@@ -27,10 +27,15 @@ import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.common.io.BaseEncoding;
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 
 /**
  * A {@link Record} is a a wrapper around a record in {@link Concourse} that
@@ -56,11 +61,34 @@ public abstract class Record {
      * @param clazz
      * @return the new Record
      */
-    protected static <T extends Record> T create(Class<T> clazz) {
+    public static <T extends Record> T create(Class<T> clazz) {
+        T record = getNewDefaultInstance(clazz);
+        cache.put(record.getId(), record);
+        return record;
+    }
+
+    /**
+     * Get a new instance of {@code clazz} by calling the default (zero-arg)
+     * constructor, if it exists. This method attempts to correctly invoke
+     * constructors for nester inner classes.
+     * 
+     * @param clazz
+     * @return the instance of the {@code clazz}.
+     */
+    @SuppressWarnings("unchecked")
+    private static <T> T getNewDefaultInstance(Class<T> clazz) {
         try {
-            T record = clazz.newInstance();
-            cache.put(record.getId(), record);
-            return record;
+            Class<?> enclosingClass = clazz.getEnclosingClass();
+            if(enclosingClass != null) {
+                Object enclosingInstance = getNewDefaultInstance(enclosingClass);
+                Constructor<?> constructor = clazz
+                        .getDeclaredConstructor(enclosingClass);
+                return (T) constructor.newInstance(enclosingInstance);
+
+            }
+            else {
+                return clazz.newInstance();
+            }
         }
         catch (ReflectiveOperationException e) {
             throw Throwables.propagate(e);
@@ -252,6 +280,43 @@ public abstract class Record {
     }
 
     /**
+     * Convert a generic {@code object} to the appropriate {@link JsonElement}.
+     * <p>
+     * <em>This method accepts {@link Iterable} collections and recursively
+     * transforms them to JSON arrays.</em>
+     * </p>
+     * 
+     * @param object
+     * @return the appropriate JsonElement
+     */
+    private static JsonElement jsonify(Object object) {
+        if(object instanceof Iterable
+                && Iterables.size((Iterable<?>) object) == 1) {
+            return jsonify(Iterables.getOnlyElement((Iterable<?>) object));
+        }
+        else if(object instanceof Iterable) {
+            JsonArray array = new JsonArray();
+            for (Object element : (Iterable<?>) object) {
+                array.add(jsonify(element));
+            }
+            return array;
+        }
+        else if(object instanceof Number) {
+            return new JsonPrimitive((Number) object);
+        }
+        else if(object instanceof Boolean) {
+            return new JsonPrimitive((Boolean) object);
+        }
+        else if(object instanceof String) {
+            return new JsonPrimitive((String) object);
+        }
+        else {
+            Gson gson = new Gson();
+            return gson.toJsonTree(object);
+        }
+    }
+
+    /**
      * The cache that holds all the record instances that have been loaded from
      * the database. This is used to ensure that we don't make unnecessary read
      * calls and also that all interaction with a particular Record goes through
@@ -310,7 +375,7 @@ public abstract class Record {
         Concourse concourse = connections().request();
         checkConstraints(concourse);
         try {
-            Field[] fields = this.getClass().getDeclaredFields();
+            Field[] fields = getAllDeclaredFields();
             for (Field field : fields) {
                 String key = field.getName();
                 if(field.getType().isAssignableFrom(Record.class)) {
@@ -370,6 +435,11 @@ public abstract class Record {
     }
 
     /**
+     * A cache of all the fields in this class and all of its parents.
+     */
+    private Field[] fields0;
+
+    /**
      * The primary key that is used to identify this Record in the database.
      */
     private final long id;
@@ -379,6 +449,54 @@ public abstract class Record {
      * therefore cannot be used without ruining the integrity of the database.
      */
     private boolean inViolation = false;
+
+    /**
+     * Dump the non private data in this {@link Record} as a JSON document.
+     * 
+     * @return the json dump
+     */
+    public String dump() {
+        try {
+            Field[] fields = getAllDeclaredFields();
+            JsonObject json = new JsonObject();
+            json.addProperty("id", id);
+            for (Field field : fields) {
+                if(!Modifier.isPrivate(field.getModifiers())) {
+                    json.add(field.getName(), jsonify(field.get(this)));
+                }
+            }
+            return json.toString();
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
+
+    }
+
+    /**
+     * Dump the specified {@code} keys in this {@link Record} as a JSON
+     * Document.
+     * 
+     * @param keys
+     * @return the json dump
+     */
+    public String dump(String... keys) {
+        try {
+            Set<String> _keys = Sets.newHashSet(keys);
+            Field[] fields = getAllDeclaredFields();
+            JsonObject json = new JsonObject();
+            json.addProperty("id", id);
+            for (Field field : fields) {
+                if(_keys.contains(field.getName())) {
+                    json.add(field.getName(), jsonify(field.get(this)));
+                }
+            }
+            return json.toString();
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
+    }
 
     /**
      * Return the {@link #id} that uniquely identifies this record.
@@ -412,6 +530,11 @@ public abstract class Record {
         }
     }
 
+    @Override
+    public final String toString() {
+        return dump();
+    }
+
     /**
      * Return the name of the section where this Record is stored in the
      * database.
@@ -437,6 +560,32 @@ public abstract class Record {
             inViolation = true;
             throw e;
         }
+    }
+
+    /**
+     * Get all the fields that are declared in this class and any of its
+     * parents.
+     * 
+     * @return the declared fields
+     */
+    private final Field[] getAllDeclaredFields() {
+        if(fields0 == null) {
+            List<Field> fields = Lists.newArrayList();
+            Class<?> clazz = this.getClass();
+            while (clazz != Object.class) {
+                for (Field field : clazz.getDeclaredFields()) {
+                    if(!field.getName().equalsIgnoreCase("fields0")
+                            && !field.isSynthetic()
+                            && !Modifier.isStatic(field.getModifiers())) {
+                        field.setAccessible(true);
+                        fields.add(field);
+                    }
+                }
+                clazz = clazz.getSuperclass();
+            }
+            fields0 = fields.toArray(new Field[] {});
+        }
+        return fields0;
     }
 
     /**
@@ -466,7 +615,7 @@ public abstract class Record {
      */
     private void save(Concourse concourse) {
         try {
-            Field[] fields = this.getClass().getDeclaredFields();
+            Field[] fields = getAllDeclaredFields();
             for (Field field : fields) {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     field.setAccessible(true);
@@ -497,14 +646,15 @@ public abstract class Record {
      */
     private void store(String key, Object value, Concourse concourse,
             boolean append) {
-        //TODO: dirty field detection!
+        // TODO: dirty field detection!
         if(value instanceof Record) {
             concourse.link(key, id, ((Record) value).id);
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
-            //TODO use reconcile() function once 0.5.0 comes out...
+            // TODO use reconcile() function once 0.5.0 comes out...
             concourse.clear(key, id); // TODO this is extreme...move to a diff
-                                      // based approach to delete on values that
+                                      // based approach to delete only values
+                                      // that
                                       // should be deleted
             for (Object item : (Iterable<?>) value) {
                 store(key, item, concourse, true);
