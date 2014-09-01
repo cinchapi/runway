@@ -1,7 +1,4 @@
-package org.cinchapi.concourse.oop;
-
-import gnu.trove.map.TLongObjectMap;
-import gnu.trove.map.hash.TLongObjectHashMap;
+package org.cinchapi.concourse.orm;
 
 import java.io.Serializable;
 import java.lang.reflect.Constructor;
@@ -11,6 +8,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import javax.annotation.Nullable;
@@ -21,6 +19,7 @@ import org.cinchapi.concourse.Link;
 import org.cinchapi.concourse.Tag;
 import org.cinchapi.concourse.lang.Criteria;
 import org.cinchapi.concourse.server.io.Serializables;
+import org.cinchapi.concourse.thrift.Operator;
 import org.cinchapi.concourse.util.ByteBuffers;
 
 import static com.google.common.base.Preconditions.checkState;
@@ -63,36 +62,8 @@ public abstract class Record {
      */
     public static <T extends Record> T create(Class<T> clazz) {
         T record = getNewDefaultInstance(clazz);
-        cache.put(record.getId(), record);
+        record.init();
         return record;
-    }
-
-    /**
-     * Get a new instance of {@code clazz} by calling the default (zero-arg)
-     * constructor, if it exists. This method attempts to correctly invoke
-     * constructors for nester inner classes.
-     * 
-     * @param clazz
-     * @return the instance of the {@code clazz}.
-     */
-    @SuppressWarnings("unchecked")
-    private static <T> T getNewDefaultInstance(Class<T> clazz) {
-        try {
-            Class<?> enclosingClass = clazz.getEnclosingClass();
-            if(enclosingClass != null) {
-                Object enclosingInstance = getNewDefaultInstance(enclosingClass);
-                Constructor<?> constructor = clazz
-                        .getDeclaredConstructor(enclosingClass);
-                return (T) constructor.newInstance(enclosingInstance);
-
-            }
-            else {
-                return clazz.newInstance();
-            }
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
     }
 
     /**
@@ -188,19 +159,9 @@ public abstract class Record {
      * @param id
      * @return the existing Record
      */
-    @SuppressWarnings("unchecked")
     public static <T extends Record> T load(Class<T> clazz, long id) {
-        T record = (T) cache.get(id);
-        if(record == null) {
-            try {
-                Constructor<T> constructor = clazz.getConstructor(long.class);
-                record = constructor.newInstance(id);
-                cache.put(id, record);
-            }
-            catch (ReflectiveOperationException e) {
-                throw Throwables.propagate(e);
-            }
-        }
+        T record = getNewDefaultInstance(clazz);
+        record.load(id);
         return record;
     }
 
@@ -219,6 +180,10 @@ public abstract class Record {
                 record.save(concourse);
             }
             return concourse.commit();
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            return false;
         }
         finally {
             connections().release(concourse);
@@ -250,6 +215,34 @@ public abstract class Record {
                     .newCachedConnectionPool("concourse_client.prefs");
         }
         return connections;
+    }
+
+    /**
+     * Get a new instance of {@code clazz} by calling the default (zero-arg)
+     * constructor, if it exists. This method attempts to correctly invoke
+     * constructors for nester inner classes.
+     * 
+     * @param clazz
+     * @return the instance of the {@code clazz}.
+     */
+    @SuppressWarnings("unchecked")
+    private static <T> T getNewDefaultInstance(Class<T> clazz) {
+        try {
+            Class<?> enclosingClass = clazz.getEnclosingClass();
+            if(enclosingClass != null) {
+                Object enclosingInstance = getNewDefaultInstance(enclosingClass);
+                Constructor<?> constructor = clazz
+                        .getDeclaredConstructor(enclosingClass);
+                return (T) constructor.newInstance(enclosingInstance);
+
+            }
+            else {
+                return clazz.newInstance();
+            }
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
     }
 
     /**
@@ -316,13 +309,17 @@ public abstract class Record {
         }
     }
 
-    /**
-     * The cache that holds all the record instances that have been loaded from
-     * the database. This is used to ensure that we don't make unnecessary read
-     * calls and also that all interaction with a particular Record goes through
-     * the same instance so we ensure that everything remains consistent.
-     */
-    private static final TLongObjectMap<Record> cache = new TLongObjectHashMap<Record>();
+    // /**
+    // * The cache that holds all the record instances that have been loaded
+    // from
+    // * the database. This is used to ensure that we don't make unnecessary
+    // read
+    // * calls and also that all interaction with a particular Record goes
+    // through
+    // * the same instance so we ensure that everything remains consistent.
+    // */
+    // private static final TLongObjectMap<Record> cache = new
+    // TLongObjectHashMap<Record>();
 
     /**
      * The connection pool. Access using the {@link #connections()} method.
@@ -352,103 +349,33 @@ public abstract class Record {
     }
 
     /**
-     * Create a new Record
+     * Create a new Record instance. In order for this to be operable, a call
+     * must be made to either {@link #init()} or {@link #load(long)}.
      */
-    protected Record() {
-        Concourse concourse = connections().request();
-        try {
-            this.id = concourse.insert(initData());
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Load an existing record from
-     * 
-     * @param primaryKey
-     */
-    @SuppressWarnings({ "unchecked", "rawtypes", "unused" })
-    private Record(long id) {
-        this.id = id;
-        Concourse concourse = connections().request();
-        checkConstraints(concourse);
-        try {
-            Field[] fields = getAllDeclaredFields();
-            for (Field field : fields) {
-                String key = field.getName();
-                if(field.getType().isAssignableFrom(Record.class)) {
-                    Constructor<? extends Record> constructor = (Constructor<? extends Record>) field
-                            .getType().getConstructor(long.class);
-                    Record record = constructor.newInstance(concourse.get(key,
-                            id));
-                    field.set(this, record);
-                }
-                else if(field.getType().isAssignableFrom(Collection.class)) {
-                    Collection collection = (Collection) field.getType()
-                            .newInstance();
-                    Set<?> values = concourse.fetch(key, id);
-                    for (Object item : values) {
-                        collection.add(item);
-                    }
-                    field.set(this, collection);
-                }
-                else if(field.getType().isArray()) {
-                    List list = new ArrayList();
-                    Set<?> values = concourse.fetch(key, id);
-                    for (Object item : values) {
-                        list.add(item);
-                    }
-                    field.set(this, list.toArray());
-                }
-                else if(field.getType().isPrimitive()
-                        || field.getType() == String.class
-                        || field.getType() == Tag.class
-                        || field.getType() == Integer.class
-                        || field.getType() == Long.class
-                        || field.getType() == Float.class
-                        || field.getType() == Double.class) {
-                    field.set(this, concourse.get(key, id));
-                }
-                else if(field.getType().isAssignableFrom(Serializable.class)) {
-                    String base64 = concourse.get(key, id);
-                    ByteBuffer bytes = ByteBuffer.wrap(BaseEncoding.base64Url()
-                            .decode(base64));
-                    field.set(this, Serializables.read(bytes,
-                            (Class<Serializable>) field.getType()));
-                }
-                else {
-                    Gson gson = new Gson();
-                    Object object = gson.fromJson(
-                            (String) concourse.get(key, id), field.getType());
-                    field.set(this, object);
-                }
-            }
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
+    protected Record() {/* noop */}
 
     /**
      * A cache of all the fields in this class and all of its parents.
      */
-    private Field[] fields0;
+    private transient Field[] fields0;
 
     /**
      * The primary key that is used to identify this Record in the database.
      */
-    private final long id;
+    private transient long id;
 
     /**
      * A flag that indicates this Record is in violation of some constraint and
      * therefore cannot be used without ruining the integrity of the database.
      */
-    private boolean inViolation = false;
+    private transient boolean inViolation = false;
+
+    /**
+     * A flag that indicates that the Record object has either been initialized
+     * as a new record in the database or has loaded an existing record and is
+     * therefore usable.
+     */
+    private transient boolean usable = false;
 
     /**
      * Dump the non private data in this {@link Record} as a JSON document.
@@ -461,8 +388,11 @@ public abstract class Record {
             JsonObject json = new JsonObject();
             json.addProperty("id", id);
             for (Field field : fields) {
-                if(!Modifier.isPrivate(field.getModifiers())) {
-                    json.add(field.getName(), jsonify(field.get(this)));
+                Object value;
+                if(!Modifier.isPrivate(field.getModifiers())
+                        && Modifier.isTransient(field.getModifiers())
+                        && (value = field.get(this)) != null) {
+                    json.add(field.getName(), jsonify(value));
                 }
             }
             return json.toString();
@@ -498,6 +428,16 @@ public abstract class Record {
         }
     }
 
+    @Override
+    public int hashCode() {
+        return Objects.hash(id);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        return id == ((Record) obj).id;
+    }
+
     /**
      * Return the {@link #id} that uniquely identifies this record.
      * 
@@ -525,6 +465,10 @@ public abstract class Record {
             save(concourse);
             return concourse.commit();
         }
+        catch (Throwable t) {
+            concourse.abort();
+            return false;
+        }
         finally {
             connections().release(concourse);
         }
@@ -533,6 +477,102 @@ public abstract class Record {
     @Override
     public final String toString() {
         return dump();
+    }
+
+    /**
+     * Initialize the new record with all the core data.
+     */
+    protected void init() {
+        if(!usable) {
+            Concourse concourse = connections().request();
+            try {
+                this.id = concourse.insert(initData());
+                usable = true;
+                // TODO set initial state
+            }
+            finally {
+                connections().release(concourse);
+            }
+        }
+    }
+
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param id
+     */
+    @SuppressWarnings({ "unchecked", "rawtypes", })
+    protected final void load(long id) {
+        if(!usable) {
+            this.id = id;
+            Concourse concourse = connections().request();
+            checkConstraints(concourse);
+            try {
+                Field[] fields = getAllDeclaredFields();
+                for (Field field : fields) {
+                    if(!Modifier.isTransient(field.getModifiers())) {
+                        String key = field.getName();
+                        if(field.getType().isAssignableFrom(Record.class)) {
+                            Constructor<? extends Record> constructor = (Constructor<? extends Record>) field
+                                    .getType().getConstructor(long.class);
+                            Record record = constructor.newInstance(concourse
+                                    .get(key, id));
+                            field.set(this, record);
+                        }
+                        else if(field.getType().isAssignableFrom(
+                                Collection.class)) {
+                            Collection collection = (Collection) field
+                                    .getType().newInstance();
+                            Set<?> values = concourse.fetch(key, id);
+                            for (Object item : values) {
+                                collection.add(item);
+                            }
+                            field.set(this, collection);
+                        }
+                        else if(field.getType().isArray()) {
+                            List list = new ArrayList();
+                            Set<?> values = concourse.fetch(key, id);
+                            for (Object item : values) {
+                                list.add(item);
+                            }
+                            field.set(this, list.toArray());
+                        }
+                        else if(field.getType().isPrimitive()
+                                || field.getType() == String.class
+                                || field.getType() == Tag.class
+                                || field.getType() == Integer.class
+                                || field.getType() == Long.class
+                                || field.getType() == Float.class
+                                || field.getType() == Double.class) {
+                            field.set(this, concourse.get(key, id));
+                        }
+                        else if(field.getType().isAssignableFrom(
+                                Serializable.class)) {
+                            String base64 = concourse.get(key, id);
+                            ByteBuffer bytes = ByteBuffer.wrap(BaseEncoding
+                                    .base64Url().decode(base64));
+                            field.set(this, Serializables.read(bytes,
+                                    (Class<Serializable>) field.getType()));
+                        }
+                        else {
+                            Gson gson = new Gson();
+                            Object object = gson.fromJson(
+                                    (String) concourse.get(key, id),
+                                    field.getType());
+                            field.set(this, object);
+                        }
+                    }
+                }
+                usable = true;
+            }
+            catch (ReflectiveOperationException e) {
+                throw Throwables.propagate(e);
+            }
+            finally {
+                connections().release(concourse);
+            }
+        }
     }
 
     /**
@@ -554,7 +594,12 @@ public abstract class Record {
      */
     private void checkConstraints(Concourse concourse) {
         try {
-            checkState(concourse.get(SECTION_KEY, id).equals(_()));
+            String section = concourse.get(SECTION_KEY, id);
+            section = section.replace("`", ""); // TODO remove when 0.4.1 comes
+                                                // out
+            checkState(section.equals(_()),
+                    "Cannot load a record from section %s "
+                            + "into a Record of type %s", section, _());
         }
         catch (IllegalStateException e) {
             inViolation = true;
@@ -606,6 +651,37 @@ public abstract class Record {
     }
 
     /**
+     * Return {@code true} if {@code key} as {@code value} for this class is
+     * unique, meaning there is no other record in the database in this class
+     * with that mapping. If {@code value} is a collection, then this method
+     * will return {@code true} if and only if every element in the collection
+     * is unique.
+     * 
+     * @param concourse
+     * @param key
+     * @param value
+     * @return {@code true} if {@code key} as {@code value} is a unique mapping
+     *         for this class
+     */
+    private boolean isUnique(Concourse concourse, String key, Object value) {
+        if(value instanceof Iterable<?> || value.getClass().isArray()) {
+            for (Object obj : (Iterable<?>) value) {
+                if(!isUnique(concourse, key, obj)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        else {
+            String clazz = "`" + _() + "`"; // TODO remove when 0.4.1 comes out
+            Criteria criteria = Criteria.where().key(SECTION_KEY)
+                    .operator(Operator.EQUALS).value(clazz).and().key(key)
+                    .operator(Operator.EQUALS).value(value).build();
+            return concourse.find(criteria).isEmpty();
+        }
+    }
+
+    /**
      * Save the data in this record using the specified {@code concourse}
      * connection. This method assumes that the caller has already started an
      * transaction, if necessary and will commit the transaction after this
@@ -621,6 +697,10 @@ public abstract class Record {
                     field.setAccessible(true);
                     String key = field.getName();
                     Object value = field.get(this);
+                    if(field.isAnnotationPresent(Unique.class)) {
+                        Preconditions
+                                .checkState(isUnique(concourse, key, value));
+                    }
                     if(value != null) {
                         store(key, value, concourse, false);
                     }
@@ -684,5 +764,4 @@ public abstract class Record {
             store(key, json, concourse, append);
         }
     }
-
 }
