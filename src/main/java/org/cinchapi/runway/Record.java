@@ -47,6 +47,13 @@ import com.google.gson.JsonPrimitive;
  * Record is persisted using the {@link #save()} method, the values of those
  * variables will automatically be stored/updated in Concourse.
  * </p>
+ * <h2>Variable Modifiers</h2>
+ * <p>
+ * Records will respect the native java modifiers placed on variables. This
+ * means that transient fields are never stored or loaded from the database.
+ * Additionally, private fields are never included in a JSON {@link #dump()} or
+ * {@link #toString()} output.
+ * </p>
  * 
  * @author jnelson
  * 
@@ -92,15 +99,43 @@ public abstract class Record {
     }
 
     /**
-     * Find and return all the records that are in {@code clazz} or any of its
-     * subclasses that match {@code criteria}.
+     * Find and return all records that match {@code criteria}, regardless of
+     * what class the Record is contained within.
+     * 
+     * @param criteria
+     * @return the records that match {@code criteria}
+     */
+    @SuppressWarnings("unchecked")
+    public static Set<Record> findAll(Criteria criteria) {
+        Concourse concourse = connections().request();
+        try {
+            Set<Record> records = Sets.newLinkedHashSet();
+            Set<Long> ids = concourse.find(criteria);
+            for (long id : ids) {
+                Class<? extends Record> clazz = (Class<? extends Record>) Class
+                        .forName((String) concourse.get(SECTION_KEY, id));
+                records.add(load(clazz, id));
+            }
+            return records;
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
+        finally {
+            connections().release(concourse);
+        }
+    }
+
+    /**
+     * Find and return every record in {@code clazz} or any of its children that
+     * match {@code criteria}.
      * 
      * @param clazz
      * @param criteria
      * @return the records that match {@code criteria}
      */
     @SuppressWarnings("unchecked")
-    public static <T extends Record> Set<? extends T> findAll(Class<T> clazz,
+    public static <T extends Record> Set<? extends T> findEvery(Class<T> clazz,
             Criteria criteria) {
         Concourse concourse = connections().request();
         try {
@@ -124,22 +159,27 @@ public abstract class Record {
     }
 
     /**
-     * Find and return any record that matches {@code criteria}, regardless of
-     * what class the Record is contained within.
+     * Search and return every records in {@code clazz} or any of its children
+     * that match the search {@code query} for {@code key}.
      * 
-     * @param criteria
-     * @return the records that match {@code criteria}
+     * @param clazz
+     * @param key
+     * @param query
+     * @return the records that match the search
      */
     @SuppressWarnings("unchecked")
-    public static Set<Record> findAny(Criteria criteria) {
+    public static <T extends Record> Set<? extends T> findEvery(Class<T> clazz,
+            String key, String query) {
         Concourse concourse = connections().request();
         try {
-            Set<Record> records = Sets.newLinkedHashSet();
-            Set<Long> ids = concourse.find(criteria);
+            Set<T> records = Sets.newLinkedHashSet();
+            Set<Long> ids = concourse.search(key, query);
             for (long id : ids) {
-                Class<? extends Record> clazz = (Class<? extends Record>) Class
+                Class<? extends T> c = (Class<? extends T>) Class
                         .forName((String) concourse.get(SECTION_KEY, id));
-                records.add(load(clazz, id));
+                if(clazz.isAssignableFrom(c)) {
+                    records.add(load(c, id));
+                }
             }
             return records;
         }
@@ -154,6 +194,12 @@ public abstract class Record {
     /**
      * Load the Record that is contained within the specified {@code clazz} and
      * has the specified {@code id}.
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
      * 
      * @param clazz
      * @param id
@@ -184,6 +230,62 @@ public abstract class Record {
         catch (Throwable t) {
             concourse.abort();
             return false;
+        }
+        finally {
+            connections().release(concourse);
+        }
+    }
+
+    /**
+     * Search and return any records in {@code clazz} that match the search
+     * {@code query} for {@code key}.
+     * 
+     * @param clazz
+     * @param key
+     * @param query
+     * @return the records that match the search
+     */
+    public static <T extends Record> Set<T> search(Class<T> clazz, String key,
+            String query) {
+        Concourse concourse = connections().request();
+        try {
+            Set<T> records = Sets.newLinkedHashSet();
+            Set<Long> ids = concourse.search(key, query);
+            for (long id : ids) {
+                if(inClass(id, clazz, concourse)) {
+                    records.add(load(clazz, id));
+                }
+            }
+            return records;
+        }
+        finally {
+            connections().release(concourse);
+        }
+    }
+
+    /**
+     * Search and return all records that match the search {@code query} for
+     * {@code key}, regardless of what class the Record is contained within.
+     * 
+     * @param key
+     * @param query
+     * @return the records that match the search
+     */
+    @SuppressWarnings("unchecked")
+    public static Set<Record> searchAll(String key, String query) {
+        Concourse concourse = connections().request();
+        try {
+            Set<Record> records = Sets.newLinkedHashSet();
+            Set<Long> ids = concourse.search(key, query);
+            for (long id : ids) {
+                Class<? extends Record> clazz = (Class<? extends Record>) Class
+                        .forName((String) concourse.get(SECTION_KEY, id));
+                records.add(load(clazz, id));
+            }
+            return records;
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
         }
         finally {
             connections().release(concourse);
@@ -308,18 +410,6 @@ public abstract class Record {
         }
     }
 
-    // /**
-    // * The cache that holds all the record instances that have been loaded
-    // from
-    // * the database. This is used to ensure that we don't make unnecessary
-    // read
-    // * calls and also that all interaction with a particular Record goes
-    // through
-    // * the same instance so we ensure that everything remains consistent.
-    // */
-    // private static final TLongObjectMap<Record> cache = new
-    // TLongObjectHashMap<Record>();
-
     /**
      * The connection pool. Access using the {@link #connections()} method.
      */
@@ -348,10 +438,10 @@ public abstract class Record {
     }
 
     /**
-     * Create a new Record instance. In order for this to be operable, a call
-     * must be made to either {@link #init()} or {@link #load(long)}.
+     * The variable that holds the name of the section in the database where
+     * this record is stored.
      */
-    protected Record() {/* noop */}
+    private transient String _ = getClass().getName();
 
     /**
      * A cache of all the fields in this class and all of its parents.
@@ -377,10 +467,10 @@ public abstract class Record {
     private transient boolean usable = false;
 
     /**
-     * The variable that holds the name of the section in the database where
-     * this record is stored.
+     * Create a new Record instance. In order for this to be operable, a call
+     * must be made to either {@link #init()} or {@link #load(long)}.
      */
-    private transient String _ = getClass().getName();
+    protected Record() {/* noop */}
 
     /**
      * Dump the non private data in this {@link Record} as a JSON document.
@@ -405,7 +495,6 @@ public abstract class Record {
         catch (ReflectiveOperationException e) {
             throw Throwables.propagate(e);
         }
-
     }
 
     /**
@@ -422,8 +511,12 @@ public abstract class Record {
             JsonObject json = new JsonObject();
             json.addProperty("id", id);
             for (Field field : fields) {
-                if(_keys.contains(field.getName())) {
-                    json.add(field.getName(), jsonify(field.get(this)));
+                Object value;
+                if(_keys.contains(field.getName())
+                        && !Modifier.isPrivate(field.getModifiers())
+                        && !Modifier.isTransient(field.getModifiers())
+                        && (value = field.get(this)) != null) {
+                    json.add(field.getName(), jsonify(value));
                 }
             }
             return json.toString();
@@ -431,11 +524,6 @@ public abstract class Record {
         catch (ReflectiveOperationException e) {
             throw Throwables.propagate(e);
         }
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(id);
     }
 
     @Override
@@ -450,6 +538,11 @@ public abstract class Record {
      */
     public final long getId() {
         return id;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id);
     }
 
     /**
@@ -487,7 +580,8 @@ public abstract class Record {
     /**
      * Initialize the new record with all the core data.
      */
-    protected void init() {
+    protected final void init() { // visible for access from static #init()
+                                  // method
         if(!usable) {
             Concourse concourse = connections().request();
             try {
@@ -508,7 +602,8 @@ public abstract class Record {
      * @param id
      */
     @SuppressWarnings({ "unchecked", "rawtypes", })
-    protected final void load(long id) {
+    protected final void load(long id) { // visible for access from static #load
+                                         // method
         if(!usable) {
             this.id = id;
             Concourse concourse = connections().request();
