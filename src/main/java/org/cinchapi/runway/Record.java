@@ -1,4 +1,4 @@
-package org.cinchapi.concourse.orm;
+package org.cinchapi.runway;
 
 import java.io.Serializable;
 import java.lang.reflect.Constructor;
@@ -266,9 +266,8 @@ public abstract class Record {
             }
         }
         else {
-            return ((String) concourse.get(SECTION_KEY, id)).replace("`", "")
-                    .equals(clazz.getName()); // TODO change when 0.4.1 comes
-                                              // out
+            return ((String) concourse.get(SECTION_KEY, id)).equals(clazz
+                    .getName());
         }
     }
 
@@ -378,6 +377,12 @@ public abstract class Record {
     private transient boolean usable = false;
 
     /**
+     * The variable that holds the name of the section in the database where
+     * this record is stored.
+     */
+    private transient String _ = getClass().getName();
+
+    /**
      * Dump the non private data in this {@link Record} as a JSON document.
      * 
      * @return the json dump
@@ -390,7 +395,7 @@ public abstract class Record {
             for (Field field : fields) {
                 Object value;
                 if(!Modifier.isPrivate(field.getModifiers())
-                        && Modifier.isTransient(field.getModifiers())
+                        && !Modifier.isTransient(field.getModifiers())
                         && (value = field.get(this)) != null) {
                     json.add(field.getName(), jsonify(value));
                 }
@@ -576,16 +581,6 @@ public abstract class Record {
     }
 
     /**
-     * Return the name of the section where this Record is stored in the
-     * database.
-     * 
-     * @return the section name
-     */
-    private final String _() {
-        return this.getClass().getName();
-    }
-
-    /**
      * Check to ensure that this Record does not violate any constraints. If so,
      * throw an {@link IllegalStateException}.
      * 
@@ -595,11 +590,9 @@ public abstract class Record {
     private void checkConstraints(Concourse concourse) {
         try {
             String section = concourse.get(SECTION_KEY, id);
-            section = section.replace("`", ""); // TODO remove when 0.4.1 comes
-                                                // out
-            checkState(section.equals(_()),
+            checkState(section.equals(_),
                     "Cannot load a record from section %s "
-                            + "into a Record of type %s", section, _());
+                            + "into a Record of type %s", section, _);
         }
         catch (IllegalStateException e) {
             inViolation = true;
@@ -641,12 +634,12 @@ public abstract class Record {
      */
     private final String initData() {
         JsonObject object = new JsonObject();
-        object.addProperty(SECTION_KEY, "`" + _() + "`"); // Wrap the
-                                                          // #section with
-                                                          // `` so that it
-                                                          // is stored in
-                                                          // Concourse as
-                                                          // a Tag.
+        object.addProperty(SECTION_KEY, "`" + _ + "`"); // Wrap the
+                                                        // #section with
+                                                        // `` so that it
+                                                        // is stored in
+                                                        // Concourse as
+                                                        // a Tag.
         return object.toString();
     }
 
@@ -673,9 +666,8 @@ public abstract class Record {
             return true;
         }
         else {
-            String clazz = "`" + _() + "`"; // TODO remove when 0.4.1 comes out
             Criteria criteria = Criteria.where().key(SECTION_KEY)
-                    .operator(Operator.EQUALS).value(clazz).and().key(key)
+                    .operator(Operator.EQUALS).value(_).and().key(key)
                     .operator(Operator.EQUALS).value(value).build();
             return concourse.find(criteria).isEmpty();
         }
@@ -734,8 +726,7 @@ public abstract class Record {
             // TODO use reconcile() function once 0.5.0 comes out...
             concourse.clear(key, id); // TODO this is extreme...move to a diff
                                       // based approach to delete only values
-                                      // that
-                                      // should be deleted
+                                      // that should be deleted
             for (Object item : (Iterable<?>) value) {
                 store(key, item, concourse, true);
             }

@@ -1,11 +1,12 @@
-package org.cinchapi.concourse.orm;
+package org.cinchapi.runway;
 
 import java.util.Set;
 
 import org.cinchapi.concourse.lang.Criteria;
-import org.cinchapi.concourse.orm.Record;
 import org.cinchapi.concourse.test.ClientServerTest;
 import org.cinchapi.concourse.thrift.Operator;
+import org.cinchapi.runway.Record;
+import org.cinchapi.runway.Unique;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -13,7 +14,7 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.4.0";
+        return "0.4.1";
     }
 
     @Override
@@ -28,21 +29,23 @@ public class RecordTest extends ClientServerTest {
         person.name = "Jeffery Nelson";
         person.age = 29;
         person.save();
-              
-        Mock person2 = Record.load(Mock.class, person.getId());
-        person2.age = 45;
         
-        Mock person3 = Record.load(Mock.class, person.getId());
-        System.out.println(person2);
-        System.out.println(person3);
-
-//        Mock person2 = Record.create(Mock.class);
-//        person2.name = "Jeffery Nelson";
+        System.out.println(person);
+              
+//        Mock person2 = Record.load(Mock.class, person.getId());
+//        person2.age = 45;
 //        
-//        System.out.println(Record.find(Mock.class, Criteria.where().key("name")
-//                .operator(Operator.EQUALS).value("Jeffery Nelson").build()));
-////        System.out.println(client.browse(person.getId()));
-//        Assert.assertFalse(person2.save());
+//        Mock person3 = Record.load(Mock.class, person.getId());
+//        System.out.println(person2);
+//        System.out.println(person3);
+
+        Mock person2 = Record.create(Mock.class);
+        person2.name = "Jeffery Nelson";
+        
+        System.out.println(Record.find(Mock.class, Criteria.where().key("name")
+                .operator(Operator.EQUALS).value("Jeffery Nelson").build()));
+//        System.out.println(client.browse(person.getId()));
+        Assert.assertFalse(person2.save());
     }
 
     class Mock extends Record {
