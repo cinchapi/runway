@@ -32,10 +32,26 @@ public class RecordTest extends ClientServerTest {
         person2.name = "Jeffery Nelson";
         Assert.assertTrue(person2.save());      
     }
+    
+    @Test
+    public void testCannotSaveNullValueForRequiredVariable(){
+        Mock person = Mock.create(Mock.class);
+        person.age = 23;
+        Assert.assertFalse(person.save());
+    }
+    
+    @Test
+    public void testNoPartialSaveWhenRequiredVariableIsNull(){
+        Mock person = Mock.create(Mock.class);
+        person.age = 23;
+        person.save();
+        Assert.assertTrue(client.describe(person.getId()).isEmpty());
+    }
 
     class Mock extends Record {
 
         @Unique
+        @Required
         public String name;
         
         public Integer age;

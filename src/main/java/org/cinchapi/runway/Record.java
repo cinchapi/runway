@@ -8,6 +8,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -21,6 +22,7 @@ import org.cinchapi.concourse.lang.Criteria;
 import org.cinchapi.concourse.server.io.Serializables;
 import org.cinchapi.concourse.thrift.Operator;
 import org.cinchapi.concourse.util.ByteBuffers;
+import org.cinchapi.runway.util.AnyObject;
 
 import static com.google.common.base.Preconditions.checkState;
 
@@ -28,6 +30,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.io.BaseEncoding;
 import com.google.gson.Gson;
@@ -53,6 +56,14 @@ import com.google.gson.JsonPrimitive;
  * means that transient fields are never stored or loaded from the database.
  * Additionally, private fields are never included in a JSON {@link #dump()} or
  * {@link #toString()} output.
+ * </p>
+ * <h2>Creating a new Instance</h2>
+ * <p>
+ * Records are created by calling the {@link Record#create(Class)} method and
+ * supplying the desired class for the instance. Internally, the create routine
+ * calls the no-arg constructor so subclasses should generally not provide their
+ * own constructors and instead create post initialization methods to aid in
+ * TODO make this make sense...
  * </p>
  * 
  * @author jnelson
@@ -212,6 +223,28 @@ public abstract class Record {
     }
 
     /**
+     * Load every record in {@code clazz}.
+     * 
+     * @param clazz
+     * @return all the records in the class
+     */
+    public static <T extends Record> Set<T> loadEvery(Class<T> clazz) {
+        Concourse concourse = connections().request();
+        try {
+            Set<T> records = Sets.newLinkedHashSet();
+            Set<Long> ids = concourse.find(Criteria.where().key(SECTION_KEY)
+                    .operator(Operator.EQUALS).value(clazz.getName()));
+            for (long id : ids) {
+                records.add(load(clazz, id));
+            }
+            return records;
+        }
+        finally {
+            connections().release(concourse);
+        }
+    }
+
+    /**
      * Save all the changes in all of the {@code records} using a single ACID
      * transaction.
      * 
@@ -300,7 +333,7 @@ public abstract class Record {
      * @param username
      * @param password
      */
-    protected static void setConnectionInformation(String host, int port,
+    public static void setConnectionInformation(String host, int port,
             String username, String password) { // visible for testing
         connections = ConnectionPool.newCachedConnectionPool(host, port,
                 username, password);
@@ -422,6 +455,12 @@ public abstract class Record {
                                                    // key name that is likely to
                                                    // avoid collisions
 
+    /**
+     * The description of a record that is considered to be in "zombie" state.
+     */
+    private static final Set<String> ZOMBIE_DESCRIPTION = Sets
+            .newHashSet(SECTION_KEY);
+
     static {
         Runtime.getRuntime().addShutdownHook(new Thread() {
 
@@ -467,17 +506,115 @@ public abstract class Record {
     private transient boolean usable = false;
 
     /**
+     * A log of any suppressed errors related to this Record. The descriptions
+     * of these errors can be thrown at any point from the
+     * {@link #throwSupressedExceptions()} method.
+     */
+    private transient List<String> errors = Lists.newArrayList();
+
+    /*
+     * (non-Javadoc)
      * Create a new Record instance. In order for this to be operable, a call
      * must be made to either {@link #init()} or {@link #load(long)}.
+     */
+    /**
+     * DO NOT CALL and DO NOT OVERRIDE!!! Please read the documentation for this
+     * class for appropriate instructions on instantiating Record instances.
      */
     protected Record() {/* noop */}
 
     /**
-     * Dump the non private data in this {@link Record} as a JSON document.
+     * Return a map that contains all of the non-private data in this record.
+     * For example, this method can be used to return data that can be sent to a
+     * template processor to map values to front-end variables. You can use the
+     * {@link #moreData()} method to define additional data values.
      * 
-     * @return the json dump
+     * @return the data in this record
+     */
+    public Map<String, Object> data() {
+        try {
+            Map<String, Object> data = moreData();
+            Field[] fields = getAllDeclaredFields();
+            data.put("id", id);
+            for (Field field : fields) {
+                Object value;
+                if(!Modifier.isPrivate(field.getModifiers())
+                        && !Modifier.isTransient(field.getModifiers())
+                        && (value = field.get(this)) != null) {
+                    data.put(field.getName(), value);
+                }
+            }
+            return data;
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
+    }
+
+    /**
+     * Return a map that contains all of the non-private data in this record
+     * based on the specified {@code keys}. For example, this method can be used
+     * to return data that can be sent to a template processor to map values to
+     * front-end variables. You can use the {@link #moreData()} method to define
+     * additional data values, and the keys that map to those values will only
+     * be returned if they are included in {@code keys}.
+     * 
+     * @return the data in this record
+     */
+    public Map<String, Object> data(String... keys) {
+        try {
+            Map<String, Object> data = moreData();
+            Set<String> _keys = Sets.newHashSet(keys);
+            for (String key : data.keySet()) {
+                if(!_keys.contains(key)) {
+                    data.remove(key);
+                }
+            }
+            Field[] fields = getAllDeclaredFields();
+            data.put("id", id);
+            for (Field field : fields) {
+                Object value;
+                if(_keys.contains(field.getName())
+                        && !Modifier.isPrivate(field.getModifiers())
+                        && !Modifier.isTransient(field.getModifiers())
+                        && (value = field.get(this)) != null) {
+                    data.put(field.getName(), value);
+                }
+            }
+            return data;
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
+    }
+
+    /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its fields. For example, this is a good way to provide template
+     * specific information that isn't persisted to the database.
+     * 
+     * @return the additional data
+     */
+    protected Map<String, Object> moreData() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Dump the non private data in this {@link Record} as a JSON string.
+     * 
+     * @return the JSON string
      */
     public String dump() {
+        return toJsonElement().toString();
+    }
+
+    /**
+     * Returns a {@link JsonElement} representation of this record which
+     * includes all of its non private fields.
+     * 
+     * @return the JsonElement representation
+     */
+    public JsonElement toJsonElement() {
         try {
             Field[] fields = getAllDeclaredFields();
             JsonObject json = new JsonObject();
@@ -490,7 +627,7 @@ public abstract class Record {
                     json.add(field.getName(), jsonify(value));
                 }
             }
-            return json.toString();
+            return json;
         }
         catch (ReflectiveOperationException e) {
             throw Throwables.propagate(e);
@@ -498,13 +635,13 @@ public abstract class Record {
     }
 
     /**
-     * Dump the specified {@code} keys in this {@link Record} as a JSON
-     * Document.
+     * Returns a {@link JsonElement} representation of this record which
+     * includes all of the non private {@code keys} that are specified.
      * 
      * @param keys
-     * @return the json dump
+     * @return the JsonElement representation
      */
-    public String dump(String... keys) {
+    public JsonElement toJsonElement(String... keys) {
         try {
             Set<String> _keys = Sets.newHashSet(keys);
             Field[] fields = getAllDeclaredFields();
@@ -519,11 +656,22 @@ public abstract class Record {
                     json.add(field.getName(), jsonify(value));
                 }
             }
-            return json.toString();
+            return json;
         }
         catch (ReflectiveOperationException e) {
             throw Throwables.propagate(e);
         }
+    }
+
+    /**
+     * Dump the non private specified {@code} keys in this {@link Record} as a
+     * JSON string.
+     * 
+     * @param keys
+     * @return the json string
+     */
+    public String dump(String... keys) {
+        return toJsonElement(keys).toString();
     }
 
     @Override
@@ -559,17 +707,31 @@ public abstract class Record {
         Preconditions.checkState(!inViolation);
         Concourse concourse = connections().request();
         try {
+            errors.clear();
             concourse.stage();
             save(concourse);
             return concourse.commit();
         }
         catch (Throwable t) {
             concourse.abort();
+            if(inZombieState(concourse)) {
+                concourse.clear(id);
+            }
+            errors.add(Throwables.getStackTraceAsString(t));
             return false;
         }
         finally {
             connections().release(concourse);
         }
+    }
+
+    public RuntimeException throwSupressedExceptions() {
+        StringBuilder sb = new StringBuilder();
+        for (String error : errors) {
+            sb.append(error);
+            sb.append(System.getProperty("line.separator"));
+        }
+        return new RuntimeException(sb.toString());
     }
 
     @Override
@@ -580,8 +742,8 @@ public abstract class Record {
     /**
      * Initialize the new record with all the core data.
      */
-    protected final void init() { // visible for access from static #init()
-                                  // method
+    final void init() { // visible for access from static #init()
+                        // method
         if(!usable) {
             Concourse concourse = connections().request();
             try {
@@ -602,8 +764,8 @@ public abstract class Record {
      * @param id
      */
     @SuppressWarnings({ "unchecked", "rawtypes", })
-    protected final void load(long id) { // visible for access from static #load
-                                         // method
+    final void load(long id) { // visible for access from static #load
+                               // method
         if(!usable) {
             this.id = id;
             Concourse concourse = connections().request();
@@ -613,17 +775,31 @@ public abstract class Record {
                 for (Field field : fields) {
                     if(!Modifier.isTransient(field.getModifiers())) {
                         String key = field.getName();
-                        if(field.getType().isAssignableFrom(Record.class)) {
+                        if(Record.class.isAssignableFrom(field.getType())) {
                             Constructor<? extends Record> constructor = (Constructor<? extends Record>) field
                                     .getType().getConstructor(long.class);
                             Record record = constructor.newInstance(concourse
                                     .get(key, id));
                             field.set(this, record);
                         }
-                        else if(field.getType().isAssignableFrom(
-                                Collection.class)) {
-                            Collection collection = (Collection) field
-                                    .getType().newInstance();
+                        else if(Collection.class.isAssignableFrom(field
+                                .getType())) {
+                            Collection collection = null;
+                            if(Modifier.isAbstract(field.getType()
+                                    .getModifiers())
+                                    || Modifier.isInterface(field.getType()
+                                            .getModifiers())) {
+                                if(field.getType() == Set.class) {
+                                    collection = Sets.newLinkedHashSet();
+                                }
+                                else { // assume list
+                                    collection = Lists.newArrayList();
+                                }
+                            }
+                            else {
+                                collection = (Collection) field.getType()
+                                        .newInstance();
+                            }
                             Set<?> values = concourse.fetch(key, id);
                             for (Object item : values) {
                                 collection.add(item);
@@ -647,13 +823,23 @@ public abstract class Record {
                                 || field.getType() == Double.class) {
                             field.set(this, concourse.get(key, id));
                         }
-                        else if(field.getType().isAssignableFrom(
-                                Serializable.class)) {
+                        else if(field.getType().isEnum()) {
+                            String stored = concourse.get(key, id);
+                            if(stored != null) {
+                                field.set(this, Enum.valueOf(
+                                        (Class<Enum>) field.getType(),
+                                        stored.toString()));
+                            }
+                        }
+                        else if(Serializable.class.isAssignableFrom(field
+                                .getType())) {
                             String base64 = concourse.get(key, id);
-                            ByteBuffer bytes = ByteBuffer.wrap(BaseEncoding
-                                    .base64Url().decode(base64));
-                            field.set(this, Serializables.read(bytes,
-                                    (Class<Serializable>) field.getType()));
+                            if(base64 != null) {
+                                ByteBuffer bytes = ByteBuffer.wrap(BaseEncoding
+                                        .base64Url().decode(base64));
+                                field.set(this, Serializables.read(bytes,
+                                        (Class<Serializable>) field.getType()));
+                            }
                         }
                         else {
                             Gson gson = new Gson();
@@ -739,6 +925,17 @@ public abstract class Record {
     }
 
     /**
+     * Return {@code true} if this record is in a "zombie" state meaning it
+     * exists in the database without any actual data.
+     * 
+     * @param concourse
+     * @return {@code true} if this record is a zombie
+     */
+    private final boolean inZombieState(Concourse concourse) {
+        return concourse.describe(id).equals(ZOMBIE_DESCRIPTION);
+    }
+
+    /**
      * Return {@code true} if {@code key} as {@code value} for this class is
      * unique, meaning there is no other record in the database in this class
      * with that mapping. If {@code value} is a collection, then this method
@@ -764,7 +961,9 @@ public abstract class Record {
             Criteria criteria = Criteria.where().key(SECTION_KEY)
                     .operator(Operator.EQUALS).value(_).and().key(key)
                     .operator(Operator.EQUALS).value(value).build();
-            return concourse.find(criteria).isEmpty();
+            Set<Long> records = concourse.find(criteria);
+            return records.isEmpty()
+                    || (records.contains(id) && records.size() == 1);
         }
     }
 
@@ -776,20 +975,25 @@ public abstract class Record {
      * 
      * @param concourse
      */
-    private void save(Concourse concourse) {
+    private void save(final Concourse concourse) {
         try {
             Field[] fields = getAllDeclaredFields();
             for (Field field : fields) {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     field.setAccessible(true);
-                    String key = field.getName();
-                    Object value = field.get(this);
+                    final String key = field.getName();
+                    final Object value = field.get(this);
                     if(field.isAnnotationPresent(Unique.class)) {
                         Preconditions
                                 .checkState(isUnique(concourse, key, value));
                     }
+                    if(field.isAnnotationPresent(Required.class)) {
+                        Preconditions.checkState(!AnyObject
+                                .isNullOrEmpty(value));
+                    }
                     if(value != null) {
                         store(key, value, concourse, false);
+
                     }
                 }
             }
@@ -811,6 +1015,7 @@ public abstract class Record {
      * @param concourse
      * @param append
      */
+    @SuppressWarnings("rawtypes")
     private void store(String key, Object value, Concourse concourse,
             boolean append) {
         // TODO: dirty field detection!
@@ -837,6 +1042,9 @@ public abstract class Record {
                 concourse.set(key, value, id); // TODO use verifyOrSet when
                                                // it becomes available
             }
+        }
+        else if(value instanceof Enum) {
+            concourse.set(key, Tag.create(((Enum) value).name()), id);
         }
         else if(value instanceof Serializable) {
             ByteBuffer bytes = Serializables.getBytes((Serializable) value);
