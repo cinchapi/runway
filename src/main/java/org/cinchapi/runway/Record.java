@@ -1,5 +1,8 @@
 package org.cinchapi.runway;
 
+import gnu.trove.map.TLongObjectMap;
+import gnu.trove.map.hash.TLongObjectHashMap;
+
 import java.io.Serializable;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -21,8 +24,10 @@ import org.cinchapi.concourse.Tag;
 import org.cinchapi.concourse.lang.Criteria;
 import org.cinchapi.concourse.server.io.Serializables;
 import org.cinchapi.concourse.thrift.Operator;
+import org.cinchapi.concourse.time.Time;
 import org.cinchapi.concourse.util.ByteBuffers;
 import org.cinchapi.runway.util.AnyObject;
+import org.cinchapi.runway.validation.Validator;
 
 import static com.google.common.base.Preconditions.checkState;
 
@@ -253,18 +258,29 @@ public abstract class Record {
      */
     public static boolean saveAll(Record... records) {
         Concourse concourse = connections().request();
+        long transactionId = Time.now();
+        Record current = null;
         try {
             concourse.stage();
+            concourse.set("transaction_id", transactionId, METADATA_RECORD);
+            Set<Record> waiting = Sets.newHashSet(records);
+            waitingToBeSaved.put(transactionId, waiting);
             for (Record record : records) {
+                current = record;
                 record.save(concourse);
             }
+            concourse.clear("transaction_id", METADATA_RECORD);
             return concourse.commit();
         }
         catch (Throwable t) {
             concourse.abort();
+            if(current != null) {
+                current.errors.add(Throwables.getStackTraceAsString(t));
+            }
             return false;
         }
         finally {
+            waitingToBeSaved.remove(transactionId);
             connections().release(concourse);
         }
     }
@@ -355,7 +371,7 @@ public abstract class Record {
     /**
      * Get a new instance of {@code clazz} by calling the default (zero-arg)
      * constructor, if it exists. This method attempts to correctly invoke
-     * constructors for nester inner classes.
+     * constructors for nested inner classes.
      * 
      * @param clazz
      * @return the instance of the {@code clazz}.
@@ -407,6 +423,25 @@ public abstract class Record {
     }
 
     /**
+     * Return {@code true} if {@code record} is part of a single transaction
+     * within {@code concourse} and is waiting to be saved.
+     * 
+     * @param concourse
+     * @param record
+     * @return {@code true} if the record is waiting to be saved
+     */
+    private static boolean isWaitingToBeSaved(Concourse concourse, Record record) {
+        try {
+            long transactionId = concourse.get("transaction_id",
+                    METADATA_RECORD);
+            return waitingToBeSaved.get(transactionId).contains(record);
+        }
+        catch (NullPointerException e) {
+            return false;
+        }
+    }
+
+    /**
      * Convert a generic {@code object} to the appropriate {@link JsonElement}.
      * <p>
      * <em>This method accepts {@link Iterable} collections and recursively
@@ -437,6 +472,12 @@ public abstract class Record {
         else if(object instanceof String) {
             return new JsonPrimitive((String) object);
         }
+        else if(object instanceof Tag) {
+            return new JsonPrimitive((String) object.toString());
+        }
+        else if(object instanceof Record) {
+            return ((Record) object).toJsonElement();
+        }
         else {
             Gson gson = new Gson();
             return gson.toJsonTree(object);
@@ -449,11 +490,26 @@ public abstract class Record {
     private static ConnectionPool connections;
 
     /**
+     * The record where metadata is stored. We typically store some transient
+     * metadata for transaction routing within this record (so its only visible
+     * within the specific transaction) and we clear it before commit time.
+     */
+    private static long METADATA_RECORD = -1;
+
+    /**
      * The key used to hold the section metadata.
      */
     private static final String SECTION_KEY = "_"; // just want a simple/short
                                                    // key name that is likely to
                                                    // avoid collisions
+
+    /**
+     * A mapping from a transaction id to the set of records that are waiting to
+     * be saved within that transaction. We use this collection to ensure that a
+     * record being saved only links to an existing record in the database or a
+     * record that will later exist (e.g. waiting to be saved).
+     */
+    private static final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
 
     /**
      * The description of a record that is considered to be in "zombie" state.
@@ -483,6 +539,19 @@ public abstract class Record {
     private transient String _ = getClass().getName();
 
     /**
+     * A flag that indicates if the record has been deleted using the
+     * {@link #deleteOnSave()} method.
+     */
+    private transient boolean deleted = false;
+
+    /**
+     * A log of any suppressed errors related to this Record. The descriptions
+     * of these errors can be thrown at any point from the
+     * {@link #throwSupressedExceptions()} method.
+     */
+    private transient List<String> errors = Lists.newArrayList();
+
+    /**
      * A cache of all the fields in this class and all of its parents.
      */
     private transient Field[] fields0;
@@ -504,13 +573,6 @@ public abstract class Record {
      * therefore usable.
      */
     private transient boolean usable = false;
-
-    /**
-     * A log of any suppressed errors related to this Record. The descriptions
-     * of these errors can be thrown at any point from the
-     * {@link #throwSupressedExceptions()} method.
-     */
-    private transient List<String> errors = Lists.newArrayList();
 
     /*
      * (non-Javadoc)
@@ -589,14 +651,11 @@ public abstract class Record {
     }
 
     /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its fields. For example, this is a good way to provide template
-     * specific information that isn't persisted to the database.
-     * 
-     * @return the additional data
+     * Delete this {@link Record} from Concourse when the {@link #save()} method
+     * is called.
      */
-    protected Map<String, Object> moreData() {
-        return Maps.newHashMap();
+    public void deleteOnSave() {
+        deleted = true;
     }
 
     /**
@@ -606,6 +665,92 @@ public abstract class Record {
      */
     public String dump() {
         return toJsonElement().toString();
+    }
+
+    /**
+     * Dump the non private specified {@code} keys in this {@link Record} as a
+     * JSON string.
+     * 
+     * @param keys
+     * @return the json string
+     */
+    public String dump(String... keys) {
+        return toJsonElement(keys).toString();
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        return id == ((Record) obj).id;
+    }
+
+    /**
+     * Return the {@link #id} that uniquely identifies this record.
+     * 
+     * @return the id
+     */
+    public final long getId() {
+        return id;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id);
+    }
+
+    /**
+     * Save all changes that have been made to this record using an ACID
+     * transaction.
+     * <p>
+     * Use {@link Record#saveAll(Record...)} to save changes in multiple records
+     * in a single ACID transaction.
+     * </p>
+     * 
+     * @return {@code true} if all the changes have been atomically saved.
+     */
+    public final boolean save() {
+        Concourse concourse = connections().request();
+        try {
+            Preconditions.checkState(!inViolation);
+            errors.clear();
+            concourse.stage();
+            if(deleted) {
+                delete(concourse);
+            }
+            else {
+                save(concourse);
+            }
+            return concourse.commit();
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            if(inZombieState(concourse)) {
+                concourse.clear(id);
+            }
+            errors.add(Throwables.getStackTraceAsString(t));
+            return false;
+        }
+        finally {
+            connections().release(concourse);
+        }
+
+    }
+
+    /**
+     * Thrown an exception that describes any exceptions that were previously
+     * suppressed. If none occured, then this method does nothing. This is a
+     * good way to understand why a save operation fails.
+     * 
+     * @throws RuntimeException
+     */
+    public void throwSupressedExceptions() {
+        if(!errors.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            for (String error : errors) {
+                sb.append(error);
+                sb.append(System.getProperty("line.separator"));
+            }
+            throw new RuntimeException(sb.toString());
+        }
     }
 
     /**
@@ -663,77 +808,6 @@ public abstract class Record {
         }
     }
 
-    /**
-     * Dump the non private specified {@code} keys in this {@link Record} as a
-     * JSON string.
-     * 
-     * @param keys
-     * @return the json string
-     */
-    public String dump(String... keys) {
-        return toJsonElement(keys).toString();
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        return id == ((Record) obj).id;
-    }
-
-    /**
-     * Return the {@link #id} that uniquely identifies this record.
-     * 
-     * @return the id
-     */
-    public final long getId() {
-        return id;
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(id);
-    }
-
-    /**
-     * Save all changes that have been made to this record using an ACID
-     * transaction.
-     * <p>
-     * Use {@link Record#saveAll(Record...)} to save changes in multiple records
-     * in a single ACID transaction.
-     * </p>
-     * 
-     * @return {@code true} if all the changes have been atomically saved.
-     */
-    public final boolean save() {
-        Preconditions.checkState(!inViolation);
-        Concourse concourse = connections().request();
-        try {
-            errors.clear();
-            concourse.stage();
-            save(concourse);
-            return concourse.commit();
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            if(inZombieState(concourse)) {
-                concourse.clear(id);
-            }
-            errors.add(Throwables.getStackTraceAsString(t));
-            return false;
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    public RuntimeException throwSupressedExceptions() {
-        StringBuilder sb = new StringBuilder();
-        for (String error : errors) {
-            sb.append(error);
-            sb.append(System.getProperty("line.separator"));
-        }
-        return new RuntimeException(sb.toString());
-    }
-
     @Override
     public final String toString() {
         return dump();
@@ -776,10 +850,10 @@ public abstract class Record {
                     if(!Modifier.isTransient(field.getModifiers())) {
                         String key = field.getName();
                         if(Record.class.isAssignableFrom(field.getType())) {
-                            Constructor<? extends Record> constructor = (Constructor<? extends Record>) field
-                                    .getType().getConstructor(long.class);
-                            Record record = constructor.newInstance(concourse
-                                    .get(key, id));
+                            Record record = (Record) getNewDefaultInstance(field
+                                    .getType());
+                            record.load(((Link) concourse.get(key, id))
+                                    .longValue());
                             field.set(this, record);
                         }
                         else if(Collection.class.isAssignableFrom(field
@@ -816,12 +890,15 @@ public abstract class Record {
                         }
                         else if(field.getType().isPrimitive()
                                 || field.getType() == String.class
-                                || field.getType() == Tag.class
                                 || field.getType() == Integer.class
                                 || field.getType() == Long.class
                                 || field.getType() == Float.class
                                 || field.getType() == Double.class) {
                             field.set(this, concourse.get(key, id));
+                        }
+                        else if(field.getType() == Tag.class) {
+                            field.set(this,
+                                    Tag.create((String) concourse.get(key, id)));
                         }
                         else if(field.getType().isEnum()) {
                             String stored = concourse.get(key, id);
@@ -862,6 +939,17 @@ public abstract class Record {
     }
 
     /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its fields. For example, this is a good way to provide template
+     * specific information that isn't persisted to the database.
+     * 
+     * @return the additional data
+     */
+    protected Map<String, Object> moreData() {
+        return Maps.newHashMap();
+    }
+
+    /**
      * Check to ensure that this Record does not violate any constraints. If so,
      * throw an {@link IllegalStateException}.
      * 
@@ -871,14 +959,26 @@ public abstract class Record {
     private void checkConstraints(Concourse concourse) {
         try {
             String section = concourse.get(SECTION_KEY, id);
-            checkState(section.equals(_),
+            checkState(
+                    section.equals(_)
+                            || Class.forName(_).isAssignableFrom(
+                                    Class.forName(section)),
                     "Cannot load a record from section %s "
                             + "into a Record of type %s", section, _);
         }
-        catch (IllegalStateException e) {
+        catch (ReflectiveOperationException | IllegalStateException e) {
             inViolation = true;
-            throw e;
+            throw Throwables.propagate(e);
         }
+    }
+
+    /**
+     * Perform an actual "deletion" of this record from the database.
+     * 
+     * @param concourse
+     */
+    private void delete(Concourse concourse) {
+        concourse.clear(id);
     }
 
     /**
@@ -983,6 +1083,13 @@ public abstract class Record {
                     field.setAccessible(true);
                     final String key = field.getName();
                     final Object value = field.get(this);
+                    if(field.isAnnotationPresent(ValidatedBy.class)) {
+                        Class<? extends Validator> validatorClass = field
+                                .getAnnotation(ValidatedBy.class).value();
+                        Validator validator = getNewDefaultInstance(validatorClass);
+                        Preconditions.checkState(validator.validate(value),
+                                validator.getErrorMessage());
+                    }
                     if(field.isAnnotationPresent(Unique.class)) {
                         Preconditions
                                 .checkState(isUnique(concourse, key, value));
@@ -1020,7 +1127,16 @@ public abstract class Record {
             boolean append) {
         // TODO: dirty field detection!
         if(value instanceof Record) {
-            concourse.link(key, id, ((Record) value).id);
+            Record record = (Record) value;
+            Preconditions.checkState(!record.inZombieState(concourse)
+                    || isWaitingToBeSaved(concourse, record),
+                    "Cannot link to an empty record! "
+                            + "You must save the record to "
+                            + "which you're linking before "
+                            + "saving this record, or save "
+                            + "them both within an atomic transaction "
+                            + "using the Record#saveAll() method");
+            concourse.link(key, id, record.id);
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
             // TODO use reconcile() function once 0.5.0 comes out...
