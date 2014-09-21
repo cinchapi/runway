@@ -1,4 +1,4 @@
-runway
+Runway
 ======
 
 Runway is the official ORM (Object-Record Mapping) framework for Concourse. Runway provides a framework for persisting simple POJO-like objects to Concourse while automatically preserving transactional security.
@@ -13,6 +13,10 @@ You can use annotations to declare database contraints on member variables withi
 
 ### Creating a Record type
 Each Record type should extend the `Record` class. Once the class is created, you can define the schema using the member variables in the class. All non-transient variables are stored in the database. All non-private variables are automatically printed out when creating a `dump` or `toString` representation of the record.
+
+Each Record has a unique `id` that is automatically assigned during creation. You can get the id for any record using the `getId()` method.
+
+**You should never create a constructor for a Record sublcass. All records are created using static factory methods and fields are updated either individually or using instance methods.**
 
 ```
 public class User extends Record {
@@ -116,4 +120,34 @@ public class User extends Record {
     }
 
 }
+```
+#### Creating a Record instance
+Use the static `create` method to construct a Record instance. You will need to pass along the class of the Record type you wish to create.
+```
+User user = User.create(User.class);
+```
+
+#### Loading a Record instance
+Use the static `load` method to load a previously stored Record instance. You will need to pass along the class of the Record type you wish to load and the `id` of the record.
+```
+User user = User.load(User.class, 1);
+```
+
+### Saving a Record
+Once you have made changes to a record, you need to save it before those changes are persisted to Concourse. Every record exposes a `save()` method that calculates diffs and stores those to the database. If the save succeeds, the method returns `true`. Otherwise, it returns `false`, which usually means that a constraint was violated.
+```
+user.name = "Jeff Nelson";
+user.setLoginInfo("jeff@cinchapi.org", "ihatesecurity");
+user.save();
+```
+
+If a record fails to save for some reason, you can always throw an Exception with a complete stacktrace of the failure's cause using the `throwSuppressedExceptions()` method.
+
+### Saving multiple Records at once
+The `save()` method saves changes to a record within an ACID transaction to ensure that the state remains consistent. You can save multiple records within a single transaction using the `Record.saveAll()` method. This is useful in situations when changes to multiple records are dependant or newly created records link to one another.
+```
+User user1 = User.create();
+User user2 = User.create();
+user1.followers.add(user2);
+Record.saveAll(user1, user2);
 ```
