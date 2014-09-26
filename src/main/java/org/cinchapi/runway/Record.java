@@ -45,30 +45,29 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 
 /**
- * A {@link Record} is a a wrapper around a record in {@link Concourse} that
- * facilitates object-oriented interaction while preserving transactional
- * security.
+ * A {@link Record} is a a wrapper around the same in {@link Concourse} that
+ * facilitates object-oriented interaction while automatically preserving
+ * transactional security.
  * <p>
- * Each subclass should define its schema through {@code non-transient} member
- * variables. When a Record is loaded from Concourse, the member variables will
- * be automatically populated with the information in the database. And, when a
- * Record is persisted using the {@link #save()} method, the values of those
- * variables will automatically be stored/updated in Concourse.
+ * Each subclass defines its "schema" through {@code non-transient} member
+ * variables. When a Record is loaded from Concourse, the member variables are
+ * automatically populated with information from the database. And, when a
+ * Record is {@link #save() saved}, the values of those variables (including any
+ * changes) will automatically be stored/updated in Concourse.
  * </p>
  * <h2>Variable Modifiers</h2>
  * <p>
  * Records will respect the native java modifiers placed on variables. This
  * means that transient fields are never stored or loaded from the database.
- * Additionally, private fields are never included in a JSON {@link #dump()} or
+ * And, private fields are never included in a JSON {@link #dump()} or
  * {@link #toString()} output.
  * </p>
  * <h2>Creating a new Instance</h2>
  * <p>
  * Records are created by calling the {@link Record#create(Class)} method and
  * supplying the desired class for the instance. Internally, the create routine
- * calls the no-arg constructor so subclasses should generally not provide their
- * own constructors and instead create post initialization methods to aid in
- * TODO make this make sense...
+ * calls the no-arg constructor so subclasses should never provide their own
+ * constructors.
  * </p>
  * 
  * @author jnelson
@@ -240,7 +239,12 @@ public abstract class Record {
             Set<Long> ids = concourse.find(Criteria.where().key(SECTION_KEY)
                     .operator(Operator.EQUALS).value(clazz.getName()));
             for (long id : ids) {
-                records.add(load(clazz, id));
+                try {
+                    records.add(load(clazz, id));
+                }
+                catch (ZombieException e) {
+                    continue;
+                }
             }
             return records;
         }
@@ -423,6 +427,18 @@ public abstract class Record {
     }
 
     /**
+     * Return {@code true} if the record identified by {@code id} is in a
+     * "zombie" state meaning it exists in the database without any actual data.
+     * 
+     * @param id
+     * @param concourse
+     * @return {@code true} if the record is a zombie
+     */
+    private static boolean inZombieState(long id, Concourse concourse) {
+        return concourse.describe(id).equals(ZOMBIE_DESCRIPTION);
+    }
+
+    /**
      * Return {@code true} if {@code record} is part of a single transaction
      * within {@code concourse} and is waiting to be saved.
      * 
@@ -577,78 +593,16 @@ public abstract class Record {
     /*
      * (non-Javadoc)
      * Create a new Record instance. In order for this to be operable, a call
-     * must be made to either {@link #init()} or {@link #load(long)}.
+     * must be made to either {@link #init()} or {@link #load(long)}. A caller
+     * should never invoke this constructor directly because it merely creates a
+     * hallow shell object that is useless until a call is made to either #init
+     * or #load.
      */
     /**
      * DO NOT CALL and DO NOT OVERRIDE!!! Please read the documentation for this
      * class for appropriate instructions on instantiating Record instances.
      */
     protected Record() {/* noop */}
-
-    /**
-     * Return a map that contains all of the non-private data in this record.
-     * For example, this method can be used to return data that can be sent to a
-     * template processor to map values to front-end variables. You can use the
-     * {@link #moreData()} method to define additional data values.
-     * 
-     * @return the data in this record
-     */
-    public Map<String, Object> data() {
-        try {
-            Map<String, Object> data = moreData();
-            Field[] fields = getAllDeclaredFields();
-            data.put("id", id);
-            for (Field field : fields) {
-                Object value;
-                if(!Modifier.isPrivate(field.getModifiers())
-                        && !Modifier.isTransient(field.getModifiers())
-                        && (value = field.get(this)) != null) {
-                    data.put(field.getName(), value);
-                }
-            }
-            return data;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-    }
-
-    /**
-     * Return a map that contains all of the non-private data in this record
-     * based on the specified {@code keys}. For example, this method can be used
-     * to return data that can be sent to a template processor to map values to
-     * front-end variables. You can use the {@link #moreData()} method to define
-     * additional data values, and the keys that map to those values will only
-     * be returned if they are included in {@code keys}.
-     * 
-     * @return the data in this record
-     */
-    public Map<String, Object> data(String... keys) {
-        try {
-            Map<String, Object> data = moreData();
-            Set<String> _keys = Sets.newHashSet(keys);
-            for (String key : data.keySet()) {
-                if(!_keys.contains(key)) {
-                    data.remove(key);
-                }
-            }
-            Field[] fields = getAllDeclaredFields();
-            data.put("id", id);
-            for (Field field : fields) {
-                Object value;
-                if(_keys.contains(field.getName())
-                        && !Modifier.isPrivate(field.getModifiers())
-                        && !Modifier.isTransient(field.getModifiers())
-                        && (value = field.get(this)) != null) {
-                    data.put(field.getName(), value);
-                }
-            }
-            return data;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-    }
 
     /**
      * Delete this {@link Record} from Concourse when the {@link #save()} method
@@ -681,6 +635,72 @@ public abstract class Record {
     @Override
     public boolean equals(Object obj) {
         return id == ((Record) obj).id;
+    }
+
+    /**
+     * Return a map that contains all of the non-private data in this record.
+     * For example, this method can be used to return data that can be sent to a
+     * template processor to map values to front-end variables. You can use the
+     * {@link #getMoreData()} method to define additional data values.
+     * 
+     * @return the data in this record
+     */
+    public Map<String, Object> getData() {
+        try {
+            Map<String, Object> data = getMoreData();
+            Field[] fields = getAllDeclaredFields();
+            data.put("id", id);
+            for (Field field : fields) {
+                Object value;
+                if(!Modifier.isPrivate(field.getModifiers())
+                        && !Modifier.isTransient(field.getModifiers())
+                        && (value = field.get(this)) != null) {
+                    data.put(field.getName(), value);
+                }
+            }
+            return data;
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
+    }
+
+    /**
+     * Return a map that contains all of the non-private data in this record
+     * based on the specified {@code keys}. For example, this method can be used
+     * to return data that can be sent to a template processor to map values to
+     * front-end variables. You can use the {@link #getMoreData()} method to
+     * define
+     * additional data values, and the keys that map to those values will only
+     * be returned if they are included in {@code keys}.
+     * 
+     * @return the data in this record
+     */
+    public Map<String, Object> getData(String... keys) {
+        try {
+            Map<String, Object> data = getMoreData();
+            Set<String> _keys = Sets.newHashSet(keys);
+            for (String key : data.keySet()) {
+                if(!_keys.contains(key)) {
+                    data.remove(key);
+                }
+            }
+            Field[] fields = getAllDeclaredFields();
+            data.put("id", id);
+            for (Field field : fields) {
+                Object value;
+                if(_keys.contains(field.getName())
+                        && !Modifier.isPrivate(field.getModifiers())
+                        && !Modifier.isTransient(field.getModifiers())
+                        && (value = field.get(this)) != null) {
+                    data.put(field.getName(), value);
+                }
+            }
+            return data;
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
     }
 
     /**
@@ -765,10 +785,10 @@ public abstract class Record {
             JsonObject json = new JsonObject();
             json.addProperty("id", id);
             for (Field field : fields) {
-                Object value;
+                Object value = field.get(this);
                 if(!Modifier.isPrivate(field.getModifiers())
                         && !Modifier.isTransient(field.getModifiers())
-                        && (value = field.get(this)) != null) {
+                        && value != null) {
                     json.add(field.getName(), jsonify(value));
                 }
             }
@@ -845,6 +865,10 @@ public abstract class Record {
             Concourse concourse = connections().request();
             checkConstraints(concourse);
             try {
+                if(inZombieState(id, concourse)) {
+                    concourse.clear(id);
+                    throw new ZombieException();
+                }
                 Field[] fields = getAllDeclaredFields();
                 for (Field field : fields) {
                     if(!Modifier.isTransient(field.getModifiers())) {
@@ -897,8 +921,10 @@ public abstract class Record {
                             field.set(this, concourse.get(key, id));
                         }
                         else if(field.getType() == Tag.class) {
-                            field.set(this,
-                                    Tag.create((String) concourse.get(key, id)));
+                            Object object = concourse.get(key, id);
+                            if(object != null) {
+                                field.set(this, Tag.create((String) object));
+                            }
                         }
                         else if(field.getType().isEnum()) {
                             String stored = concourse.get(key, id);
@@ -945,7 +971,7 @@ public abstract class Record {
      * 
      * @return the additional data
      */
-    protected Map<String, Object> moreData() {
+    protected Map<String, Object> getMoreData() {
         return Maps.newHashMap();
     }
 
@@ -1032,7 +1058,7 @@ public abstract class Record {
      * @return {@code true} if this record is a zombie
      */
     private final boolean inZombieState(Concourse concourse) {
-        return concourse.describe(id).equals(ZOMBIE_DESCRIPTION);
+        return inZombieState(id, concourse);
     }
 
     /**
@@ -1170,7 +1196,7 @@ public abstract class Record {
         }
         else {
             Gson gson = new Gson();
-            String json = gson.toJson(value);
+            Tag json = Tag.create(gson.toJson(value));
             store(key, json, concourse, append);
         }
     }

@@ -100,7 +100,10 @@ public abstract class RunwayFileLineImporter<T extends Record> implements
                             success = record.save();
                         }
                         catch (Throwable t) {
-                            msg.append(t.getMessage());
+                            String message = t.getMessage();
+                            message = message == null ? Throwables
+                                    .getStackTraceAsString(t) : message;
+                            msg.append(message);
                             success = false;
                         }
 
@@ -109,7 +112,7 @@ public abstract class RunwayFileLineImporter<T extends Record> implements
                             errors = 0;
                         }
                         else {
-                            if(msg.toString().isEmpty()){
+                            if(msg.toString().isEmpty()) {
                                 msg.append("Unable to save");
                             }
                             errors = 1;
