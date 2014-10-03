@@ -21,6 +21,7 @@ import org.cinchapi.concourse.Concourse;
 import org.cinchapi.concourse.ConnectionPool;
 import org.cinchapi.concourse.Link;
 import org.cinchapi.concourse.Tag;
+import org.cinchapi.concourse.TransactionException;
 import org.cinchapi.concourse.lang.Criteria;
 import org.cinchapi.concourse.server.io.Serializables;
 import org.cinchapi.concourse.thrift.Operator;
@@ -74,6 +75,32 @@ import com.google.gson.JsonPrimitive;
  * 
  */
 public abstract class Record {
+
+    /**
+     * Atomically clear all of the records in {@code clazz} from the database.
+     * 
+     * @param clazz
+     */
+    public static <T extends Record> void clear(Class<T> clazz) {
+        Concourse concourse = connections().request();
+        try {
+            concourse.stage();
+            Set<Long> records = concourse.find(Criteria.where()
+                    .key(SECTION_KEY).operator(Operator.EQUALS)
+                    .value(clazz.getName()));
+            for (long record : records) {
+                concourse.clear(record);
+            }
+            concourse.commit();
+        }
+        catch (TransactionException e) {
+            concourse.abort();
+            clear(clazz);
+        }
+        finally {
+            connections().release(concourse);
+        }
+    }
 
     /**
      * Create a new {@link Record} that is contained within the specified
@@ -200,6 +227,24 @@ public abstract class Record {
         }
         catch (ReflectiveOperationException e) {
             throw Throwables.propagate(e);
+        }
+        finally {
+            connections().release(concourse);
+        }
+    }
+
+    /**
+     * Return a list of all the ids for every record in {@code clazz}. This
+     * method does to load up the actual records.
+     * 
+     * @param clazz
+     * @return the ids of all the records in the class
+     */
+    public static <T extends Record> Set<Long> getEveryId(Class<T> clazz) {
+        Concourse concourse = connections().request();
+        try {
+            return concourse.find(Criteria.where().key(SECTION_KEY)
+                    .operator(Operator.EQUALS).value(clazz.getName()));
         }
         finally {
             connections().release(concourse);
@@ -421,8 +466,14 @@ public abstract class Record {
             }
         }
         else {
-            return ((String) concourse.get(SECTION_KEY, id)).equals(clazz
-                    .getName());
+            try {
+                return ((String) concourse.get(SECTION_KEY, id)).equals(clazz
+                        .getName());
+            }
+            catch (NullPointerException e) { // NPE indicates the record does
+                                             // not have a SECTION_KEY
+                return false;
+            }
         }
     }
 
@@ -784,6 +835,10 @@ public abstract class Record {
             Field[] fields = getAllDeclaredFields();
             JsonObject json = new JsonObject();
             json.addProperty("id", id);
+            Map<String, Object> more = getMoreData();
+            for (String key : more.keySet()) {
+                json.add(key, jsonify(more.get(key)));
+            }
             for (Field field : fields) {
                 Object value = field.get(this);
                 if(!Modifier.isPrivate(field.getModifiers())
@@ -812,6 +867,12 @@ public abstract class Record {
             Field[] fields = getAllDeclaredFields();
             JsonObject json = new JsonObject();
             json.addProperty("id", id);
+            Map<String, Object> more = getMoreData();
+            for (String key : more.keySet()) {
+                if(_keys.contains(key)) {
+                    json.add(key, jsonify(more.get(key)));
+                }
+            }
             for (Field field : fields) {
                 Object value;
                 if(_keys.contains(field.getName())
@@ -918,7 +979,11 @@ public abstract class Record {
                                 || field.getType() == Long.class
                                 || field.getType() == Float.class
                                 || field.getType() == Double.class) {
-                            field.set(this, concourse.get(key, id));
+                            Object value = concourse.get(key, id);
+                            if(value != null) { // Java doesn't allow primitive
+                                                // types to hold nulls
+                                field.set(this, concourse.get(key, id));
+                            }
                         }
                         else if(field.getType() == Tag.class) {
                             Object object = concourse.get(key, id);
@@ -985,6 +1050,7 @@ public abstract class Record {
     private void checkConstraints(Concourse concourse) {
         try {
             String section = concourse.get(SECTION_KEY, id);
+            checkState(section != null);
             checkState(
                     section.equals(_)
                             || Class.forName(_).isAssignableFrom(
@@ -1176,7 +1242,8 @@ public abstract class Record {
         else if(value.getClass().isPrimitive() || value instanceof String
                 || value instanceof Tag || value instanceof Link
                 || value instanceof Integer || value instanceof Long
-                || value instanceof Float || value instanceof Double) {
+                || value instanceof Float || value instanceof Double
+                || value instanceof Boolean) {
             if(append) {
                 concourse.add(key, value, id);
             }
