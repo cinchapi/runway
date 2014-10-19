@@ -47,6 +47,17 @@ public class RecordTest extends ClientServerTest {
         person.save();
         Assert.assertTrue(client.describe(person.getId()).isEmpty());
     }
+    
+    @Test
+    public void testBooleanIsNotStoredAsBase64(){
+        Mock person = Mock.create(Mock.class);
+        person.name = "John Doe";
+        person.age = 100;
+        person.save();
+        long id = person.getId();
+        person = Mock.load(Mock.class, id);
+        Assert.assertTrue(person.alive);
+    }
 
     class Mock extends Record {
 
@@ -55,6 +66,8 @@ public class RecordTest extends ClientServerTest {
         public String name;
         
         public Integer age;
+        
+        public boolean alive = true;
 
     }
 
