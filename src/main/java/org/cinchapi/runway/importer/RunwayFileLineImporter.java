@@ -113,7 +113,12 @@ public abstract class RunwayFileLineImporter<T extends Record> implements
                         }
                         else {
                             if(msg.toString().isEmpty()) {
-                                msg.append("Unable to save");
+                                try {
+                                    record.throwSupressedExceptions();
+                                }
+                                catch (Exception e) {
+                                    msg.append(e.getMessage());
+                                }
                             }
                             errors = 1;
                         }

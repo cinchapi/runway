@@ -22,6 +22,7 @@ import org.cinchapi.concourse.ConnectionPool;
 import org.cinchapi.concourse.Link;
 import org.cinchapi.concourse.Tag;
 import org.cinchapi.concourse.TransactionException;
+import org.cinchapi.concourse.lang.BuildableState;
 import org.cinchapi.concourse.lang.Criteria;
 import org.cinchapi.concourse.server.io.Serializables;
 import org.cinchapi.concourse.thrift.Operator;
@@ -33,6 +34,7 @@ import org.cinchapi.runway.validation.Validator;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.common.base.Preconditions;
+import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -123,6 +125,18 @@ public abstract class Record {
      * @return the records that match {@code criteria}
      */
     public static <T extends Record> Set<T> find(Class<T> clazz,
+            BuildableState criteria) {
+        return find(clazz, criteria.build());
+    }
+
+    /**
+     * Find any return any records in {@code clazz} that match {@code criteria}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the records that match {@code criteria}
+     */
+    public static <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria) {
         Concourse concourse = connections().request();
         try {
@@ -138,6 +152,17 @@ public abstract class Record {
         finally {
             connections().release(concourse);
         }
+    }
+
+    /**
+     * Find and return all records that match {@code criteria}, regardless of
+     * what class the Record is contained within.
+     * 
+     * @param criteria
+     * @return the records that match {@code criteria}
+     */
+    public static Set<Record> findAll(BuildableState criteria) {
+        return findAll(criteria.build());
     }
 
     /**
@@ -176,6 +201,19 @@ public abstract class Record {
      * @param criteria
      * @return the records that match {@code criteria}
      */
+    public static <T extends Record> Set<? extends T> findEvery(Class<T> clazz,
+            BuildableState criteria) {
+        return findEvery(clazz, criteria.build());
+    }
+
+    /**
+     * Find and return every record in {@code clazz} or any of its children that
+     * match {@code criteria}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the records that match {@code criteria}
+     */
     @SuppressWarnings("unchecked")
     public static <T extends Record> Set<? extends T> findEvery(Class<T> clazz,
             Criteria criteria) {
@@ -201,35 +239,38 @@ public abstract class Record {
     }
 
     /**
-     * Search and return every records in {@code clazz} or any of its children
-     * that match the search {@code query} for {@code key}.
+     * Return the single instance of {@code clazz} that matches the
+     * {@code criteria} or {@code null} if it doesn't exist or multiple objects
+     * match.
      * 
      * @param clazz
-     * @param key
-     * @param query
-     * @return the records that match the search
+     * @param criteria
+     * @return the single matching result
      */
-    @SuppressWarnings("unchecked")
-    public static <T extends Record> Set<? extends T> findEvery(Class<T> clazz,
-            String key, String query) {
-        Concourse concourse = connections().request();
+    @Nullable
+    public static <T extends Record> T findSingleInstance(Class<T> clazz,
+            BuildableState criteria) {
+        return findSingleInstance(clazz, criteria.build());
+    }
+
+    /**
+     * Return the single instance of {@code clazz} that matches the
+     * {@code criteria} or {@code null} if it doesn't exist or multiple objects
+     * match.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the single matching result
+     */
+    @Nullable
+    public static <T extends Record> T findSingleInstance(Class<T> clazz,
+            Criteria criteria) {
+        Set<T> results = find(clazz, criteria);
         try {
-            Set<T> records = Sets.newLinkedHashSet();
-            Set<Long> ids = concourse.search(key, query);
-            for (long id : ids) {
-                Class<? extends T> c = (Class<? extends T>) Class
-                        .forName((String) concourse.get(SECTION_KEY, id));
-                if(clazz.isAssignableFrom(c)) {
-                    records.add(load(c, id));
-                }
-            }
-            return records;
+            return Iterables.getOnlyElement(results);
         }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-        finally {
-            connections().release(concourse);
+        catch (Exception e) {
+            return null;
         }
     }
 
@@ -266,9 +307,7 @@ public abstract class Record {
      * @return the existing Record
      */
     public static <T extends Record> T load(Class<T> clazz, long id) {
-        T record = getNewDefaultInstance(clazz);
-        record.load(id);
-        return record;
+        return load(clazz, id, new TLongObjectHashMap<Record>());
     }
 
     /**
@@ -387,6 +426,61 @@ public abstract class Record {
         }
         finally {
             connections().release(concourse);
+        }
+    }
+
+    /**
+     * Search and return every records in {@code clazz} or any of its children
+     * that match the search {@code query} for {@code key}.
+     * 
+     * @param clazz
+     * @param key
+     * @param query
+     * @return the records that match the search
+     */
+    @SuppressWarnings("unchecked")
+    public static <T extends Record> Set<? extends T> searchEvery(
+            Class<T> clazz, String key, String query) {
+        Concourse concourse = connections().request();
+        try {
+            Set<T> records = Sets.newLinkedHashSet();
+            Set<Long> ids = concourse.search(key, query);
+            for (long id : ids) {
+                Class<? extends T> c = (Class<? extends T>) Class
+                        .forName((String) concourse.get(SECTION_KEY, id));
+                if(clazz.isAssignableFrom(c)) {
+                    records.add(load(c, id));
+                }
+            }
+            return records;
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
+        finally {
+            connections().release(concourse);
+        }
+    }
+
+    /**
+     * Search for the single instance of {@code clazz} that matches the search
+     * {@code criteria} or return {@code null} if it doesn't exist or multiple
+     * objects match.
+     * 
+     * @param clazz
+     * @param key
+     * @param value
+     * @return the single matching search result
+     */
+    @Nullable
+    public static <T extends Record> T searchSingleInstance(Class<T> clazz,
+            String key, String value) {
+        Set<T> results = search(clazz, key, value);
+        try {
+            return Iterables.getOnlyElement(results);
+        }
+        catch (Exception e) {
+            return null;
         }
     }
 
@@ -552,6 +646,30 @@ public abstract class Record {
     }
 
     /**
+     * Internal method to help recursively load records by keeping tracking of
+     * which ones currently exist. Ultimately this method will load the Record
+     * that is contained within the specified {@code clazz} and
+     * has the specified {@code id}.
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param id
+     * @param existing
+     * @return
+     */
+    private static <T extends Record> T load(Class<T> clazz, long id,
+            TLongObjectMap<Record> existing) {
+        T record = getNewDefaultInstance(clazz);
+        record.load(id, existing);
+        return record;
+    }
+
+    /**
      * The connection pool. Access using the {@link #connections()} method.
      */
     private static ConnectionPool connections;
@@ -685,7 +803,12 @@ public abstract class Record {
 
     @Override
     public boolean equals(Object obj) {
-        return id == ((Record) obj).id;
+        if(obj instanceof Record) {
+            return id == ((Record) obj).id;
+        }
+        else {
+            return false;
+        }
     }
 
     /**
@@ -917,12 +1040,18 @@ public abstract class Record {
      * instance in memory.
      * 
      * @param id
+     * @param existing
      */
     @SuppressWarnings({ "unchecked", "rawtypes", })
-    final void load(long id) { // visible for access from static #load
-                               // method
+    final void load(long id, TLongObjectMap<Record> existing) { // visible for
+                                                                // access
+                                                                // from static
+                                                                // #load
+                                                                // method
         if(!usable) {
             this.id = id;
+            existing.put(id, this); // add the current object so we don't
+                                    // recurse infinitely
             Concourse concourse = connections().request();
             checkConstraints(concourse);
             try {
@@ -937,8 +1066,9 @@ public abstract class Record {
                         if(Record.class.isAssignableFrom(field.getType())) {
                             Record record = (Record) getNewDefaultInstance(field
                                     .getType());
-                            record.load(((Link) concourse.get(key, id))
-                                    .longValue());
+                            record.load(
+                                    ((Link) concourse.get(key, id)).longValue(),
+                                    existing);
                             field.set(this, record);
                         }
                         else if(Collection.class.isAssignableFrom(field
@@ -961,6 +1091,24 @@ public abstract class Record {
                             }
                             Set<?> values = concourse.fetch(key, id);
                             for (Object item : values) {
+                                if(item instanceof Link) {
+                                    long link = ((Link) item).longValue();
+                                    Object obj = existing.get(link);
+                                    if(obj == null) {
+                                        String section = concourse.get("_",
+                                                link);
+                                        if(Strings.isNullOrEmpty(section)) {
+                                            concourse.remove(key, item, id);
+                                            continue;
+                                        }
+                                        else {
+                                            Class<? extends Record> linkClass = (Class<? extends Record>) Class
+                                                    .forName(section.toString());
+                                            item = load(linkClass, link,
+                                                    existing);
+                                        }
+                                    }
+                                }
                                 collection.add(item);
                             }
                             field.set(this, collection);
@@ -1183,12 +1331,14 @@ public abstract class Record {
                                 validator.getErrorMessage());
                     }
                     if(field.isAnnotationPresent(Unique.class)) {
-                        Preconditions
-                                .checkState(isUnique(concourse, key, value));
+                        Preconditions.checkState(
+                                isUnique(concourse, key, value),
+                                field.getName() + " must be unique");
                     }
                     if(field.isAnnotationPresent(Required.class)) {
-                        Preconditions.checkState(!AnyObject
-                                .isNullOrEmpty(value));
+                        Preconditions.checkState(
+                                !AnyObject.isNullOrEmpty(value),
+                                field.getName() + " is required");
                     }
                     if(value != null) {
                         store(key, value, concourse, false);
