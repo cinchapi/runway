@@ -1108,6 +1108,9 @@ public abstract class Record {
                                                     existing);
                                         }
                                     }
+                                    else{
+                                    	item = obj;
+                                    }
                                 }
                                 collection.add(item);
                             }
