@@ -1108,7 +1108,7 @@ public abstract class Record {
                                                     existing);
                                         }
                                     }
-                                    else{
+                                    else {
                                     	item = obj;
                                     }
                                 }
