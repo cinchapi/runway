@@ -1093,7 +1093,7 @@ public abstract class Record {
                             for (Object item : values) {
                                 if(item instanceof Link) {
                                     long link = ((Link) item).longValue();
-                                    Object obj = existing.get(link);
+                                    Record obj = existing.get(link);
                                     if(obj == null) {
                                         String section = concourse.get("_",
                                                 link);
@@ -1106,10 +1106,11 @@ public abstract class Record {
                                                     .forName(section.toString());
                                             item = load(linkClass, link,
                                                     existing);
+                                            existing.put(link, (Record) item);
                                         }
                                     }
                                     else {
-                                    	item = obj;
+                                        item = obj;
                                     }
                                 }
                                 collection.add(item);
