@@ -612,15 +612,15 @@ public abstract class Record {
      * @param object
      * @return the appropriate JsonElement
      */
-    private static JsonElement jsonify(Object object) {
+    private static JsonElement jsonify(Object object, Set<Record> seen) {
         if(object instanceof Iterable
                 && Iterables.size((Iterable<?>) object) == 1) {
-            return jsonify(Iterables.getOnlyElement((Iterable<?>) object));
+            return jsonify(Iterables.getOnlyElement((Iterable<?>) object), seen);
         }
         else if(object instanceof Iterable) {
             JsonArray array = new JsonArray();
             for (Object element : (Iterable<?>) object) {
-                array.add(jsonify(element));
+                array.add(jsonify(element, seen));
             }
             return array;
         }
@@ -637,7 +637,14 @@ public abstract class Record {
             return new JsonPrimitive((String) object.toString());
         }
         else if(object instanceof Record) {
-            return ((Record) object).toJsonElement();
+            if(!seen.contains(object)) {
+                seen.add((Record) object);
+                return ((Record) object).toJsonElement(seen);
+            }
+            else {
+                return jsonify(((Record) object).getId() + " (recursive link)",
+                        seen);
+            }
         }
         else {
             Gson gson = new Gson();
@@ -954,27 +961,7 @@ public abstract class Record {
      * @return the JsonElement representation
      */
     public JsonElement toJsonElement() {
-        try {
-            Field[] fields = getAllDeclaredFields();
-            JsonObject json = new JsonObject();
-            json.addProperty("id", id);
-            Map<String, Object> more = getMoreData();
-            for (String key : more.keySet()) {
-                json.add(key, jsonify(more.get(key)));
-            }
-            for (Field field : fields) {
-                Object value = field.get(this);
-                if(!Modifier.isPrivate(field.getModifiers())
-                        && !Modifier.isTransient(field.getModifiers())
-                        && value != null) {
-                    json.add(field.getName(), jsonify(value));
-                }
-            }
-            return json;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
+        return toJsonElement(Sets.<Record> newHashSet());
     }
 
     /**
@@ -985,36 +972,23 @@ public abstract class Record {
      * @return the JsonElement representation
      */
     public JsonElement toJsonElement(String... keys) {
-        try {
-            Set<String> _keys = Sets.newHashSet(keys);
-            Field[] fields = getAllDeclaredFields();
-            JsonObject json = new JsonObject();
-            json.addProperty("id", id);
-            Map<String, Object> more = getMoreData();
-            for (String key : more.keySet()) {
-                if(_keys.contains(key)) {
-                    json.add(key, jsonify(more.get(key)));
-                }
-            }
-            for (Field field : fields) {
-                Object value;
-                if(_keys.contains(field.getName())
-                        && !Modifier.isPrivate(field.getModifiers())
-                        && !Modifier.isTransient(field.getModifiers())
-                        && (value = field.get(this)) != null) {
-                    json.add(field.getName(), jsonify(value));
-                }
-            }
-            return json;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
+        return toJsonElement(Sets.<Record> newHashSet(), keys);
     }
 
     @Override
     public final String toString() {
         return dump();
+    }
+
+    /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its fields. For example, this is a good way to provide template
+     * specific information that isn't persisted to the database.
+     * 
+     * @return the additional data
+     */
+    protected Map<String, Object> getMoreData() {
+        return Maps.newHashMap();
     }
 
     /**
@@ -1106,7 +1080,6 @@ public abstract class Record {
                                                     .forName(section.toString());
                                             item = load(linkClass, link,
                                                     existing);
-                                            existing.put(link, (Record) item);
                                         }
                                     }
                                     else {
@@ -1179,17 +1152,6 @@ public abstract class Record {
                 connections().release(concourse);
             }
         }
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its fields. For example, this is a good way to provide template
-     * specific information that isn't persisted to the database.
-     * 
-     * @return the additional data
-     */
-    protected Map<String, Object> getMoreData() {
-        return Maps.newHashMap();
     }
 
     /**
@@ -1419,6 +1381,76 @@ public abstract class Record {
             Gson gson = new Gson();
             Tag json = Tag.create(gson.toJson(value));
             store(key, json, concourse, append);
+        }
+    }
+
+    /**
+     * Returns a {@link JsonElement} representation of this record which
+     * includes all of its non private fields.
+     * 
+     * @param seen - the records that have been previously serialized, so we
+     *            don't recurse infinitely
+     * 
+     * @return the JsonElement representation
+     */
+    private JsonElement toJsonElement(Set<Record> seen) {
+        try {
+            Field[] fields = getAllDeclaredFields();
+            JsonObject json = new JsonObject();
+            json.addProperty("id", id);
+            Map<String, Object> more = getMoreData();
+            for (String key : more.keySet()) {
+                json.add(key, jsonify(more.get(key), seen));
+            }
+            for (Field field : fields) {
+                Object value = field.get(this);
+                if(!Modifier.isPrivate(field.getModifiers())
+                        && !Modifier.isTransient(field.getModifiers())
+                        && value != null) {
+                    json.add(field.getName(), jsonify(value, seen));
+                }
+            }
+            return json;
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
+    }
+
+    /**
+     * Returns a {@link JsonElement} representation of this record which
+     * includes all of the non private {@code keys} that are specified.
+     * 
+     * @param keys
+     * @param seen - the records that have been previously serialized, so we
+     *            don't recurse infinitely
+     * @return the JsonElement representation
+     */
+    private JsonElement toJsonElement(Set<Record> seen, String... keys) {
+        try {
+            Set<String> _keys = Sets.newHashSet(keys);
+            Field[] fields = getAllDeclaredFields();
+            JsonObject json = new JsonObject();
+            json.addProperty("id", id);
+            Map<String, Object> more = getMoreData();
+            for (String key : more.keySet()) {
+                if(_keys.contains(key)) {
+                    json.add(key, jsonify(more.get(key), seen));
+                }
+            }
+            for (Field field : fields) {
+                Object value;
+                if(_keys.contains(field.getName())
+                        && !Modifier.isPrivate(field.getModifiers())
+                        && !Modifier.isTransient(field.getModifiers())
+                        && (value = field.get(this)) != null) {
+                    json.add(field.getName(), jsonify(value, seen));
+                }
+            }
+            return json;
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
         }
     }
 }
