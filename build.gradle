@@ -84,7 +84,7 @@ uploadArchives {
               authentication(userName: sonatypeUsername, password: sonatypePassword)
             }
 
-            pom.version = '0.1.5'
+            pom.version = '0.1.6'
 
             pom.project {
                name 'Runway'
