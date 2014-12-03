@@ -10,6 +10,7 @@ import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -150,6 +151,24 @@ public abstract class Record {
             return records;
         }
         finally {
+            connections().release(concourse);
+        }
+    }
+    
+    public static <T extends Record> Set<Long> findIds(Class<T> clazz, Criteria criteria){
+        Concourse concourse = connections().request();
+        try{
+            Set<Long> ids = concourse.find(criteria);
+            Iterator<Long> it = ids.iterator();
+            while(it.hasNext()){
+                long id = it.next();
+                if(!inClass(id, clazz, concourse)){
+                    it.remove();
+                }
+            }
+            return ids;
+        }
+        finally{
             connections().release(concourse);
         }
     }
