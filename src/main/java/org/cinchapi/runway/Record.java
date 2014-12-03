@@ -154,24 +154,6 @@ public abstract class Record {
             connections().release(concourse);
         }
     }
-    
-    public static <T extends Record> Set<Long> findIds(Class<T> clazz, Criteria criteria){
-        Concourse concourse = connections().request();
-        try{
-            Set<Long> ids = concourse.find(criteria);
-            Iterator<Long> it = ids.iterator();
-            while(it.hasNext()){
-                long id = it.next();
-                if(!inClass(id, clazz, concourse)){
-                    it.remove();
-                }
-            }
-            return ids;
-        }
-        finally{
-            connections().release(concourse);
-        }
-    }
 
     /**
      * Find and return all records that match {@code criteria}, regardless of
@@ -251,6 +233,46 @@ public abstract class Record {
         }
         catch (ReflectiveOperationException e) {
             throw Throwables.propagate(e);
+        }
+        finally {
+            connections().release(concourse);
+        }
+    }
+
+    /**
+     * Find and return the ids of any records in {@code clazz} that match
+     * {@code criteria}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the ids of the records that match {@code criteria}
+     */
+    public static <T extends Record> Set<Long> findIds(Class<T> clazz,
+            BuildableState criteria) {
+        return findIds(clazz, criteria.build());
+    }
+
+    /**
+     * Find and return the ids of any records in {@code clazz} that match
+     * {@code criteria}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the ids of the records that match {@code criteria}
+     */
+    public static <T extends Record> Set<Long> findIds(Class<T> clazz,
+            Criteria criteria) {
+        Concourse concourse = connections().request();
+        try {
+            Set<Long> ids = concourse.find(criteria);
+            Iterator<Long> it = ids.iterator();
+            while (it.hasNext()) {
+                long id = it.next();
+                if(!inClass(id, clazz, concourse)) {
+                    it.remove();
+                }
+            }
+            return ids;
         }
         finally {
             connections().release(concourse);
