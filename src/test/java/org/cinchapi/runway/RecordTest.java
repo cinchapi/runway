@@ -1,16 +1,17 @@
 package org.cinchapi.runway;
 
-import org.cinchapi.concourse.test.ClientServerTest;
 import org.cinchapi.runway.Record;
 import org.cinchapi.runway.Unique;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.test.ClientServerTest;
+
 public class RecordTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.4.1";
+        return "latest";
     }
 
     @Override

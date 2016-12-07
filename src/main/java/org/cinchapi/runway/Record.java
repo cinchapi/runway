@@ -18,25 +18,26 @@ import java.util.Set;
 
 import javax.annotation.Nullable;
 
-import org.cinchapi.concourse.Concourse;
-import org.cinchapi.concourse.ConnectionPool;
-import org.cinchapi.concourse.Link;
-import org.cinchapi.concourse.Tag;
-import org.cinchapi.concourse.TransactionException;
-import org.cinchapi.concourse.lang.BuildableState;
-import org.cinchapi.concourse.lang.Criteria;
 import org.cinchapi.concourse.server.io.Serializables;
-import org.cinchapi.concourse.thrift.Operator;
-import org.cinchapi.concourse.time.Time;
-import org.cinchapi.concourse.util.ByteBuffers;
 import org.cinchapi.runway.util.AnyObject;
 import org.cinchapi.runway.validation.Validator;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
+import com.cinchapi.concourse.Link;
+import com.cinchapi.concourse.Tag;
+import com.cinchapi.concourse.TransactionException;
+import com.cinchapi.concourse.lang.BuildableState;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.concourse.time.Time;
+import com.cinchapi.concourse.util.ByteBuffers;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -750,26 +751,11 @@ public abstract class Record {
     private static final Set<String> ZOMBIE_DESCRIPTION = Sets
             .newHashSet(SECTION_KEY);
 
-    static {
-        Runtime.getRuntime().addShutdownHook(new Thread() {
-
-            @Override
-            public void run() {
-                try {
-                    connections.close();
-                }
-                catch (Exception e) {
-                    throw Throwables.propagate(e);
-                }
-            }
-        });
-    }
-
     /**
      * The variable that holds the name of the section in the database where
      * this record is stored.
      */
-    private transient String _ = getClass().getName();
+    private transient String __ = getClass().getName();
 
     /**
      * A flag that indicates if the record has been deleted using the
@@ -979,7 +965,7 @@ public abstract class Record {
 
     /**
      * Thrown an exception that describes any exceptions that were previously
-     * suppressed. If none occured, then this method does nothing. This is a
+     * suppressed. If none occurred, then this method does nothing. This is a
      * good way to understand why a save operation fails.
      * 
      * @throws RuntimeException
@@ -1104,7 +1090,7 @@ public abstract class Record {
                                 collection = (Collection) field.getType()
                                         .newInstance();
                             }
-                            Set<?> values = concourse.fetch(key, id);
+                            Set<?> values = concourse.select(key, id);
                             for (Object item : values) {
                                 if(item instanceof Link) {
                                     long link = ((Link) item).longValue();
@@ -1133,7 +1119,7 @@ public abstract class Record {
                         }
                         else if(field.getType().isArray()) {
                             List list = new ArrayList();
-                            Set<?> values = concourse.fetch(key, id);
+                            Set<?> values = concourse.select(key, id);
                             for (Object item : values) {
                                 list.add(item);
                             }
@@ -1207,11 +1193,11 @@ public abstract class Record {
             String section = concourse.get(SECTION_KEY, id);
             checkState(section != null);
             checkState(
-                    section.equals(_)
-                            || Class.forName(_).isAssignableFrom(
+                    section.equals(__)
+                            || Class.forName(__).isAssignableFrom(
                                     Class.forName(section)),
                     "Cannot load a record from section %s "
-                            + "into a Record of type %s", section, _);
+                            + "into a Record of type %s", section, __);
         }
         catch (ReflectiveOperationException | IllegalStateException e) {
             inViolation = true;
@@ -1260,15 +1246,8 @@ public abstract class Record {
      * 
      * @return the initial data
      */
-    private final String initData() {
-        JsonObject object = new JsonObject();
-        object.addProperty(SECTION_KEY, "`" + _ + "`"); // Wrap the
-                                                        // #section with
-                                                        // `` so that it
-                                                        // is stored in
-                                                        // Concourse as
-                                                        // a Tag.
-        return object.toString();
+    private final Map<String, Object> initData() {
+        return ImmutableMap.<String, Object> of(SECTION_KEY, __);
     }
 
     /**
@@ -1306,7 +1285,7 @@ public abstract class Record {
         }
         else {
             Criteria criteria = Criteria.where().key(SECTION_KEY)
-                    .operator(Operator.EQUALS).value(_).and().key(key)
+                    .operator(Operator.EQUALS).value(__).and().key(key)
                     .operator(Operator.EQUALS).value(value).build();
             Set<Long> records = concourse.find(criteria);
             return records.isEmpty()
@@ -1327,7 +1306,6 @@ public abstract class Record {
             Field[] fields = getAllDeclaredFields();
             for (Field field : fields) {
                 if(!Modifier.isTransient(field.getModifiers())) {
-                    field.setAccessible(true);
                     final String key = field.getName();
                     final Object value = field.get(this);
                     if(field.isAnnotationPresent(ValidatedBy.class)) {
@@ -1349,7 +1327,6 @@ public abstract class Record {
                     }
                     if(value != null) {
                         store(key, value, concourse, false);
-
                     }
                 }
             }
@@ -1405,8 +1382,7 @@ public abstract class Record {
                 concourse.add(key, value, id);
             }
             else {
-                concourse.set(key, value, id); // TODO use verifyOrSet when
-                                               // it becomes available
+                concourse.verifyOrSet(key, value, id);
             }
         }
         else if(value instanceof Enum) {

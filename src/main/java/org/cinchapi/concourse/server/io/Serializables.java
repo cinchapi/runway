@@ -37,8 +37,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 
-import org.cinchapi.concourse.util.ByteBuffers;
-
+import com.cinchapi.common.io.ByteBuffers;
 import com.google.common.base.Throwables;
 
 /**

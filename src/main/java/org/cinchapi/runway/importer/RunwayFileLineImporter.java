@@ -11,16 +11,13 @@ import java.util.Set;
 
 import javax.annotation.Nullable;
 
-import org.cinchapi.concourse.importer.ImportResult;
-import org.cinchapi.concourse.importer.Importer;
-import org.cinchapi.concourse.lang.Criteria;
-import org.cinchapi.concourse.thrift.Operator;
-import org.cinchapi.concourse.util.Convert;
 import org.cinchapi.runway.Record;
 import org.cinchapi.runway.util.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.importer.Importer;
 import com.google.common.base.Throwables;
 import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Lists;
@@ -35,8 +32,16 @@ import com.google.common.collect.Sets;
  * 
  * @param <T> - the Record type to import the data into
  */
-public abstract class RunwayFileLineImporter<T extends Record> implements
+public abstract class RunwayFileLineImporter<T extends Record> extends
         Importer {
+
+    /**
+     * Construct a new instance.
+     * @param concourse
+     */
+    protected RunwayFileLineImporter(Concourse concourse) {
+        super(concourse);
+    }
 
     /**
      * A Logger that is available for the subclass to log helpful messages.
@@ -44,13 +49,13 @@ public abstract class RunwayFileLineImporter<T extends Record> implements
     protected Logger log = LoggerFactory.getLogger(getClass());
 
     @Override
-    public Collection<ImportResult> importFile(String file) {
+    public Set<Long> importFile(String file) {
         return importFile(file, null);
     }
 
     @SuppressWarnings("unchecked")
     @Override
-    public Collection<ImportResult> importFile(String file, String resolveKey) {
+    public Set<Long> importFile(String file, String resolveKey) {
         List<ImportResult> results = Lists.newArrayList();
         String[] keys = headers();
         try {
