@@ -1,4 +1,4 @@
-package org.cinchapi.runway.importer;
+package com.cinchapi.runway.importer;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -8,8 +8,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
-import org.cinchapi.runway.Record;
-
+import com.cinchapi.runway.Record;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;

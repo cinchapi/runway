@@ -1,11 +1,12 @@
-package org.cinchapi.runway;
+package com.cinchapi.runway;
 
-import org.cinchapi.runway.Record;
-import org.cinchapi.runway.Unique;
 import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.test.ClientServerTest;
+import com.cinchapi.runway.Record;
+import com.cinchapi.runway.Required;
+import com.cinchapi.runway.Unique;
 
 public class RecordTest extends ClientServerTest {
 

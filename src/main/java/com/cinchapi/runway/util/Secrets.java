@@ -1,4 +1,4 @@
-package org.cinchapi.runway.util;
+package com.cinchapi.runway.util;
 
 import java.security.SecureRandom;
 

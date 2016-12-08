@@ -1,4 +1,4 @@
-package org.cinchapi.runway;
+package com.cinchapi.runway;
 
 import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
@@ -18,10 +18,6 @@ import java.util.Set;
 
 import javax.annotation.Nullable;
 
-import org.cinchapi.concourse.server.io.Serializables;
-import org.cinchapi.runway.util.AnyObject;
-import org.cinchapi.runway.validation.Validator;
-
 import static com.google.common.base.Preconditions.checkState;
 
 import com.cinchapi.concourse.Concourse;
@@ -31,9 +27,12 @@ import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
+import com.cinchapi.runway.util.AnyObject;
+import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;

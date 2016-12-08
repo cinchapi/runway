@@ -1,4 +1,4 @@
-package org.cinchapi.runway;
+package com.cinchapi.runway;
 
 /**
  * A {@link ZombieException} is thrown when an attempt is made to load a record

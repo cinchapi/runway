@@ -1,4 +1,4 @@
-package org.cinchapi.runway.validation;
+package com.cinchapi.runway.validation;
 
 /**
  * A rule processor that is used by the {@link ValidatedBy} annotation and ORM

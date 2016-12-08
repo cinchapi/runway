@@ -1,4 +1,4 @@
-package org.cinchapi.runway.validation;
+package com.cinchapi.runway.validation;
 
 public class EmailValidator implements Validator {
 

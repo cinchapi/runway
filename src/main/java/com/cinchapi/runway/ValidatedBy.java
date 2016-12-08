@@ -1,4 +1,4 @@
-package org.cinchapi.runway;
+package com.cinchapi.runway;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
@@ -6,7 +6,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-import org.cinchapi.runway.validation.Validator;
+import com.cinchapi.runway.validation.Validator;
 
 /**
  * An annotation that specifies the {@link Validator} class to use when

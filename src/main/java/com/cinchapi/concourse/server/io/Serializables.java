@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-package org.cinchapi.concourse.server.io;
+package com.cinchapi.concourse.server.io;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;

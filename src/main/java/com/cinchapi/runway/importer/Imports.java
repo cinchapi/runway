@@ -1,4 +1,4 @@
-package org.cinchapi.runway.importer;
+package com.cinchapi.runway.importer;
 
 import java.util.Collection;
 

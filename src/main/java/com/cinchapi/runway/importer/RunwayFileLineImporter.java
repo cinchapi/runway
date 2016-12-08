@@ -1,4 +1,4 @@
-package org.cinchapi.runway.importer;
+package com.cinchapi.runway.importer;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
@@ -11,13 +11,14 @@ import java.util.Set;
 
 import javax.annotation.Nullable;
 
-import org.cinchapi.runway.Record;
-import org.cinchapi.runway.util.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.importer.Importer;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.runway.Record;
+import com.cinchapi.runway.util.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Lists;
