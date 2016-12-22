@@ -20,6 +20,7 @@ import javax.annotation.Nullable;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
@@ -88,9 +89,8 @@ public abstract class Record {
         Concourse concourse = connections().request();
         try {
             concourse.stage();
-            Set<Long> records = concourse.find(Criteria.where()
-                    .key(SECTION_KEY).operator(Operator.EQUALS)
-                    .value(clazz.getName()));
+            Set<Long> records = concourse.find(Criteria.where().key(SECTION_KEY)
+                    .operator(Operator.EQUALS).value(clazz.getName()));
             for (long record : records) {
                 concourse.clear(record);
             }
@@ -565,7 +565,8 @@ public abstract class Record {
         try {
             Class<?> enclosingClass = clazz.getEnclosingClass();
             if(enclosingClass != null) {
-                Object enclosingInstance = getNewDefaultInstance(enclosingClass);
+                Object enclosingInstance = getNewDefaultInstance(
+                        enclosingClass);
                 Constructor<?> constructor = clazz
                         .getDeclaredConstructor(enclosingClass);
                 return (T) constructor.newInstance(enclosingInstance);
@@ -602,8 +603,8 @@ public abstract class Record {
         }
         else {
             try {
-                return ((String) concourse.get(SECTION_KEY, id)).equals(clazz
-                        .getName());
+                return ((String) concourse.get(SECTION_KEY, id))
+                        .equals(clazz.getName());
             }
             catch (NullPointerException e) { // NPE indicates the record does
                                              // not have a SECTION_KEY
@@ -632,7 +633,8 @@ public abstract class Record {
      * @param record
      * @return {@code true} if the record is waiting to be saved
      */
-    private static boolean isWaitingToBeSaved(Concourse concourse, Record record) {
+    private static boolean isWaitingToBeSaved(Concourse concourse,
+            Record record) {
         try {
             long transactionId = concourse.get("transaction_id",
                     METADATA_RECORD);
@@ -656,7 +658,8 @@ public abstract class Record {
     private static JsonElement jsonify(Object object, Set<Record> seen) {
         if(object instanceof Iterable
                 && Iterables.size((Iterable<?>) object) == 1) {
-            return jsonify(Iterables.getOnlyElement((Iterable<?>) object), seen);
+            return jsonify(Iterables.getOnlyElement((Iterable<?>) object),
+                    seen);
         }
         else if(object instanceof Iterable) {
             JsonArray array = new JsonArray();
@@ -763,6 +766,12 @@ public abstract class Record {
     private transient boolean deleted = false;
 
     /**
+     * Data that is dynamically added using the {@link #set(String, Object)}
+     * method.
+     */
+    private final Map<String, Object> dynamicData = Maps.newHashMap();
+
+    /**
      * A log of any suppressed errors related to this Record. The descriptions
      * of these errors can be thrown at any point from the
      * {@link #throwSupressedExceptions()} method.
@@ -845,6 +854,24 @@ public abstract class Record {
     }
 
     /**
+     * Retrieve a dynamic value.
+     * 
+     * @param key the key name
+     * @return the dynamic value
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T get(String key) {
+        Object value = dynamicData.get(key);
+        if(value == null) {
+            try {
+                value = Reflection.get(key, this);
+            }
+            catch (Exception e) {/* ignore */}
+        }
+        return (T) value;
+    }
+
+    /**
      * Return a map that contains all of the non-private data in this record.
      * For example, this method can be used to return data that can be sent to a
      * template processor to map values to front-end variables. You can use the
@@ -865,6 +892,7 @@ public abstract class Record {
                     data.put(field.getName(), value);
                 }
             }
+            data.putAll(dynamicData);
             return data;
         }
         catch (ReflectiveOperationException e) {
@@ -903,6 +931,7 @@ public abstract class Record {
                     data.put(field.getName(), value);
                 }
             }
+            data.putAll(dynamicData);
             return data;
         }
         catch (ReflectiveOperationException e) {
@@ -963,6 +992,26 @@ public abstract class Record {
     }
 
     /**
+     * Set a dynamic attribute in this Record.
+     * 
+     * @param key the key name
+     * @param value the value to set
+     */
+    public void set(String key, Object value) {
+        if(dynamicData.containsKey(key)) {
+            dynamicData.put(key, value);
+        }
+        else {
+            try {
+                Reflection.set(key, value, this);
+            }
+            catch (Exception e) {
+                dynamicData.put(key, value);
+            }
+        }
+    }
+
+    /**
      * Thrown an exception that describes any exceptions that were previously
      * suppressed. If none occurred, then this method does nothing. This is a
      * good way to understand why a save operation fails.
@@ -1004,17 +1053,6 @@ public abstract class Record {
     @Override
     public final String toString() {
         return dump();
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its fields. For example, this is a good way to provide template
-     * specific information that isn't persisted to the database.
-     * 
-     * @return the additional data
-     */
-    protected Map<String, Object> getMoreData() {
-        return Maps.newHashMap();
     }
 
     /**
@@ -1064,20 +1102,20 @@ public abstract class Record {
                     if(!Modifier.isTransient(field.getModifiers())) {
                         String key = field.getName();
                         if(Record.class.isAssignableFrom(field.getType())) {
-                            Record record = (Record) getNewDefaultInstance(field
-                                    .getType());
+                            Record record = (Record) getNewDefaultInstance(
+                                    field.getType());
                             record.load(
                                     ((Link) concourse.get(key, id)).longValue(),
                                     existing);
                             field.set(this, record);
                         }
-                        else if(Collection.class.isAssignableFrom(field
-                                .getType())) {
+                        else if(Collection.class
+                                .isAssignableFrom(field.getType())) {
                             Collection collection = null;
-                            if(Modifier.isAbstract(field.getType()
-                                    .getModifiers())
-                                    || Modifier.isInterface(field.getType()
-                                            .getModifiers())) {
+                            if(Modifier
+                                    .isAbstract(field.getType().getModifiers())
+                                    || Modifier.isInterface(
+                                            field.getType().getModifiers())) {
                                 if(field.getType() == Set.class) {
                                     collection = Sets.newLinkedHashSet();
                                 }
@@ -1103,7 +1141,8 @@ public abstract class Record {
                                         }
                                         else {
                                             Class<? extends Record> linkClass = (Class<? extends Record>) Class
-                                                    .forName(section.toString());
+                                                    .forName(
+                                                            section.toString());
                                             item = load(linkClass, link,
                                                     existing);
                                         }
@@ -1145,13 +1184,14 @@ public abstract class Record {
                         else if(field.getType().isEnum()) {
                             String stored = concourse.get(key, id);
                             if(stored != null) {
-                                field.set(this, Enum.valueOf(
-                                        (Class<Enum>) field.getType(),
-                                        stored.toString()));
+                                field.set(this,
+                                        Enum.valueOf(
+                                                (Class<Enum>) field.getType(),
+                                                stored.toString()));
                             }
                         }
-                        else if(Serializable.class.isAssignableFrom(field
-                                .getType())) {
+                        else if(Serializable.class
+                                .isAssignableFrom(field.getType())) {
                             String base64 = concourse.get(key, id);
                             if(base64 != null) {
                                 ByteBuffer bytes = ByteBuffer.wrap(BaseEncoding
@@ -1181,6 +1221,17 @@ public abstract class Record {
     }
 
     /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its fields. For example, this is a good way to provide template
+     * specific information that isn't persisted to the database.
+     * 
+     * @return the additional data
+     */
+    protected Map<String, Object> getMoreData() {
+        return Maps.newHashMap();
+    }
+
+    /**
      * Check to ensure that this Record does not violate any constraints. If so,
      * throw an {@link IllegalStateException}.
      * 
@@ -1192,11 +1243,11 @@ public abstract class Record {
             String section = concourse.get(SECTION_KEY, id);
             checkState(section != null);
             checkState(
-                    section.equals(__)
-                            || Class.forName(__).isAssignableFrom(
-                                    Class.forName(section)),
+                    section.equals(__) || Class.forName(__)
+                            .isAssignableFrom(Class.forName(section)),
                     "Cannot load a record from section %s "
-                            + "into a Record of type %s", section, __);
+                            + "into a Record of type %s",
+                    section, __);
         }
         catch (ReflectiveOperationException | IllegalStateException e) {
             inViolation = true;
@@ -1310,7 +1361,8 @@ public abstract class Record {
                     if(field.isAnnotationPresent(ValidatedBy.class)) {
                         Class<? extends Validator> validatorClass = field
                                 .getAnnotation(ValidatedBy.class).value();
-                        Validator validator = getNewDefaultInstance(validatorClass);
+                        Validator validator = getNewDefaultInstance(
+                                validatorClass);
                         Preconditions.checkState(validator.validate(value),
                                 validator.getErrorMessage());
                     }
@@ -1329,6 +1381,9 @@ public abstract class Record {
                     }
                 }
             }
+            dynamicData.forEach((key, value) -> {
+                store(key, value, concourse, false);
+            });
         }
         catch (ReflectiveOperationException e) {
             throw Throwables.propagate(e);
@@ -1353,8 +1408,9 @@ public abstract class Record {
         // TODO: dirty field detection!
         if(value instanceof Record) {
             Record record = (Record) value;
-            Preconditions.checkState(!record.inZombieState(concourse)
-                    || isWaitingToBeSaved(concourse, record),
+            Preconditions.checkState(
+                    !record.inZombieState(concourse)
+                            || isWaitingToBeSaved(concourse, record),
                     "Cannot link to an empty record! "
                             + "You must save the record to "
                             + "which you're linking before "
@@ -1389,8 +1445,8 @@ public abstract class Record {
         }
         else if(value instanceof Serializable) {
             ByteBuffer bytes = Serializables.getBytes((Serializable) value);
-            Tag base64 = Tag.create(BaseEncoding.base64Url().encode(
-                    ByteBuffers.toByteArray(bytes)));
+            Tag base64 = Tag.create(BaseEncoding.base64Url()
+                    .encode(ByteBuffers.toByteArray(bytes)));
             store(key, base64, concourse, append);
         }
         else {
@@ -1426,6 +1482,9 @@ public abstract class Record {
                     json.add(field.getName(), jsonify(value, seen));
                 }
             }
+            dynamicData.forEach((key, value) -> {
+                json.add(key, jsonify(value, seen));
+            });
             return json;
         }
         catch (ReflectiveOperationException e) {
@@ -1463,6 +1522,9 @@ public abstract class Record {
                     json.add(field.getName(), jsonify(value, seen));
                 }
             }
+            dynamicData.forEach((key, value) -> {
+                json.add(key, jsonify(value, seen));
+            });
             return json;
         }
         catch (ReflectiveOperationException e) {

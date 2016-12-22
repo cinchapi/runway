@@ -60,6 +60,13 @@ public class RecordTest extends ClientServerTest {
         person = Mock.load(Mock.class, id);
         Assert.assertTrue(person.alive);
     }
+    
+    @Test
+    public void testSetDynamicAttribute(){
+        Mock person = Mock.create(Mock.class);
+        person.set("0_2_0", "foo");
+        System.out.println(person);
+    }
 
     class Mock extends Record {
 
