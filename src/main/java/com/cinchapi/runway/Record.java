@@ -769,7 +769,7 @@ public abstract class Record {
      * Data that is dynamically added using the {@link #set(String, Object)}
      * method.
      */
-    private final Map<String, Object> dynamicData = Maps.newHashMap();
+    private transient final Map<String, Object> dynamicData = Maps.newHashMap();
 
     /**
      * A log of any suppressed errors related to this Record. The descriptions
@@ -814,6 +814,16 @@ public abstract class Record {
      * class for appropriate instructions on instantiating Record instances.
      */
     protected Record() {/* noop */}
+
+    public Record(long... id) {
+        if(id.length == 0) {
+            init();
+        }
+        else {
+            long _id = id[0];
+            load(_id, new TLongObjectHashMap<Record>());
+        }
+    }
 
     /**
      * Delete this {@link Record} from Concourse when the {@link #save()} method
@@ -1168,7 +1178,8 @@ public abstract class Record {
                                 || field.getType() == Integer.class
                                 || field.getType() == Long.class
                                 || field.getType() == Float.class
-                                || field.getType() == Double.class) {
+                                || field.getType() == Double.class
+                                || field.getType() == Boolean.class) {
                             Object value = concourse.get(key, id);
                             if(value != null) { // Java doesn't allow primitive
                                                 // types to hold nulls
