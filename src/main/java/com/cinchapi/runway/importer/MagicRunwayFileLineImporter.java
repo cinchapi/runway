@@ -8,6 +8,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
+import com.cinchapi.concourse.Concourse;
 import com.cinchapi.runway.Record;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Lists;
@@ -25,6 +26,14 @@ import com.google.common.collect.Sets;
  */
 public abstract class MagicRunwayFileLineImporter<T extends Record> extends
         RunwayFileLineImporter<T> {
+
+    /**
+     * Construct a new instance.
+     * @param concourse
+     */
+    protected MagicRunwayFileLineImporter(Concourse concourse) {
+        super(concourse);
+    }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     @Override
