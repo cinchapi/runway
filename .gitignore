@@ -20,3 +20,5 @@ hs_err_pid*
 *build/
 *bin/
 concourse_client.prefs
+.counter
+gradle.properties
