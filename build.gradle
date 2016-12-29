@@ -1,24 +1,42 @@
+plugins {
+    id 'java'
+    id 'eclipse'
+    id 'maven'
+    id 'maven-publish'
+    id 'signing'
+    id "com.jfrog.bintray" version "1.7"
+}
+
 task wrapper(type: Wrapper) {
     gradleVersion = '3.0'
 }
 
-apply plugin: 'java'
-apply plugin: 'eclipse'
-apply plugin: 'maven'
-apply plugin: 'signing'
+if (JavaVersion.current().isJava8Compatible()) {
+    allprojects {
+        tasks.withType(Javadoc) {
+            options.addStringOption('Xdoclint:none', '-quiet')
+        }
+    }
+}
 
 repositories {
     mavenCentral()
     maven {
       url 'https://oss.sonatype.org/content/repositories/snapshots/'
     }
+    maven {
+      url  'http://cinchapi.bintray.com/maven'
+    }
 }
+
+// Set the version for all Concourse dependencies
+ext.concourseVersion = '0.6.0-SNAPSHOT'
 
 dependencies {
 	compile 'com.google.guava:guava:18.0'
 	compile group: 'com.cinchapi', name: 'accent4j', version: '1.0.0-SNAPSHOT', changing:true
-	compile group: 'com.cinchapi', name: 'concourse-driver-java', version: '0.5.0-SNAPSHOT', changing:true
-    compile group: 'com.cinchapi', name: 'concourse-import', version: '0.5.0-SNAPSHOT', changing:true
+	compile group: 'com.cinchapi', name: 'concourse-driver-java', version: concourseVersion, changing:true
+  compile group: 'com.cinchapi', name: 'concourse-import', version: concourseVersion, changing:true
 	compile 'org.slf4j:slf4j-api:1.7.5'
 	compile 'ch.qos.logback:logback-classic:1.0.13'
 	compile 'com.google.code.gson:gson:2.2.4'
@@ -26,7 +44,7 @@ dependencies {
 	compile 'com.github.stephenc.high-scale-lib:high-scale-lib:1.1.4'
 
 	testCompile 'junit:junit:4.11'
-	testCompile'com.cinchapi:concourse-ete-test-core:0.5.0-SNAPSHOT'
+	testCompile group: 'com.cinchapi', name: 'concourse-ete-test-core', version: concourseVersion, changing:true
 }
 
 def getVersion = { ->
@@ -38,10 +56,14 @@ def getVersion = { ->
     return stdout.toString().trim()
 }
 
-ext.globalVersion  = getVersion()
-
-group = 'org.cinchapi'
-version = globalVersion
+group = 'com.cinchapi'
+version = getVersion()
+// Drop the build component from version number and use that for
+// publishing
+ext.mavenVersion = version.split('\\.')
+ext.mavenVersion[3] = ext.mavenVersion[3].replaceAll("[0-9]+-", "-")
+ext.mavenVersion[3] = ext.mavenVersion[3].replaceAll("[0-9]+", "").trim()
+ext.mavenVersion = ext.mavenVersion.join(".").replace(".-", "-").replaceAll('\\.$', "")
 
 jar {
     manifest {
@@ -64,59 +86,36 @@ artifacts {
 	archives javadocJar
 }
 
-signing {
-    sign configurations.archives
+publishing {
+    publications {
+        BintrayPublication(MavenPublication) {
+            from components.java
+            groupId group
+            artifactId project.name
+            version mavenVersion
+        }
+    }
 }
 
-def getMaven = { ->
-        def stdout = new ByteArrayOutputStream()
-        exec {
-            commandLine 'cat', '.maven'
-            standardOutput = stdout
+bintray {
+    user = System.getenv('BINTRAY_USER')
+    key = System.getenv('BINTRAY_KEY')
+    publications = ['BintrayPublication']
+    pkg {
+        repo = mavenVersion.matches('^[0-9]+\\.[0-9]+\\.[0-9]+(-rc[0-9]+){0,1}$') ? 'maven' : 'maven-snapshots'
+        name = 'runway'
+        publish = true
+        userOrg = 'cinchapi'
+        version {
+            name = mavenVersion
+            released = new Date()
         }
-        return stdout.toString().trim()
     }
+}
 
-project.ext.maven = getMaven()
 
-uploadArchives {
-    repositories {
-        mavenDeployer {
-            beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
-
-            repository(url: project.maven) {
-              authentication(userName: sonatypeUsername, password: sonatypePassword)
-            }
-
-            pom.version = '0.2.0'
-
-            pom.project {
-               name 'Runway'
-               packaging 'jar'
-               description 'The official ORM (Object-Record Mapping) framework for Concourse'
-               url 'http://cinchapi.org'
-
-               scm {
-                   url 'git@github.com:cinchapi/runway.git'
-                   connection 'git@github.com:cinchapi/runway.git'
-                   developerConnection 'git@github.com:cinchapi/runway.git'
-               }
-
-               licenses {
-                   license {
-                       name 'The MIT License'
-                       url 'http://opensource.org/licenses/MIT'
-                       distribution 'repo'
-                   }
-               }
-
-               developers {
-                   developer {
-                       id 'jnelson'
-                       name 'Jeff Nelson'
-                   }
-               }
-           }
-        }
+test {
+    testLogging {
+        showStandardStreams = true
     }
 }
