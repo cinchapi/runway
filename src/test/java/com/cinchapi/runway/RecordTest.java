@@ -3,16 +3,22 @@ package com.cinchapi.runway;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Required;
 import com.cinchapi.runway.Unique;
-import com.cinchapi.runway.test.RunwayClientServerTest;
 
-public class RecordTest extends RunwayClientServerTest {
+public class RecordTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
         return "latest";
+    }
+
+    @Override
+    public void beforeEachTest() {
+        Record.setConnectionInformation("localhost",
+                this.server.getClientPort(), "admin", "admin");
     }
     
     @Test
