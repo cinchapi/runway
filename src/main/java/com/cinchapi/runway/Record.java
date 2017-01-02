@@ -1107,6 +1107,8 @@ public abstract class Record {
                     concourse.clear(id);
                     throw new ZombieException();
                 }
+                // TODO: do a large select and populate the fields instead of
+                // doing individual gets
                 Field[] fields = getAllDeclaredFields();
                 for (Field field : fields) {
                     if(!Modifier.isTransient(field.getModifiers())) {
@@ -1143,8 +1145,8 @@ public abstract class Record {
                                     long link = ((Link) item).longValue();
                                     Record obj = existing.get(link);
                                     if(obj == null) {
-                                        String section = concourse.get("_",
-                                                link);
+                                        String section = concourse
+                                                .get(SECTION_KEY, link);
                                         if(Strings.isNullOrEmpty(section)) {
                                             concourse.remove(key, item, id);
                                             continue;
@@ -1428,7 +1430,7 @@ public abstract class Record {
                             + "saving this record, or save "
                             + "them both within an atomic transaction "
                             + "using the Record#saveAll() method");
-            concourse.link(key, id, record.id);
+            concourse.link(key, record.id, id);
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
             // TODO use reconcile() function once 0.5.0 comes out...
