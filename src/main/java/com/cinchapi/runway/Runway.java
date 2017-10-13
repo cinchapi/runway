@@ -26,9 +26,13 @@
  */
 package com.cinchapi.runway;
 
+import java.io.IOException;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Modifier;
 import java.util.Set;
 
+import com.cinchapi.common.base.AnyStrings;
+import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -38,8 +42,11 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Strings;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
+import com.google.common.reflect.ClassPath;
+import com.google.common.reflect.ClassPath.ClassInfo;
 
 import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
@@ -50,6 +57,39 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  * @author jeff
  */
 public final class Runway {
+
+    static {
+        try {
+            ClassPath classpath = ClassPath
+                    .from(Thread.currentThread().getContextClassLoader());
+            Set<String> skip = ImmutableSet.of("java", "com.sun");
+            outer: for (ClassInfo info : classpath.getAllClasses()) {
+                for (String prefix : skip) {
+                    if(info.getName().startsWith(prefix)) {
+                        continue outer;
+                    }
+                }
+                Class<?> clazz = Reflection.getClassCasted(info.getName());
+                if(!Modifier.isAbstract(clazz.getModifiers())
+                        && !Modifier.isInterface(clazz.getModifiers())
+                        && Record.class.isAssignableFrom(clazz)) {
+                    try {
+                        System.out.println(clazz.getConstructor());
+                    }
+                    catch (NoSuchMethodException e) {
+                        System.err.println(AnyStrings.format(
+                                "Runway cannot start because {} does not contain a no-arg constructor. Exiting now.",
+                                clazz.getName()));
+                        System.exit(1);
+                    }
+
+                }
+            }
+        }
+        catch (IOException e) {
+            throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+    }
 
     /**
      * The record where metadata is stored. We typically store some transient
@@ -63,8 +103,13 @@ public final class Runway {
     }
 
     public static Runway connect(String host, int port, String username,
+            String password, String environment) {
+        return new Runway(host, port, username, password, environment);
+    }
+
+    public static Runway connect(String host, int port, String username,
             String password) {
-        return new Runway(host, port, username, password, null);
+        return connect(host, port, username, password, "");
     }
 
     private static <T> Criteria ensureClassSpecificCriteria(Criteria criteria,

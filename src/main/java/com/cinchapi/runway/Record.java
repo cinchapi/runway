@@ -1,6 +1,7 @@
 package com.cinchapi.runway;
 
 import gnu.trove.map.TLongObjectMap;
+
 import java.io.Serializable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
