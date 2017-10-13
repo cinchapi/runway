@@ -9,6 +9,8 @@ import com.cinchapi.runway.Required;
 import com.cinchapi.runway.Unique;
 
 public class RecordTest extends ClientServerTest {
+    
+    private Runway runway;
 
     @Override
     protected String getServerVersion() {
@@ -17,53 +19,51 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     public void beforeEachTest() {
-        Record.setConnectionInformation("localhost",
-                this.server.getClientPort(), "admin", "admin");
+        runway = Runway.connect("localhost", server.getClientPort(), "admin", "admin");
     }
     
     @Test
     public void testCannotAddDuplicateValuesForUniqueVariable(){
-        Mock person = Record.create(Mock.class);
+        Mock person = new Mock();
         person.name = "Jeff Nelson";
-        Assert.assertTrue(person.save());
+        Assert.assertTrue(runway.save(person));
         
-        Mock person2 = Record.create(Mock.class);
+        Mock person2 = new Mock();
         person2.name = "Jeff Nelson";
-        Assert.assertFalse(person2.save());
+        Assert.assertFalse(runway.save(person2));
         
         person2.name = "Jeffery Nelson";
-        Assert.assertTrue(person2.save());      
+        Assert.assertTrue(runway.save(person2));      
     }
     
     @Test
     public void testCannotSaveNullValueForRequiredVariable(){
-        Mock person = Mock.create(Mock.class);
+        Mock person = new Mock();
         person.age = 23;
-        Assert.assertFalse(person.save());
+        Assert.assertFalse(runway.save(person));
     }
     
     @Test
     public void testNoPartialSaveWhenRequiredVariableIsNull(){
-        Mock person = Mock.create(Mock.class);
+        Mock person = new Mock();
         person.age = 23;
-        person.save();
-        Assert.assertTrue(client.describe(person.getId()).isEmpty());
+        runway.save(person);
+        Assert.assertTrue(client.describe(person.id()).isEmpty());
     }
     
     @Test
     public void testBooleanIsNotStoredAsBase64(){
-        Mock person = Mock.create(Mock.class);
+        Mock person = new Mock();
         person.name = "John Doe";
         person.age = 100;
-        person.save();
-        long id = person.getId();
-        person = Mock.load(Mock.class, id);
+        runway.save(person);
+        person = runway.load(Mock.class, person.id());
         Assert.assertTrue(person.alive);
     }
     
     @Test
     public void testSetDynamicAttribute(){
-        Mock person = Mock.create(Mock.class);
+        Mock person = new Mock();
         person.set("0_2_0", "foo");
         System.out.println(person);
     }

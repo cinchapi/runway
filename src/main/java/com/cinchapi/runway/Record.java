@@ -1,43 +1,33 @@
 package com.cinchapi.runway;
 
 import gnu.trove.map.TLongObjectMap;
-import gnu.trove.map.hash.TLongObjectHashMap;
-
 import java.io.Serializable;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-import javax.annotation.Nullable;
-
 import static com.google.common.base.Preconditions.checkState;
 
+import com.cinchapi.common.base.AnyObjects;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
-import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
-import com.cinchapi.concourse.TransactionException;
-import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
-import com.cinchapi.runway.util.AnyObject;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -81,537 +71,20 @@ import com.google.gson.JsonPrimitive;
 public abstract class Record {
 
     /**
-     * Atomically clear all of the records in {@code clazz} from the database.
-     * 
-     * @param clazz
+     * The key used to hold the section metadata.
      */
-    public static <T extends Record> void clear(Class<T> clazz) {
-        Concourse concourse = connections().request();
-        try {
-            concourse.stage();
-            Set<Long> records = concourse.find(Criteria.where().key(SECTION_KEY)
-                    .operator(Operator.EQUALS).value(clazz.getName()));
-            for (long record : records) {
-                concourse.clear(record);
-            }
-            concourse.commit();
-        }
-        catch (TransactionException e) {
-            concourse.abort();
-            clear(clazz);
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
+    /* package */ static final String SECTION_KEY = "_"; // just want a
+                                                         // simple/short key
+                                                         // name that is likely
+                                                         // to avoid collisions
 
     /**
-     * Create a new {@link Record} that is contained within the specified
-     * {@code clazz}.
-     * 
-     * @param clazz
-     * @return the new Record
+     * The description of a record that is considered to be in "zombie" state.
      */
-    public static <T extends Record> T create(Class<T> clazz) {
-        T record = getNewDefaultInstance(clazz);
-        record.init();
-        return record;
-    }
+    private static final Set<String> ZOMBIE_DESCRIPTION = Sets
+            .newHashSet(SECTION_KEY);
 
-    /**
-     * Find any return any records in {@code clazz} that match {@code criteria}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the records that match {@code criteria}
-     */
-    public static <T extends Record> Set<T> find(Class<T> clazz,
-            BuildableState criteria) {
-        return find(clazz, criteria.build());
-    }
-
-    /**
-     * Find any return any records in {@code clazz} that match {@code criteria}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the records that match {@code criteria}
-     */
-    public static <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria) {
-        Concourse concourse = connections().request();
-        try {
-            Set<T> records = Sets.newLinkedHashSet();
-            Set<Long> ids = concourse.find(criteria);
-            for (long id : ids) {
-                if(inClass(id, clazz, concourse)) {
-                    records.add(load(clazz, id));
-                }
-            }
-            return records;
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Find and return all records that match {@code criteria}, regardless of
-     * what class the Record is contained within.
-     * 
-     * @param criteria
-     * @return the records that match {@code criteria}
-     */
-    public static Set<Record> findAll(BuildableState criteria) {
-        return findAll(criteria.build());
-    }
-
-    /**
-     * Find and return all records that match {@code criteria}, regardless of
-     * what class the Record is contained within.
-     * 
-     * @param criteria
-     * @return the records that match {@code criteria}
-     */
-    @SuppressWarnings("unchecked")
-    public static Set<Record> findAll(Criteria criteria) {
-        Concourse concourse = connections().request();
-        try {
-            Set<Record> records = Sets.newLinkedHashSet();
-            Set<Long> ids = concourse.find(criteria);
-            for (long id : ids) {
-                Class<? extends Record> clazz = (Class<? extends Record>) Class
-                        .forName((String) concourse.get(SECTION_KEY, id));
-                records.add(load(clazz, id));
-            }
-            return records;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Find and return every record in {@code clazz} or any of its children that
-     * match {@code criteria}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the records that match {@code criteria}
-     */
-    public static <T extends Record> Set<? extends T> findEvery(Class<T> clazz,
-            BuildableState criteria) {
-        return findEvery(clazz, criteria.build());
-    }
-
-    /**
-     * Find and return every record in {@code clazz} or any of its children that
-     * match {@code criteria}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the records that match {@code criteria}
-     */
-    @SuppressWarnings("unchecked")
-    public static <T extends Record> Set<? extends T> findEvery(Class<T> clazz,
-            Criteria criteria) {
-        Concourse concourse = connections().request();
-        try {
-            Set<T> records = Sets.newLinkedHashSet();
-            Set<Long> ids = concourse.find(criteria);
-            for (long id : ids) {
-                Class<? extends T> c = (Class<? extends T>) Class
-                        .forName((String) concourse.get(SECTION_KEY, id));
-                if(clazz.isAssignableFrom(c)) {
-                    records.add(load(c, id));
-                }
-            }
-            return records;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Find and return the ids of any records in {@code clazz} that match
-     * {@code criteria}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the ids of the records that match {@code criteria}
-     */
-    public static <T extends Record> Set<Long> findIds(Class<T> clazz,
-            BuildableState criteria) {
-        return findIds(clazz, criteria.build());
-    }
-
-    /**
-     * Find and return the ids of any records in {@code clazz} that match
-     * {@code criteria}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the ids of the records that match {@code criteria}
-     */
-    public static <T extends Record> Set<Long> findIds(Class<T> clazz,
-            Criteria criteria) {
-        Concourse concourse = connections().request();
-        try {
-            Set<Long> ids = concourse.find(criteria);
-            Iterator<Long> it = ids.iterator();
-            while (it.hasNext()) {
-                long id = it.next();
-                if(!inClass(id, clazz, concourse)) {
-                    it.remove();
-                }
-            }
-            return ids;
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Return the single instance of {@code clazz} that matches the
-     * {@code criteria} or {@code null} if it doesn't exist or multiple objects
-     * match.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the single matching result
-     */
-    @Nullable
-    public static <T extends Record> T findSingleInstance(Class<T> clazz,
-            BuildableState criteria) {
-        return findSingleInstance(clazz, criteria.build());
-    }
-
-    /**
-     * Return the single instance of {@code clazz} that matches the
-     * {@code criteria} or {@code null} if it doesn't exist or multiple objects
-     * match.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the single matching result
-     */
-    @Nullable
-    public static <T extends Record> T findSingleInstance(Class<T> clazz,
-            Criteria criteria) {
-        Set<T> results = find(clazz, criteria);
-        try {
-            return Iterables.getOnlyElement(results);
-        }
-        catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * Return a list of all the ids for every record in {@code clazz}. This
-     * method does to load up the actual records.
-     * 
-     * @param clazz
-     * @return the ids of all the records in the class
-     */
-    public static <T extends Record> Set<Long> getEveryId(Class<T> clazz) {
-        Concourse concourse = connections().request();
-        try {
-            return concourse.find(Criteria.where().key(SECTION_KEY)
-                    .operator(Operator.EQUALS).value(clazz.getName()));
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Load the Record that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param id
-     * @return the existing Record
-     */
-    public static <T extends Record> T load(Class<T> clazz, long id) {
-        return load(clazz, id, new TLongObjectHashMap<Record>());
-    }
-
-    /**
-     * Load every record in {@code clazz}.
-     * 
-     * @param clazz
-     * @return all the records in the class
-     */
-    public static <T extends Record> Set<T> loadEvery(Class<T> clazz) {
-        Concourse concourse = connections().request();
-        try {
-            Set<T> records = Sets.newLinkedHashSet();
-            Set<Long> ids = concourse.find(Criteria.where().key(SECTION_KEY)
-                    .operator(Operator.EQUALS).value(clazz.getName()));
-            for (long id : ids) {
-                try {
-                    records.add(load(clazz, id));
-                }
-                catch (ZombieException e) {
-                    continue;
-                }
-            }
-            return records;
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Save all the changes in all of the {@code records} using a single ACID
-     * transaction.
-     * 
-     * @param records
-     * @return {@code true} if all the changes are atomically saved.
-     */
-    public static boolean saveAll(Record... records) {
-        Concourse concourse = connections().request();
-        long transactionId = Time.now();
-        Record current = null;
-        try {
-            concourse.stage();
-            concourse.set("transaction_id", transactionId, METADATA_RECORD);
-            Set<Record> waiting = Sets.newHashSet(records);
-            waitingToBeSaved.put(transactionId, waiting);
-            for (Record record : records) {
-                current = record;
-                record.save(concourse);
-            }
-            concourse.clear("transaction_id", METADATA_RECORD);
-            return concourse.commit();
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            if(current != null) {
-                current.errors.add(Throwables.getStackTraceAsString(t));
-            }
-            return false;
-        }
-        finally {
-            waitingToBeSaved.remove(transactionId);
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Search and return any records in {@code clazz} that match the search
-     * {@code query} for {@code key}.
-     * 
-     * @param clazz
-     * @param key
-     * @param query
-     * @return the records that match the search
-     */
-    public static <T extends Record> Set<T> search(Class<T> clazz, String key,
-            String query) {
-        Concourse concourse = connections().request();
-        try {
-            Set<T> records = Sets.newLinkedHashSet();
-            Set<Long> ids = concourse.search(key, query);
-            for (long id : ids) {
-                if(inClass(id, clazz, concourse)) {
-                    records.add(load(clazz, id));
-                }
-            }
-            return records;
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Search and return all records that match the search {@code query} for
-     * {@code key}, regardless of what class the Record is contained within.
-     * 
-     * @param key
-     * @param query
-     * @return the records that match the search
-     */
-    @SuppressWarnings("unchecked")
-    public static Set<Record> searchAll(String key, String query) {
-        Concourse concourse = connections().request();
-        try {
-            Set<Record> records = Sets.newLinkedHashSet();
-            Set<Long> ids = concourse.search(key, query);
-            for (long id : ids) {
-                Class<? extends Record> clazz = (Class<? extends Record>) Class
-                        .forName((String) concourse.get(SECTION_KEY, id));
-                records.add(load(clazz, id));
-            }
-            return records;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Search and return every records in {@code clazz} or any of its children
-     * that match the search {@code query} for {@code key}.
-     * 
-     * @param clazz
-     * @param key
-     * @param query
-     * @return the records that match the search
-     */
-    @SuppressWarnings("unchecked")
-    public static <T extends Record> Set<? extends T> searchEvery(
-            Class<T> clazz, String key, String query) {
-        Concourse concourse = connections().request();
-        try {
-            Set<T> records = Sets.newLinkedHashSet();
-            Set<Long> ids = concourse.search(key, query);
-            for (long id : ids) {
-                Class<? extends T> c = (Class<? extends T>) Class
-                        .forName((String) concourse.get(SECTION_KEY, id));
-                if(clazz.isAssignableFrom(c)) {
-                    records.add(load(c, id));
-                }
-            }
-            return records;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-        finally {
-            connections().release(concourse);
-        }
-    }
-
-    /**
-     * Search for the single instance of {@code clazz} that matches the search
-     * {@code criteria} or return {@code null} if it doesn't exist or multiple
-     * objects match.
-     * 
-     * @param clazz
-     * @param key
-     * @param value
-     * @return the single matching search result
-     */
-    @Nullable
-    public static <T extends Record> T searchSingleInstance(Class<T> clazz,
-            String key, String value) {
-        Set<T> results = search(clazz, key, value);
-        try {
-            return Iterables.getOnlyElement(results);
-        }
-        catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * Set the connection information that is used for Concourse.
-     * 
-     * @param host
-     * @param port
-     * @param username
-     * @param password
-     */
-    public static void setConnectionInformation(String host, int port,
-            String username, String password) { // visible for testing
-        connections = ConnectionPool.newCachedConnectionPool(host, port,
-                username, password);
-    }
-
-    /**
-     * Return a handler to the connection pool that is in use.
-     * 
-     * @return the connection pool handler
-     */
-    private static ConnectionPool connections() {
-        if(connections == null) {
-            connections = ConnectionPool
-                    .newCachedConnectionPool("concourse_client.prefs");
-        }
-        return connections;
-    }
-
-    /**
-     * Get a new instance of {@code clazz} by calling the default (zero-arg)
-     * constructor, if it exists. This method attempts to correctly invoke
-     * constructors for nested inner classes.
-     * 
-     * @param clazz
-     * @return the instance of the {@code clazz}.
-     */
-    @SuppressWarnings("unchecked")
-    private static <T> T getNewDefaultInstance(Class<T> clazz) {
-        try {
-            Class<?> enclosingClass = clazz.getEnclosingClass();
-            if(enclosingClass != null) {
-                Object enclosingInstance = getNewDefaultInstance(
-                        enclosingClass);
-                Constructor<?> constructor = clazz
-                        .getDeclaredConstructor(enclosingClass);
-                return (T) constructor.newInstance(enclosingInstance);
-
-            }
-            else {
-                return clazz.newInstance();
-            }
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-    }
-
-    /**
-     * Return {@code true} if the Record identified by {@code id} is a member of
-     * {@code clazz}.
-     * 
-     * @param id
-     * @param clazz
-     * @param concourse
-     * @return {@code true} if the record is in the class
-     */
-    private static boolean inClass(long id, Class<? extends Record> clazz,
-            @Nullable Concourse concourse) {
-        if(concourse == null) {
-            concourse = connections().request();
-            try {
-                return inClass(id, clazz, concourse);
-            }
-            finally {
-                connections().release(concourse);
-            }
-        }
-        else {
-            try {
-                return ((String) concourse.get(SECTION_KEY, id))
-                        .equals(clazz.getName());
-            }
-            catch (NullPointerException e) { // NPE indicates the record does
-                                             // not have a SECTION_KEY
-                return false;
-            }
-        }
-    }
+    private static long NULL_ID = -1;
 
     /**
      * Return {@code true} if the record identified by {@code id} is in a
@@ -623,26 +96,6 @@ public abstract class Record {
      */
     private static boolean inZombieState(long id, Concourse concourse) {
         return concourse.describe(id).equals(ZOMBIE_DESCRIPTION);
-    }
-
-    /**
-     * Return {@code true} if {@code record} is part of a single transaction
-     * within {@code concourse} and is waiting to be saved.
-     * 
-     * @param concourse
-     * @param record
-     * @return {@code true} if the record is waiting to be saved
-     */
-    private static boolean isWaitingToBeSaved(Concourse concourse,
-            Record record) {
-        try {
-            long transactionId = concourse.get("transaction_id",
-                    METADATA_RECORD);
-            return waitingToBeSaved.get(transactionId).contains(record);
-        }
-        catch (NullPointerException e) {
-            return false;
-        }
     }
 
     /**
@@ -686,7 +139,7 @@ public abstract class Record {
                 return ((Record) object).toJsonElement(seen);
             }
             else {
-                return jsonify(((Record) object).getId() + " (recursive link)",
+                return jsonify(((Record) object).id() + " (recursive link)",
                         seen);
             }
         }
@@ -695,63 +148,6 @@ public abstract class Record {
             return gson.toJsonTree(object);
         }
     }
-
-    /**
-     * Internal method to help recursively load records by keeping tracking of
-     * which ones currently exist. Ultimately this method will load the Record
-     * that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param id
-     * @param existing
-     * @return
-     */
-    private static <T extends Record> T load(Class<T> clazz, long id,
-            TLongObjectMap<Record> existing) {
-        T record = getNewDefaultInstance(clazz);
-        record.load(id, existing);
-        return record;
-    }
-
-    /**
-     * The connection pool. Access using the {@link #connections()} method.
-     */
-    private static ConnectionPool connections;
-
-    /**
-     * The record where metadata is stored. We typically store some transient
-     * metadata for transaction routing within this record (so its only visible
-     * within the specific transaction) and we clear it before commit time.
-     */
-    private static long METADATA_RECORD = -1;
-
-    /**
-     * The key used to hold the section metadata.
-     */
-    private static final String SECTION_KEY = "_"; // just want a simple/short
-                                                   // key name that is likely to
-                                                   // avoid collisions
-
-    /**
-     * A mapping from a transaction id to the set of records that are waiting to
-     * be saved within that transaction. We use this collection to ensure that a
-     * record being saved only links to an existing record in the database or a
-     * record that will later exist (e.g. waiting to be saved).
-     */
-    private static final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
-
-    /**
-     * The description of a record that is considered to be in "zombie" state.
-     */
-    private static final Set<String> ZOMBIE_DESCRIPTION = Sets
-            .newHashSet(SECTION_KEY);
 
     /**
      * The variable that holds the name of the section in the database where
@@ -776,7 +172,7 @@ public abstract class Record {
      * of these errors can be thrown at any point from the
      * {@link #throwSupressedExceptions()} method.
      */
-    private transient List<String> errors = Lists.newArrayList();
+    /* package */ transient List<String> errors = Lists.newArrayList();
 
     /**
      * A cache of all the fields in this class and all of its parents.
@@ -786,7 +182,7 @@ public abstract class Record {
     /**
      * The primary key that is used to identify this Record in the database.
      */
-    private transient long id;
+    private transient long id = NULL_ID;
 
     /**
      * A flag that indicates this Record is in violation of some constraint and
@@ -801,28 +197,9 @@ public abstract class Record {
      */
     private transient boolean usable = false;
 
-    /*
-     * (non-Javadoc)
-     * Create a new Record instance. In order for this to be operable, a call
-     * must be made to either {@link #init()} or {@link #load(long)}. A caller
-     * should never invoke this constructor directly because it merely creates a
-     * hallow shell object that is useless until a call is made to either #init
-     * or #load.
-     */
-    /**
-     * DO NOT CALL and DO NOT OVERRIDE!!! Please read the documentation for this
-     * class for appropriate instructions on instantiating Record instances.
-     */
-    protected Record() {/* noop */}
-
-    public Record(long... id) {
-        if(id.length == 0) {
-            init();
-        }
-        else {
-            long _id = id[0];
-            load(_id, new TLongObjectHashMap<Record>());
-        }
+    public Record() {
+        this.id = Time.now();
+        usable = true;
     }
 
     /**
@@ -949,56 +326,22 @@ public abstract class Record {
         }
     }
 
-    /**
-     * Return the {@link #id} that uniquely identifies this record.
-     * 
-     * @return the id
-     */
-    public final long getId() {
-        return id;
-    }
-
     @Override
     public int hashCode() {
         return Objects.hash(id);
     }
 
     /**
-     * Save all changes that have been made to this record using an ACID
-     * transaction.
-     * <p>
-     * Use {@link Record#saveAll(Record...)} to save changes in multiple records
-     * in a single ACID transaction.
-     * </p>
+     * Return the {@link #id} that uniquely identifies this record.
      * 
-     * @return {@code true} if all the changes have been atomically saved.
+     * @return the id
      */
-    public final boolean save() {
-        Concourse concourse = connections().request();
-        try {
-            Preconditions.checkState(!inViolation);
-            errors.clear();
-            concourse.stage();
-            if(deleted) {
-                delete(concourse);
-            }
-            else {
-                save(concourse);
-            }
-            return concourse.commit();
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            if(inZombieState(concourse)) {
-                concourse.clear(id);
-            }
-            errors.add(Throwables.getStackTraceAsString(t));
-            return false;
-        }
-        finally {
-            connections().release(concourse);
-        }
+    public final long id() {
+        return id;
+    }
 
+    public final String section() {
+        return this.getClass().getName();
     }
 
     /**
@@ -1066,41 +409,19 @@ public abstract class Record {
     }
 
     /**
-     * Initialize the new record with all the core data.
-     */
-    final void init() { // visible for access from static #init()
-                        // method
-        if(!usable) {
-            Concourse concourse = connections().request();
-            try {
-                this.id = concourse.insert(initData());
-                usable = true;
-                // TODO set initial state
-            }
-            finally {
-                connections().release(concourse);
-            }
-        }
-    }
-
-    /**
      * Load an existing record from the database and add all of it to this
      * instance in memory.
      * 
-     * @param id
+     * @param runway
      * @param existing
      */
     @SuppressWarnings({ "unchecked", "rawtypes", })
-    final void load(long id, TLongObjectMap<Record> existing) { // visible for
-                                                                // access
-                                                                // from static
-                                                                // #load
-                                                                // method
+    /* package */ final void load(Concourse concourse,
+            TLongObjectMap<Record> existing) {
+        Preconditions.checkState(id != NULL_ID);
         if(!usable) {
-            this.id = id;
             existing.put(id, this); // add the current object so we don't
                                     // recurse infinitely
-            Concourse concourse = connections().request();
             checkConstraints(concourse);
             try {
                 if(inZombieState(id, concourse)) {
@@ -1114,11 +435,10 @@ public abstract class Record {
                     if(!Modifier.isTransient(field.getModifiers())) {
                         String key = field.getName();
                         if(Record.class.isAssignableFrom(field.getType())) {
-                            Record record = (Record) getNewDefaultInstance(
-                                    field.getType());
-                            record.load(
-                                    ((Link) concourse.get(key, id)).longValue(),
-                                    existing);
+                            long linkedId = ((Link) concourse.get(key, id))
+                                    .longValue();
+                            Record record = (Record) Reflection.newInstance(
+                                    field.getType(), linkedId, existing);
                             field.set(this, record);
                         }
                         else if(Collection.class
@@ -1155,8 +475,8 @@ public abstract class Record {
                                             Class<? extends Record> linkClass = (Class<? extends Record>) Class
                                                     .forName(
                                                             section.toString());
-                                            item = load(linkClass, link,
-                                                    existing);
+                                            item = Reflection.newInstance(
+                                                    linkClass, link, existing);
                                         }
                                     }
                                     else {
@@ -1227,9 +547,89 @@ public abstract class Record {
             catch (ReflectiveOperationException e) {
                 throw Throwables.propagate(e);
             }
-            finally {
-                connections().release(concourse);
+        }
+    }
+
+    /**
+     * Save all changes that have been made to this record using an ACID
+     * transaction with the provided {@code runway} instance.
+     * <p>
+     * Use {@link Runway#save(Record...)} to save changes in multiple records
+     * within a single ACID transaction. Even if saving a single record, prefer
+     * to use the save method in the {@link Runway} class instead of this for
+     * consistent semantics.
+     * </p>
+     * 
+     * @return {@code true} if all the changes have been atomically saved.
+     */
+    /* package */ final boolean save(Concourse concourse) {
+        try {
+            Preconditions.checkState(!inViolation);
+            errors.clear();
+            concourse.stage();
+            if(deleted) {
+                delete(concourse);
             }
+            else {
+                saveUnsafe(concourse);
+            }
+            return concourse.commit();
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            if(inZombieState(concourse)) {
+                concourse.clear(id);
+            }
+            errors.add(Throwables.getStackTraceAsString(t));
+            return false;
+        }
+    }
+
+    /**
+     * Save the data in this record using the specified {@code concourse}
+     * connection. This method assumes that the caller has already started an
+     * transaction, if necessary and will commit the transaction after this
+     * method completes.
+     * 
+     * @param concourse
+     */
+    /* package */ void saveUnsafe(final Concourse concourse) {
+        try {
+            concourse.verifyOrSet(SECTION_KEY, section(), id);
+            Field[] fields = getAllDeclaredFields();
+            for (Field field : fields) {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    final String key = field.getName();
+                    final Object value = field.get(this);
+                    if(field.isAnnotationPresent(ValidatedBy.class)) {
+                        Class<? extends Validator> validatorClass = field
+                                .getAnnotation(ValidatedBy.class).value();
+                        Validator validator = Reflection
+                                .newInstance(validatorClass);
+                        Preconditions.checkState(validator.validate(value),
+                                validator.getErrorMessage());
+                    }
+                    if(field.isAnnotationPresent(Unique.class)) {
+                        Preconditions.checkState(
+                                isUnique(concourse, key, value),
+                                field.getName() + " must be unique");
+                    }
+                    if(field.isAnnotationPresent(Required.class)) {
+                        Preconditions.checkState(
+                                !AnyObjects.isNullOrEmpty(value),
+                                field.getName() + " is required");
+                    }
+                    if(value != null) {
+                        store(key, value, concourse, false);
+                    }
+                }
+            }
+            dynamicData.forEach((key, value) -> {
+                store(key, value, concourse, false);
+            });
+        }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
         }
     }
 
@@ -1304,16 +704,6 @@ public abstract class Record {
     }
 
     /**
-     * Return a JSON string that contains all the data which initially populates
-     * each record upon creation.
-     * 
-     * @return the initial data
-     */
-    private final Map<String, Object> initData() {
-        return ImmutableMap.<String, Object> of(SECTION_KEY, __);
-    }
-
-    /**
      * Return {@code true} if this record is in a "zombie" state meaning it
      * exists in the database without any actual data.
      * 
@@ -1348,58 +738,11 @@ public abstract class Record {
         }
         else {
             Criteria criteria = Criteria.where().key(SECTION_KEY)
-                    .operator(Operator.EQUALS).value(__).and().key(key)
-                    .operator(Operator.EQUALS).value(value).build();
+                    .operator(Operator.EQUALS).value(getClass().getName()).and()
+                    .key(key).operator(Operator.EQUALS).value(value).build();
             Set<Long> records = concourse.find(criteria);
             return records.isEmpty()
                     || (records.contains(id) && records.size() == 1);
-        }
-    }
-
-    /**
-     * Save the data in this record using the specified {@code concourse}
-     * connection. This method assumes that the caller has already started an
-     * transaction, if necessary and will commit the transaction after this
-     * method completes.
-     * 
-     * @param concourse
-     */
-    private void save(final Concourse concourse) {
-        try {
-            Field[] fields = getAllDeclaredFields();
-            for (Field field : fields) {
-                if(!Modifier.isTransient(field.getModifiers())) {
-                    final String key = field.getName();
-                    final Object value = field.get(this);
-                    if(field.isAnnotationPresent(ValidatedBy.class)) {
-                        Class<? extends Validator> validatorClass = field
-                                .getAnnotation(ValidatedBy.class).value();
-                        Validator validator = getNewDefaultInstance(
-                                validatorClass);
-                        Preconditions.checkState(validator.validate(value),
-                                validator.getErrorMessage());
-                    }
-                    if(field.isAnnotationPresent(Unique.class)) {
-                        Preconditions.checkState(
-                                isUnique(concourse, key, value),
-                                field.getName() + " must be unique");
-                    }
-                    if(field.isAnnotationPresent(Required.class)) {
-                        Preconditions.checkState(
-                                !AnyObject.isNullOrEmpty(value),
-                                field.getName() + " is required");
-                    }
-                    if(value != null) {
-                        store(key, value, concourse, false);
-                    }
-                }
-            }
-            dynamicData.forEach((key, value) -> {
-                store(key, value, concourse, false);
-            });
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
         }
     }
 
@@ -1421,15 +764,6 @@ public abstract class Record {
         // TODO: dirty field detection!
         if(value instanceof Record) {
             Record record = (Record) value;
-            Preconditions.checkState(
-                    !record.inZombieState(concourse)
-                            || isWaitingToBeSaved(concourse, record),
-                    "Cannot link to an empty record! "
-                            + "You must save the record to "
-                            + "which you're linking before "
-                            + "saving this record, or save "
-                            + "them both within an atomic transaction "
-                            + "using the Record#saveAll() method");
             concourse.link(key, record.id, id);
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
