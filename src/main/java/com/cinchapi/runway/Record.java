@@ -270,7 +270,7 @@ public abstract class Record {
     public Map<String, Object> getData() {
         try {
             Map<String, Object> data = getMoreData();
-            Field[] fields = getAllDeclaredFields();
+            Field[] fields = Reflection.getAllDeclaredFields(this);
             data.put("id", id);
             for (Field field : fields) {
                 Object value;
@@ -308,7 +308,7 @@ public abstract class Record {
                     data.remove(key);
                 }
             }
-            Field[] fields = getAllDeclaredFields();
+            Field[] fields = Reflection.getAllDeclaredFields(this);
             data.put("id", id);
             for (Field field : fields) {
                 Object value;
@@ -431,7 +431,7 @@ public abstract class Record {
                 }
                 // TODO: do a large select and populate the fields instead of
                 // doing individual gets
-                Field[] fields = getAllDeclaredFields();
+                Field[] fields = Reflection.getAllDeclaredFields(this);
                 for (Field field : fields) {
                     if(!Modifier.isTransient(field.getModifiers())) {
                         String key = field.getName();
@@ -597,7 +597,7 @@ public abstract class Record {
     /* package */ void saveUnsafe(final Concourse concourse) {
         try {
             concourse.verifyOrSet(SECTION_KEY, section(), id);
-            Field[] fields = getAllDeclaredFields();
+            Field[] fields = Reflection.getAllDeclaredFields(this);
             for (Field field : fields) {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     final String key = field.getName();
@@ -676,32 +676,6 @@ public abstract class Record {
      */
     private void delete(Concourse concourse) {
         concourse.clear(id);
-    }
-
-    /**
-     * Get all the fields that are declared in this class and any of its
-     * parents.
-     * 
-     * @return the declared fields
-     */
-    private final Field[] getAllDeclaredFields() {
-        if(fields0 == null) {
-            List<Field> fields = Lists.newArrayList();
-            Class<?> clazz = this.getClass();
-            while (clazz != Object.class) {
-                for (Field field : clazz.getDeclaredFields()) {
-                    if(!field.getName().equalsIgnoreCase("fields0")
-                            && !field.isSynthetic()
-                            && !Modifier.isStatic(field.getModifiers())) {
-                        field.setAccessible(true);
-                        fields.add(field);
-                    }
-                }
-                clazz = clazz.getSuperclass();
-            }
-            fields0 = fields.toArray(new Field[] {});
-        }
-        return fields0;
     }
 
     /**
@@ -815,7 +789,7 @@ public abstract class Record {
      */
     private JsonElement toJsonElement(Set<Record> seen) {
         try {
-            Field[] fields = getAllDeclaredFields();
+            Field[] fields = Reflection.getAllDeclaredFields(this);
             JsonObject json = new JsonObject();
             json.addProperty("id", id);
             Map<String, Object> more = getMoreData();
@@ -852,7 +826,7 @@ public abstract class Record {
     private JsonElement toJsonElement(Set<Record> seen, String... keys) {
         try {
             Set<String> _keys = Sets.newHashSet(keys);
-            Field[] fields = getAllDeclaredFields();
+            Field[] fields = Reflection.getAllDeclaredFields(this);
             JsonObject json = new JsonObject();
             json.addProperty("id", id);
             Map<String, Object> more = getMoreData();
