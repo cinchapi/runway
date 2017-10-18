@@ -140,7 +140,7 @@ public final class Runway {
     private Runway(String host, int port, String username, String password,
             String environment) {
         this.connections = ConnectionPool.newCachedConnectionPool(host, port,
-                username, password, "");
+                username, password, environment);
     }
 
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
