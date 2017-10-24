@@ -176,11 +176,6 @@ public abstract class Record {
     /* package */ transient List<String> errors = Lists.newArrayList();
 
     /**
-     * A cache of all the fields in this class and all of its parents.
-     */
-    private transient Field[] fields0;
-
-    /**
      * The primary key that is used to identify this Record in the database.
      */
     private transient long id = NULL_ID;
@@ -191,16 +186,8 @@ public abstract class Record {
      */
     private transient boolean inViolation = false;
 
-    /**
-     * A flag that indicates that the Record object has either been initialized
-     * as a new record in the database or has loaded an existing record and is
-     * therefore usable.
-     */
-    private transient boolean usable = false;
-
     public Record() {
         this.id = Time.now();
-        usable = true;
     }
 
     /**
@@ -420,135 +407,130 @@ public abstract class Record {
     /* package */ final void load(Concourse concourse,
             TLongObjectMap<Record> existing) {
         Preconditions.checkState(id != NULL_ID);
-        if(!usable) {
-            existing.put(id, this); // add the current object so we don't
-                                    // recurse infinitely
-            checkConstraints(concourse);
-            try {
-                if(inZombieState(id, concourse)) {
-                    concourse.clear(id);
-                    throw new ZombieException();
-                }
-                // TODO: do a large select and populate the fields instead of
-                // doing individual gets
-                Field[] fields = Reflection.getAllDeclaredFields(this);
-                for (Field field : fields) {
-                    if(!Modifier.isTransient(field.getModifiers())) {
-                        String key = field.getName();
-                        if(Record.class.isAssignableFrom(field.getType())) {
-                            long linkedId = ((Link) concourse.get(key, id))
-                                    .longValue();
-                            Record record = (Record) Reflection.newInstance(
-                                    field.getType(), linkedId, existing);
-                            field.set(this, record);
-                        }
-                        else if(Collection.class
-                                .isAssignableFrom(field.getType())) {
-                            Collection collection = null;
-                            if(Modifier
-                                    .isAbstract(field.getType().getModifiers())
-                                    || Modifier.isInterface(
-                                            field.getType().getModifiers())) {
-                                if(field.getType() == Set.class) {
-                                    collection = Sets.newLinkedHashSet();
-                                }
-                                else { // assume list
-                                    collection = Lists.newArrayList();
-                                }
+        existing.put(id, this); // add the current object so we don't
+                                // recurse infinitely
+        checkConstraints(concourse);
+        try {
+            if(inZombieState(id, concourse)) {
+                concourse.clear(id);
+                throw new ZombieException();
+            }
+            // TODO: do a large select and populate the fields instead of
+            // doing individual gets
+            Field[] fields = Reflection.getAllDeclaredFields(this);
+            for (Field field : fields) {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    String key = field.getName();
+                    if(Record.class.isAssignableFrom(field.getType())) {
+                        long linkedId = ((Link) concourse.get(key, id))
+                                .longValue();
+                        Record record = (Record) Reflection.newInstance(
+                                field.getType(), linkedId, existing);
+                        field.set(this, record);
+                    }
+                    else if(Collection.class
+                            .isAssignableFrom(field.getType())) {
+                        Collection collection = null;
+                        if(Modifier.isAbstract(field.getType().getModifiers())
+                                || Modifier.isInterface(
+                                        field.getType().getModifiers())) {
+                            if(field.getType() == Set.class) {
+                                collection = Sets.newLinkedHashSet();
                             }
-                            else {
-                                collection = (Collection) field.getType()
-                                        .newInstance();
-                            }
-                            Set<?> values = concourse.select(key, id);
-                            for (Object item : values) {
-                                if(item instanceof Link) {
-                                    long link = ((Link) item).longValue();
-                                    Record obj = existing.get(link);
-                                    if(obj == null) {
-                                        String section = concourse
-                                                .get(SECTION_KEY, link);
-                                        if(Strings.isNullOrEmpty(section)) {
-                                            concourse.remove(key, item, id);
-                                            continue;
-                                        }
-                                        else {
-                                            Class<? extends Record> linkClass = (Class<? extends Record>) Class
-                                                    .forName(
-                                                            section.toString());
-                                            item = Reflection.newInstance(
-                                                    linkClass, link, existing);
-                                        }
-                                    }
-                                    else {
-                                        item = obj;
-                                    }
-                                }
-                                collection.add(item);
-                            }
-                            field.set(this, collection);
-                        }
-                        else if(field.getType().isArray()) {
-                            List list = new ArrayList();
-                            Set<?> values = concourse.select(key, id);
-                            for (Object item : values) {
-                                list.add(item);
-                            }
-                            field.set(this, list.toArray());
-                        }
-                        else if(field.getType().isPrimitive()
-                                || field.getType() == String.class
-                                || field.getType() == Integer.class
-                                || field.getType() == Long.class
-                                || field.getType() == Float.class
-                                || field.getType() == Double.class
-                                || field.getType() == Boolean.class) {
-                            Object value = concourse.get(key, id);
-                            if(value != null) { // Java doesn't allow primitive
-                                                // types to hold nulls
-                                field.set(this, concourse.get(key, id));
-                            }
-                        }
-                        else if(field.getType() == Tag.class) {
-                            Object object = concourse.get(key, id);
-                            if(object != null) {
-                                field.set(this, Tag.create((String) object));
-                            }
-                        }
-                        else if(field.getType().isEnum()) {
-                            String stored = concourse.get(key, id);
-                            if(stored != null) {
-                                field.set(this,
-                                        Enum.valueOf(
-                                                (Class<Enum>) field.getType(),
-                                                stored.toString()));
-                            }
-                        }
-                        else if(Serializable.class
-                                .isAssignableFrom(field.getType())) {
-                            String base64 = concourse.get(key, id);
-                            if(base64 != null) {
-                                ByteBuffer bytes = ByteBuffer.wrap(BaseEncoding
-                                        .base64Url().decode(base64));
-                                field.set(this, Serializables.read(bytes,
-                                        (Class<Serializable>) field.getType()));
+                            else { // assume list
+                                collection = Lists.newArrayList();
                             }
                         }
                         else {
-                            Gson gson = new Gson();
-                            Object object = gson.fromJson(
-                                    (String) concourse.get(key, id),
-                                    field.getType());
-                            field.set(this, object);
+                            collection = (Collection) field.getType()
+                                    .newInstance();
+                        }
+                        Set<?> values = concourse.select(key, id);
+                        for (Object item : values) {
+                            if(item instanceof Link) {
+                                long link = ((Link) item).longValue();
+                                Record obj = existing.get(link);
+                                if(obj == null) {
+                                    String section = concourse.get(SECTION_KEY,
+                                            link);
+                                    if(Strings.isNullOrEmpty(section)) {
+                                        concourse.remove(key, item, id);
+                                        continue;
+                                    }
+                                    else {
+                                        Class<? extends Record> linkClass = (Class<? extends Record>) Class
+                                                .forName(section.toString());
+                                        item = Reflection.newInstance(linkClass,
+                                                link, existing);
+                                    }
+                                }
+                                else {
+                                    item = obj;
+                                }
+                            }
+                            collection.add(item);
+                        }
+                        field.set(this, collection);
+                    }
+                    else if(field.getType().isArray()) {
+                        List list = new ArrayList();
+                        Set<?> values = concourse.select(key, id);
+                        for (Object item : values) {
+                            list.add(item);
+                        }
+                        field.set(this, list.toArray());
+                    }
+                    else if(field.getType().isPrimitive()
+                            || field.getType() == String.class
+                            || field.getType() == Integer.class
+                            || field.getType() == Long.class
+                            || field.getType() == Float.class
+                            || field.getType() == Double.class
+                            || field.getType() == Boolean.class) {
+                        Object value = concourse.get(key, id);
+                        if(value != null) { // Java doesn't allow primitive
+                                            // types to hold nulls
+                            field.set(this, concourse.get(key, id));
                         }
                     }
+                    else if(field.getType() == Tag.class) {
+                        Object object = concourse.get(key, id);
+                        if(object != null) {
+                            field.set(this, Tag.create((String) object));
+                        }
+                    }
+                    else if(field.getType().isEnum()) {
+                        String stored = concourse.get(key, id);
+                        if(stored != null) {
+                            field.set(this,
+                                    Enum.valueOf((Class<Enum>) field.getType(),
+                                            stored.toString()));
+                        }
+                    }
+                    else if(Serializable.class
+                            .isAssignableFrom(field.getType())) {
+                        String base64 = concourse.get(key, id);
+                        if(base64 != null) {
+                            ByteBuffer bytes = ByteBuffer.wrap(
+                                    BaseEncoding.base64Url().decode(base64));
+                            field.set(this, Serializables.read(bytes,
+                                    (Class<Serializable>) field.getType()));
+                        }
+                    }
+                    else {
+                        Gson gson = new Gson();
+                        Object object = gson.fromJson(
+                                (String) concourse.get(key, id),
+                                field.getType());
+                        field.set(this, object);
+                    }
                 }
-                usable = true;
-            }
-            catch (ReflectiveOperationException e) {
-                throw Throwables.propagate(e);
             }
         }
+        catch (ReflectiveOperationException e) {
+            throw Throwables.propagate(e);
+        }
+
     }
 
     /**

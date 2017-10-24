@@ -67,6 +67,17 @@ public class RecordTest extends ClientServerTest {
         person.set("0_2_0", "foo");
         System.out.println(person);
     }
+    
+    @Test
+    public void testLoadPopulatesFields() {
+        Mock person = new Mock();
+        person.name = "Jeff Nelson";
+        person.age = 100;
+        runway.save(person);
+        person = runway.load(Mock.class, person.id());
+        Assert.assertEquals("Jeff Nelson", person.name);
+        Assert.assertEquals((int) 100, (int) person.age);
+    }
 
     class Mock extends Record {
 
