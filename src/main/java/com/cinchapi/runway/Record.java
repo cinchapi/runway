@@ -422,11 +422,13 @@ public abstract class Record {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     String key = field.getName();
                     if(Record.class.isAssignableFrom(field.getType())) {
-                        long linkedId = ((Link) concourse.get(key, id))
-                                .longValue();
-                        Record record = (Record) Reflection.newInstance(
-                                field.getType(), linkedId, existing);
-                        field.set(this, record);
+                        Link link = ((Link) concourse.get(key, id));
+                        if(link != null) {
+                            long linkedId = link.longValue();
+                            Record record = (Record) Reflection.newInstance(
+                                    field.getType(), linkedId, existing);
+                            field.set(this, record);
+                        }
                     }
                     else if(Collection.class
                             .isAssignableFrom(field.getType())) {
