@@ -64,13 +64,13 @@ public final class Runway {
     }
 
     public static Runway connect(String host, int port, String username,
-            String password, String environment) {
-        return new Runway(host, port, username, password, environment);
+            String password) {
+        return connect(host, port, username, password, "");
     }
 
     public static Runway connect(String host, int port, String username,
-            String password) {
-        return connect(host, port, username, password, "");
+            String password, String environment) {
+        return new Runway(host, port, username, password, environment);
     }
 
     private static <T> Criteria ensureClassSpecificCriteria(Criteria criteria,
@@ -180,6 +180,36 @@ public final class Runway {
                 long id = Iterables.getOnlyElement(ids);
                 return load(clazz, id);
             }
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> load(Class<T> clazz) {
+        Concourse concourse = connections.request();
+        try {
+            Set<T> records = Sets.newLinkedHashSet();
+            Criteria criteria = Criteria.where().key(Record.SECTION_KEY)
+                    .operator(Operator.EQUALS).value(clazz.getName()).build();
+            Set<Long> ids = concourse.find(criteria);
+            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
+            ids.forEach(id -> records.add(load(clazz, id, existing)));
+            return records;
         }
         finally {
             connections.release(concourse);
