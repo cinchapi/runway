@@ -92,6 +92,20 @@ public class RecordTest extends ClientServerTest {
         }
         Assert.assertEquals(count, runway.load(Mock.class).size());
     }
+    
+    @Test
+    public void testCanGetReadablePrivateField() {
+        Mock mock = new Mock();
+        Assert.assertTrue(mock.getData().containsKey("bar"));
+        Assert.assertTrue(mock.getData("bar").containsKey("bar"));
+    }
+    
+    @Test
+    public void testCannotGetNonReadablePrivateField() {
+        Mock mock = new Mock();
+        Assert.assertFalse(mock.getData().containsKey("foo"));
+        Assert.assertFalse(mock.getData("foo").containsKey("foo"));
+    }
 
     class Mock extends Record {
 
@@ -102,6 +116,12 @@ public class RecordTest extends ClientServerTest {
         public Integer age;
 
         public boolean alive = true;
+        
+        @SuppressWarnings("unused")
+        private boolean foo = false;
+        
+        @Readable
+        private boolean bar = false;
 
     }
 

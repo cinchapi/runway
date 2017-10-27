@@ -100,6 +100,18 @@ public abstract class Record {
     }
 
     /**
+     * Return {@code true} if the {@code field} is considered readable.
+     * 
+     * @param field
+     * @return a boolean that expresses the readability of the field
+     */
+    private static boolean isReadableField(Field field) {
+        return (!Modifier.isPrivate(field.getModifiers())
+                || field.isAnnotationPresent(Readable.class))
+                && !Modifier.isTransient(field.getModifiers());
+    }
+
+    /**
      * Convert a generic {@code object} to the appropriate {@link JsonElement}.
      * <p>
      * <em>This method accepts {@link Iterable} collections and recursively
@@ -261,8 +273,7 @@ public abstract class Record {
             data.put("id", id);
             for (Field field : fields) {
                 Object value;
-                if(!Modifier.isPrivate(field.getModifiers())
-                        && !Modifier.isTransient(field.getModifiers())
+                if(isReadableField(field)
                         && (value = field.get(this)) != null) {
                     data.put(field.getName(), value);
                 }
@@ -299,9 +310,7 @@ public abstract class Record {
             data.put("id", id);
             for (Field field : fields) {
                 Object value;
-                if(_keys.contains(field.getName())
-                        && !Modifier.isPrivate(field.getModifiers())
-                        && !Modifier.isTransient(field.getModifiers())
+                if(_keys.contains(field.getName()) && isReadableField(field)
                         && (value = field.get(this)) != null) {
                     data.put(field.getName(), value);
                 }
@@ -782,9 +791,7 @@ public abstract class Record {
             }
             for (Field field : fields) {
                 Object value = field.get(this);
-                if(!Modifier.isPrivate(field.getModifiers())
-                        && !Modifier.isTransient(field.getModifiers())
-                        && value != null) {
+                if(isReadableField(field) && value != null) {
                     json.add(field.getName(), jsonify(value, seen));
                 }
             }
@@ -821,9 +828,7 @@ public abstract class Record {
             }
             for (Field field : fields) {
                 Object value;
-                if(_keys.contains(field.getName())
-                        && !Modifier.isPrivate(field.getModifiers())
-                        && !Modifier.isTransient(field.getModifiers())
+                if(_keys.contains(field.getName()) && isReadableField(field)
                         && (value = field.get(this)) != null) {
                     json.add(field.getName(), jsonify(value, seen));
                 }
