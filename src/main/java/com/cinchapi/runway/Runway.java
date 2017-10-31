@@ -96,11 +96,12 @@ public final class Runway {
                 Object enclosingInstance = newDefaultInstance(enclosingClass);
                 Constructor<?> constructor = clazz
                         .getDeclaredConstructor(enclosingClass);
+                constructor.setAccessible(true);
                 return (T) constructor.newInstance(enclosingInstance);
 
             }
             else {
-                return clazz.newInstance();
+                return Reflection.newInstance(clazz);
             }
         }
         catch (InstantiationException | NoSuchMethodException e) {
