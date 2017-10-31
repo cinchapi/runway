@@ -106,6 +106,11 @@ public class RecordTest extends ClientServerTest {
         Assert.assertFalse(mock.getData().containsKey("foo"));
         Assert.assertFalse(mock.getData("foo").containsKey("foo"));
     }
+    
+    @Test(expected = Exception.class)
+    public void testLoadNonExistingRecord() {
+        System.out.println(runway.load(Mock.class, -2));
+    }
 
     class Mock extends Record {
 
