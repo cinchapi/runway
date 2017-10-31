@@ -26,12 +26,8 @@
  */
 package com.cinchapi.runway;
 
-import java.lang.reflect.Constructor;
 import java.util.Set;
 
-import com.cinchapi.common.base.AnyStrings;
-import com.cinchapi.common.base.CheckedExceptions;
-import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
@@ -78,42 +74,6 @@ public final class Runway {
         return Criteria.where().key(Record.SECTION_KEY)
                 .operator(Operator.EQUALS).value(clazz.getName()).and()
                 .group(criteria).build();
-    }
-
-    /**
-     * Get a new instance of {@code clazz} by calling the default (zero-arg)
-     * constructor, if it exists. This method attempts to correctly invoke
-     * constructors for nested inner classes.
-     * 
-     * @param clazz
-     * @return the instance of the {@code clazz}.
-     */
-    @SuppressWarnings("unchecked")
-    private static <T> T newDefaultInstance(Class<T> clazz) {
-        try {
-            Class<?> enclosingClass = clazz.getEnclosingClass();
-            if(enclosingClass != null) {
-                Object enclosingInstance = newDefaultInstance(enclosingClass);
-                Constructor<?> constructor = clazz
-                        .getDeclaredConstructor(enclosingClass);
-                constructor.setAccessible(true);
-                return (T) constructor.newInstance(enclosingInstance);
-
-            }
-            else {
-                return Reflection.newInstance(clazz);
-            }
-        }
-        catch (InstantiationException | NoSuchMethodException e) {
-            System.err.println(AnyStrings.format(
-                    "Runway crashed because {} does not contain a no-arg constructor. Exiting now.",
-                    clazz.getName()));
-            System.exit(1);
-            throw CheckedExceptions.throwAsRuntimeException(e);
-        }
-        catch (ReflectiveOperationException e) {
-            throw CheckedExceptions.throwAsRuntimeException(e);
-        }
     }
 
     /**
@@ -306,12 +266,9 @@ public final class Runway {
      */
     private <T extends Record> T load(Class<T> clazz, long id,
             TLongObjectHashMap<Record> existing) {
-        T record = newDefaultInstance(clazz);
-        Reflection.set("id", id, record); /* (authorized) */
         Concourse concourse = connections.request();
         try {
-            record.load(concourse, existing);
-            return record;
+            return Record.load(clazz, id, existing, concourse);
         }
         finally {
             connections.release(concourse);

@@ -3,6 +3,7 @@ package com.cinchapi.runway;
 import gnu.trove.map.TLongObjectMap;
 
 import java.io.Serializable;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
@@ -16,6 +17,8 @@ import java.util.Set;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.cinchapi.common.base.AnyObjects;
+import com.cinchapi.common.base.AnyStrings;
+import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Link;
@@ -86,6 +89,25 @@ public abstract class Record {
             .newHashSet(SECTION_KEY);
 
     private static long NULL_ID = -1;
+
+    /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id}.
+     * 
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param concourse
+     * @return the loaded Record
+     */
+    @SuppressWarnings("unchecked")
+    protected static <T extends Record> T load(Class<?> clazz, long id,
+            TLongObjectMap<Record> existing, Concourse concourse) {
+        T record = (T) newDefaultInstance(clazz);
+        Reflection.set("id", id, record); /* (authorized) */
+        record.load(concourse, existing);
+        return record;
+    }
 
     /**
      * Return {@code true} if the record identified by {@code id} is in a
@@ -159,6 +181,42 @@ public abstract class Record {
         else {
             Gson gson = new Gson();
             return gson.toJsonTree(object);
+        }
+    }
+
+    /**
+     * Get a new instance of {@code clazz} by calling the default (zero-arg)
+     * constructor, if it exists. This method attempts to correctly invoke
+     * constructors for nested inner classes.
+     * 
+     * @param clazz
+     * @return the instance of the {@code clazz}.
+     */
+    @SuppressWarnings("unchecked")
+    private static <T> T newDefaultInstance(Class<T> clazz) {
+        try {
+            Class<?> enclosingClass = clazz.getEnclosingClass();
+            if(enclosingClass != null) {
+                Object enclosingInstance = newDefaultInstance(enclosingClass);
+                Constructor<?> constructor = clazz
+                        .getDeclaredConstructor(enclosingClass);
+                constructor.setAccessible(true);
+                return (T) constructor.newInstance(enclosingInstance);
+
+            }
+            else {
+                return Reflection.newInstance(clazz);
+            }
+        }
+        catch (InstantiationException | NoSuchMethodException e) {
+            System.err.println(AnyStrings.format(
+                    "Runway crashed because {} does not contain a no-arg constructor. Exiting now.",
+                    clazz.getName()));
+            System.exit(1);
+            throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+        catch (ReflectiveOperationException e) {
+            throw CheckedExceptions.throwAsRuntimeException(e);
         }
     }
 
@@ -434,8 +492,8 @@ public abstract class Record {
                         Link link = ((Link) concourse.get(key, id));
                         if(link != null) {
                             long linkedId = link.longValue();
-                            Record record = (Record) Reflection.newInstance(
-                                    field.getType(), linkedId, existing);
+                            Record record = load(field.getType(), linkedId,
+                                    existing, concourse);
                             field.set(this, record);
                         }
                     }
