@@ -208,7 +208,7 @@ public abstract class Record {
                 return Reflection.newInstance(clazz);
             }
         }
-        catch (InstantiationException | NoSuchMethodException e) {
+        catch (InstantiationException | NoSuchMethodException | RuntimeException e) {
             System.err.println(AnyStrings.format(
                     "Runway crashed because {} does not contain a no-arg constructor. Exiting now.",
                     clazz.getName()));
