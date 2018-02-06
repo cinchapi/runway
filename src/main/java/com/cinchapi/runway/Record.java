@@ -179,8 +179,17 @@ public abstract class Record {
             }
         }
         else {
-            Gson gson = new Gson();
-            return gson.toJsonTree(object);
+            if(Reflection.getMethodUnboxed(object.getClass(), "toString")
+                    .getDeclaringClass().getName() != Object.class.getName()) {
+                // If the object has overridden the toString method, then
+                // respect it and use it as the json value.
+                return new JsonPrimitive(object.toString());
+            }
+            else {
+                Gson gson = new Gson();
+                return gson.toJsonTree(object);
+            }
+
         }
     }
 
@@ -208,7 +217,8 @@ public abstract class Record {
                 return Reflection.newInstance(clazz);
             }
         }
-        catch (InstantiationException | NoSuchMethodException | RuntimeException e) {
+        catch (InstantiationException | NoSuchMethodException
+                | RuntimeException e) {
             System.err.println(AnyStrings.format(
                     "Runway crashed because {} does not contain a no-arg constructor. Exiting now.",
                     clazz.getName()));
