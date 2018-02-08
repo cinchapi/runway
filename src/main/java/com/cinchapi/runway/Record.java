@@ -32,6 +32,7 @@ import com.cinchapi.concourse.thrift.TObject;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
 import com.cinchapi.concourse.util.TypeAdapters;
+import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
@@ -661,6 +662,28 @@ public abstract class Record {
     }
 
     /**
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
+     * 
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
+     */
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
+     * 
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
+     */
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
+        return Maps.newHashMap();
+    }
+
+    /**
      * Check to ensure that this Record does not violate any constraints. If so,
      * throw an {@link IllegalStateException}.
      * 
@@ -771,7 +794,7 @@ public abstract class Record {
             }
 
         };
-        Gson gson = new GsonBuilder()
+        GsonBuilder builder = new GsonBuilder()
                 .registerTypeAdapter(Object.class,
                         TypeAdapters.forGenericObject().nullSafe())
                 .registerTypeAdapter(TObject.class,
@@ -782,9 +805,14 @@ public abstract class Record {
                         TypeAdapters.forMap().nullSafe())
                 .registerTypeHierarchyAdapter(Record.class,
                         recordTypeAdapter.nullSafe())
-                .disableHtmlEscaping().create();
-        // TODO: may need custom type adapters?
-
+                .disableHtmlEscaping();
+        jsonTypeWriters().forEach((clazz, writer) -> {
+            builder.registerTypeAdapter(clazz, writer.typeAdapter());
+        });
+        jsonTypeHierarchyWriters().forEach((clazz, writer) -> {
+            builder.registerTypeHierarchyAdapter(clazz, writer.typeAdapter());
+        });
+        Gson gson = builder.create();
         return gson.toJson(data);
     }
 
