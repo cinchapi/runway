@@ -801,16 +801,15 @@ public abstract class Record {
                         TypeAdapters.forTObject().nullSafe())
                 .registerTypeHierarchyAdapter(Collection.class,
                         TypeAdapters.forCollection().nullSafe())
-                .registerTypeHierarchyAdapter(Map.class,
-                        TypeAdapters.forMap().nullSafe())
                 .registerTypeHierarchyAdapter(Record.class,
                         recordTypeAdapter.nullSafe())
                 .disableHtmlEscaping();
         jsonTypeWriters().forEach((clazz, writer) -> {
-            builder.registerTypeAdapter(clazz, writer.typeAdapter());
+            builder.registerTypeAdapter(clazz, writer.typeAdapter().nullSafe());
         });
         jsonTypeHierarchyWriters().forEach((clazz, writer) -> {
-            builder.registerTypeHierarchyAdapter(clazz, writer.typeAdapter());
+            builder.registerTypeHierarchyAdapter(clazz,
+                    writer.typeAdapter().nullSafe());
         });
         Gson gson = builder.create();
         return gson.toJson(data);

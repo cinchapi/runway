@@ -44,6 +44,7 @@ public interface JsonTypeWriter<T> {
 
     /**
      * Return the JSON string for {@code value}.
+     * 
      * @param value
      * @return the JSON string for the {@code value}
      */

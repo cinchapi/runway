@@ -1,5 +1,7 @@
 package com.cinchapi.runway;
 
+import java.util.Map;
+
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -9,6 +11,8 @@ import com.cinchapi.concourse.util.Random;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Required;
 import com.cinchapi.runway.Unique;
+import com.cinchapi.runway.json.JsonTypeWriter;
+import com.google.common.collect.ImmutableMap;
 
 public class RecordTest extends ClientServerTest {
 
@@ -130,6 +134,12 @@ public class RecordTest extends ClientServerTest {
         System.out.println(runway.load(Flock.class, flock.id()));
     }
 
+    @Test
+    public void testCustomTypeAdapter() {
+        Sock sock = new Sock("sock", new Dock("dock"));
+        Assert.assertTrue(sock.json().contains("foo"));
+    }
+
     class Mock extends Record {
 
         @Unique
@@ -154,6 +164,32 @@ public class RecordTest extends ClientServerTest {
 
         public Flock(String name) {
             this.name = name;
+        }
+    }
+
+    class Sock extends Record {
+
+        public final String sock;
+        public final Dock dock;
+
+        public Sock(String sock, Dock dock) {
+            this.sock = sock;
+            this.dock = dock;
+        }
+        
+        @Override
+        public Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters(){
+            return ImmutableMap.of(Dock.class, (value) -> "foo");
+        }
+
+    }
+
+    class Dock extends Record {
+
+        public final String dock;
+
+        public Dock(String dock) {
+            this.dock = dock;
         }
     }
 
