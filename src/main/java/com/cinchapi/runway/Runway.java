@@ -55,6 +55,8 @@ public final class Runway implements AutoCloseable {
      */
     private static long METADATA_RECORD = -1;
 
+    private static Set<Runway> instances = Sets.newHashSet();
+
     public static Runway connect() {
         return null;
     }
@@ -89,8 +91,6 @@ public final class Runway implements AutoCloseable {
      */
     private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
 
-    private static Set<Runway> instances = Sets.newHashSet();
-
     /**
      * Construct a new instance.
      * 
@@ -110,6 +110,18 @@ public final class Runway implements AutoCloseable {
         }
         else {
             Record.PINNED_RUNWAY_INSTANCE = this;
+        }
+    }
+
+    @Override
+    public void close() throws Exception {
+        connections.close();
+        instances.remove(this);
+        if(instances.size() == 1) {
+            Record.PINNED_RUNWAY_INSTANCE = instances.iterator().next();
+        }
+        else {
+            Record.PINNED_RUNWAY_INSTANCE = null;
         }
     }
 
@@ -237,7 +249,7 @@ public final class Runway implements AutoCloseable {
                 waitingToBeSaved.put(transactionId, waiting);
                 for (Record record : records) {
                     current = record;
-                    record.saveInTransaction(concourse);
+                    record.saveWithinTransaction(concourse);
                 }
                 concourse.clear("transaction_id", METADATA_RECORD);
                 return concourse.commit();
@@ -276,18 +288,6 @@ public final class Runway implements AutoCloseable {
     private <T extends Record> T load(Class<T> clazz, long id,
             TLongObjectHashMap<Record> existing) {
         return Record.load(clazz, id, existing, connections);
-    }
-
-    @Override
-    public void close() throws Exception {
-        connections.close();
-        instances.remove(this);
-        if(instances.size() == 1) {
-            Record.PINNED_RUNWAY_INSTANCE = instances.iterator().next();
-        }
-        else {
-            Record.PINNED_RUNWAY_INSTANCE = null;
-        }
     }
 
 }

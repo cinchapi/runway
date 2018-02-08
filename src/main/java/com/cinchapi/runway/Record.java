@@ -371,6 +371,10 @@ public abstract class Record {
 
     /**
      * Save any changes made to this {@link Record}.
+     * <p>
+     * <strong>NOTE:</strong> This method recursively saves any linked
+     * {@link Records}.
+     * </p>
      */
     public boolean save() {
         Verify.that(connections != null,
@@ -586,7 +590,7 @@ public abstract class Record {
                 delete(concourse);
             }
             else {
-                saveInTransaction(concourse);
+                saveWithinTransaction(concourse);
             }
             return concourse.commit();
         }
@@ -608,7 +612,7 @@ public abstract class Record {
      * 
      * @param concourse
      */
-    /* package */ void saveInTransaction(final Concourse concourse) {
+    /* package */ void saveWithinTransaction(final Concourse concourse) {
         concourse.verifyOrSet(SECTION_KEY, __, id);
         fields().forEach(field -> {
             try {
@@ -802,6 +806,7 @@ public abstract class Record {
         // TODO: dirty field detection!
         if(value instanceof Record) {
             Record record = (Record) value;
+            record.saveWithinTransaction(concourse);
             concourse.link(key, record.id, id);
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
