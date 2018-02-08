@@ -350,7 +350,7 @@ public abstract class Record {
      * @return the data in this record
      */
     public Map<String, Object> map() {
-        Map<String, Object> data = tempData();
+        Map<String, Object> data = Maps.newHashMap(tempData());
         fields().forEach(field -> {
             try {
                 Object value;
