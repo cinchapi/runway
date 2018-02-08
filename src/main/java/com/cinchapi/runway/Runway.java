@@ -46,7 +46,7 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  *
  * @author jeff
  */
-public final class Runway {
+public final class Runway implements AutoCloseable {
 
     /**
      * The record where metadata is stored. We typically store some transient
@@ -79,7 +79,7 @@ public final class Runway {
     /**
      * A connection pool to the underlying Concourse database.
      */
-    private final ConnectionPool connections;
+    /* package */ final ConnectionPool connections;
 
     /**
      * A mapping from a transaction id to the set of records that are waiting to
@@ -88,6 +88,8 @@ public final class Runway {
      * record that will later exist (e.g. waiting to be saved).
      */
     private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
+
+    private static Set<Runway> instances = Sets.newHashSet();
 
     /**
      * Construct a new instance.
@@ -102,6 +104,13 @@ public final class Runway {
             String environment) {
         this.connections = ConnectionPool.newCachedConnectionPool(host, port,
                 username, password, environment);
+        instances.add(this);
+        if(instances.size() > 1) {
+            Record.PINNED_RUNWAY_INSTANCE = null;
+        }
+        else {
+            Record.PINNED_RUNWAY_INSTANCE = this;
+        }
     }
 
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
@@ -228,7 +237,7 @@ public final class Runway {
                 waitingToBeSaved.put(transactionId, waiting);
                 for (Record record : records) {
                     current = record;
-                    record.saveUnsafe(concourse);
+                    record.saveInTransaction(concourse);
                 }
                 concourse.clear("transaction_id", METADATA_RECORD);
                 return concourse.commit();
@@ -266,12 +275,18 @@ public final class Runway {
      */
     private <T extends Record> T load(Class<T> clazz, long id,
             TLongObjectHashMap<Record> existing) {
-        Concourse concourse = connections.request();
-        try {
-            return Record.load(clazz, id, existing, concourse);
+        return Record.load(clazz, id, existing, connections);
+    }
+
+    @Override
+    public void close() throws Exception {
+        connections.close();
+        instances.remove(this);
+        if(instances.size() == 1) {
+            Record.PINNED_RUNWAY_INSTANCE = instances.iterator().next();
         }
-        finally {
-            connections.release(concourse);
+        else {
+            Record.PINNED_RUNWAY_INSTANCE = null;
         }
     }
 

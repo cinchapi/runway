@@ -3,6 +3,7 @@ package com.cinchapi.runway;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.util.Random;
 import com.cinchapi.runway.Record;
@@ -22,6 +23,16 @@ public class RecordTest extends ClientServerTest {
     public void beforeEachTest() {
         runway = Runway.connect("localhost", server.getClientPort(), "admin",
                 "admin");
+    }
+
+    @Override
+    public void afterEachTest() {
+        try {
+            runway.close();
+        }
+        catch (Exception e) {
+            throw CheckedExceptions.throwAsRuntimeException(e);
+        }
     }
 
     @Test
@@ -92,24 +103,31 @@ public class RecordTest extends ClientServerTest {
         }
         Assert.assertEquals(count, runway.load(Mock.class).size());
     }
-    
+
     @Test
     public void testCanGetReadablePrivateField() {
         Mock mock = new Mock();
-        Assert.assertTrue(mock.getData().containsKey("bar"));
-        Assert.assertTrue(mock.getData("bar").containsKey("bar"));
+        Assert.assertTrue(mock.map().containsKey("bar"));
+        Assert.assertNotNull(mock.get("bar"));
     }
-    
+
     @Test
     public void testCannotGetNonReadablePrivateField() {
         Mock mock = new Mock();
-        Assert.assertFalse(mock.getData().containsKey("foo"));
-        Assert.assertFalse(mock.getData("foo").containsKey("foo"));
+        Assert.assertFalse(mock.map().containsKey("foo"));
+        Assert.assertNull(mock.get("foo"));
     }
-    
+
     @Test(expected = Exception.class)
     public void testLoadNonExistingRecord() {
         System.out.println(runway.load(Mock.class, -2));
+    }
+
+    @Test
+    public void testNoNoArgConstructor() {
+        Flock flock = new Flock("Jeff Nelson");
+        runway.save(flock); // TODO: change
+        System.out.println(runway.load(Flock.class, flock.id()));
     }
 
     class Mock extends Record {
@@ -121,13 +139,22 @@ public class RecordTest extends ClientServerTest {
         public Integer age;
 
         public boolean alive = true;
-        
+
         @SuppressWarnings("unused")
         private boolean foo = false;
-        
+
         @Readable
         private boolean bar = false;
 
+    }
+
+    class Flock extends Record {
+
+        public final String name;
+
+        public Flock(String name) {
+            this.name = name;
+        }
     }
 
 }

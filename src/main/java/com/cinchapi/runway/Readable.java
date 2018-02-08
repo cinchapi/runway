@@ -35,7 +35,7 @@ import java.lang.annotation.Target;
 /**
  * An annotation that can be applied to a private field within a {@link Record}
  * to indicate that the field can be read using the
- * {@link Record #getData(String...)} and related methods.
+ * {@link Record #get(String...)} and related methods.
  *
  * @author Jeff Nelson
  */

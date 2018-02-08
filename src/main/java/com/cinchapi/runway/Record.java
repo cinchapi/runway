@@ -2,46 +2,49 @@ package com.cinchapi.runway;
 
 import gnu.trove.map.TLongObjectMap;
 
+import java.io.IOException;
 import java.io.Serializable;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-
-import static com.google.common.base.Preconditions.checkState;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import com.cinchapi.common.base.AnyObjects;
-import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.concourse.thrift.TObject;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
+import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.io.BaseEncoding;
 import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonPrimitive;
+import com.google.gson.GsonBuilder;
+import com.google.gson.TypeAdapter;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonWriter;
 
 /**
  * A {@link Record} is a a wrapper around the same in {@link Concourse} that
@@ -58,21 +61,22 @@ import com.google.gson.JsonPrimitive;
  * <p>
  * Records will respect the native java modifiers placed on variables. This
  * means that transient fields are never stored or loaded from the database.
- * And, private fields are never included in a JSON {@link #dump()} or
+ * And, private fields are never included in a {@link #json() json} dump or
  * {@link #toString()} output.
  * </p>
- * <h2>Creating a new Instance</h2>
- * <p>
- * Records are created by calling the {@link Record#create(Class)} method and
- * supplying the desired class for the instance. Internally, the create routine
- * calls the no-arg constructor so subclasses should never provide their own
- * constructors.
- * </p>
  * 
- * @author jnelson
- * 
+ * @author Jeff Nelson
  */
+@SuppressWarnings("restriction")
 public abstract class Record {
+
+    /**
+     * Instance of {@link sun.misc.Unsafe} to use for hacky operations.
+     */
+    private static final sun.misc.Unsafe unsafe = Reflection
+            .getStatic("theUnsafe", sun.misc.Unsafe.class);
+
+    /* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
 
     /**
      * The key used to hold the section metadata.
@@ -91,6 +95,12 @@ public abstract class Record {
     private static long NULL_ID = -1;
 
     /**
+     * The {@link Field fields} that are defined in the base class.
+     */
+    private static Set<Field> INTERNAL_FIELDS = Sets.newHashSet(
+            Arrays.asList(Reflection.getAllDeclaredFields(Record.class)));
+
+    /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
      * 
@@ -102,10 +112,16 @@ public abstract class Record {
      */
     @SuppressWarnings("unchecked")
     protected static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, Concourse concourse) {
-        T record = (T) newDefaultInstance(clazz);
+            TLongObjectMap<Record> existing, ConnectionPool connections) {
+        T record = (T) newDefaultInstance(clazz, connections);
         Reflection.set("id", id, record); /* (authorized) */
-        record.load(concourse, existing);
+        Concourse concourse = connections.request();
+        try {
+            record.populate(concourse, existing);
+        }
+        finally {
+            connections.release(concourse);
+        }
         return record;
     }
 
@@ -134,66 +150,6 @@ public abstract class Record {
     }
 
     /**
-     * Convert a generic {@code object} to the appropriate {@link JsonElement}.
-     * <p>
-     * <em>This method accepts {@link Iterable} collections and recursively
-     * transforms them to JSON arrays.</em>
-     * </p>
-     * 
-     * @param object
-     * @return the appropriate JsonElement
-     */
-    private static JsonElement jsonify(Object object, Set<Record> seen) {
-        if(object instanceof Iterable
-                && Iterables.size((Iterable<?>) object) == 1) {
-            return jsonify(Iterables.getOnlyElement((Iterable<?>) object),
-                    seen);
-        }
-        else if(object instanceof Iterable) {
-            JsonArray array = new JsonArray();
-            for (Object element : (Iterable<?>) object) {
-                array.add(jsonify(element, seen));
-            }
-            return array;
-        }
-        else if(object instanceof Number) {
-            return new JsonPrimitive((Number) object);
-        }
-        else if(object instanceof Boolean) {
-            return new JsonPrimitive((Boolean) object);
-        }
-        else if(object instanceof String) {
-            return new JsonPrimitive((String) object);
-        }
-        else if(object instanceof Tag) {
-            return new JsonPrimitive((String) object.toString());
-        }
-        else if(object instanceof Record) {
-            if(!seen.contains(object)) {
-                seen.add((Record) object);
-                return ((Record) object).toJsonElement(seen);
-            }
-            else {
-                return jsonify(((Record) object).id() + " (recursive link)",
-                        seen);
-            }
-        }
-        else {
-            if(Reflection.getMethodUnboxed(object.getClass(), "toString")
-                    .getDeclaringClass().getName() != Object.class.getName()) {
-                // If the object has overridden the toString method, then
-                // respect it and use it as the json value.
-                return new JsonPrimitive(object.toString());
-            }
-            else {
-                Gson gson = new Gson();
-                return gson.toJsonTree(object);
-            }
-
-        }
-    }
-
-    /**
      * Get a new instance of {@code clazz} by calling the default (zero-arg)
      * constructor, if it exists. This method attempts to correctly invoke
      * constructors for nested inner classes.
@@ -202,30 +158,23 @@ public abstract class Record {
      * @return the instance of the {@code clazz}.
      */
     @SuppressWarnings("unchecked")
-    private static <T> T newDefaultInstance(Class<T> clazz) {
+    private static <T> T newDefaultInstance(Class<T> clazz,
+            ConnectionPool connections) {
         try {
-            Class<?> enclosingClass = clazz.getEnclosingClass();
-            if(enclosingClass != null) {
-                Object enclosingInstance = newDefaultInstance(enclosingClass);
-                Constructor<?> constructor = clazz
-                        .getDeclaredConstructor(enclosingClass);
-                constructor.setAccessible(true);
-                return (T) constructor.newInstance(enclosingInstance);
-
-            }
-            else {
-                return Reflection.newInstance(clazz);
-            }
+            // Use Unsafe to allocate the instance and reflectively set all the
+            // default fields defined herewithin so there's no requirement for
+            // implementing classes to contain a no-arg constructor.
+            T instance = (T) unsafe.allocateInstance(clazz);
+            Reflection.set("__", clazz.getName(), instance);
+            Reflection.set("deleted", false, instance);
+            Reflection.set("dynamicData", Maps.newHashMap(), instance);
+            Reflection.set("errors", Lists.newArrayList(), instance);
+            Reflection.set("id", NULL_ID, instance);
+            Reflection.set("inViolation", false, instance);
+            Reflection.set("connections", connections, instance);
+            return instance;
         }
-        catch (InstantiationException | NoSuchMethodException
-                | RuntimeException e) {
-            System.err.println(AnyStrings.format(
-                    "Runway crashed because {} does not contain a no-arg constructor. Exiting now.",
-                    clazz.getName()));
-            System.exit(1);
-            throw CheckedExceptions.throwAsRuntimeException(e);
-        }
-        catch (ReflectiveOperationException e) {
+        catch (InstantiationException e) {
             throw CheckedExceptions.throwAsRuntimeException(e);
         }
     }
@@ -266,8 +215,38 @@ public abstract class Record {
      */
     private transient boolean inViolation = false;
 
+    /**
+     * The {@link Concourse} database in which this {@link Record} is stored.
+     */
+    private ConnectionPool connections = null;
+
+    /**
+     * Construct a new instance.
+     * 
+     * @param concourse
+     */
     public Record() {
         this.id = Time.now();
+        if(PINNED_RUNWAY_INSTANCE != null) {
+            this.connections = PINNED_RUNWAY_INSTANCE.connections;
+        }
+    }
+
+    /**
+     * Assign this {@link Record} to a the specified {@code runway} instance.
+     * <p>
+     * Each {@link Record} must know the {@link Runway} instance in which it is
+     * stored. Explicit assignment via this method is only required if there are
+     * more than one {@link Runway} instances in the application. Otherwise, the
+     * single {@link Runway} instance is auto assigned to all Records when they
+     * are created and loaded.
+     * </p>
+     * 
+     * @param runway the {@link Runway} instance where this {@link Record} is
+     *            stored.
+     */
+    public void assign(Runway runway) {
+        connections = runway.connections;
     }
 
     /**
@@ -276,26 +255,6 @@ public abstract class Record {
      */
     public void deleteOnSave() {
         deleted = true;
-    }
-
-    /**
-     * Dump the non private data in this {@link Record} as a JSON string.
-     * 
-     * @return the JSON string
-     */
-    public String dump() {
-        return toJsonElement().toString();
-    }
-
-    /**
-     * Dump the non private specified {@code} keys in this {@link Record} as a
-     * JSON string.
-     * 
-     * @param keys
-     * @return the json string
-     */
-    public String dump(String... keys) {
-        return toJsonElement(keys).toString();
     }
 
     @Override
@@ -319,76 +278,32 @@ public abstract class Record {
         Object value = dynamicData.get(key);
         if(value == null) {
             try {
-                value = Reflection.get(key, this);
+                Field field = Reflection.getDeclaredField(key, this);
+                if(isReadableField(field)) {
+                    return (T) field.get(this);
+                }
             }
             catch (Exception e) {/* ignore */}
+        }
+        if(value == null) {
+            value = tempData().get(key);
         }
         return (T) value;
     }
 
     /**
-     * Return a map that contains all of the non-private data in this record.
-     * For example, this method can be used to return data that can be sent to a
-     * template processor to map values to front-end variables. You can use the
-     * {@link #getMoreData()} method to define additional data values.
+     * Return a map that contains all of the data for the readable {@code keys}
+     * in this {@link Record}.
+     * <p>
+     * If you want to return all the readable data, use the {@link #map()}
+     * method.
+     * </p>
      * 
      * @return the data in this record
      */
-    public Map<String, Object> getData() {
-        try {
-            Map<String, Object> data = getMoreData();
-            Field[] fields = Reflection.getAllDeclaredFields(this);
-            data.put("id", id);
-            for (Field field : fields) {
-                Object value;
-                if(isReadableField(field)
-                        && (value = field.get(this)) != null) {
-                    data.put(field.getName(), value);
-                }
-            }
-            data.putAll(dynamicData);
-            return data;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-    }
-
-    /**
-     * Return a map that contains all of the non-private data in this record
-     * based on the specified {@code keys}. For example, this method can be used
-     * to return data that can be sent to a template processor to map values to
-     * front-end variables. You can use the {@link #getMoreData()} method to
-     * define
-     * additional data values, and the keys that map to those values will only
-     * be returned if they are included in {@code keys}.
-     * 
-     * @return the data in this record
-     */
-    public Map<String, Object> getData(String... keys) {
-        try {
-            Map<String, Object> data = getMoreData();
-            Set<String> _keys = Sets.newHashSet(keys);
-            for (String key : data.keySet()) {
-                if(!_keys.contains(key)) {
-                    data.remove(key);
-                }
-            }
-            Field[] fields = Reflection.getAllDeclaredFields(this);
-            data.put("id", id);
-            for (Field field : fields) {
-                Object value;
-                if(_keys.contains(field.getName()) && isReadableField(field)
-                        && (value = field.get(this)) != null) {
-                    data.put(field.getName(), value);
-                }
-            }
-            data.putAll(dynamicData);
-            return data;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
+    public Map<String, Object> get(String... keys) {
+        return Arrays.asList(keys).stream()
+                .collect(Collectors.toMap(Function.identity(), this::get));
     }
 
     @Override
@@ -405,8 +320,68 @@ public abstract class Record {
         return id;
     }
 
-    public final String section() {
-        return this.getClass().getName();
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data.
+     * 
+     * @return json string
+     */
+    public String json() {
+        return json(Sets.newHashSet());
+    }
+
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data from the specified {@code keys}.
+     * 
+     * @return json string
+     */
+    public String json(String... keys) {
+        return json(Sets.newHashSet(), keys);
+    }
+
+    /**
+     * Return a map that contains all of the readable data in this record.
+     * <p>
+     * If you only want to return specific fields, use the
+     * {@link #get(String...)} method.
+     * </p>
+     * 
+     * @return the data in this record
+     */
+    public Map<String, Object> map() {
+        Map<String, Object> data = tempData();
+        fields().forEach(field -> {
+            try {
+                Object value;
+                if(isReadableField(field)
+                        && (value = field.get(this)) != null) {
+                    data.put(field.getName(), value);
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        });
+        data.put("id", id);
+        data.putAll(dynamicData);
+        return data;
+
+    }
+
+    /**
+     * Save any changes made to this {@link Record}.
+     */
+    public boolean save() {
+        Verify.that(connections != null,
+                "Cannot perform an implicit save because this Record isn't pinned to a Concourse instance");
+        Concourse concourse = connections.request();
+        try {
+            return save(concourse);
+        }
+        finally {
+            connections.release(concourse);
+        }
     }
 
     /**
@@ -447,30 +422,9 @@ public abstract class Record {
         }
     }
 
-    /**
-     * Returns a {@link JsonElement} representation of this record which
-     * includes all of its non private fields.
-     * 
-     * @return the JsonElement representation
-     */
-    public JsonElement toJsonElement() {
-        return toJsonElement(Sets.<Record> newHashSet());
-    }
-
-    /**
-     * Returns a {@link JsonElement} representation of this record which
-     * includes all of the non private {@code keys} that are specified.
-     * 
-     * @param keys
-     * @return the JsonElement representation
-     */
-    public JsonElement toJsonElement(String... keys) {
-        return toJsonElement(Sets.<Record> newHashSet(), keys);
-    }
-
     @Override
     public final String toString() {
-        return dump();
+        return json();
     }
 
     /**
@@ -481,21 +435,20 @@ public abstract class Record {
      * @param existing
      */
     @SuppressWarnings({ "unchecked", "rawtypes", })
-    /* package */ final void load(Concourse concourse,
+    /* package */ final void populate(Concourse concourse,
             TLongObjectMap<Record> existing) {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
         checkConstraints(concourse);
-        try {
-            if(inZombieState(id, concourse)) {
-                concourse.clear(id);
-                throw new ZombieException();
-            }
-            // TODO: do a large select and populate the fields instead of
-            // doing individual gets
-            Field[] fields = Reflection.getAllDeclaredFields(this);
-            for (Field field : fields) {
+        if(inZombieState(id, concourse)) {
+            concourse.clear(id);
+            throw new ZombieException();
+        }
+        // TODO: do a large select and populate the fields instead of
+        // doing individual gets
+        fields().forEach(field -> {
+            try {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     String key = field.getName();
                     if(Record.class.isAssignableFrom(field.getType())) {
@@ -503,7 +456,7 @@ public abstract class Record {
                         if(link != null) {
                             long linkedId = link.longValue();
                             Record record = load(field.getType(), linkedId,
-                                    existing, concourse);
+                                    existing, connections);
                             field.set(this, record);
                         }
                     }
@@ -605,10 +558,10 @@ public abstract class Record {
                     }
                 }
             }
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        });
 
     }
 
@@ -633,7 +586,7 @@ public abstract class Record {
                 delete(concourse);
             }
             else {
-                saveUnsafe(concourse);
+                saveInTransaction(concourse);
             }
             return concourse.commit();
         }
@@ -655,11 +608,10 @@ public abstract class Record {
      * 
      * @param concourse
      */
-    /* package */ void saveUnsafe(final Concourse concourse) {
-        try {
-            concourse.verifyOrSet(SECTION_KEY, section(), id);
-            Field[] fields = Reflection.getAllDeclaredFields(this);
-            for (Field field : fields) {
+    /* package */ void saveInTransaction(final Concourse concourse) {
+        concourse.verifyOrSet(SECTION_KEY, __, id);
+        fields().forEach(field -> {
+            try {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     final String key = field.getName();
                     final Object value = field.get(this);
@@ -686,13 +638,11 @@ public abstract class Record {
                     }
                 }
             }
-            dynamicData.forEach((key, value) -> {
-                store(key, value, concourse, false);
-            });
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        });
+
     }
 
     /**
@@ -702,7 +652,7 @@ public abstract class Record {
      * 
      * @return the additional data
      */
-    protected Map<String, Object> getMoreData() {
+    protected Map<String, Object> tempData() {
         return Maps.newHashMap();
     }
 
@@ -716,8 +666,8 @@ public abstract class Record {
     private void checkConstraints(Concourse concourse) {
         try {
             String section = concourse.get(SECTION_KEY, id);
-            checkState(section != null);
-            checkState(
+            Verify.that(section != null);
+            Verify.that(
                     section.equals(__) || Class.forName(__)
                             .isAssignableFrom(Class.forName(section)),
                     "Cannot load a record from section %s "
@@ -737,6 +687,17 @@ public abstract class Record {
      */
     private void delete(Concourse concourse) {
         concourse.clear(id);
+    }
+
+    /**
+     * Return all the non-internal {@link Field fields} in this class.
+     * 
+     * @return the non-internal {@link Field fields}
+     */
+    private Set<Field> fields() {
+        return Arrays.asList(Reflection.getAllDeclaredFields(this)).stream()
+                .filter(field -> !INTERNAL_FIELDS.contains(field))
+                .collect(Collectors.toSet());
     }
 
     /**
@@ -780,6 +741,47 @@ public abstract class Record {
             return records.isEmpty()
                     || (records.contains(id) && records.size() == 1);
         }
+    }
+
+    private String json(Set<Record> seen, String... keys) {
+        Map<String, Object> data = keys.length == 0 ? map() : get(keys);
+
+        // Create a dynamic type adapter that will detect recursive links and
+        // prevent infinite recursion when trying to generate the json.
+        TypeAdapter<Record> recordTypeAdapter = new TypeAdapter<Record>() {
+
+            @Override
+            public Record read(JsonReader in) throws IOException {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void write(JsonWriter out, Record value) throws IOException {
+                if(!seen.contains(value)) {
+                    seen.add(value);
+                    out.jsonValue(value.json(seen));
+                }
+                else {
+                    out.value(value.id() + " (recursive link)");
+                }
+            }
+
+        };
+        Gson gson = new GsonBuilder()
+                .registerTypeAdapter(Object.class,
+                        TypeAdapters.forGenericObject().nullSafe())
+                .registerTypeAdapter(TObject.class,
+                        TypeAdapters.forTObject().nullSafe())
+                .registerTypeHierarchyAdapter(Collection.class,
+                        TypeAdapters.forCollection().nullSafe())
+                .registerTypeHierarchyAdapter(Map.class,
+                        TypeAdapters.forMap().nullSafe())
+                .registerTypeHierarchyAdapter(Record.class,
+                        recordTypeAdapter.nullSafe())
+                .disableHtmlEscaping().create();
+        // TODO: may need custom type adapters?
+
+        return gson.toJson(data);
     }
 
     /**
@@ -839,75 +841,4 @@ public abstract class Record {
         }
     }
 
-    /**
-     * Returns a {@link JsonElement} representation of this record which
-     * includes all of its non private fields.
-     * 
-     * @param seen - the records that have been previously serialized, so we
-     *            don't recurse infinitely
-     * 
-     * @return the JsonElement representation
-     */
-    private JsonElement toJsonElement(Set<Record> seen) {
-        try {
-            Field[] fields = Reflection.getAllDeclaredFields(this);
-            JsonObject json = new JsonObject();
-            json.addProperty("id", id);
-            Map<String, Object> more = getMoreData();
-            for (String key : more.keySet()) {
-                json.add(key, jsonify(more.get(key), seen));
-            }
-            for (Field field : fields) {
-                Object value = field.get(this);
-                if(isReadableField(field) && value != null) {
-                    json.add(field.getName(), jsonify(value, seen));
-                }
-            }
-            dynamicData.forEach((key, value) -> {
-                json.add(key, jsonify(value, seen));
-            });
-            return json;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-    }
-
-    /**
-     * Returns a {@link JsonElement} representation of this record which
-     * includes all of the non private {@code keys} that are specified.
-     * 
-     * @param keys
-     * @param seen - the records that have been previously serialized, so we
-     *            don't recurse infinitely
-     * @return the JsonElement representation
-     */
-    private JsonElement toJsonElement(Set<Record> seen, String... keys) {
-        try {
-            Set<String> _keys = Sets.newHashSet(keys);
-            Field[] fields = Reflection.getAllDeclaredFields(this);
-            JsonObject json = new JsonObject();
-            json.addProperty("id", id);
-            Map<String, Object> more = getMoreData();
-            for (String key : more.keySet()) {
-                if(_keys.contains(key)) {
-                    json.add(key, jsonify(more.get(key), seen));
-                }
-            }
-            for (Field field : fields) {
-                Object value;
-                if(_keys.contains(field.getName()) && isReadableField(field)
-                        && (value = field.get(this)) != null) {
-                    json.add(field.getName(), jsonify(value, seen));
-                }
-            }
-            dynamicData.forEach((key, value) -> {
-                json.add(key, jsonify(value, seen));
-            });
-            return json;
-        }
-        catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
-        }
-    }
 }

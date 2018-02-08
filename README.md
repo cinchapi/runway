@@ -3,10 +3,14 @@ Runway
 
 Runway is the official ORM (Object-Record Mapping) framework for Concourse. Runway provides a framework for persisting simple POJO-like objects to Concourse while automatically preserving transactional security.
 
-Each class represents a different "section" within Concourse and defines a common storage schema with its non-transient member variables. Java inheritence is supported, so member variables extend to subclasses. Runway intelligently detects variable types and stores the correct data in Concourse. For example, variables that are instances of the `Record` class are stored in Concourse as links. Variables that hold arrays or collections have each unique value stored individually for the appropriate key in the record. Finally, variables that are non-primitive serializable types have their serializable forms stored.
+Persistable types must extend the `Record` class. Like Concourse, Runway doesn't insist on being given an explicit schema for Records. The class definition and some optional annotations are all that are required to define the storage schema. By default, Runway respects Java access rules. For example, private fields are saved but never exposed and transient fields are not stored in the database.
+
+Java inheritence is supported, so member variables extend to subclasses.
+
+Runway intelligently detects variable types and stores the correct data in Concourse. For example, variables that are instances of the `Record` class are stored in Concourse as links. Variables that hold arrays or collections have each unique value stored individually for the appropriate key in the record. Finally, variables that are non-primitive serializable types have their serializable forms stored.
 
 ### Constraints
-You can use annotations to declare database contraints on member variables within the class. Runway checks for these annotations when saving records and enforces the appropriate constraint.
+You can use annotations to declare optional database contraints on member variables within the class. Runway checks for these annotations when saving records and enforces the appropriate constraint.
   * `Required` - the record cannot be saved if the value of the variable is `null` or an empty collection/array
   * `Unique` - the record cannot be saved if another record in the class has the same value
   * `ValidatedBy` - the record cannot be saved in the value does not pass the specified validator
@@ -16,8 +20,6 @@ Each Record type should extend the `Record` class. Once the class is created, yo
 
 Each Record has a unique `id` that is automatically assigned during creation. You can get the id for any record using the `getId()` method.
 
-**You should never create a constructor for a Record sublcass. All records are created using static factory methods and fields are updated either individually or using instance methods.**
-
 ```
 public class User extends Record {
 
@@ -25,7 +27,7 @@ public class User extends Record {
      * Login and load the appropriate user instance that has the {@code email}
      * and {@code password} login information. If those credentials do not
      * identify a user, then return null.
-     * 
+     *
      * @param email
      * @param password
      * @return the User instance or {@code null} if the credentials are not
@@ -87,7 +89,7 @@ public class User extends Record {
      * Return the email address for this user. To set this value, use the
      * {@link #setLoginInfo(String, String)} method so that the password hash is
      * appropriately updated.
-     * 
+     *
      * @return the email address
      */
     public String getEmail() {
@@ -96,7 +98,7 @@ public class User extends Record {
 
     /**
      * Set the login information for this user.
-     * 
+     *
      * @param email
      * @param password
      */
