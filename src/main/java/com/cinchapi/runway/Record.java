@@ -794,13 +794,12 @@ public abstract class Record {
             }
 
         };
+        //TODO: write custom type adapters...
         GsonBuilder builder = new GsonBuilder()
                 .registerTypeAdapter(Object.class,
                         TypeAdapters.forGenericObject().nullSafe())
                 .registerTypeAdapter(TObject.class,
                         TypeAdapters.forTObject().nullSafe())
-                .registerTypeHierarchyAdapter(Collection.class,
-                        TypeAdapters.forCollection().nullSafe())
                 .registerTypeHierarchyAdapter(Record.class,
                         recordTypeAdapter.nullSafe())
                 .disableHtmlEscaping();
