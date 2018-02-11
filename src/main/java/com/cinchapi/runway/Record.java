@@ -108,22 +108,18 @@ public abstract class Record {
      * @param clazz
      * @param id
      * @param existing
-     * @param concourse
+     * @param connections
      * @return the loaded Record
      */
-    @SuppressWarnings("unchecked")
     protected static <T extends Record> T load(Class<?> clazz, long id,
             TLongObjectMap<Record> existing, ConnectionPool connections) {
-        T record = (T) newDefaultInstance(clazz, connections);
-        Reflection.set("id", id, record); /* (authorized) */
         Concourse concourse = connections.request();
         try {
-            record.populate(concourse, existing);
+            return load(clazz, id, existing, connections, concourse);
         }
         finally {
             connections.release(concourse);
         }
-        return record;
     }
 
     /**
@@ -148,6 +144,27 @@ public abstract class Record {
         return (!Modifier.isPrivate(field.getModifiers())
                 || field.isAnnotationPresent(Readable.class))
                 && !Modifier.isTransient(field.getModifiers());
+    }
+
+    /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id}.
+     * 
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @param concourse
+     * @return the loaded Record
+     */
+    @SuppressWarnings("unchecked")
+    private static <T extends Record> T load(Class<?> clazz, long id,
+            TLongObjectMap<Record> existing, ConnectionPool connections,
+            Concourse concourse) {
+        T record = (T) newDefaultInstance(clazz, connections);
+        Reflection.set("id", id, record); /* (authorized) */
+        record.load(concourse, existing);
+        return record;
     }
 
     /**
@@ -440,7 +457,7 @@ public abstract class Record {
      * @param existing
      */
     @SuppressWarnings({ "unchecked", "rawtypes", })
-    /* package */ final void populate(Concourse concourse,
+    /* package */ final void load(Concourse concourse,
             TLongObjectMap<Record> existing) {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
@@ -461,7 +478,7 @@ public abstract class Record {
                         if(link != null) {
                             long linkedId = link.longValue();
                             Record record = load(field.getType(), linkedId,
-                                    existing, connections);
+                                    existing, connections, concourse);
                             field.set(this, record);
                         }
                     }
@@ -497,8 +514,8 @@ public abstract class Record {
                                     else {
                                         Class<? extends Record> linkClass = (Class<? extends Record>) Class
                                                 .forName(section.toString());
-                                        item = Reflection.newInstance(linkClass,
-                                                link, existing);
+                                        item = load(linkClass, link, existing,
+                                                connections, concourse);
                                     }
                                 }
                                 else {
@@ -651,13 +668,13 @@ public abstract class Record {
     }
 
     /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its fields. For example, this is a good way to provide template
-     * specific information that isn't persisted to the database.
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
      * 
-     * @return the additional data
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
      */
-    protected Map<String, Object> tempData() {
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
         return Maps.newHashMap();
     }
 
@@ -673,13 +690,13 @@ public abstract class Record {
     }
 
     /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
+     * Provide additional data about this Record that might not be encapsulated
+     * in its fields. For example, this is a good way to provide template
+     * specific information that isn't persisted to the database.
      * 
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
+     * @return the additional data
      */
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
+    protected Map<String, Object> tempData() {
         return Maps.newHashMap();
     }
 
@@ -794,7 +811,7 @@ public abstract class Record {
             }
 
         };
-        //TODO: write custom type adapters...
+        // TODO: write custom type adapters...
         GsonBuilder builder = new GsonBuilder()
                 .registerTypeAdapter(Object.class,
                         TypeAdapters.forGenericObject().nullSafe())

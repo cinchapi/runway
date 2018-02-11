@@ -1,5 +1,6 @@
 package com.cinchapi.runway;
 
+import java.util.List;
 import java.util.Map;
 
 import org.junit.Assert;
@@ -12,6 +13,7 @@ import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Required;
 import com.cinchapi.runway.Unique;
 import com.cinchapi.runway.json.JsonTypeWriter;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
 public class RecordTest extends ClientServerTest {
@@ -139,6 +141,13 @@ public class RecordTest extends ClientServerTest {
         Sock sock = new Sock("sock", new Dock("dock"));
         Assert.assertTrue(sock.json().contains("foo"));
     }
+    
+    @Test
+    public void testLoadRecordWithCollectionOfLinks() {
+        Lock lock = new Lock(ImmutableList.of(new Dock("dock")));
+        lock.save();
+        Assert.assertEquals(lock, runway.load(Lock.class, lock.id()));
+    }
 
     class Mock extends Record {
 
@@ -182,6 +191,14 @@ public class RecordTest extends ClientServerTest {
             return ImmutableMap.of(Dock.class, (value) -> "foo");
         }
 
+    }
+    
+    class Lock extends Record  {
+        public final List<Dock> docks;
+        
+        public Lock(List<Dock> docks) {
+            this.docks = docks;
+        }
     }
 
     class Dock extends Record {
