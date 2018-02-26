@@ -115,7 +115,9 @@ public final class Runway implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        connections.close();
+        if(!connections.isClosed()) {
+            connections.close();
+        }
         instances.remove(this);
         if(instances.size() == 1) {
             Record.PINNED_RUNWAY_INSTANCE = instances.iterator().next();
