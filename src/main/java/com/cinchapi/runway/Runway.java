@@ -234,7 +234,7 @@ public final class Runway implements AutoCloseable {
         if(records.length == 1) {
             Concourse concourse = connections.request();
             try {
-                return records[0].save(concourse);
+                return records[0].save(concourse, Sets.newHashSet());
             }
             finally {
                 connections.release(concourse);
@@ -248,10 +248,11 @@ public final class Runway implements AutoCloseable {
                 concourse.stage();
                 concourse.set("transaction_id", transactionId, METADATA_RECORD);
                 Set<Record> waiting = Sets.newHashSet(records);
+                Set<Record> seen = Sets.newHashSet();
                 waitingToBeSaved.put(transactionId, waiting);
                 for (Record record : records) {
                     current = record;
-                    record.saveWithinTransaction(concourse);
+                    record.saveWithinTransaction(concourse, seen);
                 }
                 concourse.clear("transaction_id", METADATA_RECORD);
                 return concourse.commit();
