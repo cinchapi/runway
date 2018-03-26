@@ -399,7 +399,7 @@ public abstract class Record {
                 "Cannot perform an implicit save because this Record isn't pinned to a Concourse instance");
         Concourse concourse = connections.request();
         try {
-            return save(concourse);
+            return save(concourse, Sets.newHashSet());
         }
         finally {
             connections.release(concourse);
@@ -599,7 +599,7 @@ public abstract class Record {
      * 
      * @return {@code true} if all the changes have been atomically saved.
      */
-    /* package */ final boolean save(Concourse concourse) {
+    /* package */ final boolean save(Concourse concourse, Set<Record> seen) {
         try {
             Preconditions.checkState(!inViolation);
             errors.clear();
@@ -608,7 +608,7 @@ public abstract class Record {
                 delete(concourse);
             }
             else {
-                saveWithinTransaction(concourse);
+                saveWithinTransaction(concourse, seen);
             }
             return concourse.commit();
         }
@@ -630,7 +630,7 @@ public abstract class Record {
      * 
      * @param concourse
      */
-    /* package */ void saveWithinTransaction(final Concourse concourse) {
+    /* package */ void saveWithinTransaction(final Concourse concourse, Set<Record> seen) {
         concourse.verifyOrSet(SECTION_KEY, __, id);
         fields().forEach(field -> {
             try {
@@ -656,7 +656,7 @@ public abstract class Record {
                                 field.getName() + " is required");
                     }
                     if(value != null) {
-                        store(key, value, concourse, false);
+                        store(key, value, concourse, false, seen);
                     }
                 }
             }
@@ -845,11 +845,14 @@ public abstract class Record {
      */
     @SuppressWarnings("rawtypes")
     private void store(String key, Object value, Concourse concourse,
-            boolean append) {
+            boolean append, Set<Record> seen) {
         // TODO: dirty field detection!
         if(value instanceof Record) {
             Record record = (Record) value;
-            record.saveWithinTransaction(concourse);
+            if(!seen.contains(record)) {
+                seen.add(record);
+                record.saveWithinTransaction(concourse, seen);
+            }   
             concourse.link(key, record.id, id);
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
@@ -858,7 +861,7 @@ public abstract class Record {
                                       // based approach to delete only values
                                       // that should be deleted
             for (Object item : (Iterable<?>) value) {
-                store(key, item, concourse, true);
+                store(key, item, concourse, true, seen);
             }
         }
         else if(value.getClass().isPrimitive() || value instanceof String
@@ -880,12 +883,12 @@ public abstract class Record {
             ByteBuffer bytes = Serializables.getBytes((Serializable) value);
             Tag base64 = Tag.create(BaseEncoding.base64Url()
                     .encode(ByteBuffers.toByteArray(bytes)));
-            store(key, base64, concourse, append);
+            store(key, base64, concourse, append, seen);
         }
         else {
             Gson gson = new Gson();
             Tag json = Tag.create(gson.toJson(value));
-            store(key, json, concourse, append);
+            store(key, json, concourse, append, seen);
         }
     }
 

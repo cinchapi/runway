@@ -15,6 +15,7 @@ import com.cinchapi.runway.Unique;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
 
 public class RecordTest extends ClientServerTest {
 
@@ -148,6 +149,16 @@ public class RecordTest extends ClientServerTest {
         lock.save();
         Assert.assertEquals(lock, runway.load(Lock.class, lock.id()));
     }
+    
+    @Test
+    public void testCircularLinks() {
+        Tock tock = new Tock();
+        Stock stock = new Stock();
+        tock.stocks.add(stock);
+        stock.tock = tock;
+        tock.save();
+        Assert.assertTrue(true);
+    }
 
     class Mock extends Record {
 
@@ -208,6 +219,18 @@ public class RecordTest extends ClientServerTest {
         public Dock(String dock) {
             this.dock = dock;
         }
+    }
+    
+    class Tock extends Record {
+        public List<Stock> stocks = Lists.newArrayList();
+        
+        public Tock() {
+            
+        }
+    }
+    
+    class Stock extends Record {
+        public Tock tock;
     }
 
 }
