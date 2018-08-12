@@ -25,6 +25,7 @@ import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
+import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
@@ -553,6 +554,10 @@ public abstract class Record {
                             field.set(this, Tag.create((String) object));
                         }
                     }
+                    else if(field.getType() == Timestamp.class) {
+                        Object object = concourse.get(key, id);
+                        field.set(this, object);
+                    }
                     else if(field.getType().isEnum()) {
                         String stored = concourse.get(key, id);
                         if(stored != null) {
@@ -630,7 +635,8 @@ public abstract class Record {
      * 
      * @param concourse
      */
-    /* package */ void saveWithinTransaction(final Concourse concourse, Set<Record> seen) {
+    /* package */ void saveWithinTransaction(final Concourse concourse,
+            Set<Record> seen) {
         concourse.verifyOrSet(SECTION_KEY, __, id);
         fields().forEach(field -> {
             try {
@@ -852,7 +858,7 @@ public abstract class Record {
             if(!seen.contains(record)) {
                 seen.add(record);
                 record.saveWithinTransaction(concourse, seen);
-            }   
+            }
             concourse.link(key, record.id, id);
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
@@ -868,7 +874,7 @@ public abstract class Record {
                 || value instanceof Tag || value instanceof Link
                 || value instanceof Integer || value instanceof Long
                 || value instanceof Float || value instanceof Double
-                || value instanceof Boolean) {
+                || value instanceof Boolean || value instanceof Timestamp) {
             if(append) {
                 concourse.add(key, value, id);
             }
