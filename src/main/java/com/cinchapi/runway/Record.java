@@ -304,7 +304,7 @@ public abstract class Record {
             catch (Exception e) {/* ignore */}
         }
         if(value == null) {
-            value = tempData().get(key);
+            value = derived().get(key);
         }
         return (T) value;
     }
@@ -368,7 +368,7 @@ public abstract class Record {
      * @return the data in this record
      */
     public Map<String, Object> map() {
-        Map<String, Object> data = Maps.newHashMap(tempData());
+        Map<String, Object> data = Maps.newHashMap(derived());
         fields().forEach(field -> {
             try {
                 Object value;
@@ -696,7 +696,7 @@ public abstract class Record {
      * 
      * @return the additional data
      */
-    protected Map<String, Object> tempData() {
+    protected Map<String, Object> derived() {
         return Maps.newHashMap();
     }
 
