@@ -31,6 +31,7 @@ import java.util.Set;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
+import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
@@ -48,14 +49,14 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  */
 public final class Runway implements AutoCloseable {
 
+    private static Set<Runway> instances = Sets.newHashSet();
+
     /**
      * The record where metadata is stored. We typically store some transient
      * metadata for transaction routing within this record (so its only visible
      * within the specific transaction) and we clear it before commit time.
      */
     private static long METADATA_RECORD = -1;
-
-    private static Set<Runway> instances = Sets.newHashSet();
 
     public static Runway connect() {
         return null;
@@ -127,6 +128,27 @@ public final class Runway implements AutoCloseable {
         }
     }
 
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> find(Class<T> clazz,
+            BuildableState criteria) {
+        return find(clazz, criteria.build());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the matching records
+     */
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
@@ -145,6 +167,31 @@ public final class Runway implements AutoCloseable {
         }
     }
 
+    /**
+     * Find the one record of type {@code clazz} that matches the
+     * {@code criteria}. If more than one record matches, throw a
+     * {@link DuplicateEntryException}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the one matching record
+     * @throws DuplicateEntryException
+     */
+    public <T extends Record> T findOne(Class<T> clazz,
+            BuildableState criteria) {
+        return findOne(clazz, criteria.build());
+    }
+
+    /**
+     * Find the one record of type {@code clazz} that matches the
+     * {@code criteria}. If more than one record matches, throw a
+     * {@link DuplicateEntryException}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the one matching record
+     * @throws DuplicateEntryException
+     */
     public <T extends Record> T findOne(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
