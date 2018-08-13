@@ -29,7 +29,6 @@ import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
-import com.cinchapi.concourse.thrift.TObject;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
 import com.cinchapi.concourse.util.TypeAdapters;
@@ -726,7 +725,7 @@ public abstract class Record {
         }
         catch (ReflectiveOperationException | IllegalStateException e) {
             inViolation = true;
-            throw Throwables.propagate(e);
+            throw CheckedExceptions.wrapAsRuntimeException(e);
         }
     }
 
@@ -819,10 +818,8 @@ public abstract class Record {
         };
         // TODO: write custom type adapters...
         GsonBuilder builder = new GsonBuilder()
-                .registerTypeAdapter(Object.class,
-                        TypeAdapters.forGenericObject().nullSafe())
-                .registerTypeAdapter(TObject.class,
-                        TypeAdapters.forTObject().nullSafe())
+                .registerTypeAdapterFactory(TypeAdapters.primitiveTypesFactory(true))
+                .registerTypeAdapterFactory(TypeAdapters.collectionFactory(true))
                 .registerTypeHierarchyAdapter(Record.class,
                         recordTypeAdapter.nullSafe())
                 .disableHtmlEscaping();

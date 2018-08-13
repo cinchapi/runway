@@ -7,6 +7,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.util.Random;
 import com.cinchapi.runway.Record;
@@ -142,14 +143,14 @@ public class RecordTest extends ClientServerTest {
         Sock sock = new Sock("sock", new Dock("dock"));
         Assert.assertTrue(sock.json().contains("foo"));
     }
-    
+
     @Test
     public void testLoadRecordWithCollectionOfLinks() {
         Lock lock = new Lock(ImmutableList.of(new Dock("dock")));
         lock.save();
         Assert.assertEquals(lock, runway.load(Lock.class, lock.id()));
     }
-    
+
     @Test
     public void testCircularLinks() {
         Tock tock = new Tock();
@@ -158,6 +159,13 @@ public class RecordTest extends ClientServerTest {
         stock.tock = tock;
         tock.save();
         Assert.assertTrue(true);
+    }
+
+    @Test
+    public void testConcourseTypesJsonRepresentation() {
+        Pock pock = new Pock("test");
+        Assert.assertEquals("{\"tag\":\"test\",\"id\":" + pock.id() + "}",
+                pock.json());
     }
 
     class Mock extends Record {
@@ -196,17 +204,17 @@ public class RecordTest extends ClientServerTest {
             this.sock = sock;
             this.dock = dock;
         }
-        
+
         @Override
-        public Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters(){
+        public Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
             return ImmutableMap.of(Dock.class, (value) -> "foo");
         }
 
     }
-    
-    class Lock extends Record  {
+
+    class Lock extends Record {
         public final List<Dock> docks;
-        
+
         public Lock(List<Dock> docks) {
             this.docks = docks;
         }
@@ -220,17 +228,32 @@ public class RecordTest extends ClientServerTest {
             this.dock = dock;
         }
     }
-    
+
     class Tock extends Record {
         public List<Stock> stocks = Lists.newArrayList();
-        
+
         public Tock() {
-            
+
         }
     }
-    
+
     class Stock extends Record {
         public Tock tock;
+    }
+
+    class Pock extends Record {
+        public Tag tag;
+
+        public Pock(String tag) {
+            this.tag = Tag.create(tag);
+        }
+
+        @Override
+        protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
+            return ImmutableMap.of(Tag.class,
+                    tag -> "\"" + tag.toString() + "\"");
+        }
+
     }
 
 }
