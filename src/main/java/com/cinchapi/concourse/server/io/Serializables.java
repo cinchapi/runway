@@ -37,8 +37,8 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 
+import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.io.ByteBuffers;
-import com.google.common.base.Throwables;
 
 /**
  * A collection of methods to make native java serialization/deserialization
@@ -67,7 +67,7 @@ public final class Serializables {
             return ByteBuffer.wrap(baos.toByteArray());
         }
         catch (IOException e) {
-            throw Throwables.propagate(e);
+            throw CheckedExceptions.wrapAsRuntimeException(e);
         }
     }
 
@@ -91,7 +91,7 @@ public final class Serializables {
             return object;
         }
         catch (IOException | ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
+            throw CheckedExceptions.wrapAsRuntimeException(e);
         }
     }
 
@@ -111,7 +111,7 @@ public final class Serializables {
             return read(bytes, clazz);
         }
         catch (ReflectiveOperationException e) {
-            throw Throwables.propagate(e);
+            throw CheckedExceptions.wrapAsRuntimeException(e);
         }
     }
 
@@ -132,7 +132,7 @@ public final class Serializables {
             lock.release();
         }
         catch (IOException e) {
-            throw Throwables.propagate(e);
+            throw CheckedExceptions.wrapAsRuntimeException(e);
         }
 
     }
