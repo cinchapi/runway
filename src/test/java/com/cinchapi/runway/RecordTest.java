@@ -185,12 +185,19 @@ public class RecordTest extends ClientServerTest {
         hec.enumCollection
                 .forEach(se -> Assert.assertTrue(se instanceof SampleEnum));
     }
-    
+
     @Test
     public void testLoadTag() {
         Pock pock = new Pock("foo");
         pock.save();
-        runway.load(Pock.class, pock.id());      
+        runway.load(Pock.class, pock.id()); // lack of Exception means we pass
+    }
+
+    @Test
+    public void testLoadEmptyCollection() {
+        Shoe shoe = new Shoe(ImmutableList.of());
+        Assert.assertTrue(shoe.save());
+        runway.load(Shoe.class, shoe.id()); // lack of Exception means we pass
     }
 
     class Mock extends Record {
@@ -315,6 +322,16 @@ public class RecordTest extends ClientServerTest {
         public HasEnumCollection() {
             enumCollection.add(SampleEnum.FOO);
         }
+    }
+    
+    class Shoe extends Record {
+        
+        public Shoe(List<String> shoes) {
+            this.shoes = shoes;
+        }
+        
+        List<String> shoes;
+        boolean ignore = false;
     }
 
 }

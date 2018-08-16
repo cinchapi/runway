@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
 import com.cinchapi.common.base.AnyObjects;
+import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
@@ -568,7 +569,8 @@ public abstract class Record {
                                 value = Lists.newArrayList();
                             }
                             Collections.addAll((Collection) value,
-                                    collector.build());
+                                    collector.length() > 0 ? collector.build()
+                                            : Array.containing());
                         }
                     }
                     else {
