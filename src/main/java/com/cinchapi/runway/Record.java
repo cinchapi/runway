@@ -787,9 +787,13 @@ public abstract class Record {
         }
         else if(type.isPrimitive() || ImmutableSet
                 .of(String.class, Integer.class, Long.class, Float.class,
-                        Double.class, Boolean.class, Timestamp.class, Tag.class)
+                        Double.class, Boolean.class, Timestamp.class)
                 .contains(type)) {
             converted = stored;
+        }
+        else if(type == Tag.class) {
+            // NOTE: Concourse returns Tag values as String objects.
+            converted = Tag.create(stored.toString());
         }
         else if(type.isEnum()) {
             converted = Enum.valueOf((Class<Enum>) type, stored.toString());

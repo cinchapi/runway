@@ -185,6 +185,13 @@ public class RecordTest extends ClientServerTest {
         hec.enumCollection
                 .forEach(se -> Assert.assertTrue(se instanceof SampleEnum));
     }
+    
+    @Test
+    public void testLoadTag() {
+        Pock pock = new Pock("foo");
+        pock.save();
+        runway.load(Pock.class, pock.id());      
+    }
 
     class Mock extends Record {
 
