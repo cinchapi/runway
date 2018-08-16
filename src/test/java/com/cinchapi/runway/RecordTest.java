@@ -1,5 +1,6 @@
 package com.cinchapi.runway;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -14,11 +15,14 @@ import com.cinchapi.concourse.util.Random;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Required;
 import com.cinchapi.runway.Unique;
-import com.cinchapi.runway.json.JsonTypeWriter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
+import com.google.gson.GsonBuilder;
+import com.google.gson.TypeAdapter;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonWriter;
 
 public class RecordTest extends ClientServerTest {
 
@@ -167,16 +171,19 @@ public class RecordTest extends ClientServerTest {
     @Test
     public void testConcourseTypesJsonRepresentation() {
         Pock pock = new Pock("test");
-        Assert.assertEquals("{\"tag\":\"test\",\"id\":" + pock.id() + "}",
+        Assert.assertEquals(
+                new GsonBuilder().setPrettyPrinting().create().toJson(
+                        ImmutableMap.of("tag", "test", "id", pock.id())),
                 pock.json());
     }
-    
+
     @Test
     public void testLoadEnumWithinCollection() {
         HasEnumCollection hec = new HasEnumCollection();
         hec.save();
         hec = runway.load(HasEnumCollection.class, hec.id());
-        hec.enumCollection.forEach(se -> Assert.assertTrue(se instanceof SampleEnum));
+        hec.enumCollection
+                .forEach(se -> Assert.assertTrue(se instanceof SampleEnum));
     }
 
     class Mock extends Record {
@@ -217,10 +224,22 @@ public class RecordTest extends ClientServerTest {
         }
 
         @Override
-        public Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
-            return ImmutableMap.of(Dock.class, (value) -> "foo");
-        }
+        public Map<Class<?>, TypeAdapter<?>> typeAdapters() {
+            return ImmutableMap.of(Dock.class, new TypeAdapter<Dock>() {
 
+                @Override
+                public void write(JsonWriter out, Dock value)
+                        throws IOException {
+                    out.value("foo");
+                }
+
+                @Override
+                public Dock read(JsonReader in) throws IOException {
+                    return null;
+                }
+
+            });
+        }
     }
 
     class Lock extends Record {
@@ -260,20 +279,32 @@ public class RecordTest extends ClientServerTest {
         }
 
         @Override
-        protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
-            return ImmutableMap.of(Tag.class,
-                    tag -> "\"" + tag.toString() + "\"");
+        public Map<Class<?>, TypeAdapter<?>> typeAdapters() {
+            return ImmutableMap.of(Tag.class, new TypeAdapter<Tag>() {
+
+                @Override
+                public void write(JsonWriter out, Tag value)
+                        throws IOException {
+                    out.value(tag.toString());
+                }
+
+                @Override
+                public Tag read(JsonReader in) throws IOException {
+                    return null;
+                }
+
+            });
         }
 
     }
-    
+
     enum SampleEnum {
         FOO
     }
-    
+
     class HasEnumCollection extends Record {
         Set<SampleEnum> enumCollection = Sets.newHashSet();
-        
+
         public HasEnumCollection() {
             enumCollection.add(SampleEnum.FOO);
         }

@@ -40,15 +40,19 @@ import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.google.common.collect.Streams;
 import com.google.common.io.BaseEncoding;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.TypeAdapter;
+import com.google.gson.TypeAdapterFactory;
+import com.google.gson.reflect.TypeToken;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
 
@@ -73,14 +77,8 @@ import com.google.gson.stream.JsonWriter;
  * 
  * @author Jeff Nelson
  */
-@SuppressWarnings("restriction")
+@SuppressWarnings({ "restriction", "deprecation" })
 public abstract class Record {
-
-    /**
-     * Instance of {@link sun.misc.Unsafe} to use for hacky operations.
-     */
-    private static final sun.misc.Unsafe unsafe = Reflection
-            .getStatic("theUnsafe", sun.misc.Unsafe.class);
 
     /* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
 
@@ -93,18 +91,24 @@ public abstract class Record {
                                                          // to avoid collisions
 
     /**
-     * The description of a record that is considered to be in "zombie" state.
-     */
-    private static final Set<String> ZOMBIE_DESCRIPTION = Sets
-            .newHashSet(SECTION_KEY);
-
-    private static long NULL_ID = -1;
-
-    /**
      * The {@link Field fields} that are defined in the base class.
      */
     private static Set<Field> INTERNAL_FIELDS = Sets.newHashSet(
             Arrays.asList(Reflection.getAllDeclaredFields(Record.class)));
+
+    private static long NULL_ID = -1;
+
+    /**
+     * Instance of {@link sun.misc.Unsafe} to use for hacky operations.
+     */
+    private static final sun.misc.Unsafe unsafe = Reflection
+            .getStatic("theUnsafe", sun.misc.Unsafe.class);
+
+    /**
+     * The description of a record that is considered to be in "zombie" state.
+     */
+    private static final Set<String> ZOMBIE_DESCRIPTION = Sets
+            .newHashSet(SECTION_KEY);
 
     /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
@@ -125,6 +129,49 @@ public abstract class Record {
         finally {
             connections.release(concourse);
         }
+    }
+
+    /**
+     * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
+     * track of linked records to prevent infinite recursion.
+     * 
+     * @param links
+     * @return the {@link TypeAdapterFactory}
+     */
+    private static TypeAdapterFactory generateDynamicRecordTypeAdapterFactory(
+            Set<Record> links) {
+        return new TypeAdapterFactory() {
+
+            @SuppressWarnings("unchecked")
+            @Override
+            public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
+                if(type.getRawType().isAssignableFrom(Record.class)) {
+                    return (TypeAdapter<T>) new TypeAdapter<Record>() {
+
+                        @Override
+                        public Record read(JsonReader in) throws IOException {
+                            throw new UnsupportedOperationException();
+                        }
+
+                        @Override
+                        public void write(JsonWriter out, Record value)
+                                throws IOException {
+                            if(!links.contains(value)) {
+                                links.add(value);
+                                out.jsonValue(value.json(links));
+                            }
+                            else {
+                                out.value(value.id() + " (recursive link)");
+                            }
+                        }
+                    }.nullSafe();
+                }
+                else {
+                    return null;
+                }
+            }
+
+        };
     }
 
     /**
@@ -203,10 +250,22 @@ public abstract class Record {
     }
 
     /**
+     * A log of any suppressed errors related to this Record. The descriptions
+     * of these errors can be thrown at any point from the
+     * {@link #throwSupressedExceptions()} method.
+     */
+    /* package */ transient List<String> errors = Lists.newArrayList();
+
+    /**
      * The variable that holds the name of the section in the database where
      * this record is stored.
      */
     private transient String __ = getClass().getName();
+
+    /**
+     * The {@link Concourse} database in which this {@link Record} is stored.
+     */
+    private ConnectionPool connections = null;
 
     /**
      * A flag that indicates if the record has been deleted using the
@@ -221,13 +280,6 @@ public abstract class Record {
     private transient final Map<String, Object> dynamicData = Maps.newHashMap();
 
     /**
-     * A log of any suppressed errors related to this Record. The descriptions
-     * of these errors can be thrown at any point from the
-     * {@link #throwSupressedExceptions()} method.
-     */
-    /* package */ transient List<String> errors = Lists.newArrayList();
-
-    /**
      * The primary key that is used to identify this Record in the database.
      */
     private transient long id = NULL_ID;
@@ -237,11 +289,6 @@ public abstract class Record {
      * therefore cannot be used without ruining the integrity of the database.
      */
     private transient boolean inViolation = false;
-
-    /**
-     * The {@link Concourse} database in which this {@link Record} is stored.
-     */
-    private ConnectionPool connections = null;
 
     /**
      * Construct a new instance.
@@ -642,12 +689,28 @@ public abstract class Record {
     }
 
     /**
+     * Return additional {@link TypeAdapter TypeAdapters} that should be used
+     * when generating the {@link #json()} for this {@link Record}.
+     * <p>
+     * Each {@link TypeAdapter} should be mapped from the most generic class or
+     * interface for which the adapter applies.
+     * </p>
+     * 
+     * @return the type adapters to use when serializing the Record to JSON.
+     */
+    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
+        return ImmutableMap.of();
+    }
+
+    /**
      * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
      * use when generating the {@link #json()} for this {@link Record}.
      * 
      * @return a mapping from a {@link Class} to a corresponding
      *         {@link JsonTypeWriter}.
+     * @deprecated use {@link #typeAdapters()} instead
      */
+    @Deprecated
     protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
         return Maps.newHashMap();
     }
@@ -658,7 +721,9 @@ public abstract class Record {
      * 
      * @return a mapping from a {@link Class} to a corresponding
      *         {@link JsonTypeWriter}.
+     * @deprecated use {@link #typeAdapters()} instead
      */
+    @Deprecated
     protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
         return Maps.newHashMap();
     }
@@ -804,45 +869,45 @@ public abstract class Record {
         }
     }
 
-    private String json(Set<Record> seen, String... keys) {
+    @SuppressWarnings({ "unchecked" })
+    private String json(Set<Record> links, String... keys) {
         Map<String, Object> data = keys.length == 0 ? map() : get(keys);
 
-        // Create a dynamic type adapter that will detect recursive links and
-        // prevent infinite recursion when trying to generate the json.
-        TypeAdapter<Record> recordTypeAdapter = new TypeAdapter<Record>() {
-
-            @Override
-            public Record read(JsonReader in) throws IOException {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public void write(JsonWriter out, Record value) throws IOException {
-                if(!seen.contains(value)) {
-                    seen.add(value);
-                    out.jsonValue(value.json(seen));
-                }
-                else {
-                    out.value(value.id() + " (recursive link)");
-                }
-            }
-
-        };
-        // TODO: write custom type adapters...
+        // Create a dynamic type Gson instance that will detect recursive links
+        // and prevent infinite recursion when trying to generate the JSON.
+        // @formatter:off
         GsonBuilder builder = new GsonBuilder()
                 .registerTypeAdapterFactory(
                         TypeAdapters.primitiveTypesFactory(true))
                 .registerTypeAdapterFactory(
                         TypeAdapters.collectionFactory(true))
-                .registerTypeHierarchyAdapter(Record.class,
-                        recordTypeAdapter.nullSafe())
+                .registerTypeAdapterFactory(generateDynamicRecordTypeAdapterFactory(links))
+                .setPrettyPrinting()
                 .disableHtmlEscaping();
-        jsonTypeWriters().forEach((clazz, writer) -> {
-            builder.registerTypeAdapter(clazz, writer.typeAdapter().nullSafe());
-        });
-        jsonTypeHierarchyWriters().forEach((clazz, writer) -> {
-            builder.registerTypeHierarchyAdapter(clazz,
-                    writer.typeAdapter().nullSafe());
+        // @formatter:on
+        Map<Class<?>, TypeAdapter<?>> adapters = Maps.newLinkedHashMap();
+        Streams.concat(jsonTypeWriters().entrySet().stream(),
+                jsonTypeHierarchyWriters().entrySet().stream())
+                .forEach(entry -> {
+                    Class<?> clazz = entry.getKey();
+                    TypeAdapter<?> adapter = entry.getValue().typeAdapter();
+                    adapters.put(clazz, adapter);
+                });
+        adapters.putAll(typeAdapters());
+        adapters.forEach((clazz, adapter) -> {
+            builder.registerTypeAdapterFactory(new TypeAdapterFactory() {
+
+                @Override
+                public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
+                    if(type.getRawType().isAssignableFrom(clazz)) {
+                        return (TypeAdapter<T>) adapter.nullSafe();
+                    }
+                    else {
+                        return null;
+                    }
+                }
+
+            });
         });
         Gson gson = builder.create();
         return gson.toJson(data);
