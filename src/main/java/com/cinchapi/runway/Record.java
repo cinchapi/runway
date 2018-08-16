@@ -7,9 +7,9 @@ import java.io.Serializable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -17,7 +17,10 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import javax.annotation.Nullable;
+
 import com.cinchapi.common.base.AnyObjects;
+import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.reflect.Reflection;
@@ -37,6 +40,8 @@ import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -456,9 +461,8 @@ public abstract class Record {
      * @param runway
      * @param existing
      */
-    @SuppressWarnings({ "unchecked", "rawtypes", })
-    /* package */ final void load(Concourse concourse,
-            TLongObjectMap<Record> existing) {
+    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
+    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
@@ -473,114 +477,68 @@ public abstract class Record {
             try {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     String key = field.getName();
-                    if(Record.class.isAssignableFrom(field.getType())) {
-                        Link link = ((Link) concourse.get(key, id));
-                        if(link != null) {
-                            long linkedId = link.longValue();
-                            Record record = load(field.getType(), linkedId,
-                                    existing, connections, concourse);
-                            field.set(this, record);
-                        }
-                    }
-                    else if(Collection.class
-                            .isAssignableFrom(field.getType())) {
-                        Collection collection = null;
-                        if(Modifier.isAbstract(field.getType().getModifiers())
-                                || Modifier.isInterface(
-                                        field.getType().getModifiers())) {
-                            if(field.getType() == Set.class) {
-                                collection = Sets.newLinkedHashSet();
+                    Class<?> type = field.getType();
+                    Object value = null;
+                    if(Collection.class.isAssignableFrom(type)
+                            || type.isArray()) {
+                        // Handle collections and collection-like variables by
+                        // fetching all the values for the #key from Concourse.
+                        Set<?> stored = concourse.select(key, id);
+                        Class<?> collectedType = type
+                                .isArray()
+                                        ? type.getComponentType()
+                                        : Iterables.getFirst(
+                                                Reflection.getTypeArguments(key,
+                                                        this.getClass()),
+                                                Object.class);
+                        ArrayBuilder collector = ArrayBuilder.builder();
+                        stored.forEach(item -> {
+                            Object converted = convert(key, collectedType, item,
+                                    concourse, existing);
+                            if(converted != null) {
+                                collector.add(converted);
                             }
-                            else { // assume list
-                                collection = Lists.newArrayList();
+                            else {
+                                // TODO: should we remove the object from
+                                // Concourse since it results in a #null value?
                             }
+                        });
+                        if(type.isArray()) {
+                            value = collector.build();
                         }
                         else {
-                            collection = (Collection) field.getType()
-                                    .newInstance();
-                        }
-                        Set<?> values = concourse.select(key, id);
-                        for (Object item : values) {
-                            if(item instanceof Link) {
-                                long link = ((Link) item).longValue();
-                                Record obj = existing.get(link);
-                                if(obj == null) {
-                                    String section = concourse.get(SECTION_KEY,
-                                            link);
-                                    if(Strings.isNullOrEmpty(section)) {
-                                        concourse.remove(key, item, id);
-                                        continue;
-                                    }
-                                    else {
-                                        Class<? extends Record> linkClass = (Class<? extends Record>) Class
-                                                .forName(section.toString());
-                                        item = load(linkClass, link, existing,
-                                                connections, concourse);
-                                    }
-                                }
-                                else {
-                                    item = obj;
-                                }
+                            if(!Modifier.isAbstract(type.getModifiers())
+                                    && !Modifier
+                                            .isInterface(type.getModifiers())) {
+                                // This is a concrete Collection type that can
+                                // be instantiated
+                                value = Reflection.newInstance(type);
                             }
-                            collection.add(item);
-                        }
-                        field.set(this, collection);
-                    }
-                    else if(field.getType().isArray()) {
-                        List list = new ArrayList();
-                        Set<?> values = concourse.select(key, id);
-                        for (Object item : values) {
-                            list.add(item);
-                        }
-                        field.set(this, list.toArray());
-                    }
-                    else if(field.getType().isPrimitive()
-                            || field.getType() == String.class
-                            || field.getType() == Integer.class
-                            || field.getType() == Long.class
-                            || field.getType() == Float.class
-                            || field.getType() == Double.class
-                            || field.getType() == Boolean.class) {
-                        Object value = concourse.get(key, id);
-                        if(value != null) { // Java doesn't allow primitive
-                                            // types to hold nulls
-                            field.set(this, concourse.get(key, id));
-                        }
-                    }
-                    else if(field.getType() == Tag.class) {
-                        Object object = concourse.get(key, id);
-                        if(object != null) {
-                            field.set(this, Tag.create((String) object));
-                        }
-                    }
-                    else if(field.getType() == Timestamp.class) {
-                        Object object = concourse.get(key, id);
-                        field.set(this, object);
-                    }
-                    else if(field.getType().isEnum()) {
-                        String stored = concourse.get(key, id);
-                        if(stored != null) {
-                            field.set(this,
-                                    Enum.valueOf((Class<Enum>) field.getType(),
-                                            stored.toString()));
-                        }
-                    }
-                    else if(Serializable.class
-                            .isAssignableFrom(field.getType())) {
-                        String base64 = concourse.get(key, id);
-                        if(base64 != null) {
-                            ByteBuffer bytes = ByteBuffer.wrap(
-                                    BaseEncoding.base64Url().decode(base64));
-                            field.set(this, Serializables.read(bytes,
-                                    (Class<Serializable>) field.getType()));
+                            else if(type == Set.class) {
+                                value = Sets.newLinkedHashSet();
+                            }
+                            else { // assume List
+                                value = Lists.newArrayList();
+                            }
+                            Collections.addAll((Collection) value,
+                                    collector.build());
                         }
                     }
                     else {
-                        Gson gson = new Gson();
-                        Object object = gson.fromJson(
-                                (String) concourse.get(key, id),
-                                field.getType());
-                        field.set(this, object);
+                        // Populate a non-collection variable with the most
+                        // recently stored value for the #key in Concourse.
+                        Object stored = concourse.get(key, id);
+                        if(stored != null) {
+                            value = convert(key, type, stored, concourse,
+                                    existing);
+                        }
+                    }
+                    if(value != null) {
+                        field.set(this, value);
+                    }
+                    else {
+                        // no-op; NOTE: Java doesn't allow primitive types to
+                        // hold null values
                     }
                 }
             }
@@ -673,6 +631,17 @@ public abstract class Record {
     }
 
     /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its fields. For example, this is a good way to provide template
+     * specific information that isn't persisted to the database.
+     * 
+     * @return the additional data
+     */
+    protected Map<String, Object> derived() {
+        return Maps.newHashMap();
+    }
+
+    /**
      * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
      * use when generating the {@link #json()} for this {@link Record}.
      * 
@@ -691,17 +660,6 @@ public abstract class Record {
      *         {@link JsonTypeWriter}.
      */
     protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its fields. For example, this is a good way to provide template
-     * specific information that isn't persisted to the database.
-     * 
-     * @return the additional data
-     */
-    protected Map<String, Object> derived() {
         return Maps.newHashMap();
     }
 
@@ -727,6 +685,60 @@ public abstract class Record {
             inViolation = true;
             throw CheckedExceptions.wrapAsRuntimeException(e);
         }
+    }
+
+    /**
+     * Convert the {@code stored} value for {@code key} into the appropriate
+     * Java object based on the field {@code type}.
+     * 
+     * @param key
+     * @param type
+     * @param stored
+     * @param concourse
+     * @param alreadyLoaded
+     * @return the converted Object
+     */
+    @Nullable
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private Object convert(String key, Class<?> type, Object stored,
+            Concourse concourse, TLongObjectMap<Record> alreadyLoaded) {
+        Object converted = null;
+        if(Record.class.isAssignableFrom(type)) {
+            Link link = (Link) stored;
+            long target = link.longValue();
+            converted = alreadyLoaded.get(target);
+            if(converted == null) {
+                String section = concourse.get(SECTION_KEY, target);
+                if(Strings.isNullOrEmpty(section)) {
+                    concourse.remove(key, stored, id); // do some ad-hoc cleanup
+                }
+                else {
+                    Class<? extends Record> targetClass = Reflection
+                            .getClassCasted(section);
+                    converted = load(targetClass, target, alreadyLoaded,
+                            connections, concourse);
+                }
+            }
+        }
+        else if(type.isPrimitive() || ImmutableSet
+                .of(String.class, Integer.class, Long.class, Float.class,
+                        Double.class, Boolean.class, Timestamp.class, Tag.class)
+                .contains(type)) {
+            converted = stored;
+        }
+        else if(type.isEnum()) {
+            converted = Enum.valueOf((Class<Enum>) type, stored.toString());
+        }
+        else if(Serializable.class.isAssignableFrom(type)) {
+            ByteBuffer bytes = ByteBuffer
+                    .wrap(BaseEncoding.base64Url().decode(stored.toString()));
+            converted = Serializables.read(bytes, (Class<Serializable>) type);
+        }
+        else {
+            converted = new Gson().fromJson(stored.toString(), type);
+        }
+        return converted;
+
     }
 
     /**
@@ -818,8 +830,10 @@ public abstract class Record {
         };
         // TODO: write custom type adapters...
         GsonBuilder builder = new GsonBuilder()
-                .registerTypeAdapterFactory(TypeAdapters.primitiveTypesFactory(true))
-                .registerTypeAdapterFactory(TypeAdapters.collectionFactory(true))
+                .registerTypeAdapterFactory(
+                        TypeAdapters.primitiveTypesFactory(true))
+                .registerTypeAdapterFactory(
+                        TypeAdapters.collectionFactory(true))
                 .registerTypeHierarchyAdapter(Record.class,
                         recordTypeAdapter.nullSafe())
                 .disableHtmlEscaping();
