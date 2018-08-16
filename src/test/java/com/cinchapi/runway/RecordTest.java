@@ -2,6 +2,7 @@ package com.cinchapi.runway;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -17,6 +18,7 @@ import com.cinchapi.runway.json.JsonTypeWriter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 public class RecordTest extends ClientServerTest {
 
@@ -29,6 +31,7 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     public void beforeEachTest() {
+        client.clear(client.inventory()); // work around concourse config bug...
         runway = Runway.connect("localhost", server.getClientPort(), "admin",
                 "admin");
     }
@@ -167,6 +170,14 @@ public class RecordTest extends ClientServerTest {
         Assert.assertEquals("{\"tag\":\"test\",\"id\":" + pock.id() + "}",
                 pock.json());
     }
+    
+    @Test
+    public void testLoadEnumWithinCollection() {
+        HasEnumCollection hec = new HasEnumCollection();
+        hec.save();
+        hec = runway.load(HasEnumCollection.class, hec.id());
+        hec.enumCollection.forEach(se -> Assert.assertTrue(se instanceof SampleEnum));
+    }
 
     class Mock extends Record {
 
@@ -254,6 +265,18 @@ public class RecordTest extends ClientServerTest {
                     tag -> "\"" + tag.toString() + "\"");
         }
 
+    }
+    
+    enum SampleEnum {
+        FOO
+    }
+    
+    class HasEnumCollection extends Record {
+        Set<SampleEnum> enumCollection = Sets.newHashSet();
+        
+        public HasEnumCollection() {
+            enumCollection.add(SampleEnum.FOO);
+        }
     }
 
 }
