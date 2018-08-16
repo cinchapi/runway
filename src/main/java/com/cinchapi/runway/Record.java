@@ -146,7 +146,7 @@ public abstract class Record {
             @SuppressWarnings("unchecked")
             @Override
             public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
-                if(type.getRawType().isAssignableFrom(Record.class)) {
+                if(Record.class.isAssignableFrom(type.getRawType())) {
                     return (TypeAdapter<T>) new TypeAdapter<Record>() {
 
                         @Override

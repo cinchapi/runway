@@ -200,6 +200,13 @@ public class RecordTest extends ClientServerTest {
         runway.load(Shoe.class, shoe.id()); // lack of Exception means we pass
     }
 
+    @Test
+    public void testJsonWithLink() {
+        Stock stock = new Stock();
+        stock.tock = new Tock();
+        Assert.assertTrue(true); // lack of Exception means we pass
+    }
+
     class Mock extends Record {
 
         @Unique
@@ -323,13 +330,13 @@ public class RecordTest extends ClientServerTest {
             enumCollection.add(SampleEnum.FOO);
         }
     }
-    
+
     class Shoe extends Record {
-        
+
         public Shoe(List<String> shoes) {
             this.shoes = shoes;
         }
-        
+
         List<String> shoes;
         boolean ignore = false;
     }
