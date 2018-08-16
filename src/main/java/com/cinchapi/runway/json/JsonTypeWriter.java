@@ -40,6 +40,7 @@ import com.google.gson.stream.JsonWriter;
  * @author Jeff Nelson
  */
 @FunctionalInterface
+@Deprecated
 public interface JsonTypeWriter<T> {
 
     /**
