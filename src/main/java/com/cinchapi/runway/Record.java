@@ -137,10 +137,11 @@ public abstract class Record {
      * track of linked records to prevent infinite recursion.
      * 
      * @param links
+     * @param flattenSingleElementCollections
      * @return the {@link TypeAdapterFactory}
      */
     private static TypeAdapterFactory generateDynamicRecordTypeAdapterFactory(
-            Set<Record> links) {
+            boolean flattenSingleElementCollections, Set<Record> links) {
         return new TypeAdapterFactory() {
 
             @SuppressWarnings("unchecked")
@@ -159,7 +160,9 @@ public abstract class Record {
                                 throws IOException {
                             if(!links.contains(value)) {
                                 links.add(value);
-                                out.jsonValue(value.json(links));
+                                out.jsonValue(value.json(
+                                        flattenSingleElementCollections,
+                                        links));
                             }
                             else {
                                 out.value(value.id() + " (recursive link)");
@@ -398,17 +401,41 @@ public abstract class Record {
      * @return json string
      */
     public String json() {
-        return json(Sets.newHashSet());
+        return json(false);
+    }
+    
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data.
+     * 
+     * @param flattenSingleElementCollections
+     * @return json string
+     */
+    public String json(boolean flattenSingleElementCollections) {
+        return json(flattenSingleElementCollections, Sets.newHashSet());
     }
 
     /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data from the specified {@code keys}.
      * 
+     * @param keys
      * @return json string
      */
     public String json(String... keys) {
-        return json(Sets.newHashSet(), keys);
+        return json(false, keys);
+    }
+    
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data from the specified {@code keys}.
+     * 
+     * @param flattenSingleElementCollections
+     * @param keys
+     * @return json string
+     */
+    public String json(boolean flattenSingleElementCollections, String...keys) {
+        return json(flattenSingleElementCollections, Sets.newHashSet(), keys);
     }
 
     /**
@@ -875,22 +902,32 @@ public abstract class Record {
         }
     }
 
+    /**
+     * Return the JSON string for this {@link Record}.
+     * 
+     * @param flattenSingleElementCollections a boolean that indicates if single
+     *            element collections should be flattened to a single value
+     * @param links
+     * @param keys the attributes to include in the JSON
+     * @return the JSON string.
+     */
     @SuppressWarnings({ "unchecked" })
-    private String json(Set<Record> links, String... keys) {
+    private String json(boolean flattenSingleElementCollections,
+            Set<Record> links, String... keys) {
         Map<String, Object> data = keys.length == 0 ? map() : get(keys);
 
         // Create a dynamic type Gson instance that will detect recursive links
         // and prevent infinite recursion when trying to generate the JSON.
-        // @formatter:off
-        GsonBuilder builder = new GsonBuilder()
-                .registerTypeAdapterFactory(
-                        TypeAdapters.primitiveTypesFactory(true))
-                .registerTypeAdapterFactory(
-                        TypeAdapters.collectionFactory(true))
-                .registerTypeAdapterFactory(generateDynamicRecordTypeAdapterFactory(links))
-                .setPrettyPrinting()
-                .disableHtmlEscaping();
-        // @formatter:on
+        GsonBuilder builder = new GsonBuilder().registerTypeAdapterFactory(
+                TypeAdapters.primitiveTypesFactory(true));
+        if(flattenSingleElementCollections) {
+            builder.registerTypeAdapterFactory(
+                    TypeAdapters.collectionFactory(true));
+        }
+        builder.registerTypeAdapterFactory(
+                generateDynamicRecordTypeAdapterFactory(
+                        flattenSingleElementCollections, links))
+                .setPrettyPrinting().disableHtmlEscaping();
         Map<Class<?>, TypeAdapter<?>> adapters = Maps.newLinkedHashMap();
         Streams.concat(jsonTypeWriters().entrySet().stream(),
                 jsonTypeHierarchyWriters().entrySet().stream())
