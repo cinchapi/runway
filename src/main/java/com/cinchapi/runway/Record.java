@@ -97,6 +97,10 @@ public abstract class Record {
     private static Set<Field> INTERNAL_FIELDS = Sets.newHashSet(
             Arrays.asList(Reflection.getAllDeclaredFields(Record.class)));
 
+    /**
+     * A placeholder id used to indicate that a record has been deleted or
+     * doesn't actually exist in the database.
+     */
     private static long NULL_ID = -1;
 
     /**
@@ -403,7 +407,7 @@ public abstract class Record {
     public String json() {
         return json(false);
     }
-    
+
     /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data.
@@ -419,23 +423,24 @@ public abstract class Record {
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data from the specified {@code keys}.
      * 
+     * @param flattenSingleElementCollections
+     * @param keys
+     * @return json string
+     */
+    public String json(boolean flattenSingleElementCollections,
+            String... keys) {
+        return json(flattenSingleElementCollections, Sets.newHashSet(), keys);
+    }
+
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data from the specified {@code keys}.
+     * 
      * @param keys
      * @return json string
      */
     public String json(String... keys) {
         return json(false, keys);
-    }
-    
-    /**
-     * Return a JSON string containing this {@link Record}'s readable and
-     * temporary data from the specified {@code keys}.
-     * 
-     * @param flattenSingleElementCollections
-     * @param keys
-     * @return json string
-     */
-    public String json(boolean flattenSingleElementCollections, String...keys) {
-        return json(flattenSingleElementCollections, Sets.newHashSet(), keys);
     }
 
     /**
@@ -718,20 +723,6 @@ public abstract class Record {
     }
 
     /**
-     * Return additional {@link TypeAdapter TypeAdapters} that should be used
-     * when generating the {@link #json()} for this {@link Record}.
-     * <p>
-     * Each {@link TypeAdapter} should be mapped from the most generic class or
-     * interface for which the adapter applies.
-     * </p>
-     * 
-     * @return the type adapters to use when serializing the Record to JSON.
-     */
-    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
-        return ImmutableMap.of();
-    }
-
-    /**
      * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
      * use when generating the {@link #json()} for this {@link Record}.
      * 
@@ -755,6 +746,20 @@ public abstract class Record {
     @Deprecated
     protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
         return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link TypeAdapter TypeAdapters} that should be used
+     * when generating the {@link #json()} for this {@link Record}.
+     * <p>
+     * Each {@link TypeAdapter} should be mapped from the most generic class or
+     * interface for which the adapter applies.
+     * </p>
+     * 
+     * @return the type adapters to use when serializing the Record to JSON.
+     */
+    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
+        return ImmutableMap.of();
     }
 
     /**
