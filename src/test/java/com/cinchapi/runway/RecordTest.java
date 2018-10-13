@@ -20,6 +20,8 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
 import com.google.gson.TypeAdapter;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
@@ -35,7 +37,6 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     public void beforeEachTest() {
-        client.clear(client.inventory()); // work around concourse config bug...
         runway = Runway.connect("localhost", server.getClientPort(), "admin",
                 "admin");
     }
@@ -205,6 +206,22 @@ public class RecordTest extends ClientServerTest {
         Stock stock = new Stock();
         stock.tock = new Tock();
         Assert.assertTrue(true); // lack of Exception means we pass
+    }
+    
+    @Test
+    public void testJsonSingleValueCollectionDefault() {
+        Shoe shoe = new Shoe(ImmutableList.of("Nike"));
+        String json = shoe.json();
+        JsonElement elt = new JsonParser().parse(json);
+        Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonArray());
+    }
+    
+    @Test
+    public void testJsonSingleValueCollectionFlatten() {
+        Shoe shoe = new Shoe(ImmutableList.of("Nike"));
+        String json = shoe.json(true);
+        JsonElement elt = new JsonParser().parse(json);
+        Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonPrimitive());
     }
 
     class Mock extends Record {
