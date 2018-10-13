@@ -1,0 +1,35 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/openjdk:8-jdk-browsers
+    environment:
+      GRADLE_OPTS: "-Djenkins=true"
+      TERM: dumb
+      CONTAINER_BUILD: "true"
+    steps:
+      - checkout:
+          path: ~/$CIRCLE_PROJECT_REPONAME
+      - run: 
+          name: Build and Upload
+          context: bintray-creds
+          command: |
+            cd ~/$CIRCLE_PROJECT_REPONAME 
+            ./gradlew clean build bintrayUpload --refresh-dependencies
+      - run:
+          name: Save test results
+          command: |
+            cd ~/$CIRCLE_PROJECT_REPONAME
+            mkdir -p ~/junit/
+            find . -type f -regex ".*/build/test-results/.*xml" -exec cp {} ~/junit/ \;
+          when: always
+      - store_test_results:
+          path: ~/junit
+      - run: 
+          name: Save artifacts
+          command: |
+            cd ~/$CIRCLE_PROJECT_REPONAME
+            mkdir -p ~/artifacts/
+            find . -type f -regex ".*/build/libs/.*jar" -exec cp {} ~/artifacts/ \;
+      - store_artifacts:
+          path: ~/artifacts 
