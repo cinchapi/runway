@@ -84,7 +84,7 @@ public final class Serializables {
             Class<T> classObj) {
         try {
             ByteArrayInputStream bais = new ByteArrayInputStream(
-                    ByteBuffers.toByteArray(bytes));
+                    ByteBuffers.getByteArray(bytes));
             BufferedInputStream bis = new BufferedInputStream(bais);
             ObjectInput input = new ObjectInputStream(bis);
             T object = (T) input.readObject();
