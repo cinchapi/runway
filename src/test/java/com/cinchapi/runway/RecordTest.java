@@ -4,11 +4,14 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.common.collect.Continuation;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.util.Random;
@@ -123,14 +126,14 @@ public class RecordTest extends ClientServerTest {
     @Test
     public void testCanGetReadablePrivateField() {
         Mock mock = new Mock();
-        Assert.assertTrue(mock.get().containsKey("bar"));
+        Assert.assertTrue(mock.map().containsKey("bar"));
         Assert.assertNotNull(mock.get("bar"));
     }
 
     @Test
     public void testCannotGetNonReadablePrivateField() {
         Mock mock = new Mock();
-        Assert.assertFalse(mock.get().containsKey("foo"));
+        Assert.assertFalse(mock.map().containsKey("foo"));
         Assert.assertNull(mock.get("foo"));
     }
 
@@ -174,7 +177,7 @@ public class RecordTest extends ClientServerTest {
         Pock pock = new Pock("test");
         Assert.assertEquals(
                 new GsonBuilder().setPrettyPrinting().create().toJson(
-                        ImmutableMap.of("tag", "test", "id", pock.id())),
+                        ImmutableMap.of("id", pock.id(), "tag", "test")),
                 pock.json());
     }
 
@@ -223,13 +226,13 @@ public class RecordTest extends ClientServerTest {
         JsonElement elt = new JsonParser().parse(json);
         Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonPrimitive());
     }
-    
+
     @Test
     public void testGetNoKeysReturnsAllData() {
         Nock nock = new Nock();
         nock.name = "Jeff Nelson";
         nock.age = 31;
-        Map<String, Object> data = nock.get();
+        Map<String, Object> data = nock.map();
         Assert.assertTrue(data.containsKey("name"));
         Assert.assertTrue(data.containsKey("age"));
         Assert.assertTrue(data.containsKey("alive"));
@@ -237,13 +240,13 @@ public class RecordTest extends ClientServerTest {
         Assert.assertTrue(data.containsKey("bar"));
         Assert.assertTrue(data.containsKey("city"));
     }
-    
+
     @Test
     public void testGetNegativeFiltering() {
         Nock nock = new Nock();
         nock.name = "Jeff Nelson";
         nock.age = 31;
-        Map<String, Object> data = nock.get("-age", "-city");
+        Map<String, Object> data = nock.map("-age", "-city");
         Assert.assertTrue(data.containsKey("name"));
         Assert.assertFalse(data.containsKey("age"));
         Assert.assertTrue(data.containsKey("alive"));
@@ -251,13 +254,13 @@ public class RecordTest extends ClientServerTest {
         Assert.assertTrue(data.containsKey("bar"));
         Assert.assertFalse(data.containsKey("city"));
     }
-    
+
     @Test
     public void testGetNegativeAndPositiveFiltering() {
         Nock nock = new Nock();
         nock.name = "Jeff Nelson";
         nock.age = 31;
-        Map<String, Object> data = nock.get("-age", "alive", "-city");
+        Map<String, Object> data = nock.map("-age", "alive", "-city");
         Assert.assertFalse(data.containsKey("name"));
         Assert.assertFalse(data.containsKey("age"));
         Assert.assertTrue(data.containsKey("alive"));
@@ -265,19 +268,44 @@ public class RecordTest extends ClientServerTest {
         Assert.assertFalse(data.containsKey("bar"));
         Assert.assertFalse(data.containsKey("city"));
     }
-    
+
     @Test
     public void testGetPositiveFiltering() {
         Nock nock = new Nock();
         nock.name = "Jeff Nelson";
         nock.age = 31;
-        Map<String, Object> data = nock.get("age", "alive", "city");
+        Map<String, Object> data = nock.map("age", "alive", "city");
         Assert.assertFalse(data.containsKey("name"));
         Assert.assertTrue(data.containsKey("age"));
         Assert.assertTrue(data.containsKey("alive"));
         Assert.assertFalse(data.containsKey("foo"));
         Assert.assertFalse(data.containsKey("bar"));
         Assert.assertTrue(data.containsKey("city"));
+    }
+
+    @Test
+    public void testGetComputedValue() {
+        Rock rock = new Rock();
+        long start = System.currentTimeMillis();
+        String state = rock.get("state");
+        long end = System.currentTimeMillis();
+        Assert.assertEquals("Georgia", state);
+        Assert.assertTrue(end - start >= 1000);
+    }
+
+    @Test
+    public void testComputedValueIncludedInGetAll() {
+        Rock rock = new Rock();
+        Map<String, Object> data = rock.map();
+        Assert.assertTrue(data.containsKey("state"));
+    }
+
+    @Test
+    public void testComputedValueNotComputedIfNotNecessary() {
+        Bock bock = new Bock();
+        Map<String, Object> data = bock.map("-state");
+        System.out.println(data);
+        Assert.assertFalse(data.containsKey("state"));
     }
 
     class Mock extends Record {
@@ -421,6 +449,28 @@ public class RecordTest extends ClientServerTest {
             return ImmutableMap.of("city", "Atlanta");
         }
 
+    }
+
+    class Rock extends Nock {
+
+        @Override
+        public Map<String, Supplier<Object>> computed() {
+            return ImmutableMap.of("state", () -> {
+                long stop = System.currentTimeMillis() + 1000;
+                while (System.currentTimeMillis() < stop) {
+                    continue;
+                }
+                return "Georgia";
+            });
+        }
+    }
+
+    class Bock extends Nock {
+        @Override
+        public Map<String, Supplier<Object>> computed() {
+            return ImmutableMap.of("state",
+                    () -> Continuation.of(UUID::randomUUID));
+        }
     }
 
 }

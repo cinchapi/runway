@@ -7,6 +7,7 @@ import java.io.Serializable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
+import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -16,6 +17,7 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
@@ -38,6 +40,8 @@ import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.runway.json.JsonTypeWriter;
+import com.cinchapi.runway.util.ComputedEntry;
+import com.cinchapi.runway.util.CompoundHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
@@ -347,23 +351,6 @@ public abstract class Record {
     }
 
     /**
-     * Return a map that contains "readable" data from this {@link Record}.
-     * <p>
-     * If no {@code keys} are provided, all the readable data will be
-     * returned.
-     * </p>
-     * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
-     * 
-     * @return the data in this record
-     */
-    public Map<String, Object> get() {
-        return get(Array.containing());
-    }
-
-    /**
      * Retrieve a dynamic value.
      * 
      * @param key the key name
@@ -384,41 +371,30 @@ public abstract class Record {
         if(value == null) {
             value = derived().get(key);
         }
+        if(value == null) {
+            Supplier<?> computer = computed().get(key);
+            if(computer != null) {
+                value = computer.get();
+            }
+        }
         return (T) value;
     }
 
     /**
-     * Return a map that contains "readable" data from this {@link Record}.
+     * Return a map that contains all of the data for the readable {@code keys}
+     * in this {@link Record}.
      * <p>
-     * If no {@code keys} are provided, all the readable data will be
-     * returned.
+     * If you want to return all the readable data, use the {@link #map()}
+     * method.
      * </p>
-     * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
      * 
-     * @param keys
      * @return the data in this record
+     * @deprecated use {@link #map(String...)} instead
      */
+    @Deprecated
     public Map<String, Object> get(String... keys) {
-        List<String> include = Lists.newArrayList();
-        List<String> exclude = Lists.newArrayList();
-        for (String key : keys) {
-            if(key.startsWith("-")) {
-                key = key.substring(1);
-                exclude.add(key);
-            }
-            else {
-                include.add(key);
-            }
-        }
-        Map<String, Object> data = include.isEmpty() ? map()
-                : include.stream().collect(
-                        Collectors.toMap(Function.identity(), this::get));
-        return data.entrySet().stream()
-                .filter(e -> !exclude.contains(e.getKey()))
-                .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
+        return Arrays.asList(keys).stream()
+                .collect(Collectors.toMap(Function.identity(), this::get));
     }
 
     @Override
@@ -479,20 +455,58 @@ public abstract class Record {
     public String json(String... keys) {
         return json(false, keys);
     }
-    
+
     /**
-     * Return a map that contains all of the readable data in this record.
+     * Return a map that contains "readable" data from this {@link Record}.
      * <p>
-     * If you only want to return specific fields, use the
-     * {@link #get(String...)} method.
+     * If no {@code keys} are provided, all the readable data will be
+     * returned.
      * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
      * 
      * @return the data in this record
-     * @deprecated Use {@link #get()} instead.
      */
-    @Deprecated
     public Map<String, Object> map() {
-        return data();
+        return map(Array.containing());
+    }
+
+    /**
+     * Return a map that contains "readable" data from this {@link Record}.
+     * <p>
+     * If no {@code keys} are provided, all the readable data will be
+     * returned.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * 
+     * @param keys
+     * @return the data in this record
+     */
+    public Map<String, Object> map(String... keys) {
+        List<String> include = Lists.newArrayList();
+        List<String> exclude = Lists.newArrayList();
+        for (String key : keys) {
+            if(key.startsWith("-")) {
+                key = key.substring(1);
+                exclude.add(key);
+            }
+            else {
+                include.add(key);
+            }
+        }
+        Map<String, Object> data = include.isEmpty() ? data()
+                : include.stream().collect(
+                        Collectors.toMap(Function.identity(), this::get));
+        // TODO: calling data.entrySet() is causing the computed data to get
+        // computed...may need to create a lazy loading set...
+        return data.entrySet().stream()
+                .filter(e -> !exclude.contains(e.getKey()))
+                .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
     }
 
     /**
@@ -736,6 +750,25 @@ public abstract class Record {
 
     /**
      * Provide additional data about this Record that might not be encapsulated
+     * in its native fields and is "computed" on-demand.
+     * <p>
+     * Unlike {@link #derived()} attributes, computed data is generally
+     * expensive to generate and should only be calculated when explicitly
+     * requested.
+     * </p>
+     * <p>
+     * NOTE: Computed attributes are never cached. Each time one is requested,
+     * the computation that generates the value is done anew.
+     * </p>
+     * 
+     * @return the computed data
+     */
+    protected Map<String, Supplier<Object>> computed() {
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Provide additional data about this Record that might not be encapsulated
      * in its fields. For example, this is a good way to provide template
      * specific information that isn't persisted to the database.
      * 
@@ -873,7 +906,35 @@ public abstract class Record {
      * @return the data in this record
      */
     private Map<String, Object> data() {
-        Map<String, Object> data = Maps.newHashMap(derived());
+        // The #computed data must be wrapped in a special map that only
+        // computes the requested values on-demand.
+        Map<String, Object> computed = new AbstractMap<String, Object>() {
+
+            @Override
+            public Set<String> keySet() {
+                return computed().keySet();
+            }
+
+            @Override
+            public Set<Entry<String, Object>> entrySet() {
+                return computed().entrySet().stream().map(ComputedEntry::new)
+                        .collect(Collectors.toSet());
+            }
+
+            @Override
+            public Object get(Object key) {
+                Supplier<?> computer = computed().get(key);
+                if(computer != null) {
+                    return computer.get();
+                }
+                else {
+                    return null;
+                }
+            }
+
+        };
+        Map<String, Object> data = CompoundHashMap.create(derived(),
+                computed);
         fields().forEach(field -> {
             try {
                 Object value;
@@ -966,7 +1027,7 @@ public abstract class Record {
     @SuppressWarnings({ "unchecked" })
     private String json(boolean flattenSingleElementCollections,
             Set<Record> links, String... keys) {
-        Map<String, Object> data = keys.length == 0 ? map() : get(keys);
+        Map<String, Object> data = keys.length == 0 ? map() : map(keys);
 
         // Create a dynamic type Gson instance that will detect recursive links
         // and prevent infinite recursion when trying to generate the JSON.
