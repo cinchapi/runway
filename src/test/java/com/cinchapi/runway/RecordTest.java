@@ -123,14 +123,14 @@ public class RecordTest extends ClientServerTest {
     @Test
     public void testCanGetReadablePrivateField() {
         Mock mock = new Mock();
-        Assert.assertTrue(mock.map().containsKey("bar"));
+        Assert.assertTrue(mock.get().containsKey("bar"));
         Assert.assertNotNull(mock.get("bar"));
     }
 
     @Test
     public void testCannotGetNonReadablePrivateField() {
         Mock mock = new Mock();
-        Assert.assertFalse(mock.map().containsKey("foo"));
+        Assert.assertFalse(mock.get().containsKey("foo"));
         Assert.assertNull(mock.get("foo"));
     }
 
@@ -207,7 +207,7 @@ public class RecordTest extends ClientServerTest {
         stock.tock = new Tock();
         Assert.assertTrue(true); // lack of Exception means we pass
     }
-    
+
     @Test
     public void testJsonSingleValueCollectionDefault() {
         Shoe shoe = new Shoe(ImmutableList.of("Nike"));
@@ -215,13 +215,69 @@ public class RecordTest extends ClientServerTest {
         JsonElement elt = new JsonParser().parse(json);
         Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonArray());
     }
-    
+
     @Test
     public void testJsonSingleValueCollectionFlatten() {
         Shoe shoe = new Shoe(ImmutableList.of("Nike"));
         String json = shoe.json(true);
         JsonElement elt = new JsonParser().parse(json);
         Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonPrimitive());
+    }
+    
+    @Test
+    public void testGetNoKeysReturnsAllData() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 31;
+        Map<String, Object> data = nock.get();
+        Assert.assertTrue(data.containsKey("name"));
+        Assert.assertTrue(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("alive"));
+        Assert.assertFalse(data.containsKey("foo"));
+        Assert.assertTrue(data.containsKey("bar"));
+        Assert.assertTrue(data.containsKey("city"));
+    }
+    
+    @Test
+    public void testGetNegativeFiltering() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 31;
+        Map<String, Object> data = nock.get("-age", "-city");
+        Assert.assertTrue(data.containsKey("name"));
+        Assert.assertFalse(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("alive"));
+        Assert.assertFalse(data.containsKey("foo"));
+        Assert.assertTrue(data.containsKey("bar"));
+        Assert.assertFalse(data.containsKey("city"));
+    }
+    
+    @Test
+    public void testGetNegativeAndPositiveFiltering() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 31;
+        Map<String, Object> data = nock.get("-age", "alive", "-city");
+        Assert.assertFalse(data.containsKey("name"));
+        Assert.assertFalse(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("alive"));
+        Assert.assertFalse(data.containsKey("foo"));
+        Assert.assertFalse(data.containsKey("bar"));
+        Assert.assertFalse(data.containsKey("city"));
+    }
+    
+    @Test
+    public void testGetPositiveFiltering() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 31;
+        Map<String, Object> data = nock.get("age", "alive", "city");
+        Assert.assertFalse(data.containsKey("name"));
+        Assert.assertTrue(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("alive"));
+        Assert.assertFalse(data.containsKey("foo"));
+        Assert.assertFalse(data.containsKey("bar"));
+        Assert.assertTrue(data.containsKey("city"));
     }
 
     class Mock extends Record {
@@ -356,6 +412,15 @@ public class RecordTest extends ClientServerTest {
 
         List<String> shoes;
         boolean ignore = false;
+    }
+
+    class Nock extends Mock {
+
+        @Override
+        public Map<String, Object> derived() {
+            return ImmutableMap.of("city", "Atlanta");
+        }
+
     }
 
 }

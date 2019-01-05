@@ -12,6 +12,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
@@ -346,6 +347,23 @@ public abstract class Record {
     }
 
     /**
+     * Return a map that contains "readable" data from this {@link Record}.
+     * <p>
+     * If no {@code keys} are provided, all the readable data will be
+     * returned.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * 
+     * @return the data in this record
+     */
+    public Map<String, Object> get() {
+        return get(Array.containing());
+    }
+
+    /**
      * Retrieve a dynamic value.
      * 
      * @param key the key name
@@ -370,18 +388,37 @@ public abstract class Record {
     }
 
     /**
-     * Return a map that contains all of the data for the readable {@code keys}
-     * in this {@link Record}.
+     * Return a map that contains "readable" data from this {@link Record}.
      * <p>
-     * If you want to return all the readable data, use the {@link #map()}
-     * method.
+     * If no {@code keys} are provided, all the readable data will be
+     * returned.
      * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
      * 
+     * @param keys
      * @return the data in this record
      */
     public Map<String, Object> get(String... keys) {
-        return Arrays.asList(keys).stream()
-                .collect(Collectors.toMap(Function.identity(), this::get));
+        List<String> include = Lists.newArrayList();
+        List<String> exclude = Lists.newArrayList();
+        for (String key : keys) {
+            if(key.startsWith("-")) {
+                key = key.substring(1);
+                exclude.add(key);
+            }
+            else {
+                include.add(key);
+            }
+        }
+        Map<String, Object> data = include.isEmpty() ? map()
+                : include.stream().collect(
+                        Collectors.toMap(Function.identity(), this::get));
+        return data.entrySet().stream()
+                .filter(e -> !exclude.contains(e.getKey()))
+                .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
     }
 
     @Override
@@ -442,7 +479,7 @@ public abstract class Record {
     public String json(String... keys) {
         return json(false, keys);
     }
-
+    
     /**
      * Return a map that contains all of the readable data in this record.
      * <p>
@@ -451,25 +488,11 @@ public abstract class Record {
      * </p>
      * 
      * @return the data in this record
+     * @deprecated Use {@link #get()} instead.
      */
+    @Deprecated
     public Map<String, Object> map() {
-        Map<String, Object> data = Maps.newHashMap(derived());
-        fields().forEach(field -> {
-            try {
-                Object value;
-                if(isReadableField(field)
-                        && (value = field.get(this)) != null) {
-                    data.put(field.getName(), value);
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        });
-        data.put("id", id);
-        data.putAll(dynamicData);
-        return data;
-
+        return data();
     }
 
     /**
@@ -842,6 +865,30 @@ public abstract class Record {
         }
         return converted;
 
+    }
+
+    /**
+     * Return a map that contains all of the readable data in this record.
+     * 
+     * @return the data in this record
+     */
+    private Map<String, Object> data() {
+        Map<String, Object> data = Maps.newHashMap(derived());
+        fields().forEach(field -> {
+            try {
+                Object value;
+                if(isReadableField(field)
+                        && (value = field.get(this)) != null) {
+                    data.put(field.getName(), value);
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        });
+        data.put("id", id);
+        data.putAll(dynamicData);
+        return data;
     }
 
     /**
