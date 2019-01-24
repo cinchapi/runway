@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Collection;
 import java.util.Set;
 
 import com.cinchapi.concourse.Concourse;
@@ -26,7 +27,9 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Strings;
 import com.google.common.base.Throwables;
+import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
 import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
@@ -48,6 +51,11 @@ import gnu.trove.map.hash.TLongObjectHashMap;
 public final class Runway implements AutoCloseable {
 
     /**
+     * A mapping from each {@link Record} class to all of its descendants. This
+     * facilitates querying across hierarchies.
+     */
+    private static final Multimap<Class<?>, Class<?>> hierarchies;
+    /**
      * A collection of all the active {@link Runway} instances.
      */
     private static Set<Runway> instances = Sets.newHashSet();
@@ -58,6 +66,10 @@ public final class Runway implements AutoCloseable {
      * within the specific transaction) and we clear it before commit time.
      */
     private static long METADATA_RECORD = -1;
+
+    static {
+        hierarchies = HashMultimap.create();
+    }
 
     /**
      * Return a {@link Runway} instance that is connected to Concourse using the
@@ -199,6 +211,38 @@ public final class Runway implements AutoCloseable {
     }
 
     /**
+     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * and all of its descendants.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> findAcrossHierarchy(Class<T> clazz,
+            BuildableState criteria) {
+        return findAcrossHierarchy(clazz, criteria.build());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the matching records
+     */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    public <T extends Record> Set<T> findAcrossHierarchy(Class<T> clazz,
+            Criteria criteria) {
+        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+        Set<T> found = Sets.newLinkedHashSet();
+        for (Class cls : hierarchy) {
+            found.addAll(find(cls, criteria));
+        }
+        return found;
+    }
+
+    /**
      * Find the one record of type {@code clazz} that matches the
      * {@code criteria}. If more than one record matches, throw a
      * {@link DuplicateEntryException}.
@@ -249,6 +293,53 @@ public final class Runway implements AutoCloseable {
     }
 
     /**
+     * Execute the {@link #findOne(Class, BuildableState)} query for
+     * {@code clazz} and all of its descendants.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the one matching record
+     */
+    public <T extends Record> T findOneAcrossHierarchy(Class<T> clazz,
+            BuildableState criteria) {
+        return findOneAcrossHierarchy(clazz, criteria.build());
+    }
+
+    /**
+     * Execute the {@link #findOne(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the one matching record
+     */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    public <T extends Record> T findOneAcrossHierarchy(Class<T> clazz,
+            Criteria criteria) {
+        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+        Set<T> found = Sets.newLinkedHashSet();
+        for (Class cls : hierarchy) {
+            T $found = (T) findOne(cls, criteria);
+            if($found != null) {
+                found.add($found);
+            }
+        }
+        if(found.size() == 0) {
+            return null;
+        }
+        else if(found.size() == 1) {
+            return found.iterator().next();
+        }
+        else {
+            throw new DuplicateEntryException(
+                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                            Strings.format(
+                                    "There are more than one records that match {} in the hierarchy of {}",
+                                    criteria, clazz)));
+        }
+    }
+
+    /**
      * Load all the Records that are contained within the specified
      * {@code clazz}.
      * 
@@ -295,6 +386,32 @@ public final class Runway implements AutoCloseable {
     public <T extends Record> T load(Class<T> clazz, long id) {
         return load(clazz, id, new TLongObjectHashMap<Record>());
     }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    public <T extends Record> Set<T> loadAcrossHierarchy(Class<T> clazz) {
+        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+        Set<T> loaded = Sets.newLinkedHashSet();
+        for (Class cls : hierarchy) {
+            loaded.addAll(load(cls));
+        }
+        return loaded;
+    }
+
+    // TODO: what about loading a specific record using a parent class?
 
     /**
      * Save all the changes in all of the {@code records} using a single ACID
