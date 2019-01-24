@@ -26,9 +26,9 @@ import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
@@ -517,11 +517,10 @@ public abstract class Record {
         Map<String, Object> data = include.isEmpty() ? data()
                 : include.stream().collect(
                         Collectors.toMap(Function.identity(), this::get));
-        // TODO: calling data.entrySet() is causing the computed data to get
-        // computed...may need to create a lazy loading set...
         return data.entrySet().stream()
                 .filter(e -> !exclude.contains(e.getKey()))
-                .collect(Collectors.toMap(Entry::getKey, Entry::getValue));
+                .collect(HashMap::new,
+                        (m, e) -> m.put(e.getKey(), e.getValue()), Map::putAll);
     }
 
     /**
@@ -948,8 +947,7 @@ public abstract class Record {
             }
 
         };
-        Map<String, Object> data = CompoundHashMap.create(derived(),
-                computed);
+        Map<String, Object> data = CompoundHashMap.create(derived(), computed);
         fields().forEach(field -> {
             try {
                 Object value;

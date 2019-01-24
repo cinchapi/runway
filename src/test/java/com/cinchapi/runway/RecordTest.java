@@ -177,7 +177,7 @@ public class RecordTest extends ClientServerTest {
         Pock pock = new Pock("test");
         Assert.assertEquals(
                 new GsonBuilder().setPrettyPrinting().create().toJson(
-                        ImmutableMap.of("id", pock.id(), "tag", "test")),
+                        ImmutableMap.of("tag", "test", "id", pock.id())),
                 pock.json());
     }
 
