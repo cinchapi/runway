@@ -32,7 +32,7 @@ import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
 
 /**
- * {@link Runway} is ORM controller for Concourse.
+ * {@link Runway} is the ORM controller for Concourse.
  * <p>
  * {@link Runway} generally provides methods to retrieve {@link Record} objects.
  * Subsequent interaction with Records is done using instance methods.
