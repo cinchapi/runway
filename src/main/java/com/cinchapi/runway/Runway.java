@@ -47,6 +47,9 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  */
 public final class Runway implements AutoCloseable {
 
+    /**
+     * A collection of all the active {@link Runway} instances.
+     */
     private static Set<Runway> instances = Sets.newHashSet();
 
     /**
