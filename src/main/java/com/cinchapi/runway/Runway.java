@@ -1,28 +1,17 @@
 /*
- * Cinchapi Inc. CONFIDENTIAL
- * Copyright (c) 2017 Cinchapi Inc. All Rights Reserved.
+ * Copyright (c) 2013-2019 Cinchapi Inc.
  *
- * All information contained herein is, and remains the property of Cinchapi.
- * The intellectual and technical concepts contained herein are proprietary to
- * Cinchapi and may be covered by U.S. and Foreign Patents, patents in process,
- * and are protected by trade secret or copyright law. Dissemination of this
- * information or reproduction of this material is strictly forbidden unless
- * prior written permission is obtained from Cinchapi. Access to the source code
- * contained herein is hereby forbidden to anyone except current Cinchapi
- * employees, managers or contractors who have executed Confidentiality and
- * Non-disclosure agreements explicitly covering such access.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * The copyright notice above does not evidence any actual or intended
- * publication or disclosure of this source code, which includes information
- * that is confidential and/or proprietary, and is a trade secret, of Cinchapi.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- * ANY REPRODUCTION, MODIFICATION, DISTRIBUTION, PUBLIC PERFORMANCE, OR PUBLIC
- * DISPLAY OF OR THROUGH USE OF THIS SOURCE CODE WITHOUT THE EXPRESS WRITTEN
- * CONSENT OF COMPANY IS STRICTLY PROHIBITED, AND IN VIOLATION OF APPLICABLE
- * LAWS AND INTERNATIONAL TREATIES. THE RECEIPT OR POSSESSION OF THIS SOURCE
- * CODE AND/OR RELATED INFORMATION DOES NOT CONVEY OR IMPLY ANY RIGHTS TO
- * REPRODUCE, DISCLOSE OR DISTRIBUTE ITS CONTENTS, OR TO MANUFACTURE, USE, OR
- * SELL ANYTHING THAT IT MAY DESCRIBE, IN WHOLE OR IN PART.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package com.cinchapi.runway;
 
@@ -43,9 +32,18 @@ import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
 
 /**
+ * {@link Runway} is ORM controller for Concourse.
+ * <p>
+ * {@link Runway} generally provides methods to retrieve {@link Record} objects.
+ * Subsequent interaction with Records is done using instance methods.
+ * </p>
+ * <p>
+ * If an application has multiple {@link Runway} instances, implicit
+ * {@link Record#save() saving} is disabled in which case the application must
+ * use the {@link #save(Record...)} method provided by this controller.
+ * </p>
  *
- *
- * @author jeff
+ * @author Jeff Nelson
  */
 public final class Runway implements AutoCloseable {
 
@@ -58,20 +56,56 @@ public final class Runway implements AutoCloseable {
      */
     private static long METADATA_RECORD = -1;
 
+    /**
+     * Return a {@link Runway} instance that is connected to Concourse using the
+     * default connection parameters.
+     * 
+     * @return a {@link Runway} instance
+     */
     public static Runway connect() {
-        return null;
+        return new Runway(ConnectionPool.newCachedConnectionPool());
     }
 
+    /**
+     * Return a {@link Runway} instance that is connected to Concourse using the
+     * provided connection parameters.
+     * 
+     * @param host
+     * @param port
+     * @param username
+     * @param password
+     * @return a {@link Runway} instance
+     */
     public static Runway connect(String host, int port, String username,
             String password) {
         return connect(host, port, username, password, "");
     }
 
+    /**
+     * Return a {@link Runway} instance that is connected to Concourse using the
+     * provided connection parameters.
+     * 
+     * @param host
+     * @param port
+     * @param username
+     * @param password
+     * @param environment
+     * @return a {@link Runway} instance
+     */
     public static Runway connect(String host, int port, String username,
             String password, String environment) {
-        return new Runway(host, port, username, password, environment);
+        return new Runway(ConnectionPool.newCachedConnectionPool(host, port,
+                username, password, environment));
     }
 
+    /**
+     * Utility method do ensure that the {@code criteria} is limited to querying
+     * objects that belong to a specific {@code clazz}.
+     * 
+     * @param criteria
+     * @param clazz
+     * @return the updated {@code criteria}
+     */
     private static <T> Criteria ensureClassSpecificCriteria(Criteria criteria,
             Class<T> clazz) {
         return Criteria.where().key(Record.SECTION_KEY)
@@ -95,16 +129,10 @@ public final class Runway implements AutoCloseable {
     /**
      * Construct a new instance.
      * 
-     * @param host
-     * @param port
-     * @param username
-     * @param password
-     * @param environment
+     * @param connections a Concourse {@link ConnectionPool}
      */
-    private Runway(String host, int port, String username, String password,
-            String environment) {
-        this.connections = ConnectionPool.newCachedConnectionPool(host, port,
-                username, password, environment);
+    private Runway(ConnectionPool connections) {
+        this.connections = connections;
         instances.add(this);
         if(instances.size() > 1) {
             Record.PINNED_RUNWAY_INSTANCE = null;
