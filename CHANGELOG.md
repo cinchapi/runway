@@ -5,6 +5,7 @@
 * Deprecated the `get(String...keys)` method since it is redundant in light of the introduction of the `map(String...keys)` method.
 * Added support for **negative filtering** in the `map(String...keys)` method. With negative filtering, you can provide a key that is prefixed with the minus sign (e.g. `-`) to indicate that the key should not be included in the data that is returned.
 * Added the `compute` hook to support calculating dervided properties that are "expensive" to compute, on-demand. 
+* Fixed a bug that cause the `Runway#connect()` factory to return `null`.
 
 #### Version 1.0.0 (October 13, 2018)
 * Refactor and major version release!
