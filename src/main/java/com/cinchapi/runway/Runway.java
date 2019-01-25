@@ -18,6 +18,9 @@ package com.cinchapi.runway;
 import java.util.Collection;
 import java.util.Set;
 
+import org.reflections.Reflections;
+import org.reflections.scanners.SubTypesScanner;
+
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
@@ -25,12 +28,14 @@ import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
+import com.cinchapi.concourse.util.Logging;
 import com.cinchapi.concourse.util.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
+
 import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
 
@@ -55,6 +60,7 @@ public final class Runway implements AutoCloseable {
      * facilitates querying across hierarchies.
      */
     private static final Multimap<Class<?>, Class<?>> hierarchies;
+
     /**
      * A collection of all the active {@link Runway} instances.
      */
@@ -68,7 +74,18 @@ public final class Runway implements AutoCloseable {
     private static long METADATA_RECORD = -1;
 
     static {
+        // NOTE: Scanning the classpath adds startup costs proportional to the
+        // number of classes defined. We do this once at startup to minimize the
+        // effect of the cost.
         hierarchies = HashMultimap.create();
+        Logging.disable(Reflections.class);
+        Reflections.log = null; // turn off reflection logging
+        Reflections reflection = new Reflections(new SubTypesScanner());
+        reflection.getSubTypesOf(Record.class).forEach(type -> {
+            hierarchies.put(type, type);
+            reflection.getSubTypesOf(type)
+                    .forEach(subType -> hierarchies.put(type, subType));
+        });
     }
 
     /**
@@ -289,7 +306,7 @@ public final class Runway implements AutoCloseable {
                                     criteria, clazz)));
         }
     }
-    
+
     /**
      * Find the one record of type {@code clazz} that matches the
      * {@code criteria}. If more than one record matches, throw a
@@ -320,7 +337,7 @@ public final class Runway implements AutoCloseable {
     public <T extends Record> T findOne(Class<T> clazz, Criteria criteria) {
         return findUnique(clazz, criteria);
     }
-    
+
     /**
      * Find the one record of type {@code clazz} that matches the
      * {@code criteria}. If more than one record matches, throw a
