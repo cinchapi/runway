@@ -119,12 +119,14 @@ public class RunwayTest extends ClientServerTest {
     }
 
     @Test
-    public void testLoadRecordUsingParentType() {
+    public void testLoadRecordUsingParentTypeResolvesToActualType() {
         SuperAdmin sa = new SuperAdmin("Jeff Nelson", "foo", "bar");
         sa.save();
-        Admin admin = runway.load(Admin.class, sa.id());
-        // TODO: fix load to check the class
-        System.out.println(admin);
+        User admin = runway.load(User.class, sa.id());
+        Assert.assertEquals(SuperAdmin.class, admin.getClass());
+        Assert.assertEquals(admin.name, sa.name);
+        Assert.assertEquals(admin.get("foo"), sa.foo);
+        Assert.assertEquals(admin.get("bar"), sa.bar);
     }
 
     abstract class User extends Record {

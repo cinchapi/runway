@@ -21,6 +21,7 @@ import java.util.Set;
 import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
 
+import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
@@ -433,6 +434,20 @@ public final class Runway implements AutoCloseable {
      * @return the existing Record
      */
     public <T extends Record> T load(Class<T> clazz, long id) {
+        if(hierarchies.get(clazz).size() > 1) {
+            // The provided clazz has descendants, so it is possible that the
+            // Record with the #id is actually a member of a subclass
+            Concourse connection = connections.request();
+            try {
+                String section = connection.get(Record.SECTION_KEY, id);
+                if(section != null) {
+                    clazz = Reflection.getClassCasted(section);
+                }
+            }
+            finally {
+                connections.release(connection);
+            }
+        }
         return load(clazz, id, new TLongObjectHashMap<Record>());
     }
 
