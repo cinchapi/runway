@@ -218,9 +218,9 @@ public final class Runway implements AutoCloseable {
      * @param criteria
      * @return the matching records
      */
-    public <T extends Record> Set<T> findAcrossHierarchy(Class<T> clazz,
+    public <T extends Record> Set<T> findAny(Class<T> clazz,
             BuildableState criteria) {
-        return findAcrossHierarchy(clazz, criteria.build());
+        return findAny(clazz, criteria.build());
     }
 
     /**
@@ -232,7 +232,7 @@ public final class Runway implements AutoCloseable {
      * @return the matching records
      */
     @SuppressWarnings({ "rawtypes", "unchecked" })
-    public <T extends Record> Set<T> findAcrossHierarchy(Class<T> clazz,
+    public <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria) {
         Collection<Class<?>> hierarchy = hierarchies.get(clazz);
         Set<T> found = Sets.newLinkedHashSet();
@@ -243,6 +243,85 @@ public final class Runway implements AutoCloseable {
     }
 
     /**
+     * Execute the {@link #findUnique(Class, BuildableState)} query for
+     * {@code clazz} and all of its descendants.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the one matching record
+     */
+    public <T extends Record> T findAnyUnique(Class<T> clazz,
+            BuildableState criteria) {
+        return findAnyUnique(clazz, criteria.build());
+    }
+
+    /**
+     * Execute the {@link #findUnique(Class, Criteria)} query for {@code clazz}
+     * and
+     * all of its descendants.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the one matching record
+     */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    public <T extends Record> T findAnyUnique(Class<T> clazz,
+            Criteria criteria) {
+        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+        Set<T> found = Sets.newLinkedHashSet();
+        for (Class cls : hierarchy) {
+            T $found = (T) findUnique(cls, criteria);
+            if($found != null) {
+                found.add($found);
+            }
+        }
+        if(found.size() == 0) {
+            return null;
+        }
+        else if(found.size() == 1) {
+            return found.iterator().next();
+        }
+        else {
+            throw new DuplicateEntryException(
+                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                            Strings.format(
+                                    "There are more than one records that match {} in the hierarchy of {}",
+                                    criteria, clazz)));
+        }
+    }
+    
+    /**
+     * Find the one record of type {@code clazz} that matches the
+     * {@code criteria}. If more than one record matches, throw a
+     * {@link DuplicateEntryException}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the one matching record
+     * @throws DuplicateEntryException
+     * @deprecated use {@link #findUnique(Class, BuildableState)}
+     */
+    public <T extends Record> T findOne(Class<T> clazz,
+            BuildableState criteria) {
+        return findUnique(clazz, criteria);
+    }
+
+    /**
+     * Find the one record of type {@code clazz} that matches the
+     * {@code criteria}. If more than one record matches, throw a
+     * {@link DuplicateEntryException}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @return the one matching record
+     * @throws DuplicateEntryException
+     * @deprecated use {@link, #findUnique(Class, Criteria)}
+     */
+    public <T extends Record> T findOne(Class<T> clazz, Criteria criteria) {
+        return findUnique(clazz, criteria);
+    }
+    
+    /**
      * Find the one record of type {@code clazz} that matches the
      * {@code criteria}. If more than one record matches, throw a
      * {@link DuplicateEntryException}.
@@ -252,9 +331,9 @@ public final class Runway implements AutoCloseable {
      * @return the one matching record
      * @throws DuplicateEntryException
      */
-    public <T extends Record> T findOne(Class<T> clazz,
+    public <T extends Record> T findUnique(Class<T> clazz,
             BuildableState criteria) {
-        return findOne(clazz, criteria.build());
+        return findUnique(clazz, criteria.build());
     }
 
     /**
@@ -267,7 +346,7 @@ public final class Runway implements AutoCloseable {
      * @return the one matching record
      * @throws DuplicateEntryException
      */
-    public <T extends Record> T findOne(Class<T> clazz, Criteria criteria) {
+    public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
             criteria = ensureClassSpecificCriteria(criteria, clazz);
@@ -289,53 +368,6 @@ public final class Runway implements AutoCloseable {
         }
         finally {
             connections.release(concourse);
-        }
-    }
-
-    /**
-     * Execute the {@link #findOne(Class, BuildableState)} query for
-     * {@code clazz} and all of its descendants.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the one matching record
-     */
-    public <T extends Record> T findOneAcrossHierarchy(Class<T> clazz,
-            BuildableState criteria) {
-        return findOneAcrossHierarchy(clazz, criteria.build());
-    }
-
-    /**
-     * Execute the {@link #findOne(Class, Criteria)} query for {@code clazz} and
-     * all of its descendants.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the one matching record
-     */
-    @SuppressWarnings({ "unchecked", "rawtypes" })
-    public <T extends Record> T findOneAcrossHierarchy(Class<T> clazz,
-            Criteria criteria) {
-        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
-        Set<T> found = Sets.newLinkedHashSet();
-        for (Class cls : hierarchy) {
-            T $found = (T) findOne(cls, criteria);
-            if($found != null) {
-                found.add($found);
-            }
-        }
-        if(found.size() == 0) {
-            return null;
-        }
-        else if(found.size() == 1) {
-            return found.iterator().next();
-        }
-        else {
-            throw new DuplicateEntryException(
-                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                            Strings.format(
-                                    "There are more than one records that match {} in the hierarchy of {}",
-                                    criteria, clazz)));
         }
     }
 
@@ -402,7 +434,7 @@ public final class Runway implements AutoCloseable {
      * @return a {@link Set set} of {@link Record} objects
      */
     @SuppressWarnings({ "rawtypes", "unchecked" })
-    public <T extends Record> Set<T> loadAcrossHierarchy(Class<T> clazz) {
+    public <T extends Record> Set<T> loadAny(Class<T> clazz) {
         Collection<Class<?>> hierarchy = hierarchies.get(clazz);
         Set<T> loaded = Sets.newLinkedHashSet();
         for (Class cls : hierarchy) {
