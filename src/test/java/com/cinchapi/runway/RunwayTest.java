@@ -29,7 +29,7 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.google.common.collect.ImmutableSet;
 
 /**
- *
+ * Unit tests for {@link Runway}.
  *
  * @author Jeff Nelson
  */
@@ -104,7 +104,7 @@ public class RunwayTest extends ClientServerTest {
         runway.findAnyUnique(User.class, Criteria.where().key("name")
                 .operator(Operator.EQUALS).value("Jeff"));
     }
-    
+
     @Test
     public void testFindAnyUnique() {
         Manager a = new Manager("Jeff");
@@ -113,8 +113,8 @@ public class RunwayTest extends ClientServerTest {
         a.save();
         b.save();
         c.save();
-        Admin actual = runway.findAnyUnique(Admin.class, Criteria.where().key("name")
-                .operator(Operator.EQUALS).value("Jeff"));
+        Admin actual = runway.findAnyUnique(Admin.class, Criteria.where()
+                .key("name").operator(Operator.EQUALS).value("Jeff"));
         Assert.assertEquals(c, actual);
     }
 
