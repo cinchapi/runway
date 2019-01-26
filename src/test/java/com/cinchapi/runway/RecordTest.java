@@ -4,11 +4,14 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.common.collect.Continuation;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.util.Random;
@@ -207,7 +210,7 @@ public class RecordTest extends ClientServerTest {
         stock.tock = new Tock();
         Assert.assertTrue(true); // lack of Exception means we pass
     }
-    
+
     @Test
     public void testJsonSingleValueCollectionDefault() {
         Shoe shoe = new Shoe(ImmutableList.of("Nike"));
@@ -215,13 +218,94 @@ public class RecordTest extends ClientServerTest {
         JsonElement elt = new JsonParser().parse(json);
         Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonArray());
     }
-    
+
     @Test
     public void testJsonSingleValueCollectionFlatten() {
         Shoe shoe = new Shoe(ImmutableList.of("Nike"));
         String json = shoe.json(true);
         JsonElement elt = new JsonParser().parse(json);
         Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonPrimitive());
+    }
+
+    @Test
+    public void testGetNoKeysReturnsAllData() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 31;
+        Map<String, Object> data = nock.map();
+        Assert.assertTrue(data.containsKey("name"));
+        Assert.assertTrue(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("alive"));
+        Assert.assertFalse(data.containsKey("foo"));
+        Assert.assertTrue(data.containsKey("bar"));
+        Assert.assertTrue(data.containsKey("city"));
+    }
+
+    @Test
+    public void testGetNegativeFiltering() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 31;
+        Map<String, Object> data = nock.map("-age", "-city");
+        Assert.assertTrue(data.containsKey("name"));
+        Assert.assertFalse(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("alive"));
+        Assert.assertFalse(data.containsKey("foo"));
+        Assert.assertTrue(data.containsKey("bar"));
+        Assert.assertFalse(data.containsKey("city"));
+    }
+
+    @Test
+    public void testGetNegativeAndPositiveFiltering() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 31;
+        Map<String, Object> data = nock.map("-age", "alive", "-city");
+        Assert.assertFalse(data.containsKey("name"));
+        Assert.assertFalse(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("alive"));
+        Assert.assertFalse(data.containsKey("foo"));
+        Assert.assertFalse(data.containsKey("bar"));
+        Assert.assertFalse(data.containsKey("city"));
+    }
+
+    @Test
+    public void testGetPositiveFiltering() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 31;
+        Map<String, Object> data = nock.map("age", "alive", "city");
+        Assert.assertFalse(data.containsKey("name"));
+        Assert.assertTrue(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("alive"));
+        Assert.assertFalse(data.containsKey("foo"));
+        Assert.assertFalse(data.containsKey("bar"));
+        Assert.assertTrue(data.containsKey("city"));
+    }
+
+    @Test
+    public void testGetComputedValue() {
+        Rock rock = new Rock();
+        long start = System.currentTimeMillis();
+        String state = rock.get("state");
+        long end = System.currentTimeMillis();
+        Assert.assertEquals("Georgia", state);
+        Assert.assertTrue(end - start >= 1000);
+    }
+
+    @Test
+    public void testComputedValueIncludedInGetAll() {
+        Rock rock = new Rock();
+        Map<String, Object> data = rock.map();
+        Assert.assertTrue(data.containsKey("state"));
+    }
+
+    @Test
+    public void testComputedValueNotComputedIfNotNecessary() {
+        Bock bock = new Bock();
+        Map<String, Object> data = bock.map("-state");
+        System.out.println(data);
+        Assert.assertFalse(data.containsKey("state"));
     }
 
     class Mock extends Record {
@@ -356,6 +440,37 @@ public class RecordTest extends ClientServerTest {
 
         List<String> shoes;
         boolean ignore = false;
+    }
+
+    class Nock extends Mock {
+
+        @Override
+        public Map<String, Object> derived() {
+            return ImmutableMap.of("city", "Atlanta");
+        }
+
+    }
+
+    class Rock extends Nock {
+
+        @Override
+        public Map<String, Supplier<Object>> computed() {
+            return ImmutableMap.of("state", () -> {
+                long stop = System.currentTimeMillis() + 1000;
+                while (System.currentTimeMillis() < stop) {
+                    continue;
+                }
+                return "Georgia";
+            });
+        }
+    }
+
+    class Bock extends Nock {
+        @Override
+        public Map<String, Supplier<Object>> computed() {
+            return ImmutableMap.of("state",
+                    () -> Continuation.of(UUID::randomUUID));
+        }
     }
 
 }
