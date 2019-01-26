@@ -124,15 +124,13 @@ public class User extends Record {
 }
 ```
 #### Creating a Record instance
-Use the static `create` method to construct a Record instance. You will need to pass along the class of the Record type you wish to create.
-```
-User user = User.create(User.class);
-```
+You can create a Record instance by calling the class-defined constructor.
 
 #### Loading a Record instance
 Use the static `load` method to load a previously stored Record instance. You will need to pass along the class of the Record type you wish to load and the `id` of the record.
 ```
-User user = User.load(User.class, 1);
+Runway db = Runway.connect();
+User user = db.load(User.class, 1);
 ```
 
 ### Saving a Record
@@ -148,8 +146,9 @@ If a record fails to save for some reason, you can always throw an Exception wit
 ### Saving multiple Records at once
 The `save()` method saves changes to a record within an ACID transaction to ensure that the state remains consistent. You can save multiple records within a single transaction using the `Record.saveAll()` method. This is useful in situations when changes to multiple records are dependant or newly created records link to one another.
 ```
+Runway db = Runway.connect()
 User user1 = User.create();
 User user2 = User.create();
 user1.followers.add(user2);
-Record.saveAll(user1, user2);
+db.save(user1, user2);
 ```
