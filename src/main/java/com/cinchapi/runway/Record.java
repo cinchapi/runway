@@ -245,8 +245,8 @@ public abstract class Record {
             Concourse concourse, Runway runway) {
         T record = (T) newDefaultInstance(clazz, connections);
         Reflection.set("id", id, record); /* (authorized) */
-        record.load(concourse, existing);
         record.assign(runway);
+        record.load(concourse, existing);
         return record;
     }
 
