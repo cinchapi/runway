@@ -26,6 +26,7 @@ import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.concourse.time.Time;
 import com.google.common.collect.ImmutableSet;
 
 /**
@@ -127,6 +128,54 @@ public class RunwayTest extends ClientServerTest {
         Assert.assertEquals(admin.name, sa.name);
         Assert.assertEquals(admin.get("foo"), sa.foo);
         Assert.assertEquals(admin.get("bar"), sa.bar);
+    }
+
+    @Test
+    public void testRecordHasDatabaseInterfaceReferenceWhenConstructedAndOnlyOneRunway() {
+        SuperAdmin sa = new SuperAdmin("Jeff Nelson", "foo", "bar");
+        sa.db.find(User.class, Criteria.where().key("foo")
+                .operator(Operator.EQUALS).value("foo"));
+        Assert.assertTrue(true); // lack of Exception means the test passes
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testRecordDoesNotHaveDatabaseInterfaceReferenceWhenConstructedAndMultipleRunwaysExist() {
+        Runway runway2 = Runway.connect("localhost", server.getClientPort(),
+                "admin", "admin", "" + Time.now());
+        try {
+            SuperAdmin sa = new SuperAdmin("Jeff Nelson", "foo", "bar");
+            sa.db.find(User.class, Criteria.where().key("foo")
+                    .operator(Operator.EQUALS).value("foo"));
+            Assert.assertTrue(false); // lack of Exception means the test fails
+        }
+        finally {
+            try {
+                runway2.close();
+            }
+            catch (Exception e) {}
+        }
+    }
+
+    @Test
+    public void testLoadedRecordAlwaysHasDatabaseInstanceReference() {
+        SuperAdmin sa = new SuperAdmin("Jeff Nelson", "foo", "bar");
+        sa.save();
+        Runway runway2 = Runway.connect("localhost", server.getClientPort(),
+                "admin", "admin", "" + Time.now());
+        try {
+            SuperAdmin loaded = runway.findAnyUnique(SuperAdmin.class,
+                    Criteria.where().key("name").operator(Operator.EQUALS)
+                            .value("Jeff Nelson"));
+            loaded.db.find(User.class, Criteria.where().key("foo")
+                    .operator(Operator.EQUALS).value("foo"));
+            Assert.assertTrue(true); // lack of Exception means the test passes
+        }
+        finally {
+            try {
+                runway2.close();
+            }
+            catch (Exception e) {}
+        }
     }
 
     abstract class User extends Record {

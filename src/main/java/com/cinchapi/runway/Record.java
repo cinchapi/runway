@@ -273,6 +273,8 @@ public abstract class Record {
             Reflection.set("id", NULL_ID, instance);
             Reflection.set("inViolation", false, instance);
             Reflection.set("connections", connections, instance);
+            Reflection.set("db",
+                    new ReactiveDatabaseInterface((Record) instance), instance);
             return instance;
         }
         catch (InstantiationException e) {
@@ -291,7 +293,8 @@ public abstract class Record {
      * The {@link DatabaseInterface} that can be used to make queries within the
      * database from which this {@link Record} is sourced.
      */
-    protected final transient DatabaseInterface db = new ReactiveDatabaseInterface();
+    protected final transient DatabaseInterface db = new ReactiveDatabaseInterface(
+            this);
 
     /**
      * The variable that holds the name of the section in the database where
@@ -1169,13 +1172,29 @@ public abstract class Record {
      *
      * @author Jeff Nelson
      */
-    private class ReactiveDatabaseInterface implements DatabaseInterface {
+    private static class ReactiveDatabaseInterface implements
+            DatabaseInterface {
+
+        /**
+         * A reference to the enclosing {@link Record} whose state is watched
+         * and reacted to. This is needed since this class is static.
+         */
+        private final Record tracked;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param tracked
+         */
+        private ReactiveDatabaseInterface(Record tracked) {
+            this.tracked = tracked;
+        }
 
         @Override
         public <T extends Record> Set<T> find(Class<T> clazz,
                 BuildableState criteria) {
-            if(runway != null) {
-                return runway.find(clazz, criteria);
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1186,8 +1205,8 @@ public abstract class Record {
         @Override
         public <T extends Record> Set<T> find(Class<T> clazz,
                 Criteria criteria) {
-            if(runway != null) {
-                return runway.find(clazz, criteria);
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1198,8 +1217,8 @@ public abstract class Record {
         @Override
         public <T extends Record> Set<T> findAny(Class<T> clazz,
                 BuildableState criteria) {
-            if(runway != null) {
-                return runway.findAny(clazz, criteria);
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1210,8 +1229,8 @@ public abstract class Record {
         @Override
         public <T extends Record> Set<T> findAny(Class<T> clazz,
                 Criteria criteria) {
-            if(runway != null) {
-                return runway.findAny(clazz, criteria);
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1222,8 +1241,8 @@ public abstract class Record {
         @Override
         public <T extends Record> T findAnyUnique(Class<T> clazz,
                 BuildableState criteria) {
-            if(runway != null) {
-                return runway.findAnyUnique(clazz, criteria);
+            if(tracked.runway != null) {
+                return tracked.runway.findAnyUnique(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1234,8 +1253,8 @@ public abstract class Record {
         @Override
         public <T extends Record> T findAnyUnique(Class<T> clazz,
                 Criteria criteria) {
-            if(runway != null) {
-                return runway.findAnyUnique(clazz, criteria);
+            if(tracked.runway != null) {
+                return tracked.runway.findAnyUnique(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1246,8 +1265,8 @@ public abstract class Record {
         @Override
         public <T extends Record> T findUnique(Class<T> clazz,
                 BuildableState criteria) {
-            if(runway != null) {
-                return runway.findUnique(clazz, criteria);
+            if(tracked.runway != null) {
+                return tracked.runway.findUnique(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1258,8 +1277,8 @@ public abstract class Record {
         @Override
         public <T extends Record> T findUnique(Class<T> clazz,
                 Criteria criteria) {
-            if(runway != null) {
-                return runway.findUnique(clazz, criteria);
+            if(tracked.runway != null) {
+                return tracked.runway.findUnique(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1269,8 +1288,8 @@ public abstract class Record {
 
         @Override
         public <T extends Record> Set<T> load(Class<T> clazz) {
-            if(runway != null) {
-                return runway.load(clazz);
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1280,8 +1299,8 @@ public abstract class Record {
 
         @Override
         public <T extends Record> T load(Class<T> clazz, long id) {
-            if(runway != null) {
-                return runway.load(clazz, id);
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, id);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1291,8 +1310,8 @@ public abstract class Record {
 
         @Override
         public <T extends Record> Set<T> loadAny(Class<T> clazz) {
-            if(runway != null) {
-                return runway.loadAny(clazz);
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz);
             }
             else {
                 throw new UnsupportedOperationException(
