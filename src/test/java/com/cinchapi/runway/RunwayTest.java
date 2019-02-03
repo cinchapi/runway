@@ -177,6 +177,26 @@ public class RunwayTest extends ClientServerTest {
             catch (Exception e) {}
         }
     }
+    
+    @Test
+    public void testIntrospectedData() {
+        Organization o1 = new Organization("o1");
+        Organization o2 = new Organization("o2");
+        Person p1 = new Person("P1", o1);
+        runway.save(o1, o2, p1);
+        Assert.assertEquals(ImmutableSet.of(p1), o1.members());
+        Person p2 = new Person("P2", o1);
+        p2.save();
+        Assert.assertEquals(ImmutableSet.of(p1, p2), o1.members());
+        Person p3 = new Person("P3", o2);
+        p3.save();
+        Assert.assertEquals(ImmutableSet.of(p1, p2), o1.members());
+        Assert.assertEquals(ImmutableSet.of(p3), o2.members());
+        p1.organization = o2;
+        p1.save();
+        Assert.assertEquals(ImmutableSet.of(p2), o1.members());
+        Assert.assertEquals(ImmutableSet.of(p1, p3), o2.members());        
+    }
 
     abstract class User extends Record {
 
@@ -226,6 +246,31 @@ public class RunwayTest extends ClientServerTest {
             this.bar = bar;
         }
 
+    }
+
+    class Person extends Record {
+
+        public final String name;
+        public Organization organization;
+
+        public Person(String name, Organization organization) {
+            this.name = name;
+            this.organization = organization;
+        }
+    }
+
+    class Organization extends Record {
+
+        public final String name;
+
+        public Organization(String name) {
+            this.name = name;
+        }
+
+        public Set<Person> members() {
+            return db.find(Person.class, Criteria.where().key("organization")
+                    .operator(Operator.LINKS_TO).value(id()));
+        }
     }
 
 }
