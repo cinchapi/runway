@@ -364,7 +364,7 @@ public abstract class Record {
      */
     public void assign(Runway runway) {
         this.runway = runway;
-        connections = runway.connections;
+        this.connections = runway.connections;
     }
 
     /**
