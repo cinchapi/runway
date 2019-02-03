@@ -305,7 +305,7 @@ public abstract class Record {
     /**
      * The {@link Concourse} database in which this {@link Record} is stored.
      */
-    private ConnectionPool connections = null;
+    private transient ConnectionPool connections = null;
 
     /**
      * A flag that indicates if the record has been deleted using the
