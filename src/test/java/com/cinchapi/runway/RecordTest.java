@@ -13,7 +13,9 @@ import org.junit.Test;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.Continuation;
 import com.cinchapi.concourse.Tag;
+import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
+import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Required;
@@ -308,6 +310,23 @@ public class RecordTest extends ClientServerTest {
         Assert.assertFalse(data.containsKey("state"));
     }
 
+    @Test
+    public void testNonCollectionLinkFieldErroneousUpdateRepro() {
+        Tock t1 = new Tock();
+        Tock t2 = new Tock();
+        Stock s1 = new Stock();
+        s1.tock = t1;
+        runway.save(t1, t2, s1);
+        s1.tock = t2;
+        s1.save();
+        Set<Stock> stocks = runway.find(Stock.class, Criteria.where()
+                .key("tock").operator(Operator.LINKS_TO).value(t1.id()));
+        Assert.assertTrue(stocks.isEmpty());
+        stocks = runway.find(Stock.class, Criteria.where()
+                .key("tock").operator(Operator.LINKS_TO).value(t2.id()));
+        Assert.assertEquals(1, stocks.size());
+    }
+
     class Mock extends Record {
 
         @Unique
@@ -383,6 +402,7 @@ public class RecordTest extends ClientServerTest {
 
     class Tock extends Record {
         public List<Stock> stocks = Lists.newArrayList();
+        public boolean zombie = false;
 
         public Tock() {
 
