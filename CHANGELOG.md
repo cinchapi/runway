@@ -1,7 +1,7 @@
 # Changelog
 
 #### Version 1.2.0 (TBD)
-* Added a reference to the `Runway` instance to which a `Record` is assigned under the `db` variable in the `Record` class. This can be used to create getter methods or computed fields that query the database. For example, if there is a one-to-many relationship that is expressed via Record referential fields, you can use the `db` reference in the method that has many to query the database to return all the related records.
+* In the `Record` class, we added a `db` attribute, containing a reference to the `Runway` instance to which the `Record` is assigned. The `db` can be used to create getter methods or computed properties that query the database to return dynamic values. For example, if a `Record` class is the destination link from a field in many other `Record` classes (e.g. a one-to-many relationship), you can query the `db` to return all the related source records.
   * **NOTE:** Runway assignment happens automatically whenever a Record is 1) loaded, 2) saved and 3) created in a JVM where only a single Runway instance is available. If a Record is created when multiple Runway instances are available, the desired one can be assigned using the `Record#assign` method.
 
 #### Version 1.1.1 (February 3, 2019)
