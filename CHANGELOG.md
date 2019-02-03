@@ -1,5 +1,9 @@
 # Changelog
 
+#### Version 1.2.0 (TBD)
+* Added a reference to the `Runway` instance to which a `Record` is assigned under the `db` variable in the `Record` class. This can be used to create getter methods or computed fields that query the database. For example, if there is a one-to-many relationship that is expressed via Record referential fields, you can use the `db` reference in the method that has many to query the database to return all the related records.
+  * **NOTE:** Runway assignment happens automatically whenever a Record is 1) loaded, 2) saved and 3) created in a JVM where only a single Runway instance is available. If a Record is created when multiple Runway instances are available, the desired one can be assigned using the `Record#assign` method.
+
 #### Version 1.1.1 (TBD)
 * Fixed a bug that cause an issue when updating non-collection `Record` fields (which are stored as `Links` in Concourse). Previously, updating a Record reference would cause the new value to be appened to the old value in Concourse so that multiple values were stored, simulating a collection. This behaviour has now been corrected so that the new value will overwrite the previously stored value.
 
