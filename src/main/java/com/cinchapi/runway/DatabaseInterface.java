@@ -27,7 +27,7 @@ import com.cinchapi.concourse.lang.Criteria;
  *
  * @author Jeff Nelson
  */
-interface DatabaseInterface {
+public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
