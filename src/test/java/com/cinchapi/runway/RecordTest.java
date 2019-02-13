@@ -326,6 +326,17 @@ public class RecordTest extends ClientServerTest {
                 .key("tock").operator(Operator.LINKS_TO).value(t2.id()));
         Assert.assertEquals(1, stocks.size());
     }
+    
+    @Test
+    public void testCollectionLinkFieldOverwriteRegression() {
+        Tock tock = new Tock();
+        tock.stocks.add(new Stock());
+        tock.stocks.add(new Stock());
+        tock.stocks.forEach(stock -> stock.tock = tock);
+        tock.save();
+        Tock t1 = runway.load(Tock.class, tock.id());
+        Assert.assertEquals(2, t1.stocks.size());
+    }
 
     class Mock extends Record {
 
