@@ -1126,7 +1126,13 @@ public abstract class Record {
                 seen.add(record);
                 record.saveWithinTransaction(concourse, seen);
             }
-            concourse.set(key, Link.to(record.id), id);
+            if(append) {
+                concourse.link(key, record.id, id);
+            }
+            else {
+                concourse.set(key, Link.to(record.id), id);
+            }
+
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
             // TODO use reconcile() function once 0.5.0 comes out...
