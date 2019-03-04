@@ -54,7 +54,7 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  *
  * @author Jeff Nelson
  */
-public final class Runway implements AutoCloseable {
+public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * A mapping from each {@link Record} class to all of its descendants. This
@@ -189,27 +189,13 @@ public final class Runway implements AutoCloseable {
         }
     }
 
-    /**
-     * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the matching records
-     */
+    @Override
     public <T extends Record> Set<T> find(Class<T> clazz,
             BuildableState criteria) {
         return find(clazz, criteria.build());
     }
 
-    /**
-     * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the matching records
-     */
+    @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
@@ -228,27 +214,13 @@ public final class Runway implements AutoCloseable {
         }
     }
 
-    /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
-     * and all of its descendants.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the matching records
-     */
+    @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz,
             BuildableState criteria) {
         return findAny(clazz, criteria.build());
     }
 
-    /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
-     * all of its descendants.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the matching records
-     */
+    @Override
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria) {
@@ -260,28 +232,13 @@ public final class Runway implements AutoCloseable {
         return found;
     }
 
-    /**
-     * Execute the {@link #findUnique(Class, BuildableState)} query for
-     * {@code clazz} and all of its descendants.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the one matching record
-     */
+    @Override
     public <T extends Record> T findAnyUnique(Class<T> clazz,
             BuildableState criteria) {
         return findAnyUnique(clazz, criteria.build());
     }
 
-    /**
-     * Execute the {@link #findUnique(Class, Criteria)} query for {@code clazz}
-     * and
-     * all of its descendants.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the one matching record
-     */
+    @Override
     @SuppressWarnings({ "unchecked", "rawtypes" })
     public <T extends Record> T findAnyUnique(Class<T> clazz,
             Criteria criteria) {
@@ -339,31 +296,13 @@ public final class Runway implements AutoCloseable {
         return findUnique(clazz, criteria);
     }
 
-    /**
-     * Find the one record of type {@code clazz} that matches the
-     * {@code criteria}. If more than one record matches, throw a
-     * {@link DuplicateEntryException}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the one matching record
-     * @throws DuplicateEntryException
-     */
+    @Override
     public <T extends Record> T findUnique(Class<T> clazz,
             BuildableState criteria) {
         return findUnique(clazz, criteria.build());
     }
 
-    /**
-     * Find the one record of type {@code clazz} that matches the
-     * {@code criteria}. If more than one record matches, throw a
-     * {@link DuplicateEntryException}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the one matching record
-     * @throws DuplicateEntryException
-     */
+    @Override
     public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
@@ -389,20 +328,7 @@ public final class Runway implements AutoCloseable {
         }
     }
 
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz}.
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @return a {@link Set set} of {@link Record} objects
-     */
+    @Override
     public <T extends Record> Set<T> load(Class<T> clazz) {
         Concourse concourse = connections.request();
         try {
@@ -419,20 +345,7 @@ public final class Runway implements AutoCloseable {
         }
     }
 
-    /**
-     * Load the Record that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param id
-     * @return the existing Record
-     */
+    @Override
     public <T extends Record> T load(Class<T> clazz, long id) {
         if(hierarchies.get(clazz).size() > 1) {
             // The provided clazz has descendants, so it is possible that the
@@ -451,20 +364,7 @@ public final class Runway implements AutoCloseable {
         return load(clazz, id, new TLongObjectHashMap<Record>());
     }
 
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants.
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @return a {@link Set set} of {@link Record} objects
-     */
+    @Override
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public <T extends Record> Set<T> loadAny(Class<T> clazz) {
         Collection<Class<?>> hierarchy = hierarchies.get(clazz);
@@ -493,7 +393,7 @@ public final class Runway implements AutoCloseable {
         if(records.length == 1) {
             Concourse concourse = connections.request();
             try {
-                return records[0].save(concourse, Sets.newHashSet());
+                return records[0].save(concourse, Sets.newHashSet(), this);
             }
             finally {
                 connections.release(concourse);
@@ -549,7 +449,7 @@ public final class Runway implements AutoCloseable {
      */
     private <T extends Record> T load(Class<T> clazz, long id,
             TLongObjectHashMap<Record> existing) {
-        return Record.load(clazz, id, existing, connections);
+        return Record.load(clazz, id, existing, connections, this);
     }
 
 }

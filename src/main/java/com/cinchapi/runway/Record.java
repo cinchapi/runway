@@ -48,6 +48,7 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
+import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
@@ -146,10 +147,11 @@ public abstract class Record {
      * @return the loaded Record
      */
     protected static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections) {
+            TLongObjectMap<Record> existing, ConnectionPool connections,
+            Runway runway) {
         Concourse concourse = connections.request();
         try {
-            return load(clazz, id, existing, connections, concourse);
+            return load(clazz, id, existing, connections, concourse, runway);
         }
         finally {
             connections.release(concourse);
@@ -240,9 +242,10 @@ public abstract class Record {
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
             TLongObjectMap<Record> existing, ConnectionPool connections,
-            Concourse concourse) {
+            Concourse concourse, Runway runway) {
         T record = (T) newDefaultInstance(clazz, connections);
         Reflection.set("id", id, record); /* (authorized) */
+        record.assign(runway);
         record.load(concourse, existing);
         return record;
     }
@@ -270,6 +273,8 @@ public abstract class Record {
             Reflection.set("id", NULL_ID, instance);
             Reflection.set("inViolation", false, instance);
             Reflection.set("connections", connections, instance);
+            Reflection.set("db",
+                    new ReactiveDatabaseInterface((Record) instance), instance);
             return instance;
         }
         catch (InstantiationException e) {
@@ -285,6 +290,13 @@ public abstract class Record {
     /* package */ transient List<String> errors = Lists.newArrayList();
 
     /**
+     * The {@link DatabaseInterface} that can be used to make queries within the
+     * database from which this {@link Record} is sourced.
+     */
+    protected final transient DatabaseInterface db = new ReactiveDatabaseInterface(
+            this);
+
+    /**
      * The variable that holds the name of the section in the database where
      * this record is stored.
      */
@@ -293,7 +305,7 @@ public abstract class Record {
     /**
      * The {@link Concourse} database in which this {@link Record} is stored.
      */
-    private ConnectionPool connections = null;
+    private transient ConnectionPool connections = null;
 
     /**
      * A flag that indicates if the record has been deleted using the
@@ -319,6 +331,12 @@ public abstract class Record {
     private transient boolean inViolation = false;
 
     /**
+     * The {@link Runway} instance that has been {@link #assign(Runway)
+     * assigned} to this {@link Record}.
+     */
+    private transient Runway runway = null;
+
+    /**
      * Construct a new instance.
      * 
      * @param concourse
@@ -327,6 +345,7 @@ public abstract class Record {
         this.id = Time.now();
         if(PINNED_RUNWAY_INSTANCE != null) {
             this.connections = PINNED_RUNWAY_INSTANCE.connections;
+            this.runway = PINNED_RUNWAY_INSTANCE;
         }
     }
 
@@ -344,7 +363,8 @@ public abstract class Record {
      *            stored.
      */
     public void assign(Runway runway) {
-        connections = runway.connections;
+        this.runway = runway;
+        this.connections = runway.connections;
     }
 
     /**
@@ -535,7 +555,7 @@ public abstract class Record {
                 "Cannot perform an implicit save because this Record isn't pinned to a Concourse instance");
         Concourse concourse = connections.request();
         try {
-            return save(concourse, Sets.newHashSet());
+            return save(concourse, Sets.newHashSet(), runway);
         }
         finally {
             connections.release(concourse);
@@ -693,7 +713,9 @@ public abstract class Record {
      * 
      * @return {@code true} if all the changes have been atomically saved.
      */
-    /* package */ final boolean save(Concourse concourse, Set<Record> seen) {
+    /* package */ final boolean save(Concourse concourse, Set<Record> seen,
+            Runway runway) {
+        assign(runway);
         try {
             Preconditions.checkState(!inViolation);
             errors.clear();
@@ -885,7 +907,7 @@ public abstract class Record {
                     Class<? extends Record> targetClass = Reflection
                             .getClassCasted(section);
                     converted = load(targetClass, target, alreadyLoaded,
-                            connections, concourse);
+                            connections, concourse, runway);
                 }
             }
         }
@@ -925,11 +947,6 @@ public abstract class Record {
         Map<String, Object> computed = new AbstractMap<String, Object>() {
 
             @Override
-            public Set<String> keySet() {
-                return computed().keySet();
-            }
-
-            @Override
             public Set<Entry<String, Object>> entrySet() {
                 return computed().entrySet().stream().map(ComputedEntry::new)
                         .collect(Collectors.toSet());
@@ -944,6 +961,11 @@ public abstract class Record {
                 else {
                     return null;
                 }
+            }
+
+            @Override
+            public Set<String> keySet() {
+                return computed().keySet();
             }
 
         };
@@ -1147,6 +1169,162 @@ public abstract class Record {
             Tag json = Tag.create(gson.toJson(value));
             store(key, json, concourse, append, seen);
         }
+    }
+
+    /**
+     * A {@link Database} interface that reacts to the state of the
+     * {@link #runway} variable and delegates to it or throws an
+     * {@link UnsupportedOperationException} if it is {@code null}.
+     *
+     * @author Jeff Nelson
+     */
+    private static class ReactiveDatabaseInterface implements
+            DatabaseInterface {
+
+        /**
+         * A reference to the enclosing {@link Record} whose state is watched
+         * and reacted to. This is needed since this class is static.
+         */
+        private final Record tracked;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param tracked
+         */
+        private ReactiveDatabaseInterface(Record tracked) {
+            this.tracked = tracked;
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz,
+                BuildableState criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz,
+                Criteria criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                BuildableState criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T findAnyUnique(Class<T> clazz,
+                BuildableState criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAnyUnique(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T findAnyUnique(Class<T> clazz,
+                Criteria criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAnyUnique(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T findUnique(Class<T> clazz,
+                BuildableState criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.findUnique(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T findUnique(Class<T> clazz,
+                Criteria criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.findUnique(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T load(Class<T> clazz, long id) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, id);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
     }
 
 }
