@@ -21,6 +21,7 @@ import java.util.Set;
 import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
 
+import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -30,7 +31,6 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
-import com.cinchapi.concourse.util.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
@@ -259,7 +259,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             throw new DuplicateEntryException(
                     new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                            Strings.format(
+                            AnyStrings.format(
                                     "There are more than one records that match {} in the hierarchy of {}",
                                     criteria, clazz)));
         }
@@ -314,7 +314,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             else if(ids.size() > 1) {
                 throw new DuplicateEntryException(
                         new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                Strings.format(
+                                AnyStrings.format(
                                         "There are more than one records that match {} in {}",
                                         criteria, clazz)));
             }
