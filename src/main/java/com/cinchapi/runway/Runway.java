@@ -22,6 +22,7 @@ import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
 
 import com.cinchapi.common.base.AnyStrings;
+import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -203,7 +204,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             criteria = ensureClassSpecificCriteria(criteria, clazz);
             Set<Long> ids = concourse.find(criteria);
             TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
-            Set<T> records = Transformers.transformSetLazily(ids,
+            Set<T> records = LazyTransformSet.of(ids,
                     id -> load(clazz, id, existing));
             return records;
         }
@@ -334,7 +335,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     .operator(Operator.EQUALS).value(clazz.getName()).build();
             Set<Long> ids = concourse.find(criteria);
             TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
-            Set<T> records = Transformers.transformSetLazily(ids,
+            Set<T> records = LazyTransformSet.of(ids,
                     id -> load(clazz, id, existing));
             return records;
         }
