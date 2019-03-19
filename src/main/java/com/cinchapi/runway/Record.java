@@ -29,6 +29,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.AbstractMap.SimpleEntry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
@@ -135,28 +137,6 @@ public abstract class Record {
      */
     private static final Set<String> ZOMBIE_DESCRIPTION = Sets
             .newHashSet(SECTION_KEY);
-
-    /**
-     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
-     * {@code id}.
-     * 
-     * @param clazz
-     * @param id
-     * @param existing
-     * @param connections
-     * @return the loaded Record
-     */
-    protected static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections,
-            Runway runway) {
-        Concourse concourse = connections.request();
-        try {
-            return load(clazz, id, existing, connections, concourse, runway);
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
 
     /**
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
@@ -279,6 +259,28 @@ public abstract class Record {
         }
         catch (InstantiationException e) {
             throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+    }
+
+    /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id}.
+     * 
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @return the loaded Record
+     */
+    protected static <T extends Record> T load(Class<?> clazz, long id,
+            TLongObjectMap<Record> existing, ConnectionPool connections,
+            Runway runway) {
+        Concourse concourse = connections.request();
+        try {
+            return load(clazz, id, existing, connections, concourse, runway);
+        }
+        finally {
+            connections.release(concourse);
         }
     }
 
@@ -447,6 +449,55 @@ public abstract class Record {
     }
 
     /**
+     * Return the "readable" intrinsic (e.g. not {@link #derived() or
+     * {@link #computed()}) data from this {@link Record} as a {@link Map}.
+     * <p>
+     * This method be used over {@link #map()} when it is necessary to ensure
+     * that {@link #computed() computed} values aren't processed and it isn't
+     * feasible to explicitly filter them all out.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @return the intrinsic data record
+     */
+    public Map<String, Object> intrinsic() {
+        return intrinsic(Array.containing());
+    }
+
+    /**
+     * Return the "readable" intrinsic (e.g. not {@link #derived() or
+     * {@link #computed()}) data from this {@link Record} as a {@link Map}.
+     * <p>
+     * This method be used over {@link #map()} when it is necessary to ensure
+     * that {@link #computed() computed} values aren't processed and it isn't
+     * feasible to explicitly filter them all out.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @param keys
+     * @return the intrinsic record data
+     */
+    public Map<String, Object> intrinsic(String... keys) {
+        Set<String> intrinsic = fields().stream().map(Field::getName)
+                .collect(Collectors.toSet());
+        keys = Arrays.stream(keys)
+                .filter(key -> key.startsWith("-")
+                        ? intrinsic.contains(key.substring(1))
+                        : intrinsic.contains(key))
+                .toArray(String[]::new);
+        keys = keys.length == 0 ? intrinsic.toArray(Array.containing()) : keys;
+        return map(keys);
+    }
+
+    /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data.
      * 
@@ -470,6 +521,11 @@ public abstract class Record {
     /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data from the specified {@code keys}.
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
      * 
      * @param flattenSingleElementCollections
      * @param keys
@@ -483,6 +539,11 @@ public abstract class Record {
     /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data from the specified {@code keys}.
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
      * 
      * @param keys
      * @return json string
@@ -501,6 +562,7 @@ public abstract class Record {
      * This method also supports <strong>negative filtering</strong>. You can
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
+     * </p>
      * 
      * @return the data in this record
      */
@@ -518,6 +580,7 @@ public abstract class Record {
      * This method also supports <strong>negative filtering</strong>. You can
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
+     * </p>
      * 
      * @param keys
      * @return the data in this record
@@ -535,8 +598,10 @@ public abstract class Record {
             }
         }
         Map<String, Object> data = include.isEmpty() ? data()
-                : include.stream().collect(
-                        Collectors.toMap(Function.identity(), this::get));
+                : include.stream().map(key -> new SimpleEntry<>(key, get(key)))
+                        .filter(entry -> entry.getValue() != null)
+                        .collect(Collectors.toMap(Entry::getKey,
+                                Entry::getValue));
         return data.entrySet().stream()
                 .filter(e -> !exclude.contains(e.getKey()))
                 .collect(HashMap::new,
@@ -603,255 +668,6 @@ public abstract class Record {
     @Override
     public final String toString() {
         return json();
-    }
-
-    /**
-     * Load an existing record from the database and add all of it to this
-     * instance in memory.
-     * 
-     * @param runway
-     * @param existing
-     */
-    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
-    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
-        Preconditions.checkState(id != NULL_ID);
-        existing.put(id, this); // add the current object so we don't
-                                // recurse infinitely
-        checkConstraints(concourse);
-        if(inZombieState(id, concourse)) {
-            concourse.clear(id);
-            throw new ZombieException();
-        }
-        // TODO: do a large select and populate the fields instead of
-        // doing individual gets
-        fields().forEach(field -> {
-            try {
-                if(!Modifier.isTransient(field.getModifiers())) {
-                    String key = field.getName();
-                    Class<?> type = field.getType();
-                    Object value = null;
-                    if(Collection.class.isAssignableFrom(type)
-                            || type.isArray()) {
-                        // Handle collections and collection-like variables by
-                        // fetching all the values for the #key from Concourse.
-                        Set<?> stored = concourse.select(key, id);
-                        Class<?> collectedType = type
-                                .isArray()
-                                        ? type.getComponentType()
-                                        : Iterables.getFirst(
-                                                Reflection.getTypeArguments(key,
-                                                        this.getClass()),
-                                                Object.class);
-                        ArrayBuilder collector = ArrayBuilder.builder();
-                        stored.forEach(item -> {
-                            Object converted = convert(key, collectedType, item,
-                                    concourse, existing);
-                            if(converted != null) {
-                                collector.add(converted);
-                            }
-                            else {
-                                // TODO: should we remove the object from
-                                // Concourse since it results in a #null value?
-                            }
-                        });
-                        if(type.isArray()) {
-                            value = collector.build();
-                        }
-                        else {
-                            if(!Modifier.isAbstract(type.getModifiers())
-                                    && !Modifier
-                                            .isInterface(type.getModifiers())) {
-                                // This is a concrete Collection type that can
-                                // be instantiated
-                                value = Reflection.newInstance(type);
-                            }
-                            else if(type == Set.class) {
-                                value = Sets.newLinkedHashSet();
-                            }
-                            else { // assume List
-                                value = Lists.newArrayList();
-                            }
-                            Collections.addAll((Collection) value,
-                                    collector.length() > 0 ? collector.build()
-                                            : Array.containing());
-                        }
-                    }
-                    else {
-                        // Populate a non-collection variable with the most
-                        // recently stored value for the #key in Concourse.
-                        Object stored = concourse.get(key, id);
-                        if(stored != null) {
-                            value = convert(key, type, stored, concourse,
-                                    existing);
-                        }
-                    }
-                    if(value != null) {
-                        field.set(this, value);
-                    }
-                    else {
-                        // no-op; NOTE: Java doesn't allow primitive types to
-                        // hold null values
-                    }
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        });
-
-    }
-
-    /**
-     * Save all changes that have been made to this record using an ACID
-     * transaction with the provided {@code runway} instance.
-     * <p>
-     * Use {@link Runway#save(Record...)} to save changes in multiple records
-     * within a single ACID transaction. Even if saving a single record, prefer
-     * to use the save method in the {@link Runway} class instead of this for
-     * consistent semantics.
-     * </p>
-     * 
-     * @return {@code true} if all the changes have been atomically saved.
-     */
-    /* package */ final boolean save(Concourse concourse, Set<Record> seen,
-            Runway runway) {
-        assign(runway);
-        try {
-            Preconditions.checkState(!inViolation);
-            errors.clear();
-            concourse.stage();
-            if(deleted) {
-                delete(concourse);
-            }
-            else {
-                saveWithinTransaction(concourse, seen);
-            }
-            return concourse.commit();
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            if(inZombieState(concourse)) {
-                concourse.clear(id);
-            }
-            errors.add(Throwables.getStackTraceAsString(t));
-            return false;
-        }
-    }
-
-    /**
-     * Save the data in this record using the specified {@code concourse}
-     * connection. This method assumes that the caller has already started an
-     * transaction, if necessary and will commit the transaction after this
-     * method completes.
-     * 
-     * @param concourse
-     */
-    /* package */ void saveWithinTransaction(final Concourse concourse,
-            Set<Record> seen) {
-        concourse.verifyOrSet(SECTION_KEY, __, id);
-        fields().forEach(field -> {
-            try {
-                if(!Modifier.isTransient(field.getModifiers())) {
-                    final String key = field.getName();
-                    final Object value = field.get(this);
-                    if(field.isAnnotationPresent(ValidatedBy.class)) {
-                        Class<? extends Validator> validatorClass = field
-                                .getAnnotation(ValidatedBy.class).value();
-                        Validator validator = Reflection
-                                .newInstance(validatorClass);
-                        Preconditions.checkState(validator.validate(value),
-                                validator.getErrorMessage());
-                    }
-                    if(field.isAnnotationPresent(Unique.class)) {
-                        Preconditions.checkState(
-                                isUnique(concourse, key, value),
-                                field.getName() + " must be unique");
-                    }
-                    if(field.isAnnotationPresent(Required.class)) {
-                        Preconditions.checkState(
-                                !AnyObjects.isNullOrEmpty(value),
-                                field.getName() + " is required");
-                    }
-                    if(value != null) {
-                        store(key, value, concourse, false, seen);
-                    }
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        });
-
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its native fields and is "computed" on-demand.
-     * <p>
-     * Unlike {@link #derived()} attributes, computed data is generally
-     * expensive to generate and should only be calculated when explicitly
-     * requested.
-     * </p>
-     * <p>
-     * NOTE: Computed attributes are never cached. Each time one is requested,
-     * the computation that generates the value is done anew.
-     * </p>
-     * 
-     * @return the computed data
-     */
-    protected Map<String, Supplier<Object>> computed() {
-        return Collections.emptyMap();
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its fields. For example, this is a good way to provide template
-     * specific information that isn't persisted to the database.
-     * 
-     * @return the additional data
-     */
-    protected Map<String, Object> derived() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
-     * 
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
-     * @deprecated use {@link #typeAdapters()} instead
-     */
-    @Deprecated
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
-     * 
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
-     * @deprecated use {@link #typeAdapters()} instead
-     */
-    @Deprecated
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link TypeAdapter TypeAdapters} that should be used
-     * when generating the {@link #json()} for this {@link Record}.
-     * <p>
-     * Each {@link TypeAdapter} should be mapped from the most generic class or
-     * interface for which the adapter applies.
-     * </p>
-     * 
-     * @return the type adapters to use when serializing the Record to JSON.
-     */
-    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
-        return ImmutableMap.of();
     }
 
     /**
@@ -1053,6 +869,12 @@ public abstract class Record {
     /**
      * Return the JSON string for this {@link Record}.
      * 
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
      * @param flattenSingleElementCollections a boolean that indicates if single
      *            element collections should be flattened to a single value
      * @param links
@@ -1169,6 +991,255 @@ public abstract class Record {
             Tag json = Tag.create(gson.toJson(value));
             store(key, json, concourse, append, seen);
         }
+    }
+
+    /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its native fields and is "computed" on-demand.
+     * <p>
+     * Unlike {@link #derived()} attributes, computed data is generally
+     * expensive to generate and should only be calculated when explicitly
+     * requested.
+     * </p>
+     * <p>
+     * NOTE: Computed attributes are never cached. Each time one is requested,
+     * the computation that generates the value is done anew.
+     * </p>
+     * 
+     * @return the computed data
+     */
+    protected Map<String, Supplier<Object>> computed() {
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its fields. For example, this is a good way to provide template
+     * specific information that isn't persisted to the database.
+     * 
+     * @return the additional data
+     */
+    protected Map<String, Object> derived() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
+     * 
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
+     * @deprecated use {@link #typeAdapters()} instead
+     */
+    @Deprecated
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
+     * 
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
+     * @deprecated use {@link #typeAdapters()} instead
+     */
+    @Deprecated
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link TypeAdapter TypeAdapters} that should be used
+     * when generating the {@link #json()} for this {@link Record}.
+     * <p>
+     * Each {@link TypeAdapter} should be mapped from the most generic class or
+     * interface for which the adapter applies.
+     * </p>
+     * 
+     * @return the type adapters to use when serializing the Record to JSON.
+     */
+    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
+        return ImmutableMap.of();
+    }
+
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param runway
+     * @param existing
+     */
+    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
+    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
+        Preconditions.checkState(id != NULL_ID);
+        existing.put(id, this); // add the current object so we don't
+                                // recurse infinitely
+        checkConstraints(concourse);
+        if(inZombieState(id, concourse)) {
+            concourse.clear(id);
+            throw new ZombieException();
+        }
+        // TODO: do a large select and populate the fields instead of
+        // doing individual gets
+        fields().forEach(field -> {
+            try {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    String key = field.getName();
+                    Class<?> type = field.getType();
+                    Object value = null;
+                    if(Collection.class.isAssignableFrom(type)
+                            || type.isArray()) {
+                        // Handle collections and collection-like variables by
+                        // fetching all the values for the #key from Concourse.
+                        Set<?> stored = concourse.select(key, id);
+                        Class<?> collectedType = type
+                                .isArray()
+                                        ? type.getComponentType()
+                                        : Iterables.getFirst(
+                                                Reflection.getTypeArguments(key,
+                                                        this.getClass()),
+                                                Object.class);
+                        ArrayBuilder collector = ArrayBuilder.builder();
+                        stored.forEach(item -> {
+                            Object converted = convert(key, collectedType, item,
+                                    concourse, existing);
+                            if(converted != null) {
+                                collector.add(converted);
+                            }
+                            else {
+                                // TODO: should we remove the object from
+                                // Concourse since it results in a #null value?
+                            }
+                        });
+                        if(type.isArray()) {
+                            value = collector.build();
+                        }
+                        else {
+                            if(!Modifier.isAbstract(type.getModifiers())
+                                    && !Modifier
+                                            .isInterface(type.getModifiers())) {
+                                // This is a concrete Collection type that can
+                                // be instantiated
+                                value = Reflection.newInstance(type);
+                            }
+                            else if(type == Set.class) {
+                                value = Sets.newLinkedHashSet();
+                            }
+                            else { // assume List
+                                value = Lists.newArrayList();
+                            }
+                            Collections.addAll((Collection) value,
+                                    collector.length() > 0 ? collector.build()
+                                            : Array.containing());
+                        }
+                    }
+                    else {
+                        // Populate a non-collection variable with the most
+                        // recently stored value for the #key in Concourse.
+                        Object stored = concourse.get(key, id);
+                        if(stored != null) {
+                            value = convert(key, type, stored, concourse,
+                                    existing);
+                        }
+                    }
+                    if(value != null) {
+                        field.set(this, value);
+                    }
+                    else {
+                        // no-op; NOTE: Java doesn't allow primitive types to
+                        // hold null values
+                    }
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        });
+
+    }
+
+    /**
+     * Save all changes that have been made to this record using an ACID
+     * transaction with the provided {@code runway} instance.
+     * <p>
+     * Use {@link Runway#save(Record...)} to save changes in multiple records
+     * within a single ACID transaction. Even if saving a single record, prefer
+     * to use the save method in the {@link Runway} class instead of this for
+     * consistent semantics.
+     * </p>
+     * 
+     * @return {@code true} if all the changes have been atomically saved.
+     */
+    /* package */ final boolean save(Concourse concourse, Set<Record> seen,
+            Runway runway) {
+        assign(runway);
+        try {
+            Preconditions.checkState(!inViolation);
+            errors.clear();
+            concourse.stage();
+            if(deleted) {
+                delete(concourse);
+            }
+            else {
+                saveWithinTransaction(concourse, seen);
+            }
+            return concourse.commit();
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            if(inZombieState(concourse)) {
+                concourse.clear(id);
+            }
+            errors.add(Throwables.getStackTraceAsString(t));
+            return false;
+        }
+    }
+
+    /**
+     * Save the data in this record using the specified {@code concourse}
+     * connection. This method assumes that the caller has already started an
+     * transaction, if necessary and will commit the transaction after this
+     * method completes.
+     * 
+     * @param concourse
+     */
+    /* package */ void saveWithinTransaction(final Concourse concourse,
+            Set<Record> seen) {
+        concourse.verifyOrSet(SECTION_KEY, __, id);
+        fields().forEach(field -> {
+            try {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    final String key = field.getName();
+                    final Object value = field.get(this);
+                    if(field.isAnnotationPresent(ValidatedBy.class)) {
+                        Class<? extends Validator> validatorClass = field
+                                .getAnnotation(ValidatedBy.class).value();
+                        Validator validator = Reflection
+                                .newInstance(validatorClass);
+                        Preconditions.checkState(validator.validate(value),
+                                validator.getErrorMessage());
+                    }
+                    if(field.isAnnotationPresent(Unique.class)) {
+                        Preconditions.checkState(
+                                isUnique(concourse, key, value),
+                                field.getName() + " must be unique");
+                    }
+                    if(field.isAnnotationPresent(Required.class)) {
+                        Preconditions.checkState(
+                                !AnyObjects.isNullOrEmpty(value),
+                                field.getName() + " is required");
+                    }
+                    if(value != null) {
+                        store(key, value, concourse, false, seen);
+                    }
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        });
+
     }
 
     /**
