@@ -395,26 +395,31 @@ public abstract class Record {
      */
     @SuppressWarnings("unchecked")
     public <T> T get(String key) {
-        Object value = dynamicData.get(key);
-        if(value == null) {
-            try {
-                Field field = Reflection.getDeclaredField(key, this);
-                if(isReadableField(field)) {
-                    return (T) field.get(this);
+        if(key.equalsIgnoreCase("id")) {
+            return (T) new Long(id);
+        }
+        else {
+            Object value = dynamicData.get(key);
+            if(value == null) {
+                try {
+                    Field field = Reflection.getDeclaredField(key, this);
+                    if(isReadableField(field)) {
+                        return (T) field.get(this);
+                    }
+                }
+                catch (Exception e) {/* ignore */}
+            }
+            if(value == null) {
+                value = derived().get(key);
+            }
+            if(value == null) {
+                Supplier<?> computer = computed().get(key);
+                if(computer != null) {
+                    value = computer.get();
                 }
             }
-            catch (Exception e) {/* ignore */}
+            return (T) value;
         }
-        if(value == null) {
-            value = derived().get(key);
-        }
-        if(value == null) {
-            Supplier<?> computer = computed().get(key);
-            if(computer != null) {
-                value = computer.get();
-            }
-        }
-        return (T) value;
     }
 
     /**

@@ -391,6 +391,12 @@ public class RecordTest extends ClientServerTest {
         Assert.assertFalse(data.containsKey("bar"));
         Assert.assertFalse(data.containsKey("alive"));
     }
+    
+    @Test
+    public void testGetIdUseGetMethod() {
+        Nock nock = new Nock();
+        Assert.assertEquals((long) nock.id(), (long) nock.get("id"));
+    }
 
     class Mock extends Record {
 
