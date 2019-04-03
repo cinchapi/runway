@@ -22,6 +22,7 @@ import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
 
 import com.cinchapi.common.base.AnyStrings;
+import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -199,14 +200,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Set<T> records = Sets.newLinkedHashSet();
             criteria = ensureClassSpecificCriteria(criteria, clazz);
             Set<Long> ids = concourse.find(criteria);
             TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
-            ids.forEach((id) -> {
-                T record = load(clazz, id, existing);
-                records.add(record);
-            });
+            Set<T> records = LazyTransformSet.of(ids,
+                    id -> load(clazz, id, existing));
             return records;
         }
         finally {
@@ -332,12 +330,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> load(Class<T> clazz) {
         Concourse concourse = connections.request();
         try {
-            Set<T> records = Sets.newLinkedHashSet();
             Criteria criteria = Criteria.where().key(Record.SECTION_KEY)
                     .operator(Operator.EQUALS).value(clazz.getName()).build();
             Set<Long> ids = concourse.find(criteria);
             TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
-            ids.forEach(id -> records.add(load(clazz, id, existing)));
+            Set<T> records = LazyTransformSet.of(ids,
+                    id -> load(clazz, id, existing));
             return records;
         }
         finally {
