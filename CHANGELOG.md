@@ -5,6 +5,7 @@
 * Added the `Record#intrinsic` methods, which behave similiary to the analogous `map` methods with the only difference being the `intrinsic` only considers properties that are not derived or computed (e.g. intrinsic to the Record and therefore stored in Concourse).
 * Fixed a bug that caused a `NullPointerException` when attempting to retrieve a `Record`'s id by providing the `id` key to the `get`, `map`, or `json` methods. It is still preferable to retrive the id using the `#id()` method but fetching it indirectly is now supported.
 * Added *Just-In-Time Loading* for results returned from the `#find` and `#load` methods. Now, the work of loading the data for a Record in the result set is deferred until that Record is actually used. This makes stream operations more efficient because unnecessary data is no longer loaded during intermediate operations.
+* Improved the performance of loading Records by loading all the record's data in memory at once instead of dispatching separate `get` or `select` requests on a field by field basis.
 * Added `#search` and `#searchAny` methods to the `Runway` controller. Both of these methods provide an interface for Concourse's fulltext search functionality.
 
 #### Version 1.2.0 (March 4, 2019)
