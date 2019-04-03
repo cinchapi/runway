@@ -322,11 +322,11 @@ public class RecordTest extends ClientServerTest {
         Set<Stock> stocks = runway.find(Stock.class, Criteria.where()
                 .key("tock").operator(Operator.LINKS_TO).value(t1.id()));
         Assert.assertTrue(stocks.isEmpty());
-        stocks = runway.find(Stock.class, Criteria.where()
-                .key("tock").operator(Operator.LINKS_TO).value(t2.id()));
+        stocks = runway.find(Stock.class, Criteria.where().key("tock")
+                .operator(Operator.LINKS_TO).value(t2.id()));
         Assert.assertEquals(1, stocks.size());
     }
-    
+
     @Test
     public void testCollectionLinkFieldOverwriteRegression() {
         Tock tock = new Tock();
@@ -336,6 +336,66 @@ public class RecordTest extends ClientServerTest {
         tock.save();
         Tock t1 = runway.load(Tock.class, tock.id());
         Assert.assertEquals(2, t1.stocks.size());
+    }
+
+    @Test
+    public void testIntrinsicMapDoesNotReturnComputedData() {
+        Bock bock = new Bock();
+        Map<String, Object> data = bock.intrinsic();
+        Assert.assertFalse(data.containsKey("state"));
+    }
+
+    @Test
+    public void testIntrinsicMapDoesNotReturnComputedDataEvenIfRequested() {
+        Bock bock = new Bock();
+        Map<String, Object> data = bock.intrinsic("state");
+        Assert.assertFalse(data.containsKey("state"));
+    }
+
+    @Test
+    public void testIntrinsicMapDoesNotReturnDerivedData() {
+        Nock nock = new Nock();
+        Map<String, Object> data = nock.intrinsic();
+        Assert.assertFalse(data.containsKey("city"));
+    }
+
+    @Test
+    public void testIntrinsicMapDoesNotReturnDerivedDataEvenIfRequested() {
+        Nock nock = new Nock();
+        Map<String, Object> data = nock.intrinsic("city");
+        Assert.assertFalse(data.containsKey("city"));
+    }
+
+    @Test
+    public void testInstrinsicMapAllNegativeFilters() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 100;
+        Map<String, Object> data = nock.intrinsic("-age", "-name");
+        Assert.assertFalse(data.containsKey("state"));
+        Assert.assertFalse(data.containsKey("age"));
+        Assert.assertFalse(data.containsKey("name"));
+        Assert.assertTrue(data.containsKey("alive"));
+        Assert.assertTrue(data.containsKey("bar"));
+    }
+
+    @Test
+    public void testIntrinsicMapPositiveAndNegativeFilters() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 100;
+        Map<String, Object> data = nock.intrinsic("-age", "name", "-bar");
+        Assert.assertFalse(data.containsKey("state"));
+        Assert.assertFalse(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("name"));
+        Assert.assertFalse(data.containsKey("bar"));
+        Assert.assertFalse(data.containsKey("alive"));
+    }
+    
+    @Test
+    public void testGetIdUseGetMethod() {
+        Nock nock = new Nock();
+        Assert.assertEquals((long) nock.id(), (long) nock.get("id"));
     }
 
     class Mock extends Record {
