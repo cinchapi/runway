@@ -1,12 +1,15 @@
 package com.cinchapi.runway;
 
 import java.io.IOException;
+import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -380,7 +383,7 @@ public class RecordTest extends ClientServerTest {
     }
 
     @Test
-    public void testIntrinsicMapPositiveAndNegativeFilters() {
+    public void testMapDataOptions() {
         Nock nock = new Nock();
         nock.name = "Jeff Nelson";
         nock.age = 100;
@@ -390,6 +393,32 @@ public class RecordTest extends ClientServerTest {
         Assert.assertTrue(data.containsKey("name"));
         Assert.assertFalse(data.containsKey("bar"));
         Assert.assertFalse(data.containsKey("alive"));
+    }
+
+    @Test
+    public void testJsonDataOptionsSerializeNulls() {
+        Nock nock = new Nock();
+        nock.age = 100;
+        nock.name = null;
+        String json = nock.json(new DataOptions(true, true), "age", "name");
+        Map<String, Object> data = new Gson().fromJson(json,
+                new TypeToken<Map<String, Object>>(){}.getType());
+        Assert.assertTrue(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("name"));
+        Assert.assertEquals(nock.age.doubleValue(), data.get("age"));
+        Assert.assertEquals(nock.name, data.get("name"));
+    }
+
+    @Test
+    public void testJsonDataOptionsWithoutSerializeNulls() {
+        Nock nock = new Nock();
+        nock.age = 100;
+        nock.name = null;
+        String json = nock.json(new DataOptions(true, false), "age", "name");
+        Map<String, Object> data = new Gson().fromJson(json,
+                new TypeToken<Map<String, Object>>(){}.getType());
+        Assert.assertTrue(data.containsKey("age"));
+        Assert.assertEquals(nock.age.doubleValue(), data.get("age"));
     }
     
     @Test

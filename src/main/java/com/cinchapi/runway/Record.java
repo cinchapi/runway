@@ -340,8 +340,6 @@ public abstract class Record {
 
     /**
      * Construct a new instance.
-     * 
-     * @param concourse
      */
     public Record() {
         this.id = Time.now();
@@ -509,7 +507,7 @@ public abstract class Record {
      * @return json string
      */
     public String json() {
-        return json(false);
+        return json(new DataOptions(false, false));
     }
 
     /**
@@ -519,6 +517,7 @@ public abstract class Record {
      * @param flattenSingleElementCollections
      * @return json string
      */
+    @Deprecated
     public String json(boolean flattenSingleElementCollections) {
         return json(flattenSingleElementCollections, Sets.newHashSet());
     }
@@ -536,6 +535,7 @@ public abstract class Record {
      * @param keys
      * @return json string
      */
+    @Deprecated
     public String json(boolean flattenSingleElementCollections,
             String... keys) {
         return json(flattenSingleElementCollections, Sets.newHashSet(), keys);
@@ -554,7 +554,36 @@ public abstract class Record {
      * @return json string
      */
     public String json(String... keys) {
-        return json(false, keys);
+        return json(new DataOptions(false, false), keys);
+    }
+
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data.
+     *
+     * @param dataOptions
+     * @return json string
+     */
+    public String json(DataOptions dataOptions) {
+        return json(dataOptions, Sets.newHashSet());
+    }
+
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data from the specified {@code keys}.
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     *
+     * @param dataOptions
+     * @param keys
+     * @return json string
+     */
+    public String json(DataOptions dataOptions,
+            String... keys) {
+        return json(dataOptions, Sets.newHashSet(), keys);
     }
 
     /**
@@ -572,7 +601,7 @@ public abstract class Record {
      * @return the data in this record
      */
     public Map<String, Object> map() {
-        return map(Array.containing());
+        return map(new DataOptions(false, false), Array.containing());
     }
 
     /**
@@ -590,6 +619,7 @@ public abstract class Record {
      * @param keys
      * @return the data in this record
      */
+    @Deprecated
     public Map<String, Object> map(String... keys) {
         List<String> include = Lists.newArrayList();
         List<String> exclude = Lists.newArrayList();
@@ -614,10 +644,56 @@ public abstract class Record {
     }
 
     /**
+     * Return a map that contains "readable" data from this {@link Record}.
+     * <p>
+     * If no {@code keys} are provided, all the readable data will be
+     * returned.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     *
+     * @param keys
+     * @return the data in this record
+     */
+    public Map<String, Object> map(DataOptions dataOptions, String... keys) {
+        List<String> include = Lists.newArrayList();
+        List<String> exclude = Lists.newArrayList();
+        for (String key : keys) {
+            if(key.startsWith("-")) {
+                key = key.substring(1);
+                exclude.add(key);
+            }
+            else {
+                include.add(key);
+            }
+        }
+        Map<String, Object> data;
+        if (dataOptions.serializeNullValues()) {
+            data = include.isEmpty() ? data()
+                    : include.stream().map(key -> new SimpleEntry<>(key, get(key)))
+                    .collect(HashMap::new, (m,v)->m.put(v.getKey(), v.getValue()), HashMap::putAll);
+        }
+        else {
+            data = include.isEmpty() ? data()
+                    : include.stream().map(key -> new SimpleEntry<>(key, get(key)))
+                    .filter(entry -> entry.getValue() != null)
+                    .collect(Collectors.toMap(Entry::getKey,
+                            Entry::getValue));
+        }
+        return data.entrySet().stream()
+                .filter(e -> !exclude.contains(e.getKey()))
+                .collect(HashMap::new,
+                        (m, e) -> m.put(e.getKey(), e.getValue()), Map::putAll);
+    }
+
+    /**
      * Save any changes made to this {@link Record}.
      * <p>
      * <strong>NOTE:</strong> This method recursively saves any linked
-     * {@link Records}.
+     * {@link Record}.
      * </p>
      */
     public boolean save() {
@@ -873,13 +949,13 @@ public abstract class Record {
 
     /**
      * Return the JSON string for this {@link Record}.
-     * 
+     *
      * <p>
      * This method also supports <strong>negative filtering</strong>. You can
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
      * </p>
-     * 
+     *
      * @param flattenSingleElementCollections a boolean that indicates if single
      *            element collections should be flattened to a single value
      * @param links
@@ -887,6 +963,7 @@ public abstract class Record {
      * @return the JSON string.
      */
     @SuppressWarnings({ "unchecked" })
+    @Deprecated
     private String json(boolean flattenSingleElementCollections,
             Set<Record> links, String... keys) {
         Map<String, Object> data = keys.length == 0 ? map() : map(keys);
@@ -919,6 +996,73 @@ public abstract class Record {
                 public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
                     if(type.getRawType().isAssignableFrom(clazz)) {
                         return (TypeAdapter<T>) adapter.nullSafe();
+                    }
+                    else {
+                        return null;
+                    }
+                }
+
+            });
+        });
+        Gson gson = builder.create();
+        return gson.toJson(data);
+    }
+
+    /**
+     * Return the JSON string for this {@link Record}.
+     * 
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @param dataOptions
+     * @param links
+     * @param keys the attributes to include in the JSON
+     * @return the JSON string.
+     */
+    @SuppressWarnings({ "unchecked" })
+    private String json(DataOptions dataOptions,
+            Set<Record> links, String... keys) {
+        Map<String, Object> data = keys.length == 0 ? map() : map(dataOptions, keys);
+
+        // Create a dynamic type Gson instance that will detect recursive links
+        // and prevent infinite recursion when trying to generate the JSON.
+        GsonBuilder builder = new GsonBuilder().registerTypeAdapterFactory(
+                TypeAdapters.primitiveTypesFactory(true));
+        if(dataOptions.flattenSingleElementsCollections()) {
+            builder.registerTypeAdapterFactory(
+                    TypeAdapters.collectionFactory(true));
+        }
+        if(dataOptions.serializeNullValues()) {
+            builder.serializeNulls();
+        }
+        builder.registerTypeAdapterFactory(
+                generateDynamicRecordTypeAdapterFactory(
+                        dataOptions.flattenSingleElementsCollections(), links))
+                .setPrettyPrinting().disableHtmlEscaping();
+        Map<Class<?>, TypeAdapter<?>> adapters = Maps.newLinkedHashMap();
+        Streams.concat(jsonTypeWriters().entrySet().stream(),
+                jsonTypeHierarchyWriters().entrySet().stream())
+                .forEach(entry -> {
+                    Class<?> clazz = entry.getKey();
+                    TypeAdapter<?> adapter = entry.getValue().typeAdapter();
+                    adapters.put(clazz, adapter);
+                });
+        adapters.putAll(typeAdapters());
+        adapters.forEach((clazz, adapter) -> {
+            builder.registerTypeAdapterFactory(new TypeAdapterFactory() {
+
+                @Override
+                public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
+                    if(type.getRawType().isAssignableFrom(clazz)) {
+                        if (!dataOptions.serializeNullValues()) {
+                            return (TypeAdapter<T>) adapter.nullSafe();
+                        }
+                        else {
+                            return (TypeAdapter<T>) adapter;
+                        }
                     }
                     else {
                         return null;
@@ -1072,7 +1216,7 @@ public abstract class Record {
      * Load an existing record from the database and add all of it to this
      * instance in memory.
      * 
-     * @param runway
+     * @param concourse
      * @param existing
      */
     /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
@@ -1248,7 +1392,7 @@ public abstract class Record {
     }
 
     /**
-     * A {@link Database} interface that reacts to the state of the
+     * A {@link DatabaseInterface} that reacts to the state of the
      * {@link #runway} variable and delegates to it or throws an
      * {@link UnsupportedOperationException} if it is {@code null}.
      *
