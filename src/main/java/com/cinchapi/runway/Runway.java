@@ -29,7 +29,6 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
-import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
@@ -443,7 +442,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> search(Class<T> clazz, String query,
             String... keys) {
         Concourse concourse = connections.request();
-        concourse.stage();
         try {
             TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
             Set<Long> ids = Arrays.stream(keys)
@@ -454,16 +452,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     .collect(Collectors.toSet());
             Set<T> records = LazyTransformSet.of(ids,
                     id -> load(clazz, id, existing));
-            if(concourse.commit()) {
-                return records;
-            }
-            else {
-                throw new TransactionException();
-            }
-        }
-        catch (TransactionException e) {
-            concourse.abort();
-            return search(clazz, query, keys);
+            return records;
         }
         finally {
             connections.release(concourse);
