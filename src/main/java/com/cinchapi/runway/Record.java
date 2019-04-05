@@ -1098,8 +1098,7 @@ public abstract class Record {
             throw new ZombieException();
         }
         Map<String, Object> defaults = defaults();
-        // TODO: do a large select and populate the fields instead of
-        // doing individual gets
+        Map<String, Set<Object>> data = concourse.select(id);
         fields().forEach(field -> {
             try {
                 if(!Modifier.isTransient(field.getModifiers())) {
@@ -1108,9 +1107,8 @@ public abstract class Record {
                     Object value = null;
                     if(Collection.class.isAssignableFrom(type)
                             || type.isArray()) {
-                        // Handle collections and collection-like variables by
-                        // fetching all the values for the #key from Concourse.
-                        Set<?> stored = concourse.select(key, id);
+                        Set<?> stored = data.getOrDefault(key,
+                                ImmutableSet.of());
                         Class<?> collectedType = type
                                 .isArray()
                                         ? type.getComponentType()
@@ -1155,7 +1153,8 @@ public abstract class Record {
                     else {
                         // Populate a non-collection variable with the most
                         // recently stored value for the #key in Concourse.
-                        Object stored = concourse.get(key, id);
+                        Set<Object> values = data.getOrDefault(key, ImmutableSet.of());
+                        Object stored = Iterables.getFirst(values, null);
                         if(stored != null) {
                             value = convert(key, type, stored, concourse,
                                     existing);
