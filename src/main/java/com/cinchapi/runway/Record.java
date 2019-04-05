@@ -1140,7 +1140,8 @@ public abstract class Record {
                     else {
                         // Populate a non-collection variable with the most
                         // recently stored value for the #key in Concourse.
-                        Object stored = Iterables.getFirst(data.get(key), null);
+                        Set<Object> values = data.getOrDefault(key, ImmutableSet.of());
+                        Object stored = Iterables.getFirst(values, null);
                         if(stored != null) {
                             value = convert(key, type, stored, concourse,
                                     existing);
