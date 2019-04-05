@@ -255,11 +255,23 @@ public abstract class Record {
             Reflection.set("connections", connections, instance);
             Reflection.set("db",
                     new ReactiveDatabaseInterface((Record) instance), instance);
+            // Set default fields
+            Reflection.set(((Record) instance).defaults(), instance);
             return instance;
         }
         catch (InstantiationException e) {
             throw CheckedExceptions.throwAsRuntimeException(e);
         }
+    }
+
+    /**
+     * A hook method for specifying default values for keys in a record
+     * if the value of the key is null.
+     *
+     * @return The keys and their default values
+     */
+    public Map<String, Object> defaults() {
+        return Maps.newHashMap();
     }
 
     /**
@@ -1085,6 +1097,7 @@ public abstract class Record {
             concourse.clear(id);
             throw new ZombieException();
         }
+        Map<String, Object> defaults = defaults();
         // TODO: do a large select and populate the fields instead of
         // doing individual gets
         fields().forEach(field -> {
@@ -1152,6 +1165,9 @@ public abstract class Record {
                         field.set(this, value);
                     }
                     else {
+                        if (defaults.containsKey(key)) {
+                            field.set(this, defaults.get(key));
+                        }
                         // no-op; NOTE: Java doesn't allow primitive types to
                         // hold null values
                     }

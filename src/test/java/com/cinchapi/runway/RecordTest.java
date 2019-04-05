@@ -7,6 +7,10 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+import com.cinchapi.concourse.Concourse;
+import com.google.common.collect.Maps;
+import com.sun.source.tree.AssertTree;
+import gnu.trove.map.hash.TLongObjectHashMap;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -398,6 +402,38 @@ public class RecordTest extends ClientServerTest {
         Assert.assertEquals((long) nock.id(), (long) nock.get("id"));
     }
 
+    @Test
+    public void testDefaultsConstructor() {
+        Jock jock = new Jock();
+        jock.name = "Javier";
+        Assert.assertTrue(jock.save());
+
+        TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
+        Concourse concourse = runway.connections.request();
+        try {
+            jock.load(concourse, existing);
+
+            Map<String, Object> map = jock.map();
+            Assert.assertTrue(map.containsKey("age"));
+            Assert.assertEquals(26, map.get("age"));
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
+    }
+
+    @Test
+    public void testDefaultsLoad() {
+        Jock jock = new Jock();
+        jock.name = "Javier";
+
+        Assert.assertTrue(jock.save());
+        Jock newJock = runway.load(Jock.class, jock.id());
+        Map<String, Object> map = newJock.map();
+        Assert.assertTrue(map.containsKey("age"));
+        Assert.assertEquals(26, map.get("age"));
+    }
+
     class Mock extends Record {
 
         @Unique
@@ -414,6 +450,15 @@ public class RecordTest extends ClientServerTest {
         @Readable
         private boolean bar = false;
 
+    }
+
+    class Jock extends Mock {
+        @Override
+        public Map<String, Object> defaults() {
+            Map<String, Object> map = Maps.newHashMap();
+            map.put("age", 26);
+            return map;
+        }
     }
 
     class Flock extends Record {
@@ -563,5 +608,6 @@ public class RecordTest extends ClientServerTest {
                     () -> Continuation.of(UUID::randomUUID));
         }
     }
+
 
 }
