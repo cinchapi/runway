@@ -227,7 +227,7 @@ public class RecordTest extends ClientServerTest {
     @Test
     public void testJsonSingleValueCollectionFlatten() {
         Shoe shoe = new Shoe(ImmutableList.of("Nike"));
-        String json = shoe.json(true);
+        String json = shoe.json(new DataOptions(true, false));
         JsonElement elt = new JsonParser().parse(json);
         Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonPrimitive());
     }
