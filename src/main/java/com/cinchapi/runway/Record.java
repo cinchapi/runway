@@ -33,10 +33,10 @@ import java.util.Map.Entry;
 import java.util.AbstractMap.SimpleEntry;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
-import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -667,18 +667,17 @@ public abstract class Record {
         if(!options.serializeNullValues()) {
             filter = filter.and(entry -> entry.getValue() != null);
         }
-        Collector<Entry<String, Object>, ?, Map<String, Object>> collector = Collectors
-                .toMap(Entry::getKey, e -> {
-                    Object value = e.getValue();
-                    Collection<?> collection;
-                    if(options.flattenSingleElementCollections()
-                            && value instanceof Collection
-                            && (collection = (Collection<?>) value)
-                                    .size() == 1) {
-                        value = Iterables.getOnlyElement(collection);
-                    }
-                    return value;
-                }, MergeStrategies::upsert, LinkedHashMap::new);
+        BiConsumer<Map<String, Object>, Entry<String, Object>> accumulator = (
+                map, entry) -> {
+            Object value = entry.getValue();
+            Collection<?> collection;
+            if(options.flattenSingleElementCollections()
+                    && value instanceof Collection
+                    && (collection = (Collection<?>) value).size() == 1) {
+                value = Iterables.getOnlyElement(collection);
+            }
+            map.put(entry.getKey(), value);
+        };
         Stream<Entry<String, Object>> pool;
         if(include.isEmpty()) {
             pool = data().entrySet().stream();
@@ -691,7 +690,8 @@ public abstract class Record {
             pool = include.stream()
                     .map(key -> new SimpleEntry<>(key, get(key)));
         }
-        Map<String, Object> data = pool.filter(filter).collect(collector);
+        Map<String, Object> data = pool.filter(filter).collect(
+                LinkedHashMap::new, accumulator, MergeStrategies::upsert);
         return data;
     }
 
