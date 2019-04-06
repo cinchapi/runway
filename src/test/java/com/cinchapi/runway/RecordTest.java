@@ -1,3 +1,18 @@
+/*
+ * Copyright (c) 2013-2019 Cinchapi Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.cinchapi.runway;
 
 import java.io.IOException;
@@ -7,6 +22,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -224,7 +241,8 @@ public class RecordTest extends ClientServerTest {
     @Test
     public void testJsonSingleValueCollectionFlatten() {
         Shoe shoe = new Shoe(ImmutableList.of("Nike"));
-        String json = shoe.json(true);
+        String json = shoe.json(SerializationOptions.builder()
+                .flattenSingleElementCollections(true).build());
         JsonElement elt = new JsonParser().parse(json);
         Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonPrimitive());
     }
@@ -391,7 +409,37 @@ public class RecordTest extends ClientServerTest {
         Assert.assertFalse(data.containsKey("bar"));
         Assert.assertFalse(data.containsKey("alive"));
     }
-    
+
+    @Test
+    public void testJsonSerializationOptionsSerializeNulls() {
+        Nock nock = new Nock();
+        nock.age = 100;
+        nock.name = null;
+        String json = nock.json(SerializationOptions.builder()
+                .flattenSingleElementCollections(true).serializeNullValues(true)
+                .build(), "age", "name");
+        Map<String, Object> data = new Gson().fromJson(json,
+                new TypeToken<Map<String, Object>>() {}.getType());
+        Assert.assertTrue(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("name"));
+        Assert.assertEquals(nock.age.doubleValue(), data.get("age"));
+        Assert.assertEquals(nock.name, data.get("name"));
+    }
+
+    @Test
+    public void testJsonSerializationOptionsWithoutSerializeNulls() {
+        Nock nock = new Nock();
+        nock.age = 100;
+        nock.name = null;
+        String json = nock.json(SerializationOptions.builder()
+                .flattenSingleElementCollections(true).build(), "age",
+                "name");
+        Map<String, Object> data = new Gson().fromJson(json,
+                new TypeToken<Map<String, Object>>() {}.getType());
+        Assert.assertTrue(data.containsKey("age"));
+        Assert.assertEquals(nock.age.doubleValue(), data.get("age"));
+    }
+
     @Test
     public void testGetIdUseGetMethod() {
         Nock nock = new Nock();

@@ -26,16 +26,19 @@ import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.AbstractMap.SimpleEntry;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.annotation.Nullable;
 
@@ -44,6 +47,7 @@ import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
+import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -147,7 +151,7 @@ public abstract class Record {
      * @return the {@link TypeAdapterFactory}
      */
     private static TypeAdapterFactory generateDynamicRecordTypeAdapterFactory(
-            boolean flattenSingleElementCollections, Set<Record> links) {
+            SerializationOptions options, Set<Record> links) {
         return new TypeAdapterFactory() {
 
             @SuppressWarnings("unchecked")
@@ -166,9 +170,7 @@ public abstract class Record {
                                 throws IOException {
                             if(!links.contains(value)) {
                                 links.add(value);
-                                out.jsonValue(value.json(
-                                        flattenSingleElementCollections,
-                                        links));
+                                out.jsonValue(value.json(options, links));
                             }
                             else {
                                 out.value(value.id() + " (recursive link)");
@@ -340,8 +342,6 @@ public abstract class Record {
 
     /**
      * Construct a new instance.
-     * 
-     * @param concourse
      */
     public Record() {
         this.id = Time.now();
@@ -509,7 +509,7 @@ public abstract class Record {
      * @return json string
      */
     public String json() {
-        return json(false);
+        return json(SerializationOptions.defaults());
     }
 
     /**
@@ -518,9 +518,16 @@ public abstract class Record {
      * 
      * @param flattenSingleElementCollections
      * @return json string
+     * @deprecated use {@link #json(SerializationOptions) instead}
      */
+    @Deprecated
     public String json(boolean flattenSingleElementCollections) {
-        return json(flattenSingleElementCollections, Sets.newHashSet());
+        return json(
+                SerializationOptions.builder()
+                        .flattenSingleElementCollections(
+                                flattenSingleElementCollections)
+                        .build(),
+                Sets.newHashSet());
     }
 
     /**
@@ -535,10 +542,17 @@ public abstract class Record {
      * @param flattenSingleElementCollections
      * @param keys
      * @return json string
+     * @deprecated use {@link #json(SerializationOptions, String...)} instead
      */
+    @Deprecated
     public String json(boolean flattenSingleElementCollections,
             String... keys) {
-        return json(flattenSingleElementCollections, Sets.newHashSet(), keys);
+        return json(
+                SerializationOptions.builder()
+                        .flattenSingleElementCollections(
+                                flattenSingleElementCollections)
+                        .build(),
+                Sets.newHashSet(), keys);
     }
 
     /**
@@ -554,7 +568,35 @@ public abstract class Record {
      * @return json string
      */
     public String json(String... keys) {
-        return json(false, keys);
+        return json(SerializationOptions.defaults(), keys);
+    }
+
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data.
+     *
+     * @param options
+     * @return json string
+     */
+    public String json(SerializationOptions options) {
+        return json(options, Sets.newHashSet());
+    }
+
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data from the specified {@code keys}.
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     *
+     * @param options
+     * @param keys
+     * @return json string
+     */
+    public String json(SerializationOptions options, String... keys) {
+        return json(options, Sets.newHashSet(), keys);
     }
 
     /**
@@ -591,6 +633,26 @@ public abstract class Record {
      * @return the data in this record
      */
     public Map<String, Object> map(String... keys) {
+        return map(SerializationOptions.defaults(), keys);
+    }
+
+    /**
+     * Return a map that contains "readable" data from this {@link Record}.
+     * <p>
+     * If no {@code keys} are provided, all the readable data will be
+     * returned.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     *
+     * @param keys
+     * @return the data in this record
+     */
+    public Map<String, Object> map(SerializationOptions options,
+            String... keys) {
         List<String> include = Lists.newArrayList();
         List<String> exclude = Lists.newArrayList();
         for (String key : keys) {
@@ -602,22 +664,44 @@ public abstract class Record {
                 include.add(key);
             }
         }
-        Map<String, Object> data = include.isEmpty() ? data()
-                : include.stream().map(key -> new SimpleEntry<>(key, get(key)))
-                        .filter(entry -> entry.getValue() != null)
-                        .collect(Collectors.toMap(Entry::getKey,
-                                Entry::getValue));
-        return data.entrySet().stream()
-                .filter(e -> !exclude.contains(e.getKey()))
-                .collect(HashMap::new,
-                        (m, e) -> m.put(e.getKey(), e.getValue()), Map::putAll);
+        Predicate<Entry<String, Object>> filter = entry -> !exclude
+                .contains(entry.getKey());
+        if(!options.serializeNullValues()) {
+            filter = filter.and(entry -> entry.getValue() != null);
+        }
+        BiConsumer<Map<String, Object>, Entry<String, Object>> accumulator = (
+                map, entry) -> {
+            Object value = entry.getValue();
+            Collection<?> collection;
+            if(options.flattenSingleElementCollections()
+                    && value instanceof Collection
+                    && (collection = (Collection<?>) value).size() == 1) {
+                value = Iterables.getOnlyElement(collection);
+            }
+            map.put(entry.getKey(), value);
+        };
+        Stream<Entry<String, Object>> pool;
+        if(include.isEmpty()) {
+            pool = data().entrySet().stream();
+        }
+        else {
+            // NOTE: later on the #filter will attempt to remove keys that are
+            // explicitly excluded, which will have no affect here since
+            // #include and #exclude will never both have values at the same
+            // time.
+            pool = include.stream()
+                    .map(key -> new SimpleEntry<>(key, get(key)));
+        }
+        Map<String, Object> data = pool.filter(filter).collect(
+                LinkedHashMap::new, accumulator, MergeStrategies::upsert);
+        return data;
     }
 
     /**
      * Save any changes made to this {@link Record}.
      * <p>
      * <strong>NOTE:</strong> This method recursively saves any linked
-     * {@link Records}.
+     * {@link Record records}.
      * </p>
      */
     public boolean save() {
@@ -880,28 +964,30 @@ public abstract class Record {
      * indicate that the key should be excluded from the data that is returned.
      * </p>
      * 
-     * @param flattenSingleElementCollections a boolean that indicates if single
-     *            element collections should be flattened to a single value
+     * @param options
      * @param links
      * @param keys the attributes to include in the JSON
      * @return the JSON string.
      */
     @SuppressWarnings({ "unchecked" })
-    private String json(boolean flattenSingleElementCollections,
-            Set<Record> links, String... keys) {
-        Map<String, Object> data = keys.length == 0 ? map() : map(keys);
+    private String json(SerializationOptions options, Set<Record> links,
+            String... keys) {
+        Map<String, Object> data = keys.length == 0 ? map()
+                : map(options, keys);
 
         // Create a dynamic type Gson instance that will detect recursive links
         // and prevent infinite recursion when trying to generate the JSON.
         GsonBuilder builder = new GsonBuilder().registerTypeAdapterFactory(
                 TypeAdapters.primitiveTypesFactory(true));
-        if(flattenSingleElementCollections) {
+        if(options.flattenSingleElementCollections()) {
             builder.registerTypeAdapterFactory(
                     TypeAdapters.collectionFactory(true));
         }
+        if(options.serializeNullValues()) {
+            builder.serializeNulls();
+        }
         builder.registerTypeAdapterFactory(
-                generateDynamicRecordTypeAdapterFactory(
-                        flattenSingleElementCollections, links))
+                generateDynamicRecordTypeAdapterFactory(options, links))
                 .setPrettyPrinting().disableHtmlEscaping();
         Map<Class<?>, TypeAdapter<?>> adapters = Maps.newLinkedHashMap();
         Streams.concat(jsonTypeWriters().entrySet().stream(),
@@ -1072,7 +1158,7 @@ public abstract class Record {
      * Load an existing record from the database and add all of it to this
      * instance in memory.
      * 
-     * @param runway
+     * @param concourse
      * @param existing
      */
     /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
@@ -1247,7 +1333,7 @@ public abstract class Record {
     }
 
     /**
-     * A {@link Database} interface that reacts to the state of the
+     * A {@link DatabaseInterface} that reacts to the state of the
      * {@link #runway} variable and delegates to it or throws an
      * {@link UnsupportedOperationException} if it is {@code null}.
      *
