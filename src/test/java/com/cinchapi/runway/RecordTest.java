@@ -431,9 +431,10 @@ public class RecordTest extends ClientServerTest {
         Nock nock = new Nock();
         nock.age = 100;
         nock.name = null;
-        String json = nock.json(SerializationOptions.builder()
-                .flattenSingleElementCollections(true).build(), "age",
-                "name");
+        String json = nock.json(
+                SerializationOptions.builder()
+                        .flattenSingleElementCollections(true).build(),
+                "age", "name");
         Map<String, Object> data = new Gson().fromJson(json,
                 new TypeToken<Map<String, Object>>() {}.getType());
         Assert.assertTrue(data.containsKey("age"));
@@ -444,6 +445,17 @@ public class RecordTest extends ClientServerTest {
     public void testGetIdUseGetMethod() {
         Nock nock = new Nock();
         Assert.assertEquals((long) nock.id(), (long) nock.get("id"));
+    }
+
+    @Test
+    public void testJsonAllDataWithNullValues() {
+        Mock mock = new Mock();
+        mock.name = "Mock";
+        mock.age = null;
+        String json = mock.json(SerializationOptions.builder().serializeNullValues(true)
+                .build());
+        System.out.println(json);
+        Assert.assertTrue(json.contains("null"));
     }
 
     class Mock extends Record {

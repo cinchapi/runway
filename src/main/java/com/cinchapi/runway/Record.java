@@ -63,7 +63,7 @@ import com.cinchapi.concourse.util.ByteBuffers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
-import com.cinchapi.runway.util.CompoundHashMap;
+import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
@@ -874,12 +874,13 @@ public abstract class Record {
             }
 
         };
-        Map<String, Object> data = CompoundHashMap.create(derived(), computed);
+        Map<String, Object> data = BackupReadSourcesHashMap.create(derived(),
+                computed);
         fields().forEach(field -> {
             try {
                 Object value;
-                if(isReadableField(field)
-                        && (value = field.get(this)) != null) {
+                if(isReadableField(field)) {
+                    value = field.get(this);
                     data.put(field.getName(), value);
                 }
             }
@@ -972,7 +973,7 @@ public abstract class Record {
     @SuppressWarnings({ "unchecked" })
     private String json(SerializationOptions options, Set<Record> links,
             String... keys) {
-        Map<String, Object> data = keys.length == 0 ? map()
+        Map<String, Object> data = keys.length == 0 ? map(options)
                 : map(options, keys);
 
         // Create a dynamic type Gson instance that will detect recursive links
@@ -1226,7 +1227,8 @@ public abstract class Record {
                     else {
                         // Populate a non-collection variable with the most
                         // recently stored value for the #key in Concourse.
-                        Set<Object> values = data.getOrDefault(key, ImmutableSet.of());
+                        Set<Object> values = data.getOrDefault(key,
+                                ImmutableSet.of());
                         Object stored = Iterables.getFirst(values, null);
                         if(stored != null) {
                             value = convert(key, type, stored, concourse,
