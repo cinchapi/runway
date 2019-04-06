@@ -197,6 +197,43 @@ public class RunwayTest extends ClientServerTest {
         Assert.assertEquals(ImmutableSet.of(p2), o1.members());
         Assert.assertEquals(ImmutableSet.of(p1, p3), o2.members());        
     }
+    
+    @Test
+    public void testSearch() {
+        User a = new Manager("John Doern");
+        User b = new Manager("Jane Doern");
+        User c = new Manager("Liz James");
+        runway.save(a,b,c);
+        Set<Manager> records = runway.search(Manager.class, "n Doe", "name");
+        Assert.assertEquals(2, records.size());
+    }
+    
+    @Test
+    public void testSearchMultipleKeys() {
+        SuperAdmin a = new SuperAdmin("Jeff", "Goes to the store", "with you fuzzugng");
+        SuperAdmin b = new SuperAdmin("Ashleah", "With fuzzugng", "Okay cool");
+        runway.save(a,b);
+        Set<SuperAdmin> records = runway.search(SuperAdmin.class, "zzug", "foo", "bar");
+        Assert.assertEquals(2, records.size());
+    }
+    
+    @Test
+    public void testSearchSingleClass() {
+        SuperAdmin a = new SuperAdmin("Jeff", "Goes to the store", "with you fuzzugng");
+        Admin b = new Admin("Ashleah", "With fuzzugng");
+        runway.save(a,b);
+        Set<SuperAdmin> records = runway.search(SuperAdmin.class, "zzug", "foo", "bar");
+        Assert.assertEquals(1, records.size());
+    }
+    
+    @Test
+    public void testSearchAcrossClassHierarchy() {
+        SuperAdmin a = new SuperAdmin("Jeff", "Goes to the store", "with you fuzzugng");
+        Admin b = new Admin("Ashleah", "With fuzzugng");
+        runway.save(a,b);
+        Set<User> records = runway.searchAny(User.class, "zzug", "foo", "bar");
+        Assert.assertEquals(2, records.size());
+    }
 
     abstract class User extends Record {
 

@@ -15,13 +15,16 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
 
 import com.cinchapi.common.base.AnyStrings;
+import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -73,21 +76,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * within the specific transaction) and we clear it before commit time.
      */
     private static long METADATA_RECORD = -1;
-
-    static {
-        // NOTE: Scanning the classpath adds startup costs proportional to the
-        // number of classes defined. We do this once at startup to minimize the
-        // effect of the cost.
-        hierarchies = HashMultimap.create();
-        Logging.disable(Reflections.class);
-        Reflections.log = null; // turn off reflection logging
-        Reflections reflection = new Reflections(new SubTypesScanner());
-        reflection.getSubTypesOf(Record.class).forEach(type -> {
-            hierarchies.put(type, type);
-            reflection.getSubTypesOf(type)
-                    .forEach(subType -> hierarchies.put(type, subType));
-        });
-    }
 
     /**
      * Return a {@link Runway} instance that is connected to Concourse using the
@@ -146,6 +134,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 .group(criteria).build();
     }
 
+    static {
+        // NOTE: Scanning the classpath adds startup costs proportional to the
+        // number of classes defined. We do this once at startup to minimize the
+        // effect of the cost.
+        hierarchies = HashMultimap.create();
+        Logging.disable(Reflections.class);
+        Reflections.log = null; // turn off reflection logging
+        Reflections reflection = new Reflections(new SubTypesScanner());
+        reflection.getSubTypesOf(Record.class).forEach(type -> {
+            hierarchies.put(type, type);
+            reflection.getSubTypesOf(type)
+                    .forEach(subType -> hierarchies.put(type, subType));
+        });
+    }
+
     /**
      * A connection pool to the underlying Concourse database.
      */
@@ -199,14 +202,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Set<T> records = Sets.newLinkedHashSet();
             criteria = ensureClassSpecificCriteria(criteria, clazz);
             Set<Long> ids = concourse.find(criteria);
             TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
-            ids.forEach((id) -> {
-                T record = load(clazz, id, existing);
-                records.add(record);
-            });
+            Set<T> records = LazyTransformSet.of(ids,
+                    id -> load(clazz, id, existing));
             return records;
         }
         finally {
@@ -332,12 +332,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> load(Class<T> clazz) {
         Concourse concourse = connections.request();
         try {
-            Set<T> records = Sets.newLinkedHashSet();
             Criteria criteria = Criteria.where().key(Record.SECTION_KEY)
                     .operator(Operator.EQUALS).value(clazz.getName()).build();
             Set<Long> ids = concourse.find(criteria);
             TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
-            ids.forEach(id -> records.add(load(clazz, id, existing)));
+            Set<T> records = LazyTransformSet.of(ids,
+                    id -> load(clazz, id, existing));
             return records;
         }
         finally {
@@ -428,6 +428,55 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 connections.release(concourse);
             }
         }
+    }
+
+    /**
+     * Search for records in {@code clazz} that match the search {@query} across
+     * any of the provided {@code keys}.
+     * 
+     * @param clazz
+     * @param query
+     * @param keys
+     * @return the matching search results
+     */
+    public <T extends Record> Set<T> search(Class<T> clazz, String query,
+            String... keys) {
+        Concourse concourse = connections.request();
+        try {
+            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
+            Set<Long> ids = Arrays.stream(keys)
+                    .map(key -> concourse.search(key, query))
+                    .flatMap(Set::stream)
+                    .filter(record -> concourse.get(Record.SECTION_KEY, record)
+                            .equals(clazz.getName()))
+                    .collect(Collectors.toSet());
+            Set<T> records = LazyTransformSet.of(ids,
+                    id -> load(clazz, id, existing));
+            return records;
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * Search for records across the hierarchy of {@code clazz} that match the
+     * search {@query} across any of the provided {@code keys}.
+     * 
+     * @param clazz
+     * @param query
+     * @param keys
+     * @return the matching search results
+     */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    public <T extends Record> Set<T> searchAny(Class<T> clazz, String query,
+            String... keys) {
+        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+        Set<T> loaded = Sets.newLinkedHashSet();
+        for (Class cls : hierarchy) {
+            loaded.addAll(search(cls, query, keys));
+        }
+        return loaded;
     }
 
     /**
