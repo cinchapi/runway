@@ -518,6 +518,7 @@ public abstract class Record {
      * 
      * @param flattenSingleElementCollections
      * @return json string
+     * @deprecated use {@link #json(SerializationOptions) instead}
      */
     @Deprecated
     public String json(boolean flattenSingleElementCollections) {
@@ -541,6 +542,7 @@ public abstract class Record {
      * @param flattenSingleElementCollections
      * @param keys
      * @return json string
+     * @deprecated use {@link #json(SerializationOptions, String...)} instead
      */
     @Deprecated
     public String json(boolean flattenSingleElementCollections,
@@ -612,7 +614,7 @@ public abstract class Record {
      * @return the data in this record
      */
     public Map<String, Object> map() {
-        return map(SerializationOptions.defaults(), Array.containing());
+        return map(Array.containing());
     }
 
     /**
