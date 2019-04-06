@@ -1004,12 +1004,7 @@ public abstract class Record {
                 @Override
                 public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
                     if(type.getRawType().isAssignableFrom(clazz)) {
-                        if(!options.serializeNullValues()) {
-                            return (TypeAdapter<T>) adapter.nullSafe();
-                        }
-                        else {
-                            return (TypeAdapter<T>) adapter;
-                        }
+                        return (TypeAdapter<T>) adapter.nullSafe();
                     }
                     else {
                         return null;
