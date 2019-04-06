@@ -26,7 +26,7 @@ import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -34,8 +34,11 @@ import java.util.AbstractMap.SimpleEntry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.stream.Collector;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.annotation.Nullable;
 
@@ -44,6 +47,7 @@ import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
+import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -147,7 +151,7 @@ public abstract class Record {
      * @return the {@link TypeAdapterFactory}
      */
     private static TypeAdapterFactory generateDynamicRecordTypeAdapterFactory(
-            boolean flattenSingleElementCollections, Set<Record> links) {
+            SerializationOptions options, Set<Record> links) {
         return new TypeAdapterFactory() {
 
             @SuppressWarnings("unchecked")
@@ -166,9 +170,7 @@ public abstract class Record {
                                 throws IOException {
                             if(!links.contains(value)) {
                                 links.add(value);
-                                out.jsonValue(value.json(
-                                        flattenSingleElementCollections,
-                                        links));
+                                out.jsonValue(value.json(options, links));
                             }
                             else {
                                 out.value(value.id() + " (recursive link)");
@@ -507,7 +509,7 @@ public abstract class Record {
      * @return json string
      */
     public String json() {
-        return json(new DataOptions(false, false));
+        return json(SerializationOptions.defaults());
     }
 
     /**
@@ -519,7 +521,12 @@ public abstract class Record {
      */
     @Deprecated
     public String json(boolean flattenSingleElementCollections) {
-        return json(flattenSingleElementCollections, Sets.newHashSet());
+        return json(
+                SerializationOptions.builder()
+                        .flattenSingleElementCollections(
+                                flattenSingleElementCollections)
+                        .build(),
+                Sets.newHashSet());
     }
 
     /**
@@ -538,7 +545,12 @@ public abstract class Record {
     @Deprecated
     public String json(boolean flattenSingleElementCollections,
             String... keys) {
-        return json(flattenSingleElementCollections, Sets.newHashSet(), keys);
+        return json(
+                SerializationOptions.builder()
+                        .flattenSingleElementCollections(
+                                flattenSingleElementCollections)
+                        .build(),
+                Sets.newHashSet(), keys);
     }
 
     /**
@@ -554,18 +566,18 @@ public abstract class Record {
      * @return json string
      */
     public String json(String... keys) {
-        return json(new DataOptions(false, false), keys);
+        return json(SerializationOptions.defaults(), keys);
     }
 
     /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data.
      *
-     * @param dataOptions
+     * @param options
      * @return json string
      */
-    public String json(DataOptions dataOptions) {
-        return json(dataOptions, Sets.newHashSet());
+    public String json(SerializationOptions options) {
+        return json(options, Sets.newHashSet());
     }
 
     /**
@@ -577,13 +589,12 @@ public abstract class Record {
      * indicate that the key should be excluded from the data that is returned.
      * </p>
      *
-     * @param dataOptions
+     * @param options
      * @param keys
      * @return json string
      */
-    public String json(DataOptions dataOptions,
-            String... keys) {
-        return json(dataOptions, Sets.newHashSet(), keys);
+    public String json(SerializationOptions options, String... keys) {
+        return json(options, Sets.newHashSet(), keys);
     }
 
     /**
@@ -601,7 +612,7 @@ public abstract class Record {
      * @return the data in this record
      */
     public Map<String, Object> map() {
-        return map(new DataOptions(false, false), Array.containing());
+        return map(SerializationOptions.defaults(), Array.containing());
     }
 
     /**
@@ -619,28 +630,8 @@ public abstract class Record {
      * @param keys
      * @return the data in this record
      */
-    @Deprecated
     public Map<String, Object> map(String... keys) {
-        List<String> include = Lists.newArrayList();
-        List<String> exclude = Lists.newArrayList();
-        for (String key : keys) {
-            if(key.startsWith("-")) {
-                key = key.substring(1);
-                exclude.add(key);
-            }
-            else {
-                include.add(key);
-            }
-        }
-        Map<String, Object> data = include.isEmpty() ? data()
-                : include.stream().map(key -> new SimpleEntry<>(key, get(key)))
-                        .filter(entry -> entry.getValue() != null)
-                        .collect(Collectors.toMap(Entry::getKey,
-                                Entry::getValue));
-        return data.entrySet().stream()
-                .filter(e -> !exclude.contains(e.getKey()))
-                .collect(HashMap::new,
-                        (m, e) -> m.put(e.getKey(), e.getValue()), Map::putAll);
+        return map(SerializationOptions.defaults(), keys);
     }
 
     /**
@@ -658,7 +649,8 @@ public abstract class Record {
      * @param keys
      * @return the data in this record
      */
-    public Map<String, Object> map(DataOptions dataOptions, String... keys) {
+    public Map<String, Object> map(SerializationOptions options,
+            String... keys) {
         List<String> include = Lists.newArrayList();
         List<String> exclude = Lists.newArrayList();
         for (String key : keys) {
@@ -670,30 +662,44 @@ public abstract class Record {
                 include.add(key);
             }
         }
-        Map<String, Object> data;
-        if (dataOptions.serializeNullValues()) {
-            data = include.isEmpty() ? data()
-                    : include.stream().map(key -> new SimpleEntry<>(key, get(key)))
-                    .collect(HashMap::new, (m,v)->m.put(v.getKey(), v.getValue()), HashMap::putAll);
+        Predicate<Entry<String, Object>> filter = entry -> !exclude
+                .contains(entry.getKey());
+        if(!options.serializeNullValues()) {
+            filter = filter.and(entry -> entry.getValue() != null);
+        }
+        Collector<Entry<String, Object>, ?, Map<String, Object>> collector = Collectors
+                .toMap(Entry::getKey, e -> {
+                    Object value = e.getValue();
+                    Collection<?> collection;
+                    if(options.flattenSingleElementCollections()
+                            && value instanceof Collection
+                            && (collection = (Collection<?>) value)
+                                    .size() == 1) {
+                        value = Iterables.getOnlyElement(collection);
+                    }
+                    return value;
+                }, MergeStrategies::upsert, LinkedHashMap::new);
+        Stream<Entry<String, Object>> pool;
+        if(include.isEmpty()) {
+            pool = data().entrySet().stream();
         }
         else {
-            data = include.isEmpty() ? data()
-                    : include.stream().map(key -> new SimpleEntry<>(key, get(key)))
-                    .filter(entry -> entry.getValue() != null)
-                    .collect(Collectors.toMap(Entry::getKey,
-                            Entry::getValue));
+            // NOTE: later on the #filter will attempt to remove keys that are
+            // explicitly excluded, which will have no affect here since
+            // #include and #exclude will never both have values at the same
+            // time.
+            pool = include.stream()
+                    .map(key -> new SimpleEntry<>(key, get(key)));
         }
-        return data.entrySet().stream()
-                .filter(e -> !exclude.contains(e.getKey()))
-                .collect(HashMap::new,
-                        (m, e) -> m.put(e.getKey(), e.getValue()), Map::putAll);
+        Map<String, Object> data = pool.filter(filter).collect(collector);
+        return data;
     }
 
     /**
      * Save any changes made to this {@link Record}.
      * <p>
      * <strong>NOTE:</strong> This method recursively saves any linked
-     * {@link Record}.
+     * {@link Record records}.
      * </p>
      */
     public boolean save() {
@@ -949,67 +955,6 @@ public abstract class Record {
 
     /**
      * Return the JSON string for this {@link Record}.
-     *
-     * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
-     * </p>
-     *
-     * @param flattenSingleElementCollections a boolean that indicates if single
-     *            element collections should be flattened to a single value
-     * @param links
-     * @param keys the attributes to include in the JSON
-     * @return the JSON string.
-     */
-    @SuppressWarnings({ "unchecked" })
-    @Deprecated
-    private String json(boolean flattenSingleElementCollections,
-            Set<Record> links, String... keys) {
-        Map<String, Object> data = keys.length == 0 ? map() : map(keys);
-
-        // Create a dynamic type Gson instance that will detect recursive links
-        // and prevent infinite recursion when trying to generate the JSON.
-        GsonBuilder builder = new GsonBuilder().registerTypeAdapterFactory(
-                TypeAdapters.primitiveTypesFactory(true));
-        if(flattenSingleElementCollections) {
-            builder.registerTypeAdapterFactory(
-                    TypeAdapters.collectionFactory(true));
-        }
-        builder.registerTypeAdapterFactory(
-                generateDynamicRecordTypeAdapterFactory(
-                        flattenSingleElementCollections, links))
-                .setPrettyPrinting().disableHtmlEscaping();
-        Map<Class<?>, TypeAdapter<?>> adapters = Maps.newLinkedHashMap();
-        Streams.concat(jsonTypeWriters().entrySet().stream(),
-                jsonTypeHierarchyWriters().entrySet().stream())
-                .forEach(entry -> {
-                    Class<?> clazz = entry.getKey();
-                    TypeAdapter<?> adapter = entry.getValue().typeAdapter();
-                    adapters.put(clazz, adapter);
-                });
-        adapters.putAll(typeAdapters());
-        adapters.forEach((clazz, adapter) -> {
-            builder.registerTypeAdapterFactory(new TypeAdapterFactory() {
-
-                @Override
-                public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
-                    if(type.getRawType().isAssignableFrom(clazz)) {
-                        return (TypeAdapter<T>) adapter.nullSafe();
-                    }
-                    else {
-                        return null;
-                    }
-                }
-
-            });
-        });
-        Gson gson = builder.create();
-        return gson.toJson(data);
-    }
-
-    /**
-     * Return the JSON string for this {@link Record}.
      * 
      * <p>
      * This method also supports <strong>negative filtering</strong>. You can
@@ -1017,30 +962,30 @@ public abstract class Record {
      * indicate that the key should be excluded from the data that is returned.
      * </p>
      * 
-     * @param dataOptions
+     * @param options
      * @param links
      * @param keys the attributes to include in the JSON
      * @return the JSON string.
      */
     @SuppressWarnings({ "unchecked" })
-    private String json(DataOptions dataOptions,
-            Set<Record> links, String... keys) {
-        Map<String, Object> data = keys.length == 0 ? map() : map(dataOptions, keys);
+    private String json(SerializationOptions options, Set<Record> links,
+            String... keys) {
+        Map<String, Object> data = keys.length == 0 ? map()
+                : map(options, keys);
 
         // Create a dynamic type Gson instance that will detect recursive links
         // and prevent infinite recursion when trying to generate the JSON.
         GsonBuilder builder = new GsonBuilder().registerTypeAdapterFactory(
                 TypeAdapters.primitiveTypesFactory(true));
-        if(dataOptions.flattenSingleElementsCollections()) {
+        if(options.flattenSingleElementCollections()) {
             builder.registerTypeAdapterFactory(
                     TypeAdapters.collectionFactory(true));
         }
-        if(dataOptions.serializeNullValues()) {
+        if(options.serializeNullValues()) {
             builder.serializeNulls();
         }
         builder.registerTypeAdapterFactory(
-                generateDynamicRecordTypeAdapterFactory(
-                        dataOptions.flattenSingleElementsCollections(), links))
+                generateDynamicRecordTypeAdapterFactory(options, links))
                 .setPrettyPrinting().disableHtmlEscaping();
         Map<Class<?>, TypeAdapter<?>> adapters = Maps.newLinkedHashMap();
         Streams.concat(jsonTypeWriters().entrySet().stream(),
@@ -1057,7 +1002,7 @@ public abstract class Record {
                 @Override
                 public <T> TypeAdapter<T> create(Gson gson, TypeToken<T> type) {
                     if(type.getRawType().isAssignableFrom(clazz)) {
-                        if (!dataOptions.serializeNullValues()) {
+                        if(!options.serializeNullValues()) {
                             return (TypeAdapter<T>) adapter.nullSafe();
                         }
                         else {
