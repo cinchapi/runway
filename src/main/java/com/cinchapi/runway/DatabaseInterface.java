@@ -37,8 +37,10 @@ public interface DatabaseInterface {
      * @param criteria
      * @return the matching records
      */
-    public <T extends Record> Set<T> find(Class<T> clazz,
-            BuildableState criteria);
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            BuildableState criteria) {
+        return find(clazz, criteria.build());
+    }
 
     /**
      * Find and return all the records of type {@code clazz} that match the
@@ -58,8 +60,10 @@ public interface DatabaseInterface {
      * @param criteria
      * @return the matching records
      */
-    public <T extends Record> Set<T> findAny(Class<T> clazz,
-            BuildableState criteria);
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            BuildableState criteria) {
+        return findAny(clazz, criteria.build());
+    }
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
@@ -79,8 +83,10 @@ public interface DatabaseInterface {
      * @param criteria
      * @return the one matching record
      */
-    public <T extends Record> T findAnyUnique(Class<T> clazz,
-            BuildableState criteria);
+    public default <T extends Record> T findAnyUnique(Class<T> clazz,
+            BuildableState criteria) {
+        return findAnyUnique(clazz, criteria.build());
+    }
 
     /**
      * Execute the {@link #findUnique(Class, Criteria)} query for {@code clazz}
@@ -104,8 +110,10 @@ public interface DatabaseInterface {
      * @return the one matching record
      * @throws DuplicateEntryException
      */
-    public <T extends Record> T findUnique(Class<T> clazz,
-            BuildableState criteria);
+    public default <T extends Record> T findUnique(Class<T> clazz,
+            BuildableState criteria) {
+        return findUnique(clazz, criteria.build());
+    }
 
     /**
      * Find the one record of type {@code clazz} that matches the

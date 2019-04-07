@@ -191,13 +191,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Record.PINNED_RUNWAY_INSTANCE = null;
         }
     }
-
-    @Override
-    public <T extends Record> Set<T> find(Class<T> clazz,
-            BuildableState criteria) {
-        return find(clazz, criteria.build());
-    }
-
+    
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
@@ -215,12 +209,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz,
-            BuildableState criteria) {
-        return findAny(clazz, criteria.build());
-    }
-
-    @Override
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria) {
@@ -230,12 +218,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             found.addAll(find(cls, criteria));
         }
         return found;
-    }
-
-    @Override
-    public <T extends Record> T findAnyUnique(Class<T> clazz,
-            BuildableState criteria) {
-        return findAnyUnique(clazz, criteria.build());
     }
 
     @Override
@@ -294,12 +276,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> T findOne(Class<T> clazz, Criteria criteria) {
         return findUnique(clazz, criteria);
-    }
-
-    @Override
-    public <T extends Record> T findUnique(Class<T> clazz,
-            BuildableState criteria) {
-        return findUnique(clazz, criteria.build());
     }
 
     @Override
