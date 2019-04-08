@@ -452,12 +452,12 @@ public class RecordTest extends ClientServerTest {
         Mock mock = new Mock();
         mock.name = "Mock";
         mock.age = null;
-        String json = mock.json(SerializationOptions.builder().serializeNullValues(true)
-                .build());
+        String json = mock.json(SerializationOptions.builder()
+                .serializeNullValues(true).build());
         System.out.println(json);
         Assert.assertTrue(json.contains("null"));
     }
-    
+
     @Test
     public void testDefaultCompareToUsesId() {
         Nock a = new Nock();
@@ -465,7 +465,7 @@ public class RecordTest extends ClientServerTest {
         Assert.assertTrue(a.compareTo(b) < 0);
     }
 
-     @Test
+    @Test
     public void testCompareToSingleKeyDefault() {
         Mock a = new Mock();
         a.name = "Mary";
@@ -487,7 +487,7 @@ public class RecordTest extends ClientServerTest {
                                                        // breaker
     }
 
-     @Test
+    @Test
     public void testCompareToSingleKeyDescending() {
         Mock a = new Mock();
         a.name = "Mary";
@@ -504,12 +504,13 @@ public class RecordTest extends ClientServerTest {
         Assert.assertTrue(a.compareTo(b, "<name") < 0);
         Assert.assertTrue(b.compareTo(c, "<name") > 0);
         Assert.assertTrue(c.compareTo(d, "<name") < 0);
-        Assert.assertTrue(a.compareTo(c, "<name") < 0); // When equal, the record
-                                                       // id is used as a tie
-                                                       // breaker
+        Assert.assertTrue(a.compareTo(c, "<name") < 0); // When equal, the
+                                                        // record
+                                                        // id is used as a tie
+                                                        // breaker
     }
 
-     @Test
+    @Test
     public void testCompareToSingleKeyAscending() {
         Mock a = new Mock();
         a.name = "Mary";
@@ -531,7 +532,7 @@ public class RecordTest extends ClientServerTest {
                                                        // breaker
     }
 
-     @Test
+    @Test
     public void testCompareToMultiKeys() {
         Mock a = new Mock();
         a.name = "Mary";
@@ -549,6 +550,28 @@ public class RecordTest extends ClientServerTest {
         Assert.assertTrue(b.compareTo(c, "name age") < 0);
         Assert.assertTrue(c.compareTo(d, "name age") > 0);
         Assert.assertTrue(a.compareTo(c, "name <age") > 0);
+    }
+
+    @Test
+    public void testThrowSupressedExceptions() {
+        Mock a = new Mock();
+        a.name = "Bob";
+        Mock b = new Mock();
+        b.name = "Bob";
+        a.save();
+        if(b.save()) {
+            Assert.fail();
+        }
+        else {
+            try {
+                b.throwSupressedExceptions();
+                Assert.fail();
+            }
+            catch (RuntimeException e) {
+                Assert.assertEquals("name must be unique", e.getMessage());
+            }
+
+        }
     }
 
     class Mock extends Record {

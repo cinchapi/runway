@@ -26,6 +26,7 @@ import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,7 +69,6 @@ import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -318,11 +318,11 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * A log of any suppressed errors related to this Record. The descriptions
-     * of these errors can be thrown at any point from the
+     * A log of any suppressed errors related to this Record. A concatenation of
+     * these errors can be thrown at anytime from the
      * {@link #throwSupressedExceptions()} method.
      */
-    /* package */ transient List<String> errors = Lists.newArrayList();
+    /* package */ transient List<Throwable> errors = Lists.newArrayList();
 
     /**
      * The {@link DatabaseInterface} that can be used to make queries within the
@@ -842,12 +842,19 @@ public abstract class Record implements Comparable<Record> {
      */
     public void throwSupressedExceptions() {
         if(!errors.isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            for (String error : errors) {
-                sb.append(error);
-                sb.append(System.getProperty("line.separator"));
+            Iterator<Throwable> it = errors.iterator();
+            StringBuilder summary = new StringBuilder();
+            ArrayBuilder<StackTraceElement> stacktrace = ArrayBuilder.builder();
+            while (it.hasNext()) {
+                Throwable t = it.next();
+                summary.append(";").append(t.getMessage());
+                stacktrace.add(t.getStackTrace());
+                it.remove();
             }
-            throw new RuntimeException(sb.toString());
+            RuntimeException supressed = new RuntimeException(
+                    summary.toString().trim().substring(1));
+            supressed.setStackTrace(stacktrace.build());
+            throw supressed;
         }
     }
 
@@ -1441,7 +1448,7 @@ public abstract class Record implements Comparable<Record> {
             if(inZombieState(concourse)) {
                 concourse.clear(id);
             }
-            errors.add(Throwables.getStackTraceAsString(t));
+            errors.add(t);
             return false;
         }
     }

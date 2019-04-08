@@ -34,7 +34,6 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
-import com.google.common.base.Throwables;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
@@ -395,7 +394,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             catch (Throwable t) {
                 concourse.abort();
                 if(current != null) {
-                    current.errors.add(Throwables.getStackTraceAsString(t));
+                    current.errors.add(t);
                 }
                 return false;
             }
