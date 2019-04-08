@@ -60,6 +60,7 @@ import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
+import com.cinchapi.concourse.util.Numbers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
@@ -73,9 +74,11 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
 import com.google.common.io.BaseEncoding;
+import com.google.common.primitives.Longs;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.TypeAdapter;
@@ -106,7 +109,7 @@ import com.google.gson.stream.JsonWriter;
  * @author Jeff Nelson
  */
 @SuppressWarnings({ "restriction", "deprecation" })
-public abstract class Record {
+public abstract class Record implements Comparable<Record> {
 
     /* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
 
@@ -129,6 +132,34 @@ public abstract class Record {
      * doesn't actually exist in the database.
      */
     private static long NULL_ID = -1;
+
+    /**
+     * The coefficient multiplied by the result of a comparison to push the
+     * sorting in the ascending direction.
+     */
+    private static final int SORT_DIRECTION_ASCENDING_COEFFICIENT = 1;
+
+    /**
+     * The prefix applied to a key provided to the
+     * {@link #compareTo(Record, String)} methods when it is desirable to
+     * compare the values stored under that key in ascending (i.e. normal)
+     * order.
+     */
+    private static final String SORT_DIRECTION_ASCENDING_PREFIX = ">";
+
+    /**
+     * The coefficient multiplied by the result of a comparison to push the
+     * sorting in the descending direction.
+     */
+    private static final int SORT_DIRECTION_DESCENDING_COEFFICIENT = -1;
+
+    /**
+     * The prefix applied to a key provided to the
+     * {@link #compareTo(Record, String)} methods when it is desirable to
+     * compare the values stored under that key in descending (i.e. reverse)
+     * order.
+     */
+    private static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
 
     /**
      * Instance of {@link sun.misc.Unsafe} to use for hacky operations.
@@ -367,6 +398,72 @@ public abstract class Record {
     public void assign(Runway runway) {
         this.runway = runway;
         this.connections = runway.connections;
+    }
+
+    @Override
+    public int compareTo(Record record) {
+        return compareTo(record, ImmutableMap.of());
+    }
+
+    /**
+     * Compare this object to another {@code record} and sort based on the
+     * {@code order} specification.
+     * <p>
+     * A sort key can be prepended with {@code <} to indicate that
+     * the values for that key should be sorted in ascending (e.g. natural)
+     * order. Alternatively, a sort key can be prepended with {@code >} to
+     * indicate that the values for that key should be sorted in descending
+     * (i.e. reverse) order. If a sort key has no prefix, it is sorted in
+     * ascending order.
+     * </p>
+     * 
+     * @param record the object to be compared
+     * @param order a list of sort keys
+     * @return a negative integer, zero, or a positive integer as this object is
+     *         less than, equal to, or greater than the specified object.
+     */
+    public int compareTo(Record record, List<String> order) {
+        Map<String, Integer> $order = order.stream().map(key -> {
+            int coefficient;
+            if(key.startsWith(SORT_DIRECTION_DESCENDING_PREFIX)) {
+                coefficient = SORT_DIRECTION_DESCENDING_COEFFICIENT;
+                key = key.substring(1);
+            }
+            else if(key.startsWith(SORT_DIRECTION_ASCENDING_PREFIX)) {
+                coefficient = SORT_DIRECTION_ASCENDING_COEFFICIENT;
+                key = key.substring(1);
+            }
+            else {
+                coefficient = SORT_DIRECTION_ASCENDING_COEFFICIENT;
+            }
+            return new AbstractMap.SimpleImmutableEntry<String, Integer>(key,
+                    coefficient);
+        }).collect(Collectors.toMap(Entry::getKey, Entry::getValue));
+        return compareTo(record, $order);
+    }
+
+    /**
+     * Compare this object to another {@code record} and sort based on the
+     * {@code order} specification.
+     * <p>
+     * A sort key can be prepended with {@code <} to indicate that
+     * the values for that key should be sorted in ascending (e.g. natural)
+     * order. Alternatively, a sort key can be prepended with {@code >} to
+     * indicate that the values for that key should be sorted in descending
+     * (i.e. reverse) order. If a sort key has no prefix, it is sorted in
+     * ascending order.
+     * </p>
+     * 
+     * @param record the object to be compared
+     * @param order a space separated string containing sort keys
+     * @return a negative integer, zero, or a positive integer as this object is
+     *         less than, equal to, or greater than the specified object.
+     */
+    public int compareTo(Record record, String order) {
+        List<String> $order = Arrays
+                .stream(order.replaceAll(",", " ").split("\\s"))
+                .map(String::trim).collect(Collectors.toList());
+        return compareTo(record, $order);
     }
 
     /**
@@ -781,6 +878,67 @@ public abstract class Record {
             inViolation = true;
             throw CheckedExceptions.wrapAsRuntimeException(e);
         }
+    }
+
+    /**
+     * Compare this object to another {@code record} using the provided
+     * {@code order} specification.
+     * 
+     * @param record the object to be compared
+     * @param order an ordered mapping (i.e. {@link LinkedHashMap}) from sort
+     *            key to an integer that specifies the sort direction (e.g. a
+     *            positive integer means the sorting should be done in ascending
+     *            order with the "smallest" values appearing first. A negative
+     *            integer implies the opposite).
+     * @return a negative integer, zero, or a positive integer as this object is
+     *         less than, equal to, or greater than the specified object.
+     */
+    private int compareTo(Record record, Map<String, Integer> order) {
+        for (Entry<String, Integer> entry : order.entrySet()) {
+            String key = entry.getKey();
+            Integer coefficient = entry.getValue();
+            Verify.thatArgument(coefficient != 0,
+                    "The order coefficient cannot be 0");
+            Object mine = get(key);
+            Object theirs = record.get(key);
+            int comparison;
+            if(mine == null && theirs != null) {
+                // NULL value is considered "greater" so that it is always at
+                // the end.
+                comparison = 1;
+                coefficient = 1;
+            }
+            else if(mine != null && theirs == null) {
+                // NULL value is considered "greater" so that it is always at
+                // the end.
+                comparison = -1;
+                coefficient = 1;
+            }
+            else if(mine instanceof Number && theirs instanceof Number) {
+                comparison = Numbers.compare((Number) mine, (Number) theirs);
+            }
+            else if((mine instanceof String || mine instanceof Tag)
+                    && (theirs instanceof String || theirs instanceof Tag)) {
+                comparison = mine.toString().toLowerCase()
+                        .compareTo(theirs.toString().toLowerCase());
+            }
+            else if(Comparable.class.isAssignableFrom(
+                    Reflection.getClosestCommonAncestor(mine.getClass(),
+                            theirs.getClass()))) {
+                comparison = Ordering.natural().compare((Comparable<?>) mine,
+                        (Comparable<?>) theirs);
+            }
+            else {
+                comparison = Ordering.usingToString().compare(mine, theirs);
+            }
+            if(comparison != 0) {
+                return coefficient * comparison;
+            }
+            else {
+                continue;
+            }
+        }
+        return Longs.compare(id(), record.id());
     }
 
     /**

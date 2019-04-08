@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Iterator;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -27,6 +28,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
 /**
@@ -234,6 +236,24 @@ public class RunwayTest extends ClientServerTest {
         Set<User> records = runway.searchAny(User.class, "zzug", "foo", "bar");
         Assert.assertEquals(2, records.size());
     }
+    
+    @Test
+    public void testLoadSort() {
+        Manager a = new Manager("Z");
+        Manager b = new Manager("S");
+        Manager c = new Manager("A");
+        Manager d = new Manager("V");
+        runway.save(a,b,c,d);
+        Set<Manager> managers = runway.load(Manager.class, "name");
+        Iterator<Manager> expectedIt = ImmutableList.of(c, b, d, a).iterator();
+        Iterator<Manager> actualIt = managers.iterator();
+        while(expectedIt.hasNext()) {
+            Manager expected = expectedIt.next();
+            Manager actual = actualIt.next();
+            Assert.assertEquals(expected, actual);
+        }
+
+     }
 
     abstract class User extends Record {
 

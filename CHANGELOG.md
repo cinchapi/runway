@@ -8,6 +8,8 @@
 * Added *Just-In-Time Loading* for results returned from the `#find` and `#load` methods. Now, the work of loading the data for a Record in the result set is deferred until that Record is actually used. This makes stream operations more efficient because unnecessary data is no longer loaded during intermediate operations.
 * Improved the performance of loading Records by loading all the record's data in memory at once instead of dispatching separate `get` or `select` requests on a field by field basis.
 * Added `#search` and `#searchAny` methods to the `Runway` controller. Both of these methods provide an interface for Concourse's fulltext search functionality.
+* Runway now supports result set sorting. We've added `find`, `findAny`, `load` and `loadAny` methods that take an `order` parameter in the form of a `List` or a space separated `String` sequence of `sort keys`. A `sort key` is a record attribute that is prepended with a `>` or `<` to respectively imply ascending (default) or descending sorting on the attribute. It is now possible to sort a result set on any number of keys. 
+  * **NOTE:** Sorting on computed or derived keys is **NOT** supported.
 
 #### Version 1.2.0 (March 4, 2019)
 * In the `Record` class, we added a `db` attribute, containing a reference to the `Runway` instance to which the `Record` is assigned. The `db` can be used to create getter methods or computed properties that query the database to return dynamic values. For example, if a `Record` class is the destination link from a field in many other `Record` classes (e.g. a one-to-many relationship), you can query the `db` to return all the related source records.
