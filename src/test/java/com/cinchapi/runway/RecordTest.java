@@ -457,6 +457,99 @@ public class RecordTest extends ClientServerTest {
         System.out.println(json);
         Assert.assertTrue(json.contains("null"));
     }
+    
+    @Test
+    public void testDefaultCompareToUsesId() {
+        Nock a = new Nock();
+        Nock b = new Nock();
+        Assert.assertTrue(a.compareTo(b) < 0);
+    }
+
+     @Test
+    public void testCompareToSingleKeyDefault() {
+        Mock a = new Mock();
+        a.name = "Mary";
+        a.age = 40;
+        Mock b = new Mock();
+        b.name = "Barb";
+        b.age = 20;
+        Mock c = new Mock();
+        c.name = "Mary";
+        c.age = 38;
+        Mock d = new Mock();
+        d.name = "Alice";
+        d.age = 10;
+        Assert.assertTrue(a.compareTo(b, "name") > 0);
+        Assert.assertTrue(b.compareTo(c, "name") < 0);
+        Assert.assertTrue(c.compareTo(d, "name") > 0);
+        Assert.assertTrue(a.compareTo(c, "name") < 0); // When equal, the record
+                                                       // id is used as a tie
+                                                       // breaker
+    }
+
+     @Test
+    public void testCompareToSingleKeyDescending() {
+        Mock a = new Mock();
+        a.name = "Mary";
+        a.age = 40;
+        Mock b = new Mock();
+        b.name = "Barb";
+        b.age = 20;
+        Mock c = new Mock();
+        c.name = "Mary";
+        c.age = 38;
+        Mock d = new Mock();
+        d.name = "Alice";
+        d.age = 10;
+        Assert.assertTrue(a.compareTo(b, "<name") < 0);
+        Assert.assertTrue(b.compareTo(c, "<name") > 0);
+        Assert.assertTrue(c.compareTo(d, "<name") < 0);
+        Assert.assertTrue(a.compareTo(c, "<name") < 0); // When equal, the record
+                                                       // id is used as a tie
+                                                       // breaker
+    }
+
+     @Test
+    public void testCompareToSingleKeyAscending() {
+        Mock a = new Mock();
+        a.name = "Mary";
+        a.age = 40;
+        Mock b = new Mock();
+        b.name = "Barb";
+        b.age = 20;
+        Mock c = new Mock();
+        c.name = "Mary";
+        c.age = 38;
+        Mock d = new Mock();
+        d.name = "Alice";
+        d.age = 10;
+        Assert.assertTrue(a.compareTo(b, "name") > 0);
+        Assert.assertTrue(b.compareTo(c, "name") < 0);
+        Assert.assertTrue(c.compareTo(d, "name") > 0);
+        Assert.assertTrue(a.compareTo(c, "name") < 0); // When equal, the record
+                                                       // id is used as a tie
+                                                       // breaker
+    }
+
+     @Test
+    public void testCompareToMultiKeys() {
+        Mock a = new Mock();
+        a.name = "Mary";
+        a.age = 40;
+        Mock b = new Mock();
+        b.name = "Barb";
+        b.age = 20;
+        Mock c = new Mock();
+        c.name = "Mary";
+        c.age = 41;
+        Mock d = new Mock();
+        d.name = "Alice";
+        d.age = 10;
+        Assert.assertTrue(a.compareTo(b, "name age") > 0);
+        Assert.assertTrue(b.compareTo(c, "name age") < 0);
+        Assert.assertTrue(c.compareTo(d, "name age") > 0);
+        Assert.assertTrue(a.compareTo(c, "name <age") > 0);
+    }
 
     class Mock extends Record {
 
