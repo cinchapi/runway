@@ -32,6 +32,25 @@ import com.cinchapi.concourse.lang.Criteria;
  */
 public interface DatabaseInterface {
 
+    /*
+     * IMPLEMENTATION NOTE
+     * -------------------
+     * Sorting functionality currently uses the local Record#compareTo(Record,
+     * <String|List>) functionality because Concourse (as of Version 0.9.Z) does
+     * not natively support result sorting. This is expected to change in a
+     * future release. When that happens, Runway must seamlessly leverage the
+     * database's native sort when available while also falling back to the
+     * current implementation when it is not supported.
+     * 
+     * To do so, do the following:
+     * 1) Add #find, #findAny, #load and #loadAny methods that take Concourse's
+     * sort construct (e.g. Order)
+     * 2) In the implementation of those new methods, check the version of
+     * Concourse. If native sort is supported, use it. Otherwise, convert the
+     * Order to Runway's String/List order instruction and call the appropriate
+     * method.
+     */
+
     /**
      * Return the {@code records} in sorted {@code order}.
      * 
