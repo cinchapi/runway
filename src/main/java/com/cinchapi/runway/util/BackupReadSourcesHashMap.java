@@ -23,7 +23,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 /**
- * A {@link CompoundHashMap} is a {@link HashMap} that is configured to fetch
+ * A {@link BackupReadSourcesHashMap} is a {@link HashMap} that is configured to fetch
  * data from other {@link Map}s if a requested key was not explicitly added.
  * <p>
  * NOTE: This map only reads through to the other sources and never modifies
@@ -32,23 +32,23 @@ import com.google.common.collect.Sets;
  *
  * @author Jeff Nelson
  */
-public class CompoundHashMap<K, V> extends HashMap<K, V> {
+public class BackupReadSourcesHashMap<K, V> extends HashMap<K, V> {
 
     private static final long serialVersionUID = 7140831886907668552L;
 
     /**
-     * Create a new {@link CompoundHashMap} that is configured to use
+     * Create a new {@link BackupReadSourcesHashMap} that is configured to use
      * additional lookup {@code sources} for data that is not in the map.
      * 
      * @param sources the additional sources for this {@link Map} in order of
      *            decreasing priority (e.g. the value for a non-native key is
      *            sought starting with the first source provided)
-     * @return the {@link CompoundHashMap} configured to use the additional
+     * @return the {@link BackupReadSourcesHashMap} configured to use the additional
      *         {@code sources}.
      */
     @SafeVarargs
-    public static <K, V> CompoundHashMap<K, V> create(Map<K, V>... sources) {
-        return new CompoundHashMap<>(sources);
+    public static <K, V> BackupReadSourcesHashMap<K, V> create(Map<K, V>... sources) {
+        return new BackupReadSourcesHashMap<>(sources);
     }
 
     /**
@@ -62,7 +62,7 @@ public class CompoundHashMap<K, V> extends HashMap<K, V> {
      * @param sources
      */
     @SafeVarargs
-    private CompoundHashMap(Map<K, V>... sources) {
+    private BackupReadSourcesHashMap(Map<K, V>... sources) {
         this.additionalSources = Lists.newArrayList(sources);
     }
 
