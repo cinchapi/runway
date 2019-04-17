@@ -574,6 +574,14 @@ public class RecordTest extends ClientServerTest {
         }
     }
 
+    @Test
+    public void testCompareToUsingNullValuesDoesNotNPE() {
+        Mock a = new Mock();
+        Mock b = new Mock();
+        a.compareTo(b, "name");
+        Assert.assertTrue(true); // lack of Exception means that the test passes
+    }
+
     class Mock extends Record {
 
         @Unique

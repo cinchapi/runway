@@ -909,7 +909,11 @@ public abstract class Record implements Comparable<Record> {
             Object mine = get(key);
             Object theirs = record.get(key);
             int comparison;
-            if(mine == null && theirs != null) {
+            if(mine == null && theirs == null) {
+                comparison = Ordering.arbitrary().compare(mine, theirs);
+                coefficient = 1;
+            }
+            else if(mine == null && theirs != null) {
                 // NULL value is considered "greater" so that it is always at
                 // the end.
                 comparison = 1;
