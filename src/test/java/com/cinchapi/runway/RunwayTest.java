@@ -47,8 +47,7 @@ public class RunwayTest extends ClientServerTest {
 
     @Override
     public void beforeEachTest() {
-        runway = Runway.connect("localhost", server.getClientPort(), "admin",
-                "admin");
+        runway = Runway.builder().port(server.getClientPort()).build();
     }
 
     @Override
@@ -142,8 +141,8 @@ public class RunwayTest extends ClientServerTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testRecordDoesNotHaveDatabaseInterfaceReferenceWhenConstructedAndMultipleRunwaysExist() {
-        Runway runway2 = Runway.connect("localhost", server.getClientPort(),
-                "admin", "admin", "" + Time.now());
+        Runway runway2 = Runway.builder().port(server.getClientPort())
+                .environment("" + Time.now()).build();
         try {
             SuperAdmin sa = new SuperAdmin("Jeff Nelson", "foo", "bar");
             sa.db.find(User.class, Criteria.where().key("foo")
@@ -162,8 +161,8 @@ public class RunwayTest extends ClientServerTest {
     public void testLoadedRecordAlwaysHasDatabaseInstanceReference() {
         SuperAdmin sa = new SuperAdmin("Jeff Nelson", "foo", "bar");
         sa.save();
-        Runway runway2 = Runway.connect("localhost", server.getClientPort(),
-                "admin", "admin", "" + Time.now());
+        Runway runway2 = Runway.builder().port(server.getClientPort())
+                .environment("" + Time.now()).build();
         try {
             SuperAdmin loaded = runway.findAnyUnique(SuperAdmin.class,
                     Criteria.where().key("name").operator(Operator.EQUALS)
@@ -179,7 +178,7 @@ public class RunwayTest extends ClientServerTest {
             catch (Exception e) {}
         }
     }
-    
+
     @Test
     public void testIntrospectedData() {
         Organization o1 = new Organization("o1");
@@ -197,63 +196,68 @@ public class RunwayTest extends ClientServerTest {
         p1.organization = o2;
         p1.save();
         Assert.assertEquals(ImmutableSet.of(p2), o1.members());
-        Assert.assertEquals(ImmutableSet.of(p1, p3), o2.members());        
+        Assert.assertEquals(ImmutableSet.of(p1, p3), o2.members());
     }
-    
+
     @Test
     public void testSearch() {
         User a = new Manager("John Doern");
         User b = new Manager("Jane Doern");
         User c = new Manager("Liz James");
-        runway.save(a,b,c);
+        runway.save(a, b, c);
         Set<Manager> records = runway.search(Manager.class, "n Doe", "name");
         Assert.assertEquals(2, records.size());
     }
-    
+
     @Test
     public void testSearchMultipleKeys() {
-        SuperAdmin a = new SuperAdmin("Jeff", "Goes to the store", "with you fuzzugng");
+        SuperAdmin a = new SuperAdmin("Jeff", "Goes to the store",
+                "with you fuzzugng");
         SuperAdmin b = new SuperAdmin("Ashleah", "With fuzzugng", "Okay cool");
-        runway.save(a,b);
-        Set<SuperAdmin> records = runway.search(SuperAdmin.class, "zzug", "foo", "bar");
+        runway.save(a, b);
+        Set<SuperAdmin> records = runway.search(SuperAdmin.class, "zzug", "foo",
+                "bar");
         Assert.assertEquals(2, records.size());
     }
-    
+
     @Test
     public void testSearchSingleClass() {
-        SuperAdmin a = new SuperAdmin("Jeff", "Goes to the store", "with you fuzzugng");
+        SuperAdmin a = new SuperAdmin("Jeff", "Goes to the store",
+                "with you fuzzugng");
         Admin b = new Admin("Ashleah", "With fuzzugng");
-        runway.save(a,b);
-        Set<SuperAdmin> records = runway.search(SuperAdmin.class, "zzug", "foo", "bar");
+        runway.save(a, b);
+        Set<SuperAdmin> records = runway.search(SuperAdmin.class, "zzug", "foo",
+                "bar");
         Assert.assertEquals(1, records.size());
     }
-    
+
     @Test
     public void testSearchAcrossClassHierarchy() {
-        SuperAdmin a = new SuperAdmin("Jeff", "Goes to the store", "with you fuzzugng");
+        SuperAdmin a = new SuperAdmin("Jeff", "Goes to the store",
+                "with you fuzzugng");
         Admin b = new Admin("Ashleah", "With fuzzugng");
-        runway.save(a,b);
+        runway.save(a, b);
         Set<User> records = runway.searchAny(User.class, "zzug", "foo", "bar");
         Assert.assertEquals(2, records.size());
     }
-    
+
     @Test
     public void testLoadSort() {
         Manager a = new Manager("Z");
         Manager b = new Manager("S");
         Manager c = new Manager("A");
         Manager d = new Manager("V");
-        runway.save(a,b,c,d);
+        runway.save(a, b, c, d);
         Set<Manager> managers = runway.load(Manager.class, "name");
         Iterator<Manager> expectedIt = ImmutableList.of(c, b, d, a).iterator();
         Iterator<Manager> actualIt = managers.iterator();
-        while(expectedIt.hasNext()) {
+        while (expectedIt.hasNext()) {
             Manager expected = expectedIt.next();
             Manager actual = actualIt.next();
             Assert.assertEquals(expected, actual);
         }
 
-     }
+    }
 
     abstract class User extends Record {
 

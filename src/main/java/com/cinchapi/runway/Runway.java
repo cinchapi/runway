@@ -77,13 +77,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private static long METADATA_RECORD = -1;
 
     /**
+     * Return a builder that can be used to precisely configure a {@link Runway}
+     * instance.
+     * 
+     * @return a {@link Runway} builder
+     */
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /**
      * Return a {@link Runway} instance that is connected to Concourse using the
      * default connection parameters.
      * 
      * @return a {@link Runway} instance
      */
     public static Runway connect() {
-        return new Runway(ConnectionPool.newCachedConnectionPool());
+        return builder().build();
     }
 
     /**
@@ -95,10 +105,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param username
      * @param password
      * @return a {@link Runway} instance
+     * @deprecated use {@link #builder()} instead
      */
+    @Deprecated
     public static Runway connect(String host, int port, String username,
             String password) {
-        return connect(host, port, username, password, "");
+        return builder().host(host).port(port).username(username)
+                .password(password).build();
     }
 
     /**
@@ -111,11 +124,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param password
      * @param environment
      * @return a {@link Runway} instance
+     * @deprecated use {@link #builder()} instead
      */
+    @Deprecated
     public static Runway connect(String host, int port, String username,
             String password, String environment) {
-        return new Runway(ConnectionPool.newCachedConnectionPool(host, port,
-                username, password, environment));
+        return builder().host(host).port(port).username(username)
+                .password(password).environment(environment).build();
     }
 
     /**
@@ -190,7 +205,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Record.PINNED_RUNWAY_INSTANCE = null;
         }
     }
-    
+
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
@@ -474,6 +489,86 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> T load(Class<T> clazz, long id,
             TLongObjectHashMap<Record> existing) {
         return Record.load(clazz, id, existing, connections, this);
+    }
+
+    /**
+     * Builder for {@link Runway} connections. This is returned from
+     * {@link #builder()}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Builder {
+
+        private String host = "localhost";
+        private int port = 1717;
+        private String username = "admin";
+        private String password = "admin";
+        private String environment = "";
+
+        /**
+         * Set the connection's host.
+         * 
+         * @param environment
+         * @return this builder
+         */
+        public Builder host(String host) {
+            this.host = host;
+            return this;
+        }
+
+        /**
+         * Set the connection's port.
+         * 
+         * @param environment
+         * @return this builder
+         */
+        public Builder port(int port) {
+            this.port = port;
+            return this;
+        }
+
+        /**
+         * Set the connection's username.
+         * 
+         * @param environment
+         * @return this builder
+         */
+        public Builder username(String username) {
+            this.username = username;
+            return this;
+        }
+
+        /**
+         * Set the connection's password.
+         * 
+         * @param environment
+         * @return this builder
+         */
+        public Builder password(String password) {
+            this.password = password;
+            return this;
+        }
+
+        /**
+         * Set the connection's environment.
+         * 
+         * @param environment
+         * @return this builder
+         */
+        public Builder environment(String environment) {
+            this.environment = environment;
+            return this;
+        }
+
+        /**
+         * Build the configured {@link Runway} and return the instance.
+         * 
+         * @return a {@link Runway} instance
+         */
+        public Runway build() {
+            return new Runway(ConnectionPool.newCachedConnectionPool(host, port,
+                    username, password, environment));
+        }
     }
 
 }

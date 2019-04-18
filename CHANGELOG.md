@@ -12,6 +12,7 @@
 * `Record`s are now `Comparable`, in support of the aformentioned result set sorting functionality.
   * **NOTE:** Sorting on computed or derived keys is **NOT** supported.
 * Improved the error messages that are thrown from `Record#throwSuppressedExceptions` so that only the  messages from the suppressed exceptions are included in the thrown Exception's message as opposed to the entire stacktrace. The full stacktrace can be accessed using `Exception#getStackTrace`.
+* Added a `builder()` factory to `Runway`. This builder can be used to construct a `Runway` instance. As a result, the `connect` methods that take parameters have been deprecated.
 
 #### Version 1.2.0 (March 4, 2019)
 * In the `Record` class, we added a `db` attribute, containing a reference to the `Runway` instance to which the `Record` is assigned. The `db` can be used to create getter methods or computed properties that query the database to return dynamic values. For example, if a `Record` class is the destination link from a field in many other `Record` classes (e.g. a one-to-many relationship), you can query the `db` to return all the related source records.

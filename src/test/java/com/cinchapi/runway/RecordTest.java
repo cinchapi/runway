@@ -59,8 +59,7 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     public void beforeEachTest() {
-        runway = Runway.connect("localhost", server.getClientPort(), "admin",
-                "admin");
+        runway = Runway.builder().port(server.getClientPort()).build();
     }
 
     @Override
