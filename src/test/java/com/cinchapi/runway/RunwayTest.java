@@ -28,8 +28,11 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
+import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+
+import edu.emory.mathcs.backport.java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Unit tests for {@link Runway}.
@@ -256,7 +259,28 @@ public class RunwayTest extends ClientServerTest {
             Manager actual = actualIt.next();
             Assert.assertEquals(expected, actual);
         }
+    }
 
+    @Test
+    public void testLoadFromCache() throws Exception {
+        runway.close();
+        runway = Runway.builder().cache(CacheBuilder.newBuilder().build())
+                .build();
+        Manager manager = new Manager("Jeff Nelson");
+        manager.save();
+        Manager a = runway.load(Manager.class, manager.id());
+        Manager b = runway.load(Manager.class, manager.id());
+        Assert.assertSame(a, b);
+        Manager c = new Manager("Ashleah Nelson");
+        c.save();
+        Set<Manager> managers = runway.load(Manager.class);
+        AtomicBoolean passed = new AtomicBoolean(false);
+        managers.forEach(mgr -> {
+            if(mgr == a) {
+                passed.set(true);
+            }
+        });
+        Assert.assertTrue(passed.get());
     }
 
     abstract class User extends Record {

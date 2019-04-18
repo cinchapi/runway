@@ -18,12 +18,14 @@ package com.cinchapi.runway;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
 import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
 
 import com.cinchapi.common.base.AnyStrings;
+import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -34,6 +36,8 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
+import com.cinchapi.runway.cache.NoOpCache;
+import com.google.common.cache.Cache;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Multimap;
@@ -177,11 +181,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
 
     /**
+     * A pluggable {@link Cache} that can be used to make repeated record
+     * {@link #load(Class, long, TLongObjectHashMap)} more efficient.
+     */
+    private final Cache<Long, Record> cache;
+
+    /**
      * Construct a new instance.
      * 
      * @param connections a Concourse {@link ConnectionPool}
      */
-    private Runway(ConnectionPool connections) {
+    private Runway(ConnectionPool connections, Cache<Long, Record> cache) {
         this.connections = connections;
         instances.add(this);
         if(instances.size() > 1) {
@@ -190,6 +200,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             Record.PINNED_RUNWAY_INSTANCE = this;
         }
+        this.cache = cache;
     }
 
     @Override
@@ -475,20 +486,33 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * that is contained within the specified {@code clazz} and
      * has the specified {@code id}.
      * <p>
-     * Multiple calls to this method with the same parameters will return
+     * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
+     * used), multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
+     * to a Record in isolation. If a cache is provided, the rules (e.g.
+     * expiration policy, etc) of said cache govern when multiple calls to this
+     * method return the same instance for the provided parameters or not.
      * </p>
      * 
      * @param clazz
      * @param id
      * @param existing
-     * @return
+     * @return the loaded {@link Record} instance
      */
+    @SuppressWarnings("unchecked")
     private <T extends Record> T load(Class<T> clazz, long id,
             TLongObjectHashMap<Record> existing) {
-        return Record.load(clazz, id, existing, connections, this);
+        Record record;
+        try {
+            record = cache.get(id, () -> {
+                return Record.load(clazz, id, existing, connections, this);
+            });
+        }
+        catch (ExecutionException e) {
+            throw CheckedExceptions.wrapAsRuntimeException(e);
+        }
+        return (T) record;
     }
 
     /**
@@ -504,11 +528,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private String username = "admin";
         private String password = "admin";
         private String environment = "";
+        private Cache<Long, Record> cache = new NoOpCache<>();
 
         /**
          * Set the connection's host.
          * 
-         * @param environment
+         * @param host
          * @return this builder
          */
         public Builder host(String host) {
@@ -519,7 +544,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         /**
          * Set the connection's port.
          * 
-         * @param environment
+         * @param port
          * @return this builder
          */
         public Builder port(int port) {
@@ -530,7 +555,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         /**
          * Set the connection's username.
          * 
-         * @param environment
+         * @param username
          * @return this builder
          */
         public Builder username(String username) {
@@ -541,7 +566,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         /**
          * Set the connection's password.
          * 
-         * @param environment
+         * @param password
          * @return this builder
          */
         public Builder password(String password) {
@@ -561,13 +586,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
         /**
+         * Set the connection's cache.
+         * 
+         * @param cache
+         * @return this builder
+         */
+        public Builder cache(Cache<Long, Record> cache) {
+            this.cache = cache;
+            return this;
+        }
+
+        /**
          * Build the configured {@link Runway} and return the instance.
          * 
          * @return a {@link Runway} instance
          */
         public Runway build() {
             return new Runway(ConnectionPool.newCachedConnectionPool(host, port,
-                    username, password, environment));
+                    username, password, environment), cache);
         }
     }
 
