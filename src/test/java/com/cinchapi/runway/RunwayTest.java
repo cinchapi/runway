@@ -264,8 +264,8 @@ public class RunwayTest extends ClientServerTest {
     @Test
     public void testLoadFromCache() throws Exception {
         runway.close();
-        runway = Runway.builder().cache(CacheBuilder.newBuilder().build())
-                .build();
+        runway = Runway.builder().host("localhost").port(server.getClientPort())
+                .cache(CacheBuilder.newBuilder().build()).build();
         Manager manager = new Manager("Jeff Nelson");
         manager.save();
         Manager a = runway.load(Manager.class, manager.id());
