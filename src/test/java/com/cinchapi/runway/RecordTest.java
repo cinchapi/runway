@@ -29,6 +29,8 @@ import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.Continuation;
+import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
@@ -579,6 +581,28 @@ public class RecordTest extends ClientServerTest {
         Mock b = new Mock();
         a.compareTo(b, "name");
         Assert.assertTrue(true); // lack of Exception means that the test passes
+    }
+    
+    @Test
+    public void testSavingRecordWithLinksDoesNotCreateExtraneousRevisions() {
+        Sock a = new Sock("a", new Dock("a"));
+        a.save();
+        Concourse concourse = Concourse.connect("localhost", server.getClientPort(), "admin", "admin");
+        int expected = concourse.audit(a.id()).size();
+        a.save();
+        int actual = concourse.audit(a.id()).size();
+        Assert.assertEquals(expected, actual);        
+    }
+    
+    @Test
+    public void testSavingRecordWithChangeToLink() {
+        Sock a = new Sock("a", new Dock("a")); 
+        a.save();
+        Dock d = new Dock("b");
+        Reflection.set("dock", d, a);
+        a.save();
+        a = runway.load(Sock.class, a.id());
+        Assert.assertEquals(d, a.dock); 
     }
 
     class Mock extends Record {

@@ -1213,7 +1213,7 @@ public abstract class Record implements Comparable<Record> {
                 concourse.link(key, record.id, id);
             }
             else {
-                concourse.set(key, Link.to(record.id), id);
+                concourse.verifyOrSet(key, Link.to(record.id), id);
             }
 
         }
