@@ -604,6 +604,15 @@ public class RecordTest extends ClientServerTest {
         a = runway.load(Sock.class, a.id());
         Assert.assertEquals(d, a.dock); 
     }
+    
+    @Test
+    public void testSetDynamicValue() {
+        Flock flock = new Flock("flock");
+        String key = Random.getSimpleString();
+        flock.set(key, 1);
+        Assert.assertEquals(1, (int) flock.get(key));
+        Assert.assertTrue(flock.map().containsKey(key));
+    }
 
     class Mock extends Record {
 
