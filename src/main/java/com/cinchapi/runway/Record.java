@@ -69,11 +69,13 @@ import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
+import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
@@ -177,12 +179,19 @@ public abstract class Record implements Comparable<Record> {
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
      * track of linked records to prevent infinite recursion.
      * 
-     * @param links
-     * @param flattenSingleElementCollections
+     * @param options
+     * @param from the {@link Record} that is the parent link for any
+     *            encountered links
+     * @param links a {@link Multimap} that represents encountered links as a
+     *            mapping from the <strong>destination</strong> record to any
+     *            source record that links to it (e.g. the destinations are
+     *            indexed to make it easy to look up all the parent nodes in the
+     *            document graph)
      * @return the {@link TypeAdapterFactory}
      */
     private static TypeAdapterFactory generateDynamicRecordTypeAdapterFactory(
-            SerializationOptions options, Set<Record> links) {
+            SerializationOptions options, Record from,
+            Multimap<Record, Record> links) {
         return new TypeAdapterFactory() {
 
             @SuppressWarnings("unchecked")
@@ -199,8 +208,8 @@ public abstract class Record implements Comparable<Record> {
                         @Override
                         public void write(JsonWriter out, Record value)
                                 throws IOException {
-                            if(!links.contains(value)) {
-                                links.add(value);
+                            if(!isCyclic(from, value)) {
+                                links.put(value, from);
                                 out.jsonValue(value.json(options, links));
                             }
                             else {
@@ -211,6 +220,35 @@ public abstract class Record implements Comparable<Record> {
                 }
                 else {
                     return null;
+                }
+            }
+
+            /**
+             * Return {@code true} of a link {@code from} one {@link Record}
+             * {@code to} another one creates a cycle.
+             * 
+             * @param from
+             * @param to
+             * @return a boolean that indicates whether the link between two
+             *         records would form a cycle
+             */
+            private boolean isCyclic(Record from, Record to) {
+                Collection<Record> grandparents = links.get(from);
+                if(grandparents.isEmpty()) {
+                    return false;
+                }
+                else {
+                    if(grandparents.contains(to)) {
+                        return true;
+                    }
+                    else {
+                        for (Record grandparent : grandparents) {
+                            if(isCyclic(grandparent, to)) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
                 }
             }
 
@@ -624,7 +662,7 @@ public abstract class Record implements Comparable<Record> {
                         .flattenSingleElementCollections(
                                 flattenSingleElementCollections)
                         .build(),
-                Sets.newHashSet());
+                HashMultimap.create());
     }
 
     /**
@@ -649,7 +687,7 @@ public abstract class Record implements Comparable<Record> {
                         .flattenSingleElementCollections(
                                 flattenSingleElementCollections)
                         .build(),
-                Sets.newHashSet(), keys);
+                HashMultimap.create(), keys);
     }
 
     /**
@@ -676,7 +714,7 @@ public abstract class Record implements Comparable<Record> {
      * @return json string
      */
     public String json(SerializationOptions options) {
-        return json(options, Sets.newHashSet());
+        return json(options, HashMultimap.create());
     }
 
     /**
@@ -693,7 +731,7 @@ public abstract class Record implements Comparable<Record> {
      * @return json string
      */
     public String json(SerializationOptions options, String... keys) {
-        return json(options, Sets.newHashSet(), keys);
+        return json(options, HashMultimap.create(), keys);
     }
 
     /**
@@ -1140,8 +1178,8 @@ public abstract class Record implements Comparable<Record> {
      * @return the JSON string.
      */
     @SuppressWarnings({ "unchecked" })
-    private String json(SerializationOptions options, Set<Record> links,
-            String... keys) {
+    private String json(SerializationOptions options,
+            Multimap<Record, Record> links, String... keys) {
         Map<String, Object> data = keys.length == 0 ? map(options)
                 : map(options, keys);
 
@@ -1157,7 +1195,7 @@ public abstract class Record implements Comparable<Record> {
             builder.serializeNulls();
         }
         builder.registerTypeAdapterFactory(
-                generateDynamicRecordTypeAdapterFactory(options, links))
+                generateDynamicRecordTypeAdapterFactory(options, this, links))
                 .setPrettyPrinting().disableHtmlEscaping();
         Map<Class<?>, TypeAdapter<?>> adapters = Maps.newLinkedHashMap();
         Streams.concat(jsonTypeWriters().entrySet().stream(),

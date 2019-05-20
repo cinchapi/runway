@@ -582,29 +582,30 @@ public class RecordTest extends ClientServerTest {
         a.compareTo(b, "name");
         Assert.assertTrue(true); // lack of Exception means that the test passes
     }
-    
+
     @Test
     public void testSavingRecordWithLinksDoesNotCreateExtraneousRevisions() {
         Sock a = new Sock("a", new Dock("a"));
         a.save();
-        Concourse concourse = Concourse.connect("localhost", server.getClientPort(), "admin", "admin");
+        Concourse concourse = Concourse.connect("localhost",
+                server.getClientPort(), "admin", "admin");
         int expected = concourse.audit(a.id()).size();
         a.save();
         int actual = concourse.audit(a.id()).size();
-        Assert.assertEquals(expected, actual);        
+        Assert.assertEquals(expected, actual);
     }
-    
+
     @Test
     public void testSavingRecordWithChangeToLink() {
-        Sock a = new Sock("a", new Dock("a")); 
+        Sock a = new Sock("a", new Dock("a"));
         a.save();
         Dock d = new Dock("b");
         Reflection.set("dock", d, a);
         a.save();
         a = runway.load(Sock.class, a.id());
-        Assert.assertEquals(d, a.dock); 
+        Assert.assertEquals(d, a.dock);
     }
-    
+
     @Test
     public void testSetDynamicValue() {
         Flock flock = new Flock("flock");
@@ -612,6 +613,55 @@ public class RecordTest extends ClientServerTest {
         flock.set(key, 1);
         Assert.assertEquals(1, (int) flock.get(key));
         Assert.assertTrue(flock.map().containsKey(key));
+    }
+
+    @Test
+    public void testJsonCycleDetection() {
+
+        Gson gson = new GsonBuilder().setPrettyPrinting()
+                .registerTypeHierarchyAdapter(Record.class,
+                        new TypeAdapter<Record>() {
+
+                            @Override
+                            public void write(JsonWriter out, Record value)
+                                    throws IOException {
+                                out.jsonValue(value.json(SerializationOptions
+                                        .builder().serializeNullValues(true)
+                                        .build()));
+                            }
+
+                            @Override
+                            public Record read(JsonReader in)
+                                    throws IOException {
+                                throw new UnsupportedOperationException();
+                            }
+
+                        })
+                .create();
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        a.friends.add(c);
+        b.friends.add(a);
+        b.friends.add(c);
+        c.friends.add(a);
+        c.friends.add(b);
+        String json = gson.toJson(ImmutableList.of(c, a, b));
+        System.out.println(json);
+        Assert.assertTrue(true); // lack of StackOverflowExceptions means we
+                                 // pass
+
+    }
+
+    class Node extends Record {
+
+        public String label;
+        public List<Node> friends = Lists.newArrayList();
+
+        public Node(String label) {
+            this.label = label;
+        }
     }
 
     class Mock extends Record {
