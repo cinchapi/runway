@@ -28,6 +28,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
+import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -281,6 +282,23 @@ public class RunwayTest extends ClientServerTest {
             }
         });
         Assert.assertTrue(passed.get());
+    }
+    
+    @Test
+    public void testLoadAcrossClassHiearchyPerformsLazyLoad() throws Exception {
+        Manager a = new Manager("A");
+        Admin b = new Admin("A", "B");
+        SuperAdmin c = new SuperAdmin("C", "C", "C");
+        a.save();
+        b.save();
+        c.save();
+        runway.close();
+        Cache<Long, Record> cache = CacheBuilder.newBuilder().build();
+        runway = Runway.builder().host("localhost").port(server.getClientPort())
+                .cache(cache).build();
+        Set<User> users = runway.loadAny(User.class);
+        Assert.assertEquals(0, cache.size());
+        Assert.assertEquals(ImmutableSet.of(a, b, c), users);
     }
 
     abstract class User extends Record {
