@@ -242,7 +242,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Collection<Class<?>> hierarchy = hierarchies.get(clazz);
         Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
         for (Class cls : hierarchy) {
-            Set<Long> $ids = Reflection.get("from", find(cls, criteria)); // (authorized)
+            Set<Long> $ids = Reflection.<Set<Long>> get("from",
+                    find(cls, criteria)); // (authorized)
             $ids.forEach(id -> ids.put(id, cls));
         }
         TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
@@ -377,7 +378,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Collection<Class<?>> hierarchy = hierarchies.get(clazz);
         Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
         for (Class cls : hierarchy) {
-            Set<Long> $ids = Reflection.get("from", load(cls)); // (authorized)
+            Set<Long> $ids = Reflection.<Set<Long>> get("from", load(cls)); // (authorized)
             $ids.forEach(id -> ids.put(id, cls));
         }
         TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
@@ -485,7 +486,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Collection<Class<?>> hierarchy = hierarchies.get(clazz);
         Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
         for (Class cls : hierarchy) {
-            Set<Long> $ids = Reflection.get("from", search(cls, query, keys)); // (authorized)
+            Set<Long> $ids = Reflection.<Set<Long>> get("from",
+                    search(cls, query, keys)); // (authorized)
             $ids.forEach(id -> ids.put(id, cls));
         }
         TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
