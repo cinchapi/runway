@@ -17,6 +17,7 @@ package com.cinchapi.runway;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
@@ -40,6 +41,7 @@ import com.cinchapi.runway.cache.NoOpCache;
 import com.google.common.cache.Cache;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
 
@@ -238,10 +240,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria) {
         Collection<Class<?>> hierarchy = hierarchies.get(clazz);
-        Set<T> found = Sets.newLinkedHashSet();
+        Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
         for (Class cls : hierarchy) {
-            found.addAll(find(cls, criteria));
+            Set<Long> $ids = Reflection.get("from", find(cls, criteria)); // (authorized)
+            $ids.forEach(id -> ids.put(id, cls));
         }
+        TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
+        Set<T> found = LazyTransformSet.of(ids.keySet(),
+                id -> load(ids.get(id), id, existing));
         return found;
     }
 
@@ -369,10 +375,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public <T extends Record> Set<T> loadAny(Class<T> clazz) {
         Collection<Class<?>> hierarchy = hierarchies.get(clazz);
-        Set<T> loaded = Sets.newLinkedHashSet();
+        Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
         for (Class cls : hierarchy) {
-            loaded.addAll(load(cls));
+            Set<Long> $ids = Reflection.get("from", load(cls)); // (authorized)
+            $ids.forEach(id -> ids.put(id, cls));
         }
+        TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
+        Set<T> loaded = LazyTransformSet.of(ids.keySet(),
+                id -> load(ids.get(id), id, existing));
         return loaded;
     }
 
@@ -473,10 +483,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> searchAny(Class<T> clazz, String query,
             String... keys) {
         Collection<Class<?>> hierarchy = hierarchies.get(clazz);
-        Set<T> loaded = Sets.newLinkedHashSet();
+        Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
         for (Class cls : hierarchy) {
-            loaded.addAll(search(cls, query, keys));
+            Set<Long> $ids = Reflection.get("from", search(cls, query, keys)); // (authorized)
+            $ids.forEach(id -> ids.put(id, cls));
         }
+        TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
+        Set<T> loaded = LazyTransformSet.of(ids.keySet(),
+                id -> load(ids.get(id), id, existing));
         return loaded;
     }
 
