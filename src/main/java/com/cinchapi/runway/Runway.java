@@ -85,21 +85,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private static long METADATA_RECORD = -1;
 
-    static {
-        // NOTE: Scanning the classpath adds startup costs proportional to the
-        // number of classes defined. We do this once at startup to minimize the
-        // effect of the cost.
-        hierarchies = HashMultimap.create();
-        Logging.disable(Reflections.class);
-        Reflections.log = null; // turn off reflection logging
-        Reflections reflection = new Reflections(new SubTypesScanner());
-        reflection.getSubTypesOf(Record.class).forEach(type -> {
-            hierarchies.put(type, type);
-            reflection.getSubTypesOf(type)
-                    .forEach(subType -> hierarchies.put(type, subType));
-        });
-    }
-
     /**
      * Return a builder that can be used to precisely configure a {@link Runway}
      * instance.
@@ -172,21 +157,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 .group(criteria).build();
     }
 
-    /**
-     * Intelligently select all the data for the {@code ids} from
-     * {@code concourse}.
-     * 
-     * @param concourse
-     * @param ids
-     * @return the selected data
-     */
-    private static Map<Long, Map<String, Set<Object>>> select(
-            Concourse concourse, Set<Long> ids) {
-        // TODO: stagger/stream/buffer the load if there are a lot of ids
-        // (possibly using a continuation) so that a group of records are
-        // fetched on the fly only when necessary so as to prevent holding so
-        // much data in memory
-        return concourse.select(ids);
+    static {
+        // NOTE: Scanning the classpath adds startup costs proportional to the
+        // number of classes defined. We do this once at startup to minimize the
+        // effect of the cost.
+        hierarchies = HashMultimap.create();
+        Logging.disable(Reflections.class);
+        Reflections.log = null; // turn off reflection logging
+        Reflections reflection = new Reflections(new SubTypesScanner());
+        reflection.getSubTypesOf(Record.class).forEach(type -> {
+            hierarchies.put(type, type);
+            reflection.getSubTypesOf(type)
+                    .forEach(subType -> hierarchies.put(type, subType));
+        });
     }
 
     /**
@@ -195,18 +178,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /* package */ final ConnectionPool connections;
 
     /**
+     * A pluggable {@link Cache} that can be used to make repeated record
+     * {@link #load(Class, long, TLongObjectHashMap)} more efficient.
+     */
+    private final Cache<Long, Record> cache;
+
+    /**
      * A mapping from a transaction id to the set of records that are waiting to
      * be saved within that transaction. We use this collection to ensure that a
      * record being saved only links to an existing record in the database or a
      * record that will later exist (e.g. waiting to be saved).
      */
     private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
-
-    /**
-     * A pluggable {@link Cache} that can be used to make repeated record
-     * {@link #load(Class, long, TLongObjectHashMap)} more efficient.
-     */
-    private final Cache<Long, Record> cache;
 
     /**
      * Construct a new instance.
@@ -248,7 +231,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
             Set<T> records = LazyTransformSet.of(ids, id -> {
                 if(data.get() == null) {
-                    data.set(select(concourse, ids));
+                    data.set($select(ids));
                 }
                 return load(clazz, id, existing, data.get().get(id));
             });
@@ -275,7 +258,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
             Set<T> found = LazyTransformSet.of(ids.keySet(), id -> {
                 if(data.get() == null) {
-                    data.set(select(concourse, ids.keySet()));
+                    data.set($select(ids.keySet()));
                 }
                 return load(ids.get(id), id, existing, data.get().get(id));
             });
@@ -380,7 +363,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
             Set<T> records = LazyTransformSet.of(ids, id -> {
                 if(data.get() == null) {
-                    data.set(select(concourse, ids));
+                    data.set($select(ids));
                 }
                 return load(clazz, id, existing, data.get().get(id));
             });
@@ -425,7 +408,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
             Set<T> loaded = LazyTransformSet.of(ids.keySet(), id -> {
                 if(data.get() == null) {
-                    data.set(select(concourse, ids.keySet()));
+                    data.set($select(ids.keySet()));
                 }
                 return load(ids.get(id), id, existing, data.get().get(id));
             });
@@ -507,7 +490,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
             Set<T> records = LazyTransformSet.of(ids, id -> {
                 if(data.get() == null) {
-                    data.set(select(concourse, ids));
+                    data.set($select(ids));
                 }
                 return load(clazz, id, existing, data.get().get(id));
             });
@@ -517,8 +500,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             connections.release(concourse);
         }
     }
-
-    // TODO: what about loading a specific record using a parent class?
 
     /**
      * Search for records across the hierarchy of {@code clazz} that match the
@@ -544,7 +525,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
             Set<T> loaded = LazyTransformSet.of(ids.keySet(), id -> {
                 if(data.get() == null) {
-                    data.set(select(concourse, ids.keySet()));
+                    data.set($select(ids.keySet()));
                 }
                 return load(ids.get(id), id, existing, data.get().get(id));
             });
@@ -555,6 +536,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
     }
+
+    // TODO: what about loading a specific record using a parent class?
 
     /**
      * Perform the find operation using the {@code concourse} handler.
@@ -603,6 +586,28 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Intelligently select all the data for the {@code ids} from
+     * {@code concourse}.
+     * 
+     * @param concourse
+     * @param ids
+     * @return the selected data
+     */
+    private Map<Long, Map<String, Set<Object>>> $select(Set<Long> ids) {
+        Concourse concourse = connections.request();
+        try {
+            // TODO: stagger/stream/buffer the load if there are a lot of ids
+            // (possibly using a continuation) so that a group of records are
+            // fetched on the fly only when necessary so as to prevent holding
+            // so much data in memory
+            return concourse.select(ids);
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
      * that is contained within the specified {@code clazz} and
@@ -629,7 +634,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Record record;
         try {
             record = cache.get(id, () -> {
-                return Record.load(clazz, id, existing, connections, this, data);
+                return Record.load(clazz, id, existing, connections, this,
+                        data);
             });
         }
         catch (ExecutionException e) {
@@ -646,12 +652,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public static class Builder {
 
+        private Cache<Long, Record> cache = new NoOpCache<>();
+        private String environment = "";
         private String host = "localhost";
+        private String password = "admin";
         private int port = 1717;
         private String username = "admin";
-        private String password = "admin";
-        private String environment = "";
-        private Cache<Long, Record> cache = new NoOpCache<>();
 
         /**
          * Build the configured {@link Runway} and return the instance.
