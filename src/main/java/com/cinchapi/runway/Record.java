@@ -263,8 +263,11 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      * @return {@code true} if the record is a zombie
      */
-    private static boolean inZombieState(long id, Concourse concourse) {
-        return concourse.describe(id).equals(ZOMBIE_DESCRIPTION);
+    private static boolean inZombieState(long id, Concourse concourse,
+            @Nullable Map<String, Set<Object>> data) {
+        Set<String> keys = data != null ? data.keySet()
+                : concourse.describe(id);
+        return keys.equals(ZOMBIE_DESCRIPTION);
     }
 
     /**
@@ -1130,7 +1133,7 @@ public abstract class Record implements Comparable<Record> {
      * @return {@code true} if this record is a zombie
      */
     private final boolean inZombieState(Concourse concourse) {
-        return inZombieState(id, concourse);
+        return inZombieState(id, concourse, null);
     }
 
     /**
@@ -1391,7 +1394,7 @@ public abstract class Record implements Comparable<Record> {
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
         checkConstraints(concourse);
-        if(inZombieState(id, concourse)) {
+        if(inZombieState(id, concourse, data)) {
             concourse.clear(id);
             throw new ZombieException();
         }
