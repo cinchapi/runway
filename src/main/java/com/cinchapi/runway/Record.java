@@ -293,11 +293,12 @@ public abstract class Record implements Comparable<Record> {
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
             TLongObjectMap<Record> existing, ConnectionPool connections,
-            Concourse concourse, Runway runway) {
+            Concourse concourse, Runway runway,
+            @Nullable Map<String, Set<Object>> data) {
         T record = (T) newDefaultInstance(clazz, connections);
         Reflection.set("id", id, record); /* (authorized) */
         record.assign(runway);
-        record.load(concourse, existing);
+        record.load(concourse, existing, data);
         return record;
     }
 
@@ -345,10 +346,11 @@ public abstract class Record implements Comparable<Record> {
      */
     protected static <T extends Record> T load(Class<?> clazz, long id,
             TLongObjectMap<Record> existing, ConnectionPool connections,
-            Runway runway) {
+            Runway runway, @Nullable Map<String, Set<Object>> data) {
         Concourse concourse = connections.request();
         try {
-            return load(clazz, id, existing, connections, concourse, runway);
+            return load(clazz, id, existing, connections, concourse, runway,
+                    data);
         }
         finally {
             connections.release(concourse);
@@ -1019,7 +1021,7 @@ public abstract class Record implements Comparable<Record> {
                     Class<? extends Record> targetClass = Reflection
                             .getClassCasted(section);
                     converted = load(targetClass, target, alreadyLoaded,
-                            connections, concourse, runway);
+                            connections, concourse, runway, null);
                 }
             }
         }
@@ -1369,8 +1371,22 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      * @param existing
      */
-    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
     final void load(Concourse concourse, TLongObjectMap<Record> existing) {
+        load(concourse, existing, null);
+    }
+
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param concourse
+     * @param existing
+     * @param data data that is pre-loaded from {@code concourse}; this should
+     *            only be provided from a trusted source
+     */
+    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
+    final void load(Concourse concourse, TLongObjectMap<Record> existing,
+            @Nullable Map<String, Set<Object>> data) {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
@@ -1379,8 +1395,8 @@ public abstract class Record implements Comparable<Record> {
             concourse.clear(id);
             throw new ZombieException();
         }
-        Map<String, Set<Object>> data = concourse.select(id);
-        fields().forEach(field -> {
+        data = data == null ? concourse.select(id) : data;
+        for (Field field : fields()) {
             try {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     String key = field.getName();
@@ -1454,8 +1470,7 @@ public abstract class Record implements Comparable<Record> {
             catch (ReflectiveOperationException e) {
                 throw CheckedExceptions.throwAsRuntimeException(e);
             }
-        });
-
+        }
     }
 
     /**
