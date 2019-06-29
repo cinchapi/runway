@@ -37,10 +37,12 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
 import com.cinchapi.runway.cache.NoOpCache;
+import com.github.zafarkhaja.semver.Version;
 import com.google.common.cache.Cache;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
@@ -192,6 +194,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
 
     /**
+     * A flag that indicates whether the connected server supports result set
+     * sorting.
+     */
+    private final boolean sortable;
+
+    /**
      * Construct a new instance.
      * 
      * @param connections a Concourse {@link ConnectionPool}
@@ -206,6 +214,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Record.PINNED_RUNWAY_INSTANCE = this;
         }
         this.cache = cache;
+        Concourse concourse = connections.request();
+        try {
+            Version target = Version.forIntegers(0, 10);
+            Version actual = Versions
+                    .parseSemanticVersion(concourse.getServerVersion());
+            sortable = actual.greaterThanOrEqualTo(target);
+        }
+        finally {
+            connections.release(concourse);
+        }
     }
 
     @Override
