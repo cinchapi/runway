@@ -26,21 +26,21 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.collect.Continuation;
-import com.cinchapi.runway.util.CompoundHashMap;
+import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.google.common.collect.ImmutableMap;
 
 /**
- * Unit tests for {@link CompoundHashMap}.
+ * Unit tests for {@link BackupReadSourcesHashMap}.
  *
  * @author Jeff Nelson
  */
-public class CompoundHashMapTest {
+public class BackupReadSourcesHashMapTest {
 
     @Test
     public void testMultiSourceHashMapGet() {
         Map<String, Supplier<Object>> computed = ImmutableMap.of("b",
                 () -> Continuation.of(UUID::randomUUID));
-        Map<String, Object> data = CompoundHashMap.create(
+        Map<String, Object> data = BackupReadSourcesHashMap.create(
                 ImmutableMap.of("a", 1), new AbstractMap<String, Object>() {
                     // Wrap the #computed data in a map that computes the
                     // requested values on-demand.

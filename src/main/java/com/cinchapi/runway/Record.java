@@ -26,14 +26,20 @@ import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.AbstractMap.SimpleEntry;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.annotation.Nullable;
 
@@ -42,6 +48,7 @@ import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
+import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -54,22 +61,26 @@ import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
+import com.cinchapi.concourse.util.Numbers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
-import com.cinchapi.runway.util.CompoundHashMap;
+import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
-import com.google.common.base.Throwables;
+import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
 import com.google.common.io.BaseEncoding;
+import com.google.common.primitives.Longs;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.TypeAdapter;
@@ -100,7 +111,7 @@ import com.google.gson.stream.JsonWriter;
  * @author Jeff Nelson
  */
 @SuppressWarnings({ "restriction", "deprecation" })
-public abstract class Record {
+public abstract class Record implements Comparable<Record> {
 
     /* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
 
@@ -125,6 +136,34 @@ public abstract class Record {
     private static long NULL_ID = -1;
 
     /**
+     * The coefficient multiplied by the result of a comparison to push the
+     * sorting in the ascending direction.
+     */
+    private static final int SORT_DIRECTION_ASCENDING_COEFFICIENT = 1;
+
+    /**
+     * The prefix applied to a key provided to the
+     * {@link #compareTo(Record, String)} methods when it is desirable to
+     * compare the values stored under that key in ascending (i.e. normal)
+     * order.
+     */
+    private static final String SORT_DIRECTION_ASCENDING_PREFIX = ">";
+
+    /**
+     * The coefficient multiplied by the result of a comparison to push the
+     * sorting in the descending direction.
+     */
+    private static final int SORT_DIRECTION_DESCENDING_COEFFICIENT = -1;
+
+    /**
+     * The prefix applied to a key provided to the
+     * {@link #compareTo(Record, String)} methods when it is desirable to
+     * compare the values stored under that key in descending (i.e. reverse)
+     * order.
+     */
+    private static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
+
+    /**
      * Instance of {@link sun.misc.Unsafe} to use for hacky operations.
      */
     private static final sun.misc.Unsafe unsafe = Reflection
@@ -137,37 +176,22 @@ public abstract class Record {
             .newHashSet(SECTION_KEY);
 
     /**
-     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
-     * {@code id}.
-     * 
-     * @param clazz
-     * @param id
-     * @param existing
-     * @param connections
-     * @return the loaded Record
-     */
-    protected static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections,
-            Runway runway) {
-        Concourse concourse = connections.request();
-        try {
-            return load(clazz, id, existing, connections, concourse, runway);
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
      * track of linked records to prevent infinite recursion.
      * 
-     * @param links
-     * @param flattenSingleElementCollections
+     * @param options
+     * @param from the {@link Record} that is the parent link for any
+     *            encountered links
+     * @param links a {@link Multimap} that represents encountered links as a
+     *            mapping from the <strong>destination</strong> record to any
+     *            source record that links to it (e.g. the destinations are
+     *            indexed to make it easy to look up all the parent nodes in the
+     *            document graph)
      * @return the {@link TypeAdapterFactory}
      */
     private static TypeAdapterFactory generateDynamicRecordTypeAdapterFactory(
-            boolean flattenSingleElementCollections, Set<Record> links) {
+            SerializationOptions options, Record from,
+            Multimap<Record, Record> links) {
         return new TypeAdapterFactory() {
 
             @SuppressWarnings("unchecked")
@@ -184,11 +208,9 @@ public abstract class Record {
                         @Override
                         public void write(JsonWriter out, Record value)
                                 throws IOException {
-                            if(!links.contains(value)) {
-                                links.add(value);
-                                out.jsonValue(value.json(
-                                        flattenSingleElementCollections,
-                                        links));
+                            if(!isCyclic(from, value)) {
+                                links.put(value, from);
+                                out.jsonValue(value.json(options, links));
                             }
                             else {
                                 out.value(value.id() + " (recursive link)");
@@ -198,6 +220,35 @@ public abstract class Record {
                 }
                 else {
                     return null;
+                }
+            }
+
+            /**
+             * Return {@code true} of a link {@code from} one {@link Record}
+             * {@code to} another one creates a cycle.
+             * 
+             * @param from
+             * @param to
+             * @return a boolean that indicates whether the link between two
+             *         records would form a cycle
+             */
+            private boolean isCyclic(Record from, Record to) {
+                Collection<Record> grandparents = links.get(from);
+                if(grandparents.isEmpty()) {
+                    return false;
+                }
+                else {
+                    if(grandparents.contains(to)) {
+                        return true;
+                    }
+                    else {
+                        for (Record grandparent : grandparents) {
+                            if(isCyclic(grandparent, to)) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
                 }
             }
 
@@ -242,11 +293,12 @@ public abstract class Record {
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
             TLongObjectMap<Record> existing, ConnectionPool connections,
-            Concourse concourse, Runway runway) {
+            Concourse concourse, Runway runway,
+            @Nullable Map<String, Set<Object>> data) {
         T record = (T) newDefaultInstance(clazz, connections);
         Reflection.set("id", id, record); /* (authorized) */
         record.assign(runway);
-        record.load(concourse, existing);
+        record.load(concourse, existing, data);
         return record;
     }
 
@@ -283,11 +335,34 @@ public abstract class Record {
     }
 
     /**
-     * A log of any suppressed errors related to this Record. The descriptions
-     * of these errors can be thrown at any point from the
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id}.
+     * 
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @return the loaded Record
+     */
+    protected static <T extends Record> T load(Class<?> clazz, long id,
+            TLongObjectMap<Record> existing, ConnectionPool connections,
+            Runway runway, @Nullable Map<String, Set<Object>> data) {
+        Concourse concourse = connections.request();
+        try {
+            return load(clazz, id, existing, connections, concourse, runway,
+                    data);
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * A log of any suppressed errors related to this Record. A concatenation of
+     * these errors can be thrown at anytime from the
      * {@link #throwSupressedExceptions()} method.
      */
-    /* package */ transient List<String> errors = Lists.newArrayList();
+    /* package */ transient List<Throwable> errors = Lists.newArrayList();
 
     /**
      * The {@link DatabaseInterface} that can be used to make queries within the
@@ -338,8 +413,6 @@ public abstract class Record {
 
     /**
      * Construct a new instance.
-     * 
-     * @param concourse
      */
     public Record() {
         this.id = Time.now();
@@ -365,6 +438,72 @@ public abstract class Record {
     public void assign(Runway runway) {
         this.runway = runway;
         this.connections = runway.connections;
+    }
+
+    @Override
+    public int compareTo(Record record) {
+        return compareTo(record, ImmutableMap.of());
+    }
+
+    /**
+     * Compare this object to another {@code record} and sort based on the
+     * {@code order} specification.
+     * <p>
+     * A sort key can be prepended with {@code <} to indicate that
+     * the values for that key should be sorted in ascending (e.g. natural)
+     * order. Alternatively, a sort key can be prepended with {@code >} to
+     * indicate that the values for that key should be sorted in descending
+     * (i.e. reverse) order. If a sort key has no prefix, it is sorted in
+     * ascending order.
+     * </p>
+     * 
+     * @param record the object to be compared
+     * @param order a list of sort keys
+     * @return a negative integer, zero, or a positive integer as this object is
+     *         less than, equal to, or greater than the specified object.
+     */
+    public int compareTo(Record record, List<String> order) {
+        Map<String, Integer> $order = order.stream().map(key -> {
+            int coefficient;
+            if(key.startsWith(SORT_DIRECTION_DESCENDING_PREFIX)) {
+                coefficient = SORT_DIRECTION_DESCENDING_COEFFICIENT;
+                key = key.substring(1);
+            }
+            else if(key.startsWith(SORT_DIRECTION_ASCENDING_PREFIX)) {
+                coefficient = SORT_DIRECTION_ASCENDING_COEFFICIENT;
+                key = key.substring(1);
+            }
+            else {
+                coefficient = SORT_DIRECTION_ASCENDING_COEFFICIENT;
+            }
+            return new AbstractMap.SimpleImmutableEntry<String, Integer>(key,
+                    coefficient);
+        }).collect(Collectors.toMap(Entry::getKey, Entry::getValue));
+        return compareTo(record, $order);
+    }
+
+    /**
+     * Compare this object to another {@code record} and sort based on the
+     * {@code order} specification.
+     * <p>
+     * A sort key can be prepended with {@code <} to indicate that
+     * the values for that key should be sorted in ascending (e.g. natural)
+     * order. Alternatively, a sort key can be prepended with {@code >} to
+     * indicate that the values for that key should be sorted in descending
+     * (i.e. reverse) order. If a sort key has no prefix, it is sorted in
+     * ascending order.
+     * </p>
+     * 
+     * @param record the object to be compared
+     * @param order a space separated string containing sort keys
+     * @return a negative integer, zero, or a positive integer as this object is
+     *         less than, equal to, or greater than the specified object.
+     */
+    public int compareTo(Record record, String order) {
+        List<String> $order = Arrays
+                .stream(order.replaceAll(",", " ").split("\\s"))
+                .map(String::trim).collect(Collectors.toList());
+        return compareTo(record, $order);
     }
 
     /**
@@ -393,26 +532,31 @@ public abstract class Record {
      */
     @SuppressWarnings("unchecked")
     public <T> T get(String key) {
-        Object value = dynamicData.get(key);
-        if(value == null) {
-            try {
-                Field field = Reflection.getDeclaredField(key, this);
-                if(isReadableField(field)) {
-                    return (T) field.get(this);
+        if(key.equalsIgnoreCase("id")) {
+            return (T) new Long(id);
+        }
+        else {
+            Object value = dynamicData.get(key);
+            if(value == null) {
+                try {
+                    Field field = Reflection.getDeclaredField(key, this);
+                    if(isReadableField(field)) {
+                        return (T) field.get(this);
+                    }
+                }
+                catch (Exception e) {/* ignore */}
+            }
+            if(value == null) {
+                value = derived().get(key);
+            }
+            if(value == null) {
+                Supplier<?> computer = computed().get(key);
+                if(computer != null) {
+                    value = computer.get();
                 }
             }
-            catch (Exception e) {/* ignore */}
+            return (T) value;
         }
-        if(value == null) {
-            value = derived().get(key);
-        }
-        if(value == null) {
-            Supplier<?> computer = computed().get(key);
-            if(computer != null) {
-                value = computer.get();
-            }
-        }
-        return (T) value;
     }
 
     /**
@@ -447,13 +591,62 @@ public abstract class Record {
     }
 
     /**
+     * Return the "readable" intrinsic (e.g. not {@link #derived() or
+     * {@link #computed()}) data from this {@link Record} as a {@link Map}.
+     * <p>
+     * This method be used over {@link #map()} when it is necessary to ensure
+     * that {@link #computed() computed} values aren't processed and it isn't
+     * feasible to explicitly filter them all out.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @return the intrinsic data record
+     */
+    public Map<String, Object> intrinsic() {
+        return intrinsic(Array.containing());
+    }
+
+    /**
+     * Return the "readable" intrinsic (e.g. not {@link #derived() or
+     * {@link #computed()}) data from this {@link Record} as a {@link Map}.
+     * <p>
+     * This method be used over {@link #map()} when it is necessary to ensure
+     * that {@link #computed() computed} values aren't processed and it isn't
+     * feasible to explicitly filter them all out.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @param keys
+     * @return the intrinsic record data
+     */
+    public Map<String, Object> intrinsic(String... keys) {
+        Set<String> intrinsic = fields().stream().map(Field::getName)
+                .collect(Collectors.toSet());
+        keys = Arrays.stream(keys)
+                .filter(key -> key.startsWith("-")
+                        ? intrinsic.contains(key.substring(1))
+                        : intrinsic.contains(key))
+                .toArray(String[]::new);
+        keys = keys.length == 0 ? intrinsic.toArray(Array.containing()) : keys;
+        return map(keys);
+    }
+
+    /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data.
      * 
      * @return json string
      */
     public String json() {
-        return json(false);
+        return json(SerializationOptions.defaults());
     }
 
     /**
@@ -462,33 +655,85 @@ public abstract class Record {
      * 
      * @param flattenSingleElementCollections
      * @return json string
+     * @deprecated use {@link #json(SerializationOptions) instead}
      */
+    @Deprecated
     public String json(boolean flattenSingleElementCollections) {
-        return json(flattenSingleElementCollections, Sets.newHashSet());
+        return json(
+                SerializationOptions.builder()
+                        .flattenSingleElementCollections(
+                                flattenSingleElementCollections)
+                        .build(),
+                HashMultimap.create());
     }
 
     /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data from the specified {@code keys}.
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
      * 
      * @param flattenSingleElementCollections
      * @param keys
      * @return json string
+     * @deprecated use {@link #json(SerializationOptions, String...)} instead
      */
+    @Deprecated
     public String json(boolean flattenSingleElementCollections,
             String... keys) {
-        return json(flattenSingleElementCollections, Sets.newHashSet(), keys);
+        return json(
+                SerializationOptions.builder()
+                        .flattenSingleElementCollections(
+                                flattenSingleElementCollections)
+                        .build(),
+                HashMultimap.create(), keys);
     }
 
     /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data from the specified {@code keys}.
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
      * 
      * @param keys
      * @return json string
      */
     public String json(String... keys) {
-        return json(false, keys);
+        return json(SerializationOptions.defaults(), keys);
+    }
+
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data.
+     *
+     * @param options
+     * @return json string
+     */
+    public String json(SerializationOptions options) {
+        return json(options, HashMultimap.create());
+    }
+
+    /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data from the specified {@code keys}.
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     *
+     * @param options
+     * @param keys
+     * @return json string
+     */
+    public String json(SerializationOptions options, String... keys) {
+        return json(options, HashMultimap.create(), keys);
     }
 
     /**
@@ -501,6 +746,7 @@ public abstract class Record {
      * This method also supports <strong>negative filtering</strong>. You can
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
+     * </p>
      * 
      * @return the data in this record
      */
@@ -518,11 +764,32 @@ public abstract class Record {
      * This method also supports <strong>negative filtering</strong>. You can
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
+     * </p>
      * 
      * @param keys
      * @return the data in this record
      */
     public Map<String, Object> map(String... keys) {
+        return map(SerializationOptions.defaults(), keys);
+    }
+
+    /**
+     * Return a map that contains "readable" data from this {@link Record}.
+     * <p>
+     * If no {@code keys} are provided, all the readable data will be
+     * returned.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     *
+     * @param keys
+     * @return the data in this record
+     */
+    public Map<String, Object> map(SerializationOptions options,
+            String... keys) {
         List<String> include = Lists.newArrayList();
         List<String> exclude = Lists.newArrayList();
         for (String key : keys) {
@@ -534,20 +801,44 @@ public abstract class Record {
                 include.add(key);
             }
         }
-        Map<String, Object> data = include.isEmpty() ? data()
-                : include.stream().collect(
-                        Collectors.toMap(Function.identity(), this::get));
-        return data.entrySet().stream()
-                .filter(e -> !exclude.contains(e.getKey()))
-                .collect(HashMap::new,
-                        (m, e) -> m.put(e.getKey(), e.getValue()), Map::putAll);
+        Predicate<Entry<String, Object>> filter = entry -> !exclude
+                .contains(entry.getKey());
+        if(!options.serializeNullValues()) {
+            filter = filter.and(entry -> entry.getValue() != null);
+        }
+        BiConsumer<Map<String, Object>, Entry<String, Object>> accumulator = (
+                map, entry) -> {
+            Object value = entry.getValue();
+            Collection<?> collection;
+            if(options.flattenSingleElementCollections()
+                    && value instanceof Collection
+                    && (collection = (Collection<?>) value).size() == 1) {
+                value = Iterables.getOnlyElement(collection);
+            }
+            map.put(entry.getKey(), value);
+        };
+        Stream<Entry<String, Object>> pool;
+        if(include.isEmpty()) {
+            pool = data().entrySet().stream();
+        }
+        else {
+            // NOTE: later on the #filter will attempt to remove keys that are
+            // explicitly excluded, which will have no affect here since
+            // #include and #exclude will never both have values at the same
+            // time.
+            pool = include.stream()
+                    .map(key -> new SimpleEntry<>(key, get(key)));
+        }
+        Map<String, Object> data = pool.filter(filter).collect(
+                LinkedHashMap::new, accumulator, MergeStrategies::upsert);
+        return data;
     }
 
     /**
      * Save any changes made to this {@link Record}.
      * <p>
      * <strong>NOTE:</strong> This method recursively saves any linked
-     * {@link Records}.
+     * {@link Record records}.
      * </p>
      */
     public boolean save() {
@@ -591,267 +882,25 @@ public abstract class Record {
      */
     public void throwSupressedExceptions() {
         if(!errors.isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            for (String error : errors) {
-                sb.append(error);
-                sb.append(System.getProperty("line.separator"));
+            Iterator<Throwable> it = errors.iterator();
+            StringBuilder summary = new StringBuilder();
+            ArrayBuilder<StackTraceElement> stacktrace = ArrayBuilder.builder();
+            while (it.hasNext()) {
+                Throwable t = it.next();
+                summary.append(";").append(t.getMessage());
+                stacktrace.add(t.getStackTrace());
+                it.remove();
             }
-            throw new RuntimeException(sb.toString());
+            RuntimeException supressed = new RuntimeException(
+                    summary.toString().trim().substring(1));
+            supressed.setStackTrace(stacktrace.build());
+            throw supressed;
         }
     }
 
     @Override
     public final String toString() {
         return json();
-    }
-
-    /**
-     * Load an existing record from the database and add all of it to this
-     * instance in memory.
-     * 
-     * @param runway
-     * @param existing
-     */
-    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
-    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
-        Preconditions.checkState(id != NULL_ID);
-        existing.put(id, this); // add the current object so we don't
-                                // recurse infinitely
-        checkConstraints(concourse);
-        if(inZombieState(id, concourse)) {
-            concourse.clear(id);
-            throw new ZombieException();
-        }
-        // TODO: do a large select and populate the fields instead of
-        // doing individual gets
-        fields().forEach(field -> {
-            try {
-                if(!Modifier.isTransient(field.getModifiers())) {
-                    String key = field.getName();
-                    Class<?> type = field.getType();
-                    Object value = null;
-                    if(Collection.class.isAssignableFrom(type)
-                            || type.isArray()) {
-                        // Handle collections and collection-like variables by
-                        // fetching all the values for the #key from Concourse.
-                        Set<?> stored = concourse.select(key, id);
-                        Class<?> collectedType = type
-                                .isArray()
-                                        ? type.getComponentType()
-                                        : Iterables.getFirst(
-                                                Reflection.getTypeArguments(key,
-                                                        this.getClass()),
-                                                Object.class);
-                        ArrayBuilder collector = ArrayBuilder.builder();
-                        stored.forEach(item -> {
-                            Object converted = convert(key, collectedType, item,
-                                    concourse, existing);
-                            if(converted != null) {
-                                collector.add(converted);
-                            }
-                            else {
-                                // TODO: should we remove the object from
-                                // Concourse since it results in a #null value?
-                            }
-                        });
-                        if(type.isArray()) {
-                            value = collector.build();
-                        }
-                        else {
-                            if(!Modifier.isAbstract(type.getModifiers())
-                                    && !Modifier
-                                            .isInterface(type.getModifiers())) {
-                                // This is a concrete Collection type that can
-                                // be instantiated
-                                value = Reflection.newInstance(type);
-                            }
-                            else if(type == Set.class) {
-                                value = Sets.newLinkedHashSet();
-                            }
-                            else { // assume List
-                                value = Lists.newArrayList();
-                            }
-                            Collections.addAll((Collection) value,
-                                    collector.length() > 0 ? collector.build()
-                                            : Array.containing());
-                        }
-                    }
-                    else {
-                        // Populate a non-collection variable with the most
-                        // recently stored value for the #key in Concourse.
-                        Object stored = concourse.get(key, id);
-                        if(stored != null) {
-                            value = convert(key, type, stored, concourse,
-                                    existing);
-                        }
-                    }
-                    if(value != null) {
-                        field.set(this, value);
-                    }
-                    else {
-                        // no-op; NOTE: Java doesn't allow primitive types to
-                        // hold null values
-                    }
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        });
-
-    }
-
-    /**
-     * Save all changes that have been made to this record using an ACID
-     * transaction with the provided {@code runway} instance.
-     * <p>
-     * Use {@link Runway#save(Record...)} to save changes in multiple records
-     * within a single ACID transaction. Even if saving a single record, prefer
-     * to use the save method in the {@link Runway} class instead of this for
-     * consistent semantics.
-     * </p>
-     * 
-     * @return {@code true} if all the changes have been atomically saved.
-     */
-    /* package */ final boolean save(Concourse concourse, Set<Record> seen,
-            Runway runway) {
-        assign(runway);
-        try {
-            Preconditions.checkState(!inViolation);
-            errors.clear();
-            concourse.stage();
-            if(deleted) {
-                delete(concourse);
-            }
-            else {
-                saveWithinTransaction(concourse, seen);
-            }
-            return concourse.commit();
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            if(inZombieState(concourse)) {
-                concourse.clear(id);
-            }
-            errors.add(Throwables.getStackTraceAsString(t));
-            return false;
-        }
-    }
-
-    /**
-     * Save the data in this record using the specified {@code concourse}
-     * connection. This method assumes that the caller has already started an
-     * transaction, if necessary and will commit the transaction after this
-     * method completes.
-     * 
-     * @param concourse
-     */
-    /* package */ void saveWithinTransaction(final Concourse concourse,
-            Set<Record> seen) {
-        concourse.verifyOrSet(SECTION_KEY, __, id);
-        fields().forEach(field -> {
-            try {
-                if(!Modifier.isTransient(field.getModifiers())) {
-                    final String key = field.getName();
-                    final Object value = field.get(this);
-                    if(field.isAnnotationPresent(ValidatedBy.class)) {
-                        Class<? extends Validator> validatorClass = field
-                                .getAnnotation(ValidatedBy.class).value();
-                        Validator validator = Reflection
-                                .newInstance(validatorClass);
-                        Preconditions.checkState(validator.validate(value),
-                                validator.getErrorMessage());
-                    }
-                    if(field.isAnnotationPresent(Unique.class)) {
-                        Preconditions.checkState(
-                                isUnique(concourse, key, value),
-                                field.getName() + " must be unique");
-                    }
-                    if(field.isAnnotationPresent(Required.class)) {
-                        Preconditions.checkState(
-                                !AnyObjects.isNullOrEmpty(value),
-                                field.getName() + " is required");
-                    }
-                    if(value != null) {
-                        store(key, value, concourse, false, seen);
-                    }
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        });
-
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its native fields and is "computed" on-demand.
-     * <p>
-     * Unlike {@link #derived()} attributes, computed data is generally
-     * expensive to generate and should only be calculated when explicitly
-     * requested.
-     * </p>
-     * <p>
-     * NOTE: Computed attributes are never cached. Each time one is requested,
-     * the computation that generates the value is done anew.
-     * </p>
-     * 
-     * @return the computed data
-     */
-    protected Map<String, Supplier<Object>> computed() {
-        return Collections.emptyMap();
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its fields. For example, this is a good way to provide template
-     * specific information that isn't persisted to the database.
-     * 
-     * @return the additional data
-     */
-    protected Map<String, Object> derived() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
-     * 
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
-     * @deprecated use {@link #typeAdapters()} instead
-     */
-    @Deprecated
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
-     * 
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
-     * @deprecated use {@link #typeAdapters()} instead
-     */
-    @Deprecated
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link TypeAdapter TypeAdapters} that should be used
-     * when generating the {@link #json()} for this {@link Record}.
-     * <p>
-     * Each {@link TypeAdapter} should be mapped from the most generic class or
-     * interface for which the adapter applies.
-     * </p>
-     * 
-     * @return the type adapters to use when serializing the Record to JSON.
-     */
-    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
-        return ImmutableMap.of();
     }
 
     /**
@@ -876,6 +925,71 @@ public abstract class Record {
             inViolation = true;
             throw CheckedExceptions.wrapAsRuntimeException(e);
         }
+    }
+
+    /**
+     * Compare this object to another {@code record} using the provided
+     * {@code order} specification.
+     * 
+     * @param record the object to be compared
+     * @param order an ordered mapping (i.e. {@link LinkedHashMap}) from sort
+     *            key to an integer that specifies the sort direction (e.g. a
+     *            positive integer means the sorting should be done in ascending
+     *            order with the "smallest" values appearing first. A negative
+     *            integer implies the opposite).
+     * @return a negative integer, zero, or a positive integer as this object is
+     *         less than, equal to, or greater than the specified object.
+     */
+    private int compareTo(Record record, Map<String, Integer> order) {
+        for (Entry<String, Integer> entry : order.entrySet()) {
+            String key = entry.getKey();
+            Integer coefficient = entry.getValue();
+            Verify.thatArgument(coefficient != 0,
+                    "The order coefficient cannot be 0");
+            Object mine = get(key);
+            Object theirs = record.get(key);
+            int comparison;
+            if(mine == null && theirs == null) {
+                comparison = Ordering.arbitrary().compare(mine, theirs);
+                coefficient = 1;
+            }
+            else if(mine == null && theirs != null) {
+                // NULL value is considered "greater" so that it is always at
+                // the end.
+                comparison = 1;
+                coefficient = 1;
+            }
+            else if(mine != null && theirs == null) {
+                // NULL value is considered "greater" so that it is always at
+                // the end.
+                comparison = -1;
+                coefficient = 1;
+            }
+            else if(mine instanceof Number && theirs instanceof Number) {
+                comparison = Numbers.compare((Number) mine, (Number) theirs);
+            }
+            else if((mine instanceof String || mine instanceof Tag)
+                    && (theirs instanceof String || theirs instanceof Tag)) {
+                comparison = mine.toString().toLowerCase()
+                        .compareTo(theirs.toString().toLowerCase());
+            }
+            else if(Comparable.class.isAssignableFrom(
+                    Reflection.getClosestCommonAncestor(mine.getClass(),
+                            theirs.getClass()))) {
+                comparison = Ordering.natural().compare((Comparable<?>) mine,
+                        (Comparable<?>) theirs);
+            }
+            else {
+                comparison = Ordering.usingToString().compare(mine, theirs);
+            }
+            if(comparison != 0) {
+                return coefficient * comparison;
+            }
+            else {
+                continue;
+            }
+        }
+        return Longs.compare(id(), record.id());
     }
 
     /**
@@ -907,7 +1021,7 @@ public abstract class Record {
                     Class<? extends Record> targetClass = Reflection
                             .getClassCasted(section);
                     converted = load(targetClass, target, alreadyLoaded,
-                            connections, concourse, runway);
+                            connections, concourse, runway, null);
                 }
             }
         }
@@ -969,12 +1083,13 @@ public abstract class Record {
             }
 
         };
-        Map<String, Object> data = CompoundHashMap.create(derived(), computed);
+        Map<String, Object> data = BackupReadSourcesHashMap.create(derived(),
+                computed);
         fields().forEach(field -> {
             try {
                 Object value;
-                if(isReadableField(field)
-                        && (value = field.get(this)) != null) {
+                if(isReadableField(field)) {
+                    value = field.get(this);
                     data.put(field.getName(), value);
                 }
             }
@@ -1053,28 +1168,36 @@ public abstract class Record {
     /**
      * Return the JSON string for this {@link Record}.
      * 
-     * @param flattenSingleElementCollections a boolean that indicates if single
-     *            element collections should be flattened to a single value
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @param options
      * @param links
      * @param keys the attributes to include in the JSON
      * @return the JSON string.
      */
     @SuppressWarnings({ "unchecked" })
-    private String json(boolean flattenSingleElementCollections,
-            Set<Record> links, String... keys) {
-        Map<String, Object> data = keys.length == 0 ? map() : map(keys);
+    private String json(SerializationOptions options,
+            Multimap<Record, Record> links, String... keys) {
+        Map<String, Object> data = keys.length == 0 ? map(options)
+                : map(options, keys);
 
         // Create a dynamic type Gson instance that will detect recursive links
         // and prevent infinite recursion when trying to generate the JSON.
         GsonBuilder builder = new GsonBuilder().registerTypeAdapterFactory(
                 TypeAdapters.primitiveTypesFactory(true));
-        if(flattenSingleElementCollections) {
+        if(options.flattenSingleElementCollections()) {
             builder.registerTypeAdapterFactory(
                     TypeAdapters.collectionFactory(true));
         }
+        if(options.serializeNullValues()) {
+            builder.serializeNulls();
+        }
         builder.registerTypeAdapterFactory(
-                generateDynamicRecordTypeAdapterFactory(
-                        flattenSingleElementCollections, links))
+                generateDynamicRecordTypeAdapterFactory(options, this, links))
                 .setPrettyPrinting().disableHtmlEscaping();
         Map<Class<?>, TypeAdapter<?>> adapters = Maps.newLinkedHashMap();
         Streams.concat(jsonTypeWriters().entrySet().stream(),
@@ -1130,7 +1253,7 @@ public abstract class Record {
                 concourse.link(key, record.id, id);
             }
             else {
-                concourse.set(key, Link.to(record.id), id);
+                concourse.verifyOrSet(key, Link.to(record.id), id);
             }
 
         }
@@ -1172,7 +1295,269 @@ public abstract class Record {
     }
 
     /**
-     * A {@link Database} interface that reacts to the state of the
+     * Provide additional data about this Record that might not be encapsulated
+     * in its native fields and is "computed" on-demand.
+     * <p>
+     * Unlike {@link #derived()} attributes, computed data is generally
+     * expensive to generate and should only be calculated when explicitly
+     * requested.
+     * </p>
+     * <p>
+     * NOTE: Computed attributes are never cached. Each time one is requested,
+     * the computation that generates the value is done anew.
+     * </p>
+     * 
+     * @return the computed data
+     */
+    protected Map<String, Supplier<Object>> computed() {
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its fields. For example, this is a good way to provide template
+     * specific information that isn't persisted to the database.
+     * 
+     * @return the additional data
+     */
+    protected Map<String, Object> derived() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
+     * 
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
+     * @deprecated use {@link #typeAdapters()} instead
+     */
+    @Deprecated
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
+     * 
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
+     * @deprecated use {@link #typeAdapters()} instead
+     */
+    @Deprecated
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link TypeAdapter TypeAdapters} that should be used
+     * when generating the {@link #json()} for this {@link Record}.
+     * <p>
+     * Each {@link TypeAdapter} should be mapped from the most generic class or
+     * interface for which the adapter applies.
+     * </p>
+     * 
+     * @return the type adapters to use when serializing the Record to JSON.
+     */
+    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
+        return ImmutableMap.of();
+    }
+
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param concourse
+     * @param existing
+     */
+    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
+        load(concourse, existing, null);
+    }
+
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param concourse
+     * @param existing
+     * @param data data that is pre-loaded from {@code concourse}; this should
+     *            only be provided from a trusted source
+     */
+    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
+    final void load(Concourse concourse, TLongObjectMap<Record> existing,
+            @Nullable Map<String, Set<Object>> data) {
+        Preconditions.checkState(id != NULL_ID);
+        existing.put(id, this); // add the current object so we don't
+                                // recurse infinitely
+        checkConstraints(concourse);
+        if(inZombieState(id, concourse)) {
+            concourse.clear(id);
+            throw new ZombieException();
+        }
+        data = data == null ? concourse.select(id) : data;
+        for (Field field : fields()) {
+            try {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    String key = field.getName();
+                    Class<?> type = field.getType();
+                    Object value = null;
+                    if(Collection.class.isAssignableFrom(type)
+                            || type.isArray()) {
+                        Set<?> stored = data.getOrDefault(key,
+                                ImmutableSet.of());
+                        Class<?> collectedType = type
+                                .isArray()
+                                        ? type.getComponentType()
+                                        : Iterables.getFirst(
+                                                Reflection.getTypeArguments(key,
+                                                        this.getClass()),
+                                                Object.class);
+                        ArrayBuilder collector = ArrayBuilder.builder();
+                        stored.forEach(item -> {
+                            Object converted = convert(key, collectedType, item,
+                                    concourse, existing);
+                            if(converted != null) {
+                                collector.add(converted);
+                            }
+                            else {
+                                // TODO: should we remove the object from
+                                // Concourse since it results in a #null value?
+                            }
+                        });
+                        if(type.isArray()) {
+                            value = collector.build();
+                        }
+                        else {
+                            if(!Modifier.isAbstract(type.getModifiers())
+                                    && !Modifier
+                                            .isInterface(type.getModifiers())) {
+                                // This is a concrete Collection type that can
+                                // be instantiated
+                                value = Reflection.newInstance(type);
+                            }
+                            else if(type == Set.class) {
+                                value = Sets.newLinkedHashSet();
+                            }
+                            else { // assume List
+                                value = Lists.newArrayList();
+                            }
+                            Collections.addAll((Collection) value,
+                                    collector.length() > 0 ? collector.build()
+                                            : Array.containing());
+                        }
+                    }
+                    else {
+                        // Populate a non-collection variable with the most
+                        // recently stored value for the #key in Concourse.
+                        Set<Object> values = data.getOrDefault(key,
+                                ImmutableSet.of());
+                        Object stored = Iterables.getFirst(values, null);
+                        if(stored != null) {
+                            value = convert(key, type, stored, concourse,
+                                    existing);
+                        }
+                    }
+                    if(value != null) {
+                        field.set(this, value);
+                    }
+                    else {
+                        // no-op; NOTE: Java doesn't allow primitive types to
+                        // hold null values
+                    }
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        }
+    }
+
+    /**
+     * Save all changes that have been made to this record using an ACID
+     * transaction with the provided {@code runway} instance.
+     * <p>
+     * Use {@link Runway#save(Record...)} to save changes in multiple records
+     * within a single ACID transaction. Even if saving a single record, prefer
+     * to use the save method in the {@link Runway} class instead of this for
+     * consistent semantics.
+     * </p>
+     * 
+     * @return {@code true} if all the changes have been atomically saved.
+     */
+    /* package */ final boolean save(Concourse concourse, Set<Record> seen,
+            Runway runway) {
+        assign(runway);
+        try {
+            Preconditions.checkState(!inViolation);
+            errors.clear();
+            concourse.stage();
+            if(deleted) {
+                delete(concourse);
+            }
+            else {
+                saveWithinTransaction(concourse, seen);
+            }
+            return concourse.commit();
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            if(inZombieState(concourse)) {
+                concourse.clear(id);
+            }
+            errors.add(t);
+            return false;
+        }
+    }
+
+    /**
+     * Save the data in this record using the specified {@code concourse}
+     * connection. This method assumes that the caller has already started an
+     * transaction, if necessary and will commit the transaction after this
+     * method completes.
+     * 
+     * @param concourse
+     */
+    /* package */ void saveWithinTransaction(final Concourse concourse,
+            Set<Record> seen) {
+        concourse.verifyOrSet(SECTION_KEY, __, id);
+        fields().forEach(field -> {
+            try {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    final String key = field.getName();
+                    final Object value = field.get(this);
+                    if(field.isAnnotationPresent(ValidatedBy.class)) {
+                        Class<? extends Validator> validatorClass = field
+                                .getAnnotation(ValidatedBy.class).value();
+                        Validator validator = Reflection
+                                .newInstance(validatorClass);
+                        Preconditions.checkState(validator.validate(value),
+                                validator.getErrorMessage());
+                    }
+                    if(field.isAnnotationPresent(Unique.class)) {
+                        Preconditions.checkState(
+                                isUnique(concourse, key, value),
+                                field.getName() + " must be unique");
+                    }
+                    if(field.isAnnotationPresent(Required.class)) {
+                        Preconditions.checkState(
+                                !AnyObjects.isNullOrEmpty(value),
+                                field.getName() + " is required");
+                    }
+                    if(value != null) {
+                        store(key, value, concourse, false, seen);
+                    }
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        });
+
+    }
+
+    /**
+     * A {@link DatabaseInterface} that reacts to the state of the
      * {@link #runway} variable and delegates to it or throws an
      * {@link UnsupportedOperationException} if it is {@code null}.
      *

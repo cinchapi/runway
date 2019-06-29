@@ -15,12 +15,22 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
 
 import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
 
+import com.cinchapi.common.base.AnyStrings;
+import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -30,10 +40,11 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
-import com.cinchapi.concourse.util.Strings;
-import com.google.common.base.Throwables;
+import com.cinchapi.runway.cache.NoOpCache;
+import com.google.common.cache.Cache;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
 
@@ -90,13 +101,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Return a builder that can be used to precisely configure a {@link Runway}
+     * instance.
+     * 
+     * @return a {@link Runway} builder
+     */
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /**
      * Return a {@link Runway} instance that is connected to Concourse using the
      * default connection parameters.
      * 
      * @return a {@link Runway} instance
      */
     public static Runway connect() {
-        return new Runway(ConnectionPool.newCachedConnectionPool());
+        return builder().build();
     }
 
     /**
@@ -108,10 +129,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param username
      * @param password
      * @return a {@link Runway} instance
+     * @deprecated use {@link #builder()} instead
      */
+    @Deprecated
     public static Runway connect(String host, int port, String username,
             String password) {
-        return connect(host, port, username, password, "");
+        return builder().host(host).port(port).username(username)
+                .password(password).build();
     }
 
     /**
@@ -124,11 +148,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param password
      * @param environment
      * @return a {@link Runway} instance
+     * @deprecated use {@link #builder()} instead
      */
+    @Deprecated
     public static Runway connect(String host, int port, String username,
             String password, String environment) {
-        return new Runway(ConnectionPool.newCachedConnectionPool(host, port,
-                username, password, environment));
+        return builder().host(host).port(port).username(username)
+                .password(password).environment(environment).build();
     }
 
     /**
@@ -147,6 +173,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Intelligently select all the data for the {@code ids} from
+     * {@code concourse}.
+     * 
+     * @param concourse
+     * @param ids
+     * @return the selected data
+     */
+    private static Map<Long, Map<String, Set<Object>>> select(
+            Concourse concourse, Set<Long> ids) {
+        // TODO: stagger/stream/buffer the load if there are a lot of ids
+        // (possibly using a continuation) so that a group of records are
+        // fetched on the fly only when necessary so as to prevent holding so
+        // much data in memory
+        return concourse.select(ids);
+    }
+
+    /**
      * A connection pool to the underlying Concourse database.
      */
     /* package */ final ConnectionPool connections;
@@ -160,11 +203,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
 
     /**
+     * A pluggable {@link Cache} that can be used to make repeated record
+     * {@link #load(Class, long, TLongObjectHashMap)} more efficient.
+     */
+    private final Cache<Long, Record> cache;
+
+    /**
      * Construct a new instance.
      * 
      * @param connections a Concourse {@link ConnectionPool}
      */
-    private Runway(ConnectionPool connections) {
+    private Runway(ConnectionPool connections, Cache<Long, Record> cache) {
         this.connections = connections;
         instances.add(this);
         if(instances.size() > 1) {
@@ -173,6 +222,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             Record.PINNED_RUNWAY_INSTANCE = this;
         }
+        this.cache = cache;
     }
 
     @Override
@@ -190,22 +240,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     @Override
-    public <T extends Record> Set<T> find(Class<T> clazz,
-            BuildableState criteria) {
-        return find(clazz, criteria.build());
-    }
-
-    @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Set<T> records = Sets.newLinkedHashSet();
-            criteria = ensureClassSpecificCriteria(criteria, clazz);
-            Set<Long> ids = concourse.find(criteria);
+            Set<Long> ids = $find(concourse, clazz, criteria);
             TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
-            ids.forEach((id) -> {
-                T record = load(clazz, id, existing);
-                records.add(record);
+            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+            Set<T> records = LazyTransformSet.of(ids, id -> {
+                if(data.get() == null) {
+                    data.set(select(concourse, ids));
+                }
+                return load(clazz, id, existing, data.get().get(id));
             });
             return records;
         }
@@ -215,27 +260,31 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz,
-            BuildableState criteria) {
-        return findAny(clazz, criteria.build());
-    }
-
-    @Override
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria) {
-        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
-        Set<T> found = Sets.newLinkedHashSet();
-        for (Class cls : hierarchy) {
-            found.addAll(find(cls, criteria));
+        Concourse concourse = connections.request();
+        try {
+            Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+            Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
+            for (Class cls : hierarchy) {
+                Set<Long> $ids = $find(concourse, cls, criteria);
+                $ids.forEach(id -> ids.put(id, cls));
+            }
+            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
+            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+            Set<T> found = LazyTransformSet.of(ids.keySet(), id -> {
+                if(data.get() == null) {
+                    data.set(select(concourse, ids.keySet()));
+                }
+                return load(ids.get(id), id, existing, data.get().get(id));
+            });
+            return found;
         }
-        return found;
-    }
+        finally {
+            connections.release(concourse);
+        }
 
-    @Override
-    public <T extends Record> T findAnyUnique(Class<T> clazz,
-            BuildableState criteria) {
-        return findAnyUnique(clazz, criteria.build());
     }
 
     @Override
@@ -259,7 +308,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             throw new DuplicateEntryException(
                     new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                            Strings.format(
+                            AnyStrings.format(
                                     "There are more than one records that match {} in the hierarchy of {}",
                                     criteria, clazz)));
         }
@@ -297,12 +346,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     @Override
-    public <T extends Record> T findUnique(Class<T> clazz,
-            BuildableState criteria) {
-        return findUnique(clazz, criteria.build());
-    }
-
-    @Override
     public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
@@ -314,7 +357,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             else if(ids.size() > 1) {
                 throw new DuplicateEntryException(
                         new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                Strings.format(
+                                AnyStrings.format(
                                         "There are more than one records that match {} in {}",
                                         criteria, clazz)));
             }
@@ -332,12 +375,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> load(Class<T> clazz) {
         Concourse concourse = connections.request();
         try {
-            Set<T> records = Sets.newLinkedHashSet();
-            Criteria criteria = Criteria.where().key(Record.SECTION_KEY)
-                    .operator(Operator.EQUALS).value(clazz.getName()).build();
-            Set<Long> ids = concourse.find(criteria);
+            Set<Long> ids = $load(concourse, clazz);
             TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
-            ids.forEach(id -> records.add(load(clazz, id, existing)));
+            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+            Set<T> records = LazyTransformSet.of(ids, id -> {
+                if(data.get() == null) {
+                    data.set(select(concourse, ids));
+                }
+                return load(clazz, id, existing, data.get().get(id));
+            });
             return records;
         }
         finally {
@@ -361,21 +407,34 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 connections.release(connection);
             }
         }
-        return load(clazz, id, new TLongObjectHashMap<Record>());
+        return load(clazz, id, new TLongObjectHashMap<Record>(), null);
     }
 
     @Override
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public <T extends Record> Set<T> loadAny(Class<T> clazz) {
-        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
-        Set<T> loaded = Sets.newLinkedHashSet();
-        for (Class cls : hierarchy) {
-            loaded.addAll(load(cls));
+        Concourse concourse = connections.request();
+        try {
+            Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+            Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
+            for (Class cls : hierarchy) {
+                Set<Long> $ids = $load(concourse, cls);
+                $ids.forEach(id -> ids.put(id, cls));
+            }
+            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
+            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+            Set<T> loaded = LazyTransformSet.of(ids.keySet(), id -> {
+                if(data.get() == null) {
+                    data.set(select(concourse, ids.keySet()));
+                }
+                return load(ids.get(id), id, existing, data.get().get(id));
+            });
+            return loaded;
         }
-        return loaded;
+        finally {
+            connections.release(concourse);
+        }
     }
-
-    // TODO: what about loading a specific record using a parent class?
 
     /**
      * Save all the changes in all of the {@code records} using a single ACID
@@ -419,7 +478,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             catch (Throwable t) {
                 concourse.abort();
                 if(current != null) {
-                    current.errors.add(Throwables.getStackTraceAsString(t));
+                    current.errors.add(t);
                 }
                 return false;
             }
@@ -431,25 +490,244 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Search for records in {@code clazz} that match the search {@query} across
+     * any of the provided {@code keys}.
+     * 
+     * @param clazz
+     * @param query
+     * @param keys
+     * @return the matching search results
+     */
+    public <T extends Record> Set<T> search(Class<T> clazz, String query,
+            String... keys) {
+        Concourse concourse = connections.request();
+        try {
+            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
+            Set<Long> ids = $search(concourse, clazz, query, keys);
+            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+            Set<T> records = LazyTransformSet.of(ids, id -> {
+                if(data.get() == null) {
+                    data.set(select(concourse, ids));
+                }
+                return load(clazz, id, existing, data.get().get(id));
+            });
+            return records;
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    // TODO: what about loading a specific record using a parent class?
+
+    /**
+     * Search for records across the hierarchy of {@code clazz} that match the
+     * search {@query} across any of the provided {@code keys}.
+     * 
+     * @param clazz
+     * @param query
+     * @param keys
+     * @return the matching search results
+     */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    public <T extends Record> Set<T> searchAny(Class<T> clazz, String query,
+            String... keys) {
+        Concourse concourse = connections.request();
+        try {
+            Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+            Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
+            for (Class cls : hierarchy) {
+                Set<Long> $ids = $search(concourse, cls, query, keys);
+                $ids.forEach(id -> ids.put(id, cls));
+            }
+            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
+            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+            Set<T> loaded = LazyTransformSet.of(ids.keySet(), id -> {
+                if(data.get() == null) {
+                    data.set(select(concourse, ids.keySet()));
+                }
+                return load(ids.get(id), id, existing, data.get().get(id));
+            });
+            return loaded;
+        }
+        finally {
+            connections.release(concourse);
+        }
+
+    }
+
+    /**
+     * Perform the find operation using the {@code concourse} handler.
+     * 
+     * @param concourse
+     * @param clazz
+     * @param criteria
+     * @return the result set
+     */
+    private <T> Set<Long> $find(Concourse concourse, Class<T> clazz,
+            Criteria criteria) {
+        criteria = ensureClassSpecificCriteria(criteria, clazz);
+        return concourse.find(criteria);
+    }
+
+    /**
+     * Return the ids of all the {@code Record}s in the {@code clazz}, using the
+     * provided {@code concourse} connection.
+     * 
+     * @param concourse
+     * @param clazz
+     * @return the records in the class
+     */
+    private <T> Set<Long> $load(Concourse concourse, Class<T> clazz) {
+        Criteria criteria = Criteria.where().key(Record.SECTION_KEY)
+                .operator(Operator.EQUALS).value(clazz.getName()).build();
+        return concourse.find(criteria);
+    }
+
+    /**
+     * Perform a search.
+     * 
+     * @param concourse
+     * @param clazz
+     * @param query
+     * @param keys
+     * @return the ids of the records that match the search
+     */
+    private <T> Set<Long> $search(Concourse concourse, Class<T> clazz,
+            String query, String... keys) {
+        return Arrays.stream(keys).map(key -> concourse.search(key, query))
+                .flatMap(Set::stream)
+                .filter(record -> concourse.get(Record.SECTION_KEY, record)
+                        .equals(clazz.getName()))
+                .collect(Collectors.toSet());
+    }
+
+    /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
      * that is contained within the specified {@code clazz} and
      * has the specified {@code id}.
      * <p>
-     * Multiple calls to this method with the same parameters will return
+     * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
+     * used), multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
+     * to a Record in isolation. If a cache is provided, the rules (e.g.
+     * expiration policy, etc) of said cache govern when multiple calls to this
+     * method return the same instance for the provided parameters or not.
      * </p>
      * 
      * @param clazz
      * @param id
      * @param existing
-     * @return
+     * @return the loaded {@link Record} instance
      */
+    @SuppressWarnings("unchecked")
     private <T extends Record> T load(Class<T> clazz, long id,
-            TLongObjectHashMap<Record> existing) {
-        return Record.load(clazz, id, existing, connections, this);
+            TLongObjectHashMap<Record> existing,
+            @Nullable Map<String, Set<Object>> data) {
+        Record record;
+        try {
+            record = cache.get(id, () -> {
+                return Record.load(clazz, id, existing, connections, this, data);
+            });
+        }
+        catch (ExecutionException e) {
+            throw CheckedExceptions.wrapAsRuntimeException(e);
+        }
+        return (T) record;
+    }
+
+    /**
+     * Builder for {@link Runway} connections. This is returned from
+     * {@link #builder()}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Builder {
+
+        private String host = "localhost";
+        private int port = 1717;
+        private String username = "admin";
+        private String password = "admin";
+        private String environment = "";
+        private Cache<Long, Record> cache = new NoOpCache<>();
+
+        /**
+         * Build the configured {@link Runway} and return the instance.
+         * 
+         * @return a {@link Runway} instance
+         */
+        public Runway build() {
+            return new Runway(ConnectionPool.newCachedConnectionPool(host, port,
+                    username, password, environment), cache);
+        }
+
+        /**
+         * Set the connection's cache.
+         * 
+         * @param cache
+         * @return this builder
+         */
+        public Builder cache(Cache<Long, Record> cache) {
+            this.cache = cache;
+            return this;
+        }
+
+        /**
+         * Set the connection's environment.
+         * 
+         * @param environment
+         * @return this builder
+         */
+        public Builder environment(String environment) {
+            this.environment = environment;
+            return this;
+        }
+
+        /**
+         * Set the connection's host.
+         * 
+         * @param host
+         * @return this builder
+         */
+        public Builder host(String host) {
+            this.host = host;
+            return this;
+        }
+
+        /**
+         * Set the connection's password.
+         * 
+         * @param password
+         * @return this builder
+         */
+        public Builder password(String password) {
+            this.password = password;
+            return this;
+        }
+
+        /**
+         * Set the connection's port.
+         * 
+         * @param port
+         * @return this builder
+         */
+        public Builder port(int port) {
+            this.port = port;
+            return this;
+        }
+
+        /**
+         * Set the connection's username.
+         * 
+         * @param username
+         * @return this builder
+         */
+        public Builder username(String username) {
+            this.username = username;
+            return this;
+        }
     }
 
 }

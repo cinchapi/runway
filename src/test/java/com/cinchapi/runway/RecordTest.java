@@ -1,3 +1,18 @@
+/*
+ * Copyright (c) 2013-2019 Cinchapi Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.cinchapi.runway;
 
 import java.io.IOException;
@@ -7,11 +22,15 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.Continuation;
+import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
@@ -42,8 +61,7 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     public void beforeEachTest() {
-        runway = Runway.connect("localhost", server.getClientPort(), "admin",
-                "admin");
+        runway = Runway.builder().port(server.getClientPort()).build();
     }
 
     @Override
@@ -224,7 +242,8 @@ public class RecordTest extends ClientServerTest {
     @Test
     public void testJsonSingleValueCollectionFlatten() {
         Shoe shoe = new Shoe(ImmutableList.of("Nike"));
-        String json = shoe.json(true);
+        String json = shoe.json(SerializationOptions.builder()
+                .flattenSingleElementCollections(true).build());
         JsonElement elt = new JsonParser().parse(json);
         Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonPrimitive());
     }
@@ -322,11 +341,11 @@ public class RecordTest extends ClientServerTest {
         Set<Stock> stocks = runway.find(Stock.class, Criteria.where()
                 .key("tock").operator(Operator.LINKS_TO).value(t1.id()));
         Assert.assertTrue(stocks.isEmpty());
-        stocks = runway.find(Stock.class, Criteria.where()
-                .key("tock").operator(Operator.LINKS_TO).value(t2.id()));
+        stocks = runway.find(Stock.class, Criteria.where().key("tock")
+                .operator(Operator.LINKS_TO).value(t2.id()));
         Assert.assertEquals(1, stocks.size());
     }
-    
+
     @Test
     public void testCollectionLinkFieldOverwriteRegression() {
         Tock tock = new Tock();
@@ -336,6 +355,313 @@ public class RecordTest extends ClientServerTest {
         tock.save();
         Tock t1 = runway.load(Tock.class, tock.id());
         Assert.assertEquals(2, t1.stocks.size());
+    }
+
+    @Test
+    public void testIntrinsicMapDoesNotReturnComputedData() {
+        Bock bock = new Bock();
+        Map<String, Object> data = bock.intrinsic();
+        Assert.assertFalse(data.containsKey("state"));
+    }
+
+    @Test
+    public void testIntrinsicMapDoesNotReturnComputedDataEvenIfRequested() {
+        Bock bock = new Bock();
+        Map<String, Object> data = bock.intrinsic("state");
+        Assert.assertFalse(data.containsKey("state"));
+    }
+
+    @Test
+    public void testIntrinsicMapDoesNotReturnDerivedData() {
+        Nock nock = new Nock();
+        Map<String, Object> data = nock.intrinsic();
+        Assert.assertFalse(data.containsKey("city"));
+    }
+
+    @Test
+    public void testIntrinsicMapDoesNotReturnDerivedDataEvenIfRequested() {
+        Nock nock = new Nock();
+        Map<String, Object> data = nock.intrinsic("city");
+        Assert.assertFalse(data.containsKey("city"));
+    }
+
+    @Test
+    public void testInstrinsicMapAllNegativeFilters() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 100;
+        Map<String, Object> data = nock.intrinsic("-age", "-name");
+        Assert.assertFalse(data.containsKey("state"));
+        Assert.assertFalse(data.containsKey("age"));
+        Assert.assertFalse(data.containsKey("name"));
+        Assert.assertTrue(data.containsKey("alive"));
+        Assert.assertTrue(data.containsKey("bar"));
+    }
+
+    @Test
+    public void testIntrinsicMapPositiveAndNegativeFilters() {
+        Nock nock = new Nock();
+        nock.name = "Jeff Nelson";
+        nock.age = 100;
+        Map<String, Object> data = nock.intrinsic("-age", "name", "-bar");
+        Assert.assertFalse(data.containsKey("state"));
+        Assert.assertFalse(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("name"));
+        Assert.assertFalse(data.containsKey("bar"));
+        Assert.assertFalse(data.containsKey("alive"));
+    }
+
+    @Test
+    public void testJsonSerializationOptionsSerializeNulls() {
+        Nock nock = new Nock();
+        nock.age = 100;
+        nock.name = null;
+        String json = nock.json(SerializationOptions.builder()
+                .flattenSingleElementCollections(true).serializeNullValues(true)
+                .build(), "age", "name");
+        Map<String, Object> data = new Gson().fromJson(json,
+                new TypeToken<Map<String, Object>>() {}.getType());
+        Assert.assertTrue(data.containsKey("age"));
+        Assert.assertTrue(data.containsKey("name"));
+        Assert.assertEquals(nock.age.doubleValue(), data.get("age"));
+        Assert.assertEquals(nock.name, data.get("name"));
+    }
+
+    @Test
+    public void testJsonSerializationOptionsWithoutSerializeNulls() {
+        Nock nock = new Nock();
+        nock.age = 100;
+        nock.name = null;
+        String json = nock.json(
+                SerializationOptions.builder()
+                        .flattenSingleElementCollections(true).build(),
+                "age", "name");
+        Map<String, Object> data = new Gson().fromJson(json,
+                new TypeToken<Map<String, Object>>() {}.getType());
+        Assert.assertTrue(data.containsKey("age"));
+        Assert.assertEquals(nock.age.doubleValue(), data.get("age"));
+    }
+
+    @Test
+    public void testGetIdUseGetMethod() {
+        Nock nock = new Nock();
+        Assert.assertEquals((long) nock.id(), (long) nock.get("id"));
+    }
+
+    @Test
+    public void testJsonAllDataWithNullValues() {
+        Mock mock = new Mock();
+        mock.name = "Mock";
+        mock.age = null;
+        String json = mock.json(SerializationOptions.builder()
+                .serializeNullValues(true).build());
+        System.out.println(json);
+        Assert.assertTrue(json.contains("null"));
+    }
+
+    @Test
+    public void testDefaultCompareToUsesId() {
+        Nock a = new Nock();
+        Nock b = new Nock();
+        Assert.assertTrue(a.compareTo(b) < 0);
+    }
+
+    @Test
+    public void testCompareToSingleKeyDefault() {
+        Mock a = new Mock();
+        a.name = "Mary";
+        a.age = 40;
+        Mock b = new Mock();
+        b.name = "Barb";
+        b.age = 20;
+        Mock c = new Mock();
+        c.name = "Mary";
+        c.age = 38;
+        Mock d = new Mock();
+        d.name = "Alice";
+        d.age = 10;
+        Assert.assertTrue(a.compareTo(b, "name") > 0);
+        Assert.assertTrue(b.compareTo(c, "name") < 0);
+        Assert.assertTrue(c.compareTo(d, "name") > 0);
+        Assert.assertTrue(a.compareTo(c, "name") < 0); // When equal, the record
+                                                       // id is used as a tie
+                                                       // breaker
+    }
+
+    @Test
+    public void testCompareToSingleKeyDescending() {
+        Mock a = new Mock();
+        a.name = "Mary";
+        a.age = 40;
+        Mock b = new Mock();
+        b.name = "Barb";
+        b.age = 20;
+        Mock c = new Mock();
+        c.name = "Mary";
+        c.age = 38;
+        Mock d = new Mock();
+        d.name = "Alice";
+        d.age = 10;
+        Assert.assertTrue(a.compareTo(b, "<name") < 0);
+        Assert.assertTrue(b.compareTo(c, "<name") > 0);
+        Assert.assertTrue(c.compareTo(d, "<name") < 0);
+        Assert.assertTrue(a.compareTo(c, "<name") < 0); // When equal, the
+                                                        // record
+                                                        // id is used as a tie
+                                                        // breaker
+    }
+
+    @Test
+    public void testCompareToSingleKeyAscending() {
+        Mock a = new Mock();
+        a.name = "Mary";
+        a.age = 40;
+        Mock b = new Mock();
+        b.name = "Barb";
+        b.age = 20;
+        Mock c = new Mock();
+        c.name = "Mary";
+        c.age = 38;
+        Mock d = new Mock();
+        d.name = "Alice";
+        d.age = 10;
+        Assert.assertTrue(a.compareTo(b, "name") > 0);
+        Assert.assertTrue(b.compareTo(c, "name") < 0);
+        Assert.assertTrue(c.compareTo(d, "name") > 0);
+        Assert.assertTrue(a.compareTo(c, "name") < 0); // When equal, the record
+                                                       // id is used as a tie
+                                                       // breaker
+    }
+
+    @Test
+    public void testCompareToMultiKeys() {
+        Mock a = new Mock();
+        a.name = "Mary";
+        a.age = 40;
+        Mock b = new Mock();
+        b.name = "Barb";
+        b.age = 20;
+        Mock c = new Mock();
+        c.name = "Mary";
+        c.age = 41;
+        Mock d = new Mock();
+        d.name = "Alice";
+        d.age = 10;
+        Assert.assertTrue(a.compareTo(b, "name age") > 0);
+        Assert.assertTrue(b.compareTo(c, "name age") < 0);
+        Assert.assertTrue(c.compareTo(d, "name age") > 0);
+        Assert.assertTrue(a.compareTo(c, "name <age") > 0);
+    }
+
+    @Test
+    public void testThrowSupressedExceptions() {
+        Mock a = new Mock();
+        a.name = "Bob";
+        Mock b = new Mock();
+        b.name = "Bob";
+        a.save();
+        if(b.save()) {
+            Assert.fail();
+        }
+        else {
+            try {
+                b.throwSupressedExceptions();
+                Assert.fail();
+            }
+            catch (RuntimeException e) {
+                Assert.assertEquals("name must be unique", e.getMessage());
+            }
+
+        }
+    }
+
+    @Test
+    public void testCompareToUsingNullValuesDoesNotNPE() {
+        Mock a = new Mock();
+        Mock b = new Mock();
+        a.compareTo(b, "name");
+        Assert.assertTrue(true); // lack of Exception means that the test passes
+    }
+
+    @Test
+    public void testSavingRecordWithLinksDoesNotCreateExtraneousRevisions() {
+        Sock a = new Sock("a", new Dock("a"));
+        a.save();
+        Concourse concourse = Concourse.connect("localhost",
+                server.getClientPort(), "admin", "admin");
+        int expected = concourse.audit(a.id()).size();
+        a.save();
+        int actual = concourse.audit(a.id()).size();
+        Assert.assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testSavingRecordWithChangeToLink() {
+        Sock a = new Sock("a", new Dock("a"));
+        a.save();
+        Dock d = new Dock("b");
+        Reflection.set("dock", d, a);
+        a.save();
+        a = runway.load(Sock.class, a.id());
+        Assert.assertEquals(d, a.dock);
+    }
+
+    @Test
+    public void testSetDynamicValue() {
+        Flock flock = new Flock("flock");
+        String key = Random.getSimpleString();
+        flock.set(key, 1);
+        Assert.assertEquals(1, (int) flock.get(key));
+        Assert.assertTrue(flock.map().containsKey(key));
+    }
+
+    @Test
+    public void testJsonCycleDetection() {
+
+        Gson gson = new GsonBuilder().setPrettyPrinting()
+                .registerTypeHierarchyAdapter(Record.class,
+                        new TypeAdapter<Record>() {
+
+                            @Override
+                            public void write(JsonWriter out, Record value)
+                                    throws IOException {
+                                out.jsonValue(value.json(SerializationOptions
+                                        .builder().serializeNullValues(true)
+                                        .build()));
+                            }
+
+                            @Override
+                            public Record read(JsonReader in)
+                                    throws IOException {
+                                throw new UnsupportedOperationException();
+                            }
+
+                        })
+                .create();
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        a.friends.add(c);
+        b.friends.add(a);
+        b.friends.add(c);
+        c.friends.add(a);
+        c.friends.add(b);
+        String json = gson.toJson(ImmutableList.of(c, a, b));
+        System.out.println(json);
+        Assert.assertTrue(true); // lack of StackOverflowExceptions means we
+                                 // pass
+
+    }
+
+    class Node extends Record {
+
+        public String label;
+        public List<Node> friends = Lists.newArrayList();
+
+        public Node(String label) {
+            this.label = label;
+        }
     }
 
     class Mock extends Record {
