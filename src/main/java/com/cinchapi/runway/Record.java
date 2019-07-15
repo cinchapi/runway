@@ -28,10 +28,12 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.AbstractMap.SimpleEntry;
+import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
@@ -174,6 +176,36 @@ public abstract class Record implements Comparable<Record> {
      */
     private static final Set<String> ZOMBIE_DESCRIPTION = Sets
             .newHashSet(SECTION_KEY);
+
+    /**
+     * Dereference the {@code value} stored for {@code field} if it is a
+     * {@link DeferredReference} or a {@link Sequence} of them.
+     * 
+     * @param field
+     * @param value
+     * @return the dereferenced value if it can be dereferenced or the original
+     *         input
+     */
+    private static Object dereference(Field field, Object value) {
+        if(value == null) {
+            return value;
+        }
+        else if(value instanceof DeferredReference) {
+            value = ((DeferredReference<?>) value).get();
+        }
+        else if(Sequences.isSequence(value)) {
+            Collection<Class<?>> typeArgs = Reflection.getTypeArguments(field);
+            if(typeArgs.contains(DeferredReference.class)
+                    || typeArgs.contains(Object.class)) {
+                value = Sequences.stream(value)
+                        .map(item -> dereference(field, item))
+                        .collect(Collectors.toCollection(
+                                value instanceof Set ? LinkedHashSet::new
+                                        : ArrayList::new));
+            }
+        }
+        return value;
+    }
 
     /**
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
@@ -545,6 +577,7 @@ public abstract class Record implements Comparable<Record> {
                     Field field = Reflection.getDeclaredField(key, this);
                     if(isReadableField(field)) {
                         value = field.get(this);
+                        value = dereference(field, value);
                     }
                 }
                 catch (Exception e) {/* ignore */}
@@ -557,14 +590,6 @@ public abstract class Record implements Comparable<Record> {
                 if(computer != null) {
                     value = computer.get();
                 }
-            }
-            if(value instanceof DeferredReference) {
-                // Calling #get to retrieved a deferred reference should
-                // dereference and return the actual value.
-                value = ((DeferredReference<?>) value).get();
-            }
-            else if(Sequences.isSequence(value)) {
-                
             }
             return (T) value;
         }
@@ -705,22 +730,6 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return a JSON string containing this {@link Record}'s readable and
-     * temporary data from the specified {@code keys}.
-     * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
-     * </p>
-     * 
-     * @param keys
-     * @return json string
-     */
-    public String json(String... keys) {
-        return json(SerializationOptions.defaults(), keys);
-    }
-
-    /**
-     * Return a JSON string containing this {@link Record}'s readable and
      * temporary data.
      *
      * @param options
@@ -748,6 +757,22 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data from the specified {@code keys}.
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @param keys
+     * @return json string
+     */
+    public String json(String... keys) {
+        return json(SerializationOptions.defaults(), keys);
+    }
+
+    /**
      * Return a map that contains "readable" data from this {@link Record}.
      * <p>
      * If no {@code keys} are provided, all the readable data will be
@@ -763,25 +788,6 @@ public abstract class Record implements Comparable<Record> {
      */
     public Map<String, Object> map() {
         return map(Array.containing());
-    }
-
-    /**
-     * Return a map that contains "readable" data from this {@link Record}.
-     * <p>
-     * If no {@code keys} are provided, all the readable data will be
-     * returned.
-     * </p>
-     * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
-     * </p>
-     * 
-     * @param keys
-     * @return the data in this record
-     */
-    public Map<String, Object> map(String... keys) {
-        return map(SerializationOptions.defaults(), keys);
     }
 
     /**
@@ -843,6 +849,25 @@ public abstract class Record implements Comparable<Record> {
         Map<String, Object> data = pool.filter(filter).collect(
                 LinkedHashMap::new, accumulator, MergeStrategies::upsert);
         return data;
+    }
+
+    /**
+     * Return a map that contains "readable" data from this {@link Record}.
+     * <p>
+     * If no {@code keys} are provided, all the readable data will be
+     * returned.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @param keys
+     * @return the data in this record
+     */
+    public Map<String, Object> map(String... keys) {
+        return map(SerializationOptions.defaults(), keys);
     }
 
     /**
@@ -1108,11 +1133,7 @@ public abstract class Record implements Comparable<Record> {
                 Object value;
                 if(isReadableField(field)) {
                     value = field.get(this);
-                    if(value instanceof DeferredReference) {
-                        // Calling #data to retrieved a deferred reference should
-                        // dereference and return the actual value.
-                        value = ((DeferredReference<?>) value).get();
-                    }
+                    value = dereference(field, value);
                     data.put(field.getName(), value);
                 }
             }

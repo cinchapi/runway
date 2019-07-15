@@ -18,6 +18,8 @@ package com.cinchapi.runway;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
 
+import com.google.common.base.MoreObjects;
+
 /**
  * A {@link DeferredReference} is a {@link Record} reference (e.g. {@link Link})
  * in another {@link Record} that is only {@link Runway#load(Class, long)} from
@@ -27,11 +29,23 @@ import javax.annotation.concurrent.Immutable;
  * deferring the loading of linked {@link Record records} until they are
  * actually used.
  * </p>
+ * <p>
+ * A {@link DeferredReference} should only be used to wrap a member variable in
+ * a {@link Record} class. Using a {@link DeferredReference} in
+ * {@link Record#derived(), {@link Record#computed()} or
+ * {@link Record#set(String, Object)} functions doesn't make sense and has
+ * undefined consequences.
+ * </p>
  *
  * @author Jeff Nelson
  */
 @Immutable
 public final class DeferredReference<T extends Record> {
+
+    /*
+     * NOTE: This class intentionally does not define #hashCode and #equals
+     * since the semantics are undefined.
+     */
 
     /**
      * The reference's id.
@@ -51,6 +65,17 @@ public final class DeferredReference<T extends Record> {
     /**
      * Construct a new instance.
      * 
+     * @param reference
+     */
+    public DeferredReference(T reference) {
+        this.reference = reference;
+        this.id = reference.id();
+        this.db = reference.db;
+    }
+
+    /**
+     * Construct a new instance.
+     * 
      * @param clazz
      * @param id
      * @param db
@@ -58,17 +83,6 @@ public final class DeferredReference<T extends Record> {
     DeferredReference(long id, Runway db) {
         this.id = id;
         this.db = db;
-    }
-
-    /**
-     * Construct a new instance.
-     * 
-     * @param reference
-     */
-    public DeferredReference(T reference) {
-        this.reference = reference;
-        this.id = reference.id();
-        this.db = reference.db;
     }
 
     /**
@@ -83,14 +97,21 @@ public final class DeferredReference<T extends Record> {
         return reference;
     }
 
+    @Override
+    public String toString() {
+        return MoreObjects.toStringHelper(this).add("id", id).toString();
+    }
+
+    /**
+     * Return the current, possible {@code null} reference. Unlike
+     * {@link #get()} this method does not load the reference if it is not
+     * current loaded.
+     * 
+     * @return the current reference
+     */
     @Nullable
     T $ref() {
         return reference;
-    }
-
-    @Override
-    public String toString() {
-        return "@" + id;
     }
 
 }

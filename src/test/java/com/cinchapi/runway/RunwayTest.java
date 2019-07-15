@@ -30,7 +30,6 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
-import com.cinchapi.runway.RunwayTest.User;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
@@ -351,14 +350,12 @@ public class RunwayTest extends ClientServerTest {
 
     @Test
     public void testLoadDeferredExplictMapCollection() {
-        //TODO: fix collection handling
         Jock jock = new Jock("A");
         jock.friends.add(new DeferredReference<>(new Jock("B")));
         jock.friends.add(new DeferredReference<>(new Jock("C")));
         jock.save();
         jock = runway.load(Jock.class, jock.id());
         ((List<?>) jock.map("friends").get("friends")).forEach(value -> {
-            System.out.println(value.getClass());
             Assert.assertFalse(value instanceof DeferredReference);
             Assert.assertTrue(value instanceof Jock);
         });
