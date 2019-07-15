@@ -46,7 +46,7 @@ public class RunwayTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return ClientServerTest.LATEST_SNAPSHOT_VERSION;
+        return "0.9.6";
     }
 
     @Override
