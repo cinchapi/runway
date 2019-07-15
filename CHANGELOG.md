@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.3.1 (July 15, 2019)
+* Improved `load` performance by removing extraneous data loading.
+
 #### Version 1.3.0 (June 29, 2019)
 * Fixed a bug that cause the `Record#map` method to throw a `NullPointerException` when explictly requesting a key whose value was `null`.
 * Added the `Record#intrinsic` methods, which behave similiary to the analogous `map` methods with the only difference being the `intrinsic` only considers properties that are not derived or computed (e.g. intrinsic to the Record and therefore stored in Concourse).
