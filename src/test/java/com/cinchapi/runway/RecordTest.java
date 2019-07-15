@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -31,6 +32,7 @@ import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.Continuation;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
@@ -56,7 +58,7 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "latest";
+        return "0.9.6";
     }
 
     @Override
@@ -654,6 +656,28 @@ public class RecordTest extends ClientServerTest {
 
     }
 
+    @Test
+    public void testSaveDeferredReference() {
+        Jock jock = new Jock("A");
+        jock.mentor = new DeferredReference<>(new Jock("B"));
+        long id = jock.mentor.get().id();
+        jock.save();
+        Assert.assertEquals(Link.to(id), client.get("mentor", jock.id()));
+    }
+
+    @Test
+    public void testSaveDeferredReferenceCollection() {
+        Jock jock = new Jock("A");
+        jock.friends.add(new DeferredReference<>(new Jock("B")));
+        jock.friends.add(new DeferredReference<>(new Jock("C")));
+        jock.friends.add(new DeferredReference<>(new Jock("D")));
+        Set<Link> expected = jock.friends.stream()
+                .map(ref -> Link.to(ref.get().id()))
+                .collect(Collectors.toSet());
+        jock.save();
+        Assert.assertEquals(expected, client.select("friends", jock.id()));
+    }    
+
     class Node extends Record {
 
         public String label;
@@ -828,6 +852,18 @@ public class RecordTest extends ClientServerTest {
             return ImmutableMap.of("state",
                     () -> Continuation.of(UUID::randomUUID));
         }
+    }
+
+    class Jock extends Record {
+
+        public String name;
+        public DeferredReference<Jock> mentor;
+        public List<DeferredReference<Jock>> friends = Lists.newArrayList();
+
+        public Jock(String name) {
+            this.name = name;
+        }
+
     }
 
 }

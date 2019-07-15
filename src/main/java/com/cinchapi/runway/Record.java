@@ -49,6 +49,7 @@ import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.collect.MergeStrategies;
+import com.cinchapi.common.collect.Sequences;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -68,7 +69,6 @@ import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Strings;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -544,7 +544,7 @@ public abstract class Record implements Comparable<Record> {
                 try {
                     Field field = Reflection.getDeclaredField(key, this);
                     if(isReadableField(field)) {
-                        return (T) field.get(this);
+                        value = field.get(this);
                     }
                 }
                 catch (Exception e) {/* ignore */}
@@ -557,6 +557,14 @@ public abstract class Record implements Comparable<Record> {
                 if(computer != null) {
                     value = computer.get();
                 }
+            }
+            if(value instanceof DeferredReference) {
+                // Calling #get to retrieved a deferred reference should
+                // dereference and return the actual value.
+                value = ((DeferredReference<?>) value).get();
+            }
+            else if(Sequences.isSequence(value)) {
+                
             }
             return (T) value;
         }
@@ -913,9 +921,18 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      * @throws IllegalStateException
      */
-    private void checkConstraints(Concourse concourse) {
+    private void checkConstraints(Concourse concourse,
+            @Nullable Map<String, Set<Object>> data) {
         try {
-            String section = concourse.get(SECTION_KEY, id);
+            String section = null;
+            if(data == null) {
+                section = concourse.get(SECTION_KEY, id);
+            }
+            else {
+                section = (String) Iterables
+                        .getLast(data.computeIfAbsent(SECTION_KEY,
+                                ignore -> concourse.select(SECTION_KEY, id)));
+            }
             Verify.that(section != null);
             Verify.that(
                     section.equals(__) || Class.forName(__)
@@ -1011,20 +1028,18 @@ public abstract class Record implements Comparable<Record> {
     private Object convert(String key, Class<?> type, Object stored,
             Concourse concourse, TLongObjectMap<Record> alreadyLoaded) {
         Object converted = null;
-        if(Record.class.isAssignableFrom(type)) {
+        if(Record.class.isAssignableFrom(type)
+                || type == DeferredReference.class) {
             Link link = (Link) stored;
             long target = link.longValue();
             converted = alreadyLoaded.get(target);
             if(converted == null) {
-                String section = concourse.get(SECTION_KEY, target);
-                if(Strings.isNullOrEmpty(section)) {
-                    concourse.remove(key, stored, id); // do some ad-hoc cleanup
+                if(type == DeferredReference.class) {
+                    converted = new DeferredReference(target, runway);
                 }
                 else {
-                    Class<? extends Record> targetClass = Reflection
-                            .getClassCasted(section);
-                    converted = load(targetClass, target, alreadyLoaded,
-                            connections, concourse, runway, null);
+                    converted = load(type, target, alreadyLoaded, connections,
+                            concourse, runway, null);
                 }
             }
         }
@@ -1093,6 +1108,11 @@ public abstract class Record implements Comparable<Record> {
                 Object value;
                 if(isReadableField(field)) {
                     value = field.get(this);
+                    if(value instanceof DeferredReference) {
+                        // Calling #data to retrieved a deferred reference should
+                        // dereference and return the actual value.
+                        value = ((DeferredReference<?>) value).get();
+                    }
                     data.put(field.getName(), value);
                 }
             }
@@ -1258,7 +1278,17 @@ public abstract class Record implements Comparable<Record> {
             else {
                 concourse.verifyOrSet(key, Link.to(record.id), id);
             }
-
+        }
+        else if(value instanceof DeferredReference) {
+            DeferredReference deferred = (DeferredReference) value;
+            Record ref = deferred.$ref();
+            if(ref != null) {
+                store(key, ref, concourse, append, seen);
+            }
+            else {
+                // no-op because the reference was not loaded and therefore has
+                // no changes to save...
+            }
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
             // TODO use reconcile() function once 0.5.0 comes out...
@@ -1393,7 +1423,7 @@ public abstract class Record implements Comparable<Record> {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
-        checkConstraints(concourse);
+        checkConstraints(concourse, data);
         if(inZombieState(id, concourse, data)) {
             concourse.clear(id);
             throw new ZombieException();
