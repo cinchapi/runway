@@ -302,7 +302,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 throw new DuplicateEntryException(
                         new com.cinchapi.concourse.thrift.DuplicateEntryException(
                                 AnyStrings.format(
-                                        "There are more than one records that match {} in the hierarchy of {}",
+                                        "There are more than one records that match {} in {}",
                                         criteria, clazz)));
             }
         }
