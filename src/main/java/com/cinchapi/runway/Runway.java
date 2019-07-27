@@ -646,8 +646,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 Map<String, Set<Object>> $data = data;
                 if($data == null) {
                     // Since the desired class isn't specified, we must
-                    // prematurely select the record's data to determine the
-                    // correct class.
+                    // prematurely select the record's data to determine it.
                     Concourse connection = connections.request();
                     try {
                         $data = connection.select(id);
