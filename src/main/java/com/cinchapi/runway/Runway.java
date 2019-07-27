@@ -17,6 +17,7 @@ package com.cinchapi.runway;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -37,6 +38,10 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.paginate.Page;
+import com.cinchapi.concourse.lang.sort.Direction;
+import com.cinchapi.concourse.lang.sort.Order;
+import com.cinchapi.concourse.lang.sort.OrderComponent;
 import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
@@ -46,6 +51,7 @@ import com.github.zafarkhaja.semver.Version;
 import com.google.common.cache.Cache;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
@@ -145,6 +151,28 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Return a {@link List} based {@
+     * @param order
+     * @return
+     */
+    private static List<String> backwardsCompatible(Order order) {
+        List<String> components = Lists.newArrayList();
+        for (OrderComponent component : order.spec()) {
+            if(component.timestamp() != null) {
+                throw new UnsupportedOperationException(
+                        "An OrderComponent with a timestamp is not backwards compatible");
+            }
+            else {
+                String prefix = component.direction() == Direction.ASCENDING
+                        ? Record.SORT_DIRECTION_ASCENDING_PREFIX
+                        : Record.SORT_DIRECTION_DESCENDING_PREFIX;
+                components.add(prefix + component.key());
+            }
+        }
+        return components;
+    }
+
+    /**
      * Utility method do ensure that the {@code criteria} is limited to querying
      * objects that belong to a specific {@code clazz}.
      * 
@@ -186,18 +214,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final Cache<Long, Record> cache;
 
     /**
-     * A mapping from a transaction id to the set of records that are waiting to
-     * be saved within that transaction. We use this collection to ensure that a
-     * record being saved only links to an existing record in the database or a
-     * record that will later exist (e.g. waiting to be saved).
+     * A flag that indicates whether the connect server supports result set
+     * pagination.
      */
-    private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
+    private final boolean pageable;
 
     /**
      * A flag that indicates whether the connected server supports result set
      * sorting.
      */
     private final boolean sortable;
+
+    /**
+     * A mapping from a transaction id to the set of records that are waiting to
+     * be saved within that transaction. We use this collection to ensure that a
+     * record being saved only links to an existing record in the database or a
+     * record that will later exist (e.g. waiting to be saved).
+     */
+    private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
 
     /**
      * Construct a new instance.
@@ -219,7 +253,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Version target = Version.forIntegers(0, 10);
             Version actual = Versions
                     .parseSemanticVersion(concourse.getServerVersion());
-            sortable = actual.greaterThanOrEqualTo(target);
+            this.sortable = actual.greaterThanOrEqualTo(target);
+            this.pageable = sortable;
         }
         finally {
             connections.release(concourse);
@@ -286,6 +321,51 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             connections.release(concourse);
         }
 
+    }
+
+    /* (non-Javadoc)
+     * @see com.cinchapi.runway.DatabaseInterface#findAny(java.lang.Class, com.cinchapi.concourse.lang.Criteria, com.cinchapi.concourse.lang.sort.Order)
+     */
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Order order) {
+        if(sortable) {
+            return null;
+        }
+        else {
+            return findAny(clazz, criteria, backwardsCompatible(order));
+        }
+    }
+
+    /* (non-Javadoc)
+     * @see com.cinchapi.runway.DatabaseInterface#findAny(java.lang.Class, com.cinchapi.concourse.lang.Criteria, com.cinchapi.concourse.lang.sort.Order, com.cinchapi.concourse.lang.paginate.Page)
+     */
+    @Override
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criiteria,
+            Order order, Page page) {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    /* (non-Javadoc)
+     * @see com.cinchapi.runway.DatabaseInterface#findAny(java.lang.Class, com.cinchapi.concourse.lang.Criteria, com.cinchapi.concourse.lang.paginate.Page)
+     */
+    @Override
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criiteria,
+            Page page) {
+        // TODO Auto-generated method stub
+        return null;
+    }
+
+    /* (non-Javadoc)
+     * @see com.cinchapi.runway.DatabaseInterface#findAny(java.lang.Class, com.cinchapi.concourse.lang.Criteria, com.cinchapi.concourse.lang.paginate.Page, com.cinchapi.concourse.lang.sort.Order)
+     */
+    @Override
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criiteria,
+            Page page, Order order) {
+        // TODO Auto-generated method stub
+        return null;
     }
 
     @Override
@@ -391,6 +471,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             connections.release(concourse);
         }
     }
+
+    // TODO: what about loading a specific record using a parent class?
 
     @Override
     public <T extends Record> T load(Class<T> clazz, long id) {
@@ -554,8 +636,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
     }
-
-    // TODO: what about loading a specific record using a parent class?
 
     /**
      * Perform the find operation using the {@code concourse} handler.
