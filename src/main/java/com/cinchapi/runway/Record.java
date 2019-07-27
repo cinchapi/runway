@@ -55,7 +55,6 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
-import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
@@ -147,7 +146,7 @@ public abstract class Record implements Comparable<Record> {
      * compare the values stored under that key in ascending (i.e. normal)
      * order.
      */
-    private static final String SORT_DIRECTION_ASCENDING_PREFIX = ">";
+    static final String SORT_DIRECTION_ASCENDING_PREFIX = ">";
 
     /**
      * The coefficient multiplied by the result of a comparison to push the
@@ -161,7 +160,7 @@ public abstract class Record implements Comparable<Record> {
      * compare the values stored under that key in descending (i.e. reverse)
      * order.
      */
-    private static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
+    static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
 
     /**
      * Instance of {@link sun.misc.Unsafe} to use for hacky operations.
@@ -913,18 +912,9 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      * @throws IllegalStateException
      */
-    private void checkConstraints(Concourse concourse,
-            @Nullable Map<String, Set<Object>> data) {
+    private void checkConstraints(Concourse concourse) {
         try {
-            String section = null;
-            if(data == null) {
-                section = concourse.get(SECTION_KEY, id);
-            }
-            else {
-                section = (String) Iterables
-                        .getLast(data.computeIfAbsent(SECTION_KEY,
-                                ignore -> concourse.select(SECTION_KEY, id)));
-            }
+            String section = concourse.get(SECTION_KEY, id);
             Verify.that(section != null);
             Verify.that(
                     section.equals(__) || Class.forName(__)
@@ -1402,7 +1392,7 @@ public abstract class Record implements Comparable<Record> {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
-        checkConstraints(concourse, data);
+        checkConstraints(concourse);
         if(inZombieState(id, concourse, data)) {
             concourse.clear(id);
             throw new ZombieException();
@@ -1595,33 +1585,9 @@ public abstract class Record implements Comparable<Record> {
 
         @Override
         public <T extends Record> Set<T> find(Class<T> clazz,
-                BuildableState criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz,
                 Criteria criteria) {
             if(tracked.runway != null) {
                 return tracked.runway.find(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                BuildableState criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1643,33 +1609,9 @@ public abstract class Record implements Comparable<Record> {
 
         @Override
         public <T extends Record> T findAnyUnique(Class<T> clazz,
-                BuildableState criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAnyUnique(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findAnyUnique(Class<T> clazz,
                 Criteria criteria) {
             if(tracked.runway != null) {
                 return tracked.runway.findAnyUnique(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findUnique(Class<T> clazz,
-                BuildableState criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findUnique(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
