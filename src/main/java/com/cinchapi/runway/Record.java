@@ -912,9 +912,18 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      * @throws IllegalStateException
      */
-    private void checkConstraints(Concourse concourse) {
+    private void checkConstraints(Concourse concourse,
+            @Nullable Map<String, Set<Object>> data) {
         try {
-            String section = concourse.get(SECTION_KEY, id);
+            String section = null;
+            if(data == null) {
+                section = concourse.get(SECTION_KEY, id);
+            }
+            else {
+                section = (String) Iterables
+                        .getLast(data.computeIfAbsent(SECTION_KEY,
+                                ignore -> concourse.select(SECTION_KEY, id)));
+            }
             Verify.that(section != null);
             Verify.that(
                     section.equals(__) || Class.forName(__)
@@ -1392,7 +1401,7 @@ public abstract class Record implements Comparable<Record> {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
-        checkConstraints(concourse);
+        checkConstraints(concourse, data);
         if(inZombieState(id, concourse, data)) {
             concourse.clear(id);
             throw new ZombieException();
