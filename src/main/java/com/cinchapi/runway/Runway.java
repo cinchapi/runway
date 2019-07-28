@@ -93,6 +93,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private static long METADATA_RECORD = -1;
 
+    static {
+        // NOTE: Scanning the classpath adds startup costs proportional to the
+        // number of classes defined. We do this once at startup to minimize the
+        // effect of the cost.
+        hierarchies = HashMultimap.create();
+        Logging.disable(Reflections.class);
+        Reflections.log = null; // turn off reflection logging
+        Reflections reflection = new Reflections(new SubTypesScanner());
+        reflection.getSubTypesOf(Record.class).forEach(type -> {
+            hierarchies.put(type, type);
+            reflection.getSubTypesOf(type)
+                    .forEach(subType -> hierarchies.put(type, subType));
+        });
+    }
+
     /**
      * Placeholder for a {@code null} {@link Order} parameter.
      */
@@ -161,11 +176,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return a {@link List} based {
+     * Return a {@link List} based order specification.
      * 
-     * @
      * @param order
-     * @return
+     * @return the list-based order
      */
     private static List<String> backwardsCompatible(Order order) {
         List<String> components = Lists.newArrayList();
@@ -182,21 +196,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         return components;
-    }
-
-    static {
-        // NOTE: Scanning the classpath adds startup costs proportional to the
-        // number of classes defined. We do this once at startup to minimize the
-        // effect of the cost.
-        hierarchies = HashMultimap.create();
-        Logging.disable(Reflections.class);
-        Reflections.log = null; // turn off reflection logging
-        Reflections reflection = new Reflections(new SubTypesScanner());
-        reflection.getSubTypesOf(Record.class).forEach(type -> {
-            hierarchies.put(type, type);
-            reflection.getSubTypesOf(type)
-                    .forEach(subType -> hierarchies.put(type, subType));
-        });
     }
 
     /**
@@ -768,35 +767,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Internal utility method to dispatch a "find" request" for a
-     * {@code criteria} based on whether the {@code order} and/or {@code page}
-     * params are non-null.
-     * 
-     * @param concourse
-     * @param criteria
-     * @param order
-     * @param page
-     * @return the ids of the matching records
-     */
-    private Set<Long> find0(Concourse concourse, Criteria criteria, Order order,
-            @Nullable Page page) {
-        Set<Long> ids;
-        if(order != null && page != null) {
-            ids = concourse.find(criteria, order, page);
-        }
-        else if(order == null && page == null) {
-            ids = concourse.find(criteria);
-        }
-        else if(order != null) {
-            ids = concourse.find(criteria, order);
-        }
-        else { // page != null
-            ids = concourse.find(criteria, page);
-        }
-        return ids;
-    }
-
-    /**
      * Perform the "find any" operation using the {@code concourse} handler.
      * 
      * @param concourse
@@ -886,6 +856,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return Arrays.stream(keys).map(key -> concourse.search(key, query))
                 .flatMap(Set::stream).filter(filter)
                 .collect(Collectors.toSet());
+    }
+
+    /**
+     * Internal utility method to dispatch a "find" request" for a
+     * {@code criteria} based on whether the {@code order} and/or {@code page}
+     * params are non-null.
+     * 
+     * @param concourse
+     * @param criteria
+     * @param order
+     * @param page
+     * @return the ids of the matching records
+     */
+    private Set<Long> find0(Concourse concourse, Criteria criteria, Order order,
+            @Nullable Page page) {
+        Set<Long> ids;
+        if(order != null && page != null) {
+            ids = concourse.find(criteria, order, page);
+        }
+        else if(order == null && page == null) {
+            ids = concourse.find(criteria);
+        }
+        else if(order != null) {
+            ids = concourse.find(criteria, order);
+        }
+        else { // page != null
+            ids = concourse.find(criteria, page);
+        }
+        return ids;
     }
 
     /**
