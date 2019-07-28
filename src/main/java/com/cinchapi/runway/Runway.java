@@ -176,11 +176,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return a {@link List} based {
+     * Return a {@link List} based order specification.
      * 
-     * @
      * @param order
-     * @return
+     * @return the list-based order
      */
     private static List<String> backwardsCompatible(Order order) {
         List<String> components = Lists.newArrayList();
