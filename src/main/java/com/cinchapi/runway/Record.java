@@ -177,29 +177,6 @@ public abstract class Record implements Comparable<Record> {
             .newHashSet(SECTION_KEY);
 
     /**
-     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
-     * {@code id}.
-     * 
-     * @param clazz
-     * @param id
-     * @param existing
-     * @param connections
-     * @return the loaded Record
-     */
-    protected static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections,
-            Runway runway, @Nullable Map<String, Set<Object>> data) {
-        Concourse concourse = connections.request();
-        try {
-            return load(clazz, id, existing, connections, concourse, runway,
-                    data);
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
      * track of linked records to prevent infinite recursion.
      * 
@@ -358,6 +335,29 @@ public abstract class Record implements Comparable<Record> {
         }
         catch (InstantiationException e) {
             throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+    }
+
+    /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id}.
+     * 
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @return the loaded Record
+     */
+    protected static <T extends Record> T load(Class<?> clazz, long id,
+            TLongObjectMap<Record> existing, ConnectionPool connections,
+            Runway runway, @Nullable Map<String, Set<Object>> data) {
+        Concourse concourse = connections.request();
+        try {
+            return load(clazz, id, existing, connections, concourse, runway,
+                    data);
+        }
+        finally {
+            connections.release(concourse);
         }
     }
 
@@ -908,268 +908,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Load an existing record from the database and add all of it to this
-     * instance in memory.
-     * 
-     * @param concourse
-     * @param existing
-     */
-    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
-        load(concourse, existing, null);
-    }
-
-    /**
-     * Load an existing record from the database and add all of it to this
-     * instance in memory.
-     * 
-     * @param concourse
-     * @param existing
-     * @param data data that is pre-loaded from {@code concourse}; this should
-     *            only be provided from a trusted source
-     */
-    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
-    final void load(Concourse concourse, TLongObjectMap<Record> existing,
-            @Nullable Map<String, Set<Object>> data) {
-        Preconditions.checkState(id != NULL_ID);
-        existing.put(id, this); // add the current object so we don't
-                                // recurse infinitely
-        checkConstraints(concourse, data);
-        if(inZombieState(id, concourse, data)) {
-            concourse.clear(id);
-            throw new ZombieException();
-        }
-        data = data == null ? concourse.select(id) : data;
-        for (Field field : fields()) {
-            try {
-                if(!Modifier.isTransient(field.getModifiers())) {
-                    String key = field.getName();
-                    Class<?> type = field.getType();
-                    Object value = null;
-                    if(Collection.class.isAssignableFrom(type)
-                            || type.isArray()) {
-                        Set<?> stored = data.getOrDefault(key,
-                                ImmutableSet.of());
-                        Class<?> collectedType = type
-                                .isArray()
-                                        ? type.getComponentType()
-                                        : Iterables.getFirst(
-                                                Reflection.getTypeArguments(key,
-                                                        this.getClass()),
-                                                Object.class);
-                        ArrayBuilder collector = ArrayBuilder.builder();
-                        stored.forEach(item -> {
-                            Object converted = convert(key, collectedType, item,
-                                    concourse, existing);
-                            if(converted != null) {
-                                collector.add(converted);
-                            }
-                            else {
-                                // TODO: should we remove the object from
-                                // Concourse since it results in a #null value?
-                            }
-                        });
-                        if(type.isArray()) {
-                            value = collector.build();
-                        }
-                        else {
-                            if(!Modifier.isAbstract(type.getModifiers())
-                                    && !Modifier
-                                            .isInterface(type.getModifiers())) {
-                                // This is a concrete Collection type that can
-                                // be instantiated
-                                value = Reflection.newInstance(type);
-                            }
-                            else if(type == Set.class) {
-                                value = Sets.newLinkedHashSet();
-                            }
-                            else { // assume List
-                                value = Lists.newArrayList();
-                            }
-                            Collections.addAll((Collection) value,
-                                    collector.length() > 0 ? collector.build()
-                                            : Array.containing());
-                        }
-                    }
-                    else {
-                        // Populate a non-collection variable with the most
-                        // recently stored value for the #key in Concourse.
-                        Set<Object> values = data.getOrDefault(key,
-                                ImmutableSet.of());
-                        Object stored = Iterables.getFirst(values, null);
-                        if(stored != null) {
-                            value = convert(key, type, stored, concourse,
-                                    existing);
-                        }
-                    }
-                    if(value != null) {
-                        field.set(this, value);
-                    }
-                    else {
-                        // no-op; NOTE: Java doesn't allow primitive types to
-                        // hold null values
-                    }
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        }
-    }
-
-    /**
-     * Save all changes that have been made to this record using an ACID
-     * transaction with the provided {@code runway} instance.
-     * <p>
-     * Use {@link Runway#save(Record...)} to save changes in multiple records
-     * within a single ACID transaction. Even if saving a single record, prefer
-     * to use the save method in the {@link Runway} class instead of this for
-     * consistent semantics.
-     * </p>
-     * 
-     * @return {@code true} if all the changes have been atomically saved.
-     */
-    /* package */ final boolean save(Concourse concourse, Set<Record> seen,
-            Runway runway) {
-        assign(runway);
-        try {
-            Preconditions.checkState(!inViolation);
-            errors.clear();
-            concourse.stage();
-            if(deleted) {
-                delete(concourse);
-            }
-            else {
-                saveWithinTransaction(concourse, seen);
-            }
-            return concourse.commit();
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            if(inZombieState(concourse)) {
-                concourse.clear(id);
-            }
-            errors.add(t);
-            return false;
-        }
-    }
-
-    /**
-     * Save the data in this record using the specified {@code concourse}
-     * connection. This method assumes that the caller has already started an
-     * transaction, if necessary and will commit the transaction after this
-     * method completes.
-     * 
-     * @param concourse
-     */
-    /* package */ void saveWithinTransaction(final Concourse concourse,
-            Set<Record> seen) {
-        concourse.verifyOrSet(SECTION_KEY, __, id);
-        fields().forEach(field -> {
-            try {
-                if(!Modifier.isTransient(field.getModifiers())) {
-                    final String key = field.getName();
-                    final Object value = field.get(this);
-                    if(field.isAnnotationPresent(ValidatedBy.class)) {
-                        Class<? extends Validator> validatorClass = field
-                                .getAnnotation(ValidatedBy.class).value();
-                        Validator validator = Reflection
-                                .newInstance(validatorClass);
-                        Preconditions.checkState(validator.validate(value),
-                                validator.getErrorMessage());
-                    }
-                    if(field.isAnnotationPresent(Unique.class)) {
-                        Preconditions.checkState(
-                                isUnique(concourse, key, value),
-                                field.getName() + " must be unique");
-                    }
-                    if(field.isAnnotationPresent(Required.class)) {
-                        Preconditions.checkState(
-                                !AnyObjects.isNullOrEmpty(value),
-                                field.getName() + " is required");
-                    }
-                    if(value != null) {
-                        store(key, value, concourse, false, seen);
-                    }
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        });
-
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its native fields and is "computed" on-demand.
-     * <p>
-     * Unlike {@link #derived()} attributes, computed data is generally
-     * expensive to generate and should only be calculated when explicitly
-     * requested.
-     * </p>
-     * <p>
-     * NOTE: Computed attributes are never cached. Each time one is requested,
-     * the computation that generates the value is done anew.
-     * </p>
-     * 
-     * @return the computed data
-     */
-    protected Map<String, Supplier<Object>> computed() {
-        return Collections.emptyMap();
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its fields. For example, this is a good way to provide template
-     * specific information that isn't persisted to the database.
-     * 
-     * @return the additional data
-     */
-    protected Map<String, Object> derived() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
-     * 
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
-     * @deprecated use {@link #typeAdapters()} instead
-     */
-    @Deprecated
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
-     * 
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
-     * @deprecated use {@link #typeAdapters()} instead
-     */
-    @Deprecated
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link TypeAdapter TypeAdapters} that should be used
-     * when generating the {@link #json()} for this {@link Record}.
-     * <p>
-     * Each {@link TypeAdapter} should be mapped from the most generic class or
-     * interface for which the adapter applies.
-     * </p>
-     * 
-     * @return the type adapters to use when serializing the Record to JSON.
-     */
-    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
-        return ImmutableMap.of();
-    }
-
-    /**
      * Check to ensure that this Record does not violate any constraints. If so,
      * throw an {@link IllegalStateException}.
      * 
@@ -1567,6 +1305,268 @@ public abstract class Record implements Comparable<Record> {
             Tag json = Tag.create(gson.toJson(value));
             store(key, json, concourse, append, seen);
         }
+    }
+
+    /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its native fields and is "computed" on-demand.
+     * <p>
+     * Unlike {@link #derived()} attributes, computed data is generally
+     * expensive to generate and should only be calculated when explicitly
+     * requested.
+     * </p>
+     * <p>
+     * NOTE: Computed attributes are never cached. Each time one is requested,
+     * the computation that generates the value is done anew.
+     * </p>
+     * 
+     * @return the computed data
+     */
+    protected Map<String, Supplier<Object>> computed() {
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its fields. For example, this is a good way to provide template
+     * specific information that isn't persisted to the database.
+     * 
+     * @return the additional data
+     */
+    protected Map<String, Object> derived() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
+     * 
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
+     * @deprecated use {@link #typeAdapters()} instead
+     */
+    @Deprecated
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
+     * 
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
+     * @deprecated use {@link #typeAdapters()} instead
+     */
+    @Deprecated
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link TypeAdapter TypeAdapters} that should be used
+     * when generating the {@link #json()} for this {@link Record}.
+     * <p>
+     * Each {@link TypeAdapter} should be mapped from the most generic class or
+     * interface for which the adapter applies.
+     * </p>
+     * 
+     * @return the type adapters to use when serializing the Record to JSON.
+     */
+    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
+        return ImmutableMap.of();
+    }
+
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param concourse
+     * @param existing
+     */
+    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
+        load(concourse, existing, null);
+    }
+
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param concourse
+     * @param existing
+     * @param data data that is pre-loaded from {@code concourse}; this should
+     *            only be provided from a trusted source
+     */
+    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
+    final void load(Concourse concourse, TLongObjectMap<Record> existing,
+            @Nullable Map<String, Set<Object>> data) {
+        Preconditions.checkState(id != NULL_ID);
+        existing.put(id, this); // add the current object so we don't
+                                // recurse infinitely
+        checkConstraints(concourse, data);
+        if(inZombieState(id, concourse, data)) {
+            concourse.clear(id);
+            throw new ZombieException();
+        }
+        data = data == null ? concourse.select(id) : data;
+        for (Field field : fields()) {
+            try {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    String key = field.getName();
+                    Class<?> type = field.getType();
+                    Object value = null;
+                    if(Collection.class.isAssignableFrom(type)
+                            || type.isArray()) {
+                        Set<?> stored = data.getOrDefault(key,
+                                ImmutableSet.of());
+                        Class<?> collectedType = type
+                                .isArray()
+                                        ? type.getComponentType()
+                                        : Iterables.getFirst(
+                                                Reflection.getTypeArguments(key,
+                                                        this.getClass()),
+                                                Object.class);
+                        ArrayBuilder collector = ArrayBuilder.builder();
+                        stored.forEach(item -> {
+                            Object converted = convert(key, collectedType, item,
+                                    concourse, existing);
+                            if(converted != null) {
+                                collector.add(converted);
+                            }
+                            else {
+                                // TODO: should we remove the object from
+                                // Concourse since it results in a #null value?
+                            }
+                        });
+                        if(type.isArray()) {
+                            value = collector.build();
+                        }
+                        else {
+                            if(!Modifier.isAbstract(type.getModifiers())
+                                    && !Modifier
+                                            .isInterface(type.getModifiers())) {
+                                // This is a concrete Collection type that can
+                                // be instantiated
+                                value = Reflection.newInstance(type);
+                            }
+                            else if(type == Set.class) {
+                                value = Sets.newLinkedHashSet();
+                            }
+                            else { // assume List
+                                value = Lists.newArrayList();
+                            }
+                            Collections.addAll((Collection) value,
+                                    collector.length() > 0 ? collector.build()
+                                            : Array.containing());
+                        }
+                    }
+                    else {
+                        // Populate a non-collection variable with the most
+                        // recently stored value for the #key in Concourse.
+                        Set<Object> values = data.getOrDefault(key,
+                                ImmutableSet.of());
+                        Object stored = Iterables.getFirst(values, null);
+                        if(stored != null) {
+                            value = convert(key, type, stored, concourse,
+                                    existing);
+                        }
+                    }
+                    if(value != null) {
+                        field.set(this, value);
+                    }
+                    else {
+                        // no-op; NOTE: Java doesn't allow primitive types to
+                        // hold null values
+                    }
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        }
+    }
+
+    /**
+     * Save all changes that have been made to this record using an ACID
+     * transaction with the provided {@code runway} instance.
+     * <p>
+     * Use {@link Runway#save(Record...)} to save changes in multiple records
+     * within a single ACID transaction. Even if saving a single record, prefer
+     * to use the save method in the {@link Runway} class instead of this for
+     * consistent semantics.
+     * </p>
+     * 
+     * @return {@code true} if all the changes have been atomically saved.
+     */
+    /* package */ final boolean save(Concourse concourse, Set<Record> seen,
+            Runway runway) {
+        assign(runway);
+        try {
+            Preconditions.checkState(!inViolation);
+            errors.clear();
+            concourse.stage();
+            if(deleted) {
+                delete(concourse);
+            }
+            else {
+                saveWithinTransaction(concourse, seen);
+            }
+            return concourse.commit();
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            if(inZombieState(concourse)) {
+                concourse.clear(id);
+            }
+            errors.add(t);
+            return false;
+        }
+    }
+
+    /**
+     * Save the data in this record using the specified {@code concourse}
+     * connection. This method assumes that the caller has already started an
+     * transaction, if necessary and will commit the transaction after this
+     * method completes.
+     * 
+     * @param concourse
+     */
+    /* package */ void saveWithinTransaction(final Concourse concourse,
+            Set<Record> seen) {
+        concourse.verifyOrSet(SECTION_KEY, __, id);
+        fields().forEach(field -> {
+            try {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    final String key = field.getName();
+                    final Object value = field.get(this);
+                    if(field.isAnnotationPresent(ValidatedBy.class)) {
+                        Class<? extends Validator> validatorClass = field
+                                .getAnnotation(ValidatedBy.class).value();
+                        Validator validator = Reflection
+                                .newInstance(validatorClass);
+                        Preconditions.checkState(validator.validate(value),
+                                validator.getErrorMessage());
+                    }
+                    if(field.isAnnotationPresent(Unique.class)) {
+                        Preconditions.checkState(
+                                isUnique(concourse, key, value),
+                                field.getName() + " must be unique");
+                    }
+                    if(field.isAnnotationPresent(Required.class)) {
+                        Preconditions.checkState(
+                                !AnyObjects.isNullOrEmpty(value),
+                                field.getName() + " is required");
+                    }
+                    if(value != null) {
+                        store(key, value, concourse, false, seen);
+                    }
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        });
+
     }
 
     /**

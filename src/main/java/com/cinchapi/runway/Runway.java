@@ -768,35 +768,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Internal utility method to dispatch a "find" request" for a
-     * {@code criteria} based on whether the {@code order} and/or {@code page}
-     * params are non-null.
-     * 
-     * @param concourse
-     * @param criteria
-     * @param order
-     * @param page
-     * @return the ids of the matching records
-     */
-    private Set<Long> find0(Concourse concourse, Criteria criteria, Order order,
-            @Nullable Page page) {
-        Set<Long> ids;
-        if(order != null && page != null) {
-            ids = concourse.find(criteria, order, page);
-        }
-        else if(order == null && page == null) {
-            ids = concourse.find(criteria);
-        }
-        else if(order != null) {
-            ids = concourse.find(criteria, order);
-        }
-        else { // page != null
-            ids = concourse.find(criteria, page);
-        }
-        return ids;
-    }
-
-    /**
      * Perform the "find any" operation using the {@code concourse} handler.
      * 
      * @param concourse
@@ -886,6 +857,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return Arrays.stream(keys).map(key -> concourse.search(key, query))
                 .flatMap(Set::stream).filter(filter)
                 .collect(Collectors.toSet());
+    }
+
+    /**
+     * Internal utility method to dispatch a "find" request" for a
+     * {@code criteria} based on whether the {@code order} and/or {@code page}
+     * params are non-null.
+     * 
+     * @param concourse
+     * @param criteria
+     * @param order
+     * @param page
+     * @return the ids of the matching records
+     */
+    private Set<Long> find0(Concourse concourse, Criteria criteria, Order order,
+            @Nullable Page page) {
+        Set<Long> ids;
+        if(order != null && page != null) {
+            ids = concourse.find(criteria, order, page);
+        }
+        else if(order == null && page == null) {
+            ids = concourse.find(criteria);
+        }
+        else if(order != null) {
+            ids = concourse.find(criteria, order);
+        }
+        else { // page != null
+            ids = concourse.find(criteria, page);
+        }
+        return ids;
     }
 
     /**
