@@ -442,7 +442,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Concourse concourse = connections.request();
         try {
             Set<Long> ids = $searchAny(concourse, clazz, query, keys);
-            return instantiate(clazz, ids);
+            return instantiate(ids);
         }
         finally {
             connections.release(concourse);
