@@ -17,6 +17,7 @@ package com.cinchapi.runway;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -213,7 +214,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * A flag that indicates whether the connected server supports result set
      * sorting and pagination.
      */
-    private final boolean hasNativeSortAndPagination;
+    private final boolean hasNativeSortingAndPagination;
 
     /**
      * A mapping from a transaction id to the set of records that are waiting to
@@ -243,7 +244,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Version target = Version.forIntegers(0, 10);
             Version actual = Versions
                     .parseSemanticVersion(concourse.getServerVersion());
-            this.hasNativeSortAndPagination = actual
+            this.hasNativeSortingAndPagination = actual
                     .greaterThanOrEqualTo(target);
         }
         finally {
@@ -269,11 +270,74 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $find(concourse, clazz, criteria);
+            Set<Long> ids = $find(concourse, clazz, criteria, NO_ORDER,
+                    NO_PAGINATION);
             return instantiate(clazz, ids);
         }
         finally {
             connections.release(concourse);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Order order) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $find(concourse, clazz, criteria, order,
+                        NO_PAGINATION);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria, backwardsCompatible(order));
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Order order, Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $find(concourse, clazz, criteria, order, page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    @Override
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $find(concourse, clazz, criteria, NO_ORDER,
+                        NO_PAGINATION);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria).stream().skip(page.skip())
+                    .limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -295,7 +359,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Order order) {
-        if(hasNativeSortAndPagination) {
+        if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 Set<Long> ids = $findAny(concourse, clazz, criteria, order,
@@ -311,40 +375,47 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criiteria,
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Order order, Page page) {
-        // TODO Auto-generated method stub
-        return null;
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $findAny(concourse, clazz, criteria, order,
+                        page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
     }
 
-    /*
-     * (non-Javadoc)
-     * 
-     * @see com.cinchapi.runway.DatabaseInterface#findAny(java.lang.Class,
-     * com.cinchapi.concourse.lang.Criteria,
-     * com.cinchapi.concourse.lang.paginate.Page)
-     */
     @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criiteria,
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Page page) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    /*
-     * (non-Javadoc)
-     * 
-     * @see com.cinchapi.runway.DatabaseInterface#findAny(java.lang.Class,
-     * com.cinchapi.concourse.lang.Criteria,
-     * com.cinchapi.concourse.lang.paginate.Page,
-     * com.cinchapi.concourse.lang.sort.Order)
-     */
-    @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criiteria,
-            Page page, Order order) {
-        // TODO Auto-generated method stub
-        return null;
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $findAny(concourse, clazz, criteria, NO_ORDER,
+                        page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria).stream().skip(page.skip())
+                    .limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
     }
 
     @Override
@@ -408,7 +479,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $find(concourse, clazz, criteria);
+            Set<Long> ids = $find(concourse, clazz, criteria, NO_ORDER,
+                    NO_PAGINATION);
             if(ids.isEmpty()) {
                 return null;
             }
@@ -432,15 +504,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> load(Class<T> clazz) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $load(concourse, clazz);
+            Set<Long> ids = $load(concourse, clazz, NO_ORDER, NO_PAGINATION);
             return instantiate(clazz, ids);
         }
         finally {
             connections.release(concourse);
         }
     }
-
-    // TODO: what about loading a specific record using a parent class?
 
     @Override
     public <T extends Record> T load(Class<T> clazz, long id) {
@@ -461,15 +531,130 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return instantiate(clazz, id, new TLongObjectHashMap<Record>(), null);
     }
 
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> load(Class<T> clazz, Order order) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $load(concourse, clazz, order, NO_PAGINATION);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz, backwardsCompatible(order));
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $load(concourse, clazz, order, page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz, backwardsCompatible(order)).stream()
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    @Override
+    public <T extends Record> Set<T> load(Class<T> clazz, Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $load(concourse, clazz, NO_ORDER, page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz).stream().skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
     @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $loadAny(concourse, clazz);
+            Set<Long> ids = $loadAny(concourse, clazz, NO_ORDER, NO_PAGINATION);
             return instantiate(ids);
         }
         finally {
             connections.release(concourse);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $loadAny(concourse, clazz, order,
+                        NO_PAGINATION);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz, backwardsCompatible(order));
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+            Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $loadAny(concourse, clazz, order, page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz, backwardsCompatible(order)).stream()
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    @Override
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $loadAny(concourse, clazz, NO_ORDER, page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz).stream().skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -577,24 +762,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the result set
      */
     private <T> Set<Long> $find(Concourse concourse, Class<T> clazz,
-            Criteria criteria) {
+            Criteria criteria, @Nullable Order order, @Nullable Page page) {
         criteria = $Criteria.withinClass(clazz, criteria);
-        return concourse.find(criteria);
+        return find0(concourse, criteria, order, page);
     }
 
     /**
-     * Perform the "find any" operation using the {@code concourse} handler.
+     * Internal utility method to dispatch a "find" request" for a
+     * {@code criteria} based on whether the {@code order} and/or {@code page}
+     * params are non-null.
      * 
      * @param concourse
-     * @param clazz
      * @param criteria
      * @param order
      * @param page
-     * @return the result set
+     * @return the ids of the matching records
      */
-    private <T> Set<Long> $findAny(Concourse concourse, Class<T> clazz,
-            Criteria criteria, @Nullable Order order, @Nullable Page page) {
-        criteria = $Criteria.accrossClassHierachy(clazz, criteria);
+    private Set<Long> find0(Concourse concourse, Criteria criteria, Order order,
+            @Nullable Page page) {
         Set<Long> ids;
         if(order != null && page != null) {
             ids = concourse.find(criteria, order, page);
@@ -612,6 +797,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Perform the "find any" operation using the {@code concourse} handler.
+     * 
+     * @param concourse
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @return the result set
+     */
+    private <T> Set<Long> $findAny(Concourse concourse, Class<T> clazz,
+            Criteria criteria, @Nullable Order order, @Nullable Page page) {
+        criteria = $Criteria.accrossClassHierachy(clazz, criteria);
+        return find0(concourse, criteria, order, page);
+    }
+
+    /**
      * Return the ids of all the {@code Record}s in the {@code clazz}, using the
      * provided {@code concourse} connection.
      * 
@@ -619,9 +820,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz
      * @return the records in the class
      */
-    private <T> Set<Long> $load(Concourse concourse, Class<T> clazz) {
+    private <T> Set<Long> $load(Concourse concourse, Class<T> clazz,
+            @Nullable Order order, @Nullable Page page) {
         Criteria criteria = $Criteria.forClass(clazz);
-        return concourse.find(criteria);
+        return find0(concourse, criteria, order, page);
     }
 
     /**
@@ -632,9 +834,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz
      * @return the records in the class hierarchy
      */
-    private <T> Set<Long> $loadAny(Concourse concourse, Class<T> clazz) {
+    private <T> Set<Long> $loadAny(Concourse concourse, Class<T> clazz,
+            @Nullable Order order, @Nullable Page page) {
         Criteria criteria = $Criteria.forClassHierarchy(clazz);
-        return concourse.find(criteria);
+        return find0(concourse, criteria, order, page);
     }
 
     /**
