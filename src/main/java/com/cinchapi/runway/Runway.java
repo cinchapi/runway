@@ -17,12 +17,14 @@ package com.cinchapi.runway;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
-
 import javax.annotation.Nullable;
 
 import org.reflections.Reflections;
@@ -37,6 +39,10 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.paginate.Page;
+import com.cinchapi.concourse.lang.sort.Direction;
+import com.cinchapi.concourse.lang.sort.Order;
+import com.cinchapi.concourse.lang.sort.OrderComponent;
 import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
@@ -46,7 +52,7 @@ import com.github.zafarkhaja.semver.Version;
 import com.google.common.cache.Cache;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Maps;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
 
@@ -101,6 +107,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     .forEach(subType -> hierarchies.put(type, subType));
         });
     }
+
+    /**
+     * Placeholder for a {@code null} {@link Order} parameter.
+     */
+    private static Order NO_ORDER = null;
+
+    /**
+     * Placeholder for a {@code null} {@link Page} parameter.
+     */
+    private static Page NO_PAGINATION = null;
 
     /**
      * Return a builder that can be used to precisely configure a {@link Runway}
@@ -160,18 +176,27 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Utility method do ensure that the {@code criteria} is limited to querying
-     * objects that belong to a specific {@code clazz}.
+     * Return a {@link List} based {
      * 
-     * @param criteria
-     * @param clazz
-     * @return the updated {@code criteria}
+     * @
+     * @param order
+     * @return
      */
-    private static <T> Criteria ensureClassSpecificCriteria(Criteria criteria,
-            Class<T> clazz) {
-        return Criteria.where().key(Record.SECTION_KEY)
-                .operator(Operator.EQUALS).value(clazz.getName()).and()
-                .group(criteria).build();
+    private static List<String> backwardsCompatible(Order order) {
+        List<String> components = Lists.newArrayList();
+        for (OrderComponent component : order.spec()) {
+            if(component.timestamp() != null) {
+                throw new UnsupportedOperationException(
+                        "An OrderComponent with a timestamp is not backwards compatible");
+            }
+            else {
+                String prefix = component.direction() == Direction.ASCENDING
+                        ? Record.SORT_DIRECTION_ASCENDING_PREFIX
+                        : Record.SORT_DIRECTION_DESCENDING_PREFIX;
+                components.add(prefix + component.key());
+            }
+        }
+        return components;
     }
 
     /**
@@ -181,9 +206,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * A pluggable {@link Cache} that can be used to make repeated record
-     * {@link #load(Class, long, TLongObjectHashMap)} more efficient.
+     * {@link #instantiate(Class, long, TLongObjectHashMap)} more efficient.
      */
     private final Cache<Long, Record> cache;
+
+    /**
+     * A flag that indicates whether the connected server supports result set
+     * sorting and pagination.
+     */
+    private final boolean hasNativeSortingAndPagination;
 
     /**
      * A mapping from a transaction id to the set of records that are waiting to
@@ -192,12 +223,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * record that will later exist (e.g. waiting to be saved).
      */
     private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
-
-    /**
-     * A flag that indicates whether the connected server supports result set
-     * sorting.
-     */
-    private final boolean sortable;
 
     /**
      * Construct a new instance.
@@ -219,7 +244,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Version target = Version.forIntegers(0, 10);
             Version actual = Versions
                     .parseSemanticVersion(concourse.getServerVersion());
-            sortable = actual.greaterThanOrEqualTo(target);
+            this.hasNativeSortingAndPagination = actual
+                    .greaterThanOrEqualTo(target);
         }
         finally {
             connections.release(concourse);
@@ -244,74 +270,177 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $find(concourse, clazz, criteria);
-            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
-            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
-            Set<T> records = LazyTransformSet.of(ids, id -> {
-                if(data.get() == null) {
-                    data.set($select(ids));
-                }
-                return load(clazz, id, existing, data.get().get(id));
-            });
-            return records;
+            Set<Long> ids = $find(concourse, clazz, criteria, NO_ORDER,
+                    NO_PAGINATION);
+            return instantiate(clazz, ids);
         }
         finally {
             connections.release(concourse);
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Override
-    @SuppressWarnings({ "rawtypes", "unchecked" })
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Order order) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $find(concourse, clazz, criteria, order,
+                        NO_PAGINATION);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria, backwardsCompatible(order));
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Order order, Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $find(concourse, clazz, criteria, order, page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    @Override
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $find(concourse, clazz, criteria, NO_ORDER,
+                        NO_PAGINATION);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria).stream().skip(page.skip())
+                    .limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Collection<Class<?>> hierarchy = hierarchies.get(clazz);
-            Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
-            for (Class cls : hierarchy) {
-                Set<Long> $ids = $find(concourse, cls, criteria);
-                $ids.forEach(id -> ids.put(id, cls));
-            }
-            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
-            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
-            Set<T> found = LazyTransformSet.of(ids.keySet(), id -> {
-                if(data.get() == null) {
-                    data.set($select(ids.keySet()));
-                }
-                return load(ids.get(id), id, existing, data.get().get(id));
-            });
-            return found;
+            Set<Long> ids = $findAny(concourse, clazz, criteria, NO_ORDER,
+                    NO_PAGINATION);
+            return instantiate(ids);
         }
         finally {
             connections.release(concourse);
         }
+    }
 
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Order order) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $findAny(concourse, clazz, criteria, order,
+                        NO_PAGINATION);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria, backwardsCompatible(order));
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Order order, Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $findAny(concourse, clazz, criteria, order,
+                        page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
     }
 
     @Override
-    @SuppressWarnings({ "unchecked", "rawtypes" })
-    public <T extends Record> T findAnyUnique(Class<T> clazz,
-            Criteria criteria) {
-        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
-        Set<T> found = Sets.newLinkedHashSet();
-        for (Class cls : hierarchy) {
-            T $found = (T) findUnique(cls, criteria);
-            if($found != null) {
-                found.add($found);
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $findAny(concourse, clazz, criteria, NO_ORDER,
+                        page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
             }
         }
-        if(found.size() == 0) {
-            return null;
-        }
-        else if(found.size() == 1) {
-            return found.iterator().next();
-        }
         else {
-            throw new DuplicateEntryException(
-                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                            AnyStrings.format(
-                                    "There are more than one records that match {} in the hierarchy of {}",
-                                    criteria, clazz)));
+            return findAny(clazz, criteria).stream().skip(page.skip())
+                    .limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    @Override
+    public <T extends Record> T findAnyUnique(Class<T> clazz,
+            Criteria criteria) {
+        Concourse concourse = connections.request();
+        try {
+            Set<Long> ids = $findAny(concourse, clazz, criteria, NO_ORDER,
+                    NO_PAGINATION);
+            if(ids.isEmpty()) {
+                return null;
+            }
+            else if(ids.size() == 1) {
+                return load(clazz, ids.iterator().next());
+            }
+            else {
+                throw new DuplicateEntryException(
+                        new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                                AnyStrings.format(
+                                        "There are more than one records that match {} in the hierarchy of {}",
+                                        criteria, clazz)));
+            }
+        }
+        finally {
+            connections.release(concourse);
         }
     }
 
@@ -350,21 +479,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            criteria = ensureClassSpecificCriteria(criteria, clazz);
-            Set<Long> ids = concourse.find(criteria);
+            Set<Long> ids = $find(concourse, clazz, criteria, NO_ORDER,
+                    NO_PAGINATION);
             if(ids.isEmpty()) {
                 return null;
             }
-            else if(ids.size() > 1) {
+            else if(ids.size() == 1) {
+                return load(clazz, ids.iterator().next());
+            }
+            else {
                 throw new DuplicateEntryException(
                         new com.cinchapi.concourse.thrift.DuplicateEntryException(
                                 AnyStrings.format(
                                         "There are more than one records that match {} in {}",
                                         criteria, clazz)));
-            }
-            else {
-                long id = Iterables.getOnlyElement(ids);
-                return load(clazz, id);
             }
         }
         finally {
@@ -376,16 +504,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> load(Class<T> clazz) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $load(concourse, clazz);
-            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
-            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
-            Set<T> records = LazyTransformSet.of(ids, id -> {
-                if(data.get() == null) {
-                    data.set($select(ids));
-                }
-                return load(clazz, id, existing, data.get().get(id));
-            });
-            return records;
+            Set<Long> ids = $load(concourse, clazz, NO_ORDER, NO_PAGINATION);
+            return instantiate(clazz, ids);
         }
         finally {
             connections.release(concourse);
@@ -408,32 +528,133 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 connections.release(connection);
             }
         }
-        return load(clazz, id, new TLongObjectHashMap<Record>(), null);
+        return instantiate(clazz, id, new TLongObjectHashMap<Record>(), null);
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> load(Class<T> clazz, Order order) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $load(concourse, clazz, order, NO_PAGINATION);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz, backwardsCompatible(order));
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $load(concourse, clazz, order, page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz, backwardsCompatible(order)).stream()
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
     }
 
     @Override
-    @SuppressWarnings({ "rawtypes", "unchecked" })
+    public <T extends Record> Set<T> load(Class<T> clazz, Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $load(concourse, clazz, NO_ORDER, page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz).stream().skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz) {
         Concourse concourse = connections.request();
         try {
-            Collection<Class<?>> hierarchy = hierarchies.get(clazz);
-            Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
-            for (Class cls : hierarchy) {
-                Set<Long> $ids = $load(concourse, cls);
-                $ids.forEach(id -> ids.put(id, cls));
-            }
-            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
-            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
-            Set<T> loaded = LazyTransformSet.of(ids.keySet(), id -> {
-                if(data.get() == null) {
-                    data.set($select(ids.keySet()));
-                }
-                return load(ids.get(id), id, existing, data.get().get(id));
-            });
-            return loaded;
+            Set<Long> ids = $loadAny(concourse, clazz, NO_ORDER, NO_PAGINATION);
+            return instantiate(ids);
         }
         finally {
             connections.release(concourse);
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $loadAny(concourse, clazz, order,
+                        NO_PAGINATION);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz, backwardsCompatible(order));
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+            Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $loadAny(concourse, clazz, order, page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz, backwardsCompatible(order)).stream()
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    @Override
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Set<Long> ids = $loadAny(concourse, clazz, NO_ORDER, page);
+                return instantiate(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz).stream().skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -503,16 +724,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             String... keys) {
         Concourse concourse = connections.request();
         try {
-            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<>();
             Set<Long> ids = $search(concourse, clazz, query, keys);
-            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
-            Set<T> records = LazyTransformSet.of(ids, id -> {
-                if(data.get() == null) {
-                    data.set($select(ids));
-                }
-                return load(clazz, id, existing, data.get().get(id));
-            });
-            return records;
+            return instantiate(clazz, ids);
         }
         finally {
             connections.release(concourse);
@@ -528,34 +741,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param keys
      * @return the matching search results
      */
-    @SuppressWarnings({ "rawtypes", "unchecked" })
     public <T extends Record> Set<T> searchAny(Class<T> clazz, String query,
             String... keys) {
         Concourse concourse = connections.request();
         try {
-            Collection<Class<?>> hierarchy = hierarchies.get(clazz);
-            Map<Long, Class<T>> ids = Maps.newLinkedHashMap();
-            for (Class cls : hierarchy) {
-                Set<Long> $ids = $search(concourse, cls, query, keys);
-                $ids.forEach(id -> ids.put(id, cls));
-            }
-            TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
-            AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
-            Set<T> loaded = LazyTransformSet.of(ids.keySet(), id -> {
-                if(data.get() == null) {
-                    data.set($select(ids.keySet()));
-                }
-                return load(ids.get(id), id, existing, data.get().get(id));
-            });
-            return loaded;
+            Set<Long> ids = $searchAny(concourse, clazz, query, keys);
+            return instantiate(ids);
         }
         finally {
             connections.release(concourse);
         }
-
     }
-
-    // TODO: what about loading a specific record using a parent class?
 
     /**
      * Perform the find operation using the {@code concourse} handler.
@@ -566,9 +762,54 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the result set
      */
     private <T> Set<Long> $find(Concourse concourse, Class<T> clazz,
-            Criteria criteria) {
-        criteria = ensureClassSpecificCriteria(criteria, clazz);
-        return concourse.find(criteria);
+            Criteria criteria, @Nullable Order order, @Nullable Page page) {
+        criteria = $Criteria.withinClass(clazz, criteria);
+        return find0(concourse, criteria, order, page);
+    }
+
+    /**
+     * Internal utility method to dispatch a "find" request" for a
+     * {@code criteria} based on whether the {@code order} and/or {@code page}
+     * params are non-null.
+     * 
+     * @param concourse
+     * @param criteria
+     * @param order
+     * @param page
+     * @return the ids of the matching records
+     */
+    private Set<Long> find0(Concourse concourse, Criteria criteria, Order order,
+            @Nullable Page page) {
+        Set<Long> ids;
+        if(order != null && page != null) {
+            ids = concourse.find(criteria, order, page);
+        }
+        else if(order == null && page == null) {
+            ids = concourse.find(criteria);
+        }
+        else if(order != null) {
+            ids = concourse.find(criteria, order);
+        }
+        else { // page != null
+            ids = concourse.find(criteria, page);
+        }
+        return ids;
+    }
+
+    /**
+     * Perform the "find any" operation using the {@code concourse} handler.
+     * 
+     * @param concourse
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @return the result set
+     */
+    private <T> Set<Long> $findAny(Concourse concourse, Class<T> clazz,
+            Criteria criteria, @Nullable Order order, @Nullable Page page) {
+        criteria = $Criteria.accrossClassHierachy(clazz, criteria);
+        return find0(concourse, criteria, order, page);
     }
 
     /**
@@ -579,10 +820,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz
      * @return the records in the class
      */
-    private <T> Set<Long> $load(Concourse concourse, Class<T> clazz) {
-        Criteria criteria = Criteria.where().key(Record.SECTION_KEY)
-                .operator(Operator.EQUALS).value(clazz.getName()).build();
-        return concourse.find(criteria);
+    private <T> Set<Long> $load(Concourse concourse, Class<T> clazz,
+            @Nullable Order order, @Nullable Page page) {
+        Criteria criteria = $Criteria.forClass(clazz);
+        return find0(concourse, criteria, order, page);
+    }
+
+    /**
+     * Return the ids of all the {@code Record}s in the {@code clazz} hierarchy,
+     * using the provided {@code concourse} connection.
+     * 
+     * @param concourse
+     * @param clazz
+     * @return the records in the class hierarchy
+     */
+    private <T> Set<Long> $loadAny(Concourse concourse, Class<T> clazz,
+            @Nullable Order order, @Nullable Page page) {
+        Criteria criteria = $Criteria.forClassHierarchy(clazz);
+        return find0(concourse, criteria, order, page);
     }
 
     /**
@@ -604,25 +859,33 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Intelligently select all the data for the {@code ids} from
-     * {@code concourse}.
+     * Internal method to perform a search across a {@code clazz} hierarchy and
+     * return the matching ids.
      * 
      * @param concourse
-     * @param ids
-     * @return the selected data
+     * @param clazz
+     * @param query
+     * @param keys
+     * @return the ids of the records that match the search
      */
-    private Map<Long, Map<String, Set<Object>>> $select(Set<Long> ids) {
-        Concourse concourse = connections.request();
-        try {
-            // TODO: stagger/stream/buffer the load if there are a lot of ids
-            // (possibly using a continuation) so that a group of records are
-            // fetched on the fly only when necessary so as to prevent holding
-            // so much data in memory
-            return concourse.select(ids);
+    @SuppressWarnings("rawtypes")
+    private <T> Set<Long> $searchAny(Concourse concourse, Class<T> clazz,
+            String query, String... keys) {
+        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+        Predicate<Long> filter = null;
+        for (Class cls : hierarchy) {
+            Predicate<Long> $filter = record -> concourse
+                    .get(Record.SECTION_KEY, record).equals(cls.getName());
+            if(filter == null) {
+                filter = $filter;
+            }
+            else {
+                filter = filter.or($filter);
+            }
         }
-        finally {
-            connections.release(concourse);
-        }
+        return Arrays.stream(keys).map(key -> concourse.search(key, query))
+                .flatMap(Set::stream).filter(filter)
+                .collect(Collectors.toSet());
     }
 
     /**
@@ -643,10 +906,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz
      * @param id
      * @param existing
+     * @param data
      * @return the loaded {@link Record} instance
      */
     @SuppressWarnings("unchecked")
-    private <T extends Record> T load(Class<T> clazz, long id,
+    private <T extends Record> T instantiate(Class<T> clazz, long id,
             TLongObjectHashMap<Record> existing,
             @Nullable Map<String, Set<Object>> data) {
         Record record;
@@ -660,6 +924,129 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             throw CheckedExceptions.wrapAsRuntimeException(e);
         }
         return (T) record;
+    }
+
+    /**
+     * Create a {@link Record} instance of type {@code clazz} (or one of its
+     * descendants) for each of the {@code ids}.
+     * 
+     * @param clazz
+     * @param ids
+     * @return the instantiated {@link Record}s
+     */
+    private <T extends Record> Set<T> instantiate(Class<T> clazz,
+            Set<Long> ids) {
+        TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
+        AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        Set<T> records = LazyTransformSet.of(ids, id -> {
+            if(data.get() == null) {
+                data.set(select(ids));
+            }
+            return instantiate(clazz, id, existing, data.get().get(id));
+        });
+        return records;
+    }
+
+    /**
+     * Internal method to help recursively load records by keeping tracking of
+     * which ones currently exist. Ultimately this method will load the Record
+     * that is contained within the specified {@code clazz} and
+     * has the specified {@code id}.
+     * <p>
+     * Unlike {@link #instantiate(Class, long, TLongObjectHashMap, Map)} this
+     * method
+     * does not need to know the desired {@link Class} of the loaded
+     * {@link Record}.
+     * </p>
+     * <p>
+     * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
+     * used), multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation. If a cache is provided, the rules (e.g.
+     * expiration policy, etc) of said cache govern when multiple calls to this
+     * method return the same instance for the provided parameters or not.
+     * </p>
+     * 
+     * @param id
+     * @param existing
+     * @param data
+     * @return the loaded {@link Record} instance
+     */
+    @SuppressWarnings("unchecked")
+    private <T extends Record> T instantiate(long id,
+            TLongObjectHashMap<Record> existing,
+            @Nullable Map<String, Set<Object>> data) {
+        Record record;
+        try {
+            record = cache.get(id, () -> {
+                Map<String, Set<Object>> $data = data;
+                if($data == null) {
+                    // Since the desired class isn't specified, we must
+                    // prematurely select the record's data to determine it.
+                    Concourse connection = connections.request();
+                    try {
+                        $data = connection.select(id);
+                    }
+                    finally {
+                        connections.release(connection);
+                    }
+                }
+                String section = (String) Iterables
+                        .getLast($data.get(Record.SECTION_KEY));
+                Class<T> clazz = Reflection.getClassCasted(section);
+                return Record.load(clazz, id, existing, connections, this,
+                        data);
+            });
+        }
+        catch (ExecutionException e) {
+            throw CheckedExceptions.wrapAsRuntimeException(e);
+        }
+        return (T) record;
+    }
+
+    /**
+     * Create a {@link Record} instance for each of the {@code ids}.
+     * <p>
+     * The {@link Record} class will be determined by the data stored for each
+     * of the {@code ids}.
+     * </p>
+     * 
+     * @param ids
+     * @return the instantiated {@link Record}s
+     */
+    private <T extends Record> Set<T> instantiate(Set<Long> ids) {
+        TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
+        AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        Set<T> records = LazyTransformSet.of(ids, id -> {
+            if(data.get() == null) {
+                data.set(select(ids));
+            }
+            return instantiate(id, existing, data.get().get(id));
+        });
+        return records;
+    }
+
+    /**
+     * Intelligently select all the data for the {@code ids} from
+     * {@code concourse}.
+     * 
+     * @param concourse
+     * @param ids
+     * @return the selected data
+     */
+    private Map<Long, Map<String, Set<Object>>> select(Set<Long> ids) {
+        Concourse concourse = connections.request();
+        try {
+            // TODO: stagger/stream/buffer the load if there are a lot of ids
+            // (possibly using a continuation) so that a group of records are
+            // fetched on the fly only when necessary so as to prevent holding
+            // so much data in memory
+            return concourse.select(ids);
+        }
+        finally {
+            connections.release(concourse);
+        }
     }
 
     /**
@@ -752,6 +1139,80 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             this.username = username;
             return this;
         }
+    }
+
+    /**
+     * Internal utility class for Database {@link Criteria} with support for
+     * {@link Runway} specific semantics.
+     *
+     * @author Jeff Nelson
+     */
+    private static class $Criteria {
+
+        /**
+         * Utility method do ensure that the {@code criteria} is limited to
+         * querying objects that belong to a specific {@code clazz} hierarchy.
+         * 
+         * @param criteria
+         * @param parent class
+         * 
+         * @return the updated {@code criteria}
+         */
+        public static <T> Criteria accrossClassHierachy(Class<T> clazz,
+                Criteria criteria) {
+            return Criteria.where().group(forClassHierarchy(clazz)).and()
+                    .group(criteria).build();
+        }
+
+        /**
+         * Return a {@link Criteria} to find records within {@code clazz}.
+         * 
+         * @param clazz
+         * @return the {@link Criteria}
+         */
+        public static <T> Criteria forClass(Class<T> clazz) {
+            return Criteria.where().key(Record.SECTION_KEY)
+                    .operator(Operator.EQUALS).value(clazz.getName()).build();
+        }
+
+        /**
+         * Return a {@link Criteria} to find records across the {@code clazz}
+         * hierarchy.
+         * 
+         * @param clazz
+         * @return the {@link Criteria}
+         */
+        @SuppressWarnings("rawtypes")
+        public static <T> Criteria forClassHierarchy(Class<T> clazz) {
+            Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+            BuildableState criteria = null;
+            for (Class cls : hierarchy) {
+                if(criteria == null) {
+                    criteria = Criteria.where().key(Record.SECTION_KEY)
+                            .operator(Operator.EQUALS).value(cls.getName());
+                }
+                else {
+                    criteria.or().key(Record.SECTION_KEY)
+                            .operator(Operator.EQUALS).value(cls.getName());
+                }
+            }
+            return criteria.build();
+        }
+
+        /**
+         * Utility method do ensure that the {@code criteria} is limited to
+         * querying
+         * objects that belong to a specific {@code clazz}.
+         * 
+         * @param clazz
+         * @param criteria
+         */
+        public static <T> Criteria withinClass(Class<T> clazz,
+                Criteria criteria) {
+            return Criteria.where().group(forClass(clazz)).and().group(criteria)
+                    .build();
+        }
+
     }
 
 }

@@ -23,6 +23,8 @@ import java.util.stream.Collectors;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.paginate.Page;
+import com.cinchapi.concourse.lang.sort.Order;
 
 /**
  * A {@link DatabaseInterface} provides methods for interacting with a database
@@ -31,25 +33,6 @@ import com.cinchapi.concourse.lang.Criteria;
  * @author Jeff Nelson
  */
 public interface DatabaseInterface {
-
-    /*
-     * IMPLEMENTATION NOTE
-     * -------------------
-     * Sorting functionality currently uses the local Record#compareTo(Record,
-     * <String|List>) functionality because Concourse (as of Version 0.9.Z) does
-     * not natively support result sorting. This is expected to change in a
-     * future release. When that happens, Runway must seamlessly leverage the
-     * database's native sort when available while also falling back to the
-     * current implementation when it is not supported.
-     * 
-     * To do so, do the following:
-     * 1) Add #find, #findAny, #load and #loadAny methods that take Concourse's
-     * sort construct (e.g. Order)
-     * 2) In the implementation of those new methods, check the version of
-     * Concourse. If native sort is supported, use it. Otherwise, convert the
-     * Order to Runway's String/List order instruction and call the appropriate
-     * method.
-     */
 
     /**
      * Return the {@code records} in sorted {@code order}.
@@ -88,151 +71,94 @@ public interface DatabaseInterface {
      * @param criteria
      * @return the matching records
      */
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            BuildableState criteria) {
-        return find(clazz, criteria.build());
-    }
-
-    /**
-     * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria} sorted by the specified {@code order}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @return the matching records
-     */
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            BuildableState criteria, String order) {
-        Set<T> records = find(clazz, criteria);
-        return sort(records, order);
-    }
-
-    /**
-     * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria} sorted by the specified {@code order}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @return the matching records
-     */
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, String order) {
-        Set<T> records = find(clazz, criteria);
-        return sort(records, order);
-    }
-
-    /**
-     * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria} sorted by the specified {@code order}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @return the matching records
-     */
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            BuildableState criteria, List<String> order) {
-        Set<T> records = find(clazz, criteria);
-        return sort(records, order);
-    }
-
-    /**
-     * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria} sorted by the specified {@code order}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @return the matching records
-     */
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, List<String> order) {
-        Set<T> records = find(clazz, criteria);
-        return sort(records, order);
-    }
-
-    /**
-     * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the matching records
-     */
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria);
 
     /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
-     * and all of its descendants.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the matching records
-     */
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            BuildableState criteria) {
-        return findAny(clazz, criteria.build());
-    }
-
-    /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order}.
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order}.
      * 
      * @param clazz
      * @param criteria
      * @param order
      * @return the matching records
+     * @deprecated Use {@link #find(Class, Criteria, Order)} instead
      */
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            BuildableState criteria, String order) {
-        Set<T> records = findAny(clazz, criteria);
-        return sort(records, order);
-    }
-
-    /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @return the matching records
-     */
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            BuildableState criteria, List<String> order) {
-        Set<T> records = findAny(clazz, criteria);
-        return sort(records, order);
-    }
-
-    /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @return the matching records
-     */
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, String order) {
-        Set<T> records = findAny(clazz, criteria);
-        return sort(records, order);
-    }
-
-    /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @return the matching records
-     */
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+    @Deprecated
+    public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, List<String> order) {
-        Set<T> records = findAny(clazz, criteria);
+        Set<T> records = find(clazz, criteria);
+        return sort(records, order);
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @return the matching records
+     * @deprecated Use {@link #find(Class, Criteria, Order)} instead
+     */
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Order order);
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order} and limited to the
+     * specified {@code page}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Order order, Page page);
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} limited to the specified {@code page}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Page page);
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order} and limited to the
+     * specified {@code page}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Page page, Order order) {
+        return find(clazz, criteria, order, page);
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @return the matching records
+     * @deprecated Use {@link #find(Class, Criteria, Order)} instead
+     */
+    @Deprecated
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, String order) {
+        Set<T> records = find(clazz, criteria);
         return sort(records, order);
     }
 
@@ -247,22 +173,96 @@ public interface DatabaseInterface {
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria);
 
     /**
-     * Execute the {@link #findUnique(Class, BuildableState)} query for
-     * {@code clazz} and all of its descendants.
+     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order}.
      * 
      * @param clazz
      * @param criteria
-     * @return the one matching record
+     * @param order
+     * @return the matching records
+     * @deprecated Use {@link #findAny(Class, Criteria, Order)} instead
      */
-    public default <T extends Record> T findAnyUnique(Class<T> clazz,
-            BuildableState criteria) {
-        return findAnyUnique(clazz, criteria.build());
+    @Deprecated
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, List<String> order) {
+        Set<T> records = findAny(clazz, criteria);
+        return sort(records, order);
+    }
+
+    /**
+     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Order order);
+
+    /**
+     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order} and
+     * limited to the specified {@code page}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Order order, Page page);
+
+    /**
+     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * and all of its descendants limited to the specified {@code page}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Page page);
+
+    /**
+     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order} and
+     * limited to the specified {@code page}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @param order
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Page page, Order order) {
+        return findAny(clazz, criteria, order, page);
+    }
+
+    /**
+     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @return the matching records
+     * @deprecated Use {@link #findAny(Class, Criteria, Order)} instead
+     */
+    @Deprecated
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, String order) {
+        Set<T> records = findAny(clazz, criteria);
+        return sort(records, order);
     }
 
     /**
      * Execute the {@link #findUnique(Class, Criteria)} query for {@code clazz}
-     * and
-     * all of its descendants.
+     * and all of its descendants.
      * 
      * @param clazz
      * @param criteria
@@ -270,21 +270,6 @@ public interface DatabaseInterface {
      */
     public <T extends Record> T findAnyUnique(Class<T> clazz,
             Criteria criteria);
-
-    /**
-     * Find the one record of type {@code clazz} that matches the
-     * {@code criteria}. If more than one record matches, throw a
-     * {@link DuplicateEntryException}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @return the one matching record
-     * @throws DuplicateEntryException
-     */
-    public default <T extends Record> T findUnique(Class<T> clazz,
-            BuildableState criteria) {
-        return findUnique(clazz, criteria.build());
-    }
 
     /**
      * Find the one record of type {@code clazz} that matches the
@@ -327,7 +312,9 @@ public interface DatabaseInterface {
      * 
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
+     * @deprecated Use {@link #load(Class, Order)}
      */
+    @Deprecated
     public default <T extends Record> Set<T> load(Class<T> clazz,
             List<String> order) {
         Set<T> records = load(clazz);
@@ -362,8 +349,86 @@ public interface DatabaseInterface {
      * </p>
      * 
      * @param clazz
+     * @param order
      * @return a {@link Set set} of {@link Record} objects
      */
+    public <T extends Record> Set<T> load(Class<T> clazz, Order order);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order} and limited to
+     * the specified {@code page}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param order
+     * @param page
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Page page);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and limited to the specified {@code page}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> load(Class<T> clazz, Page page);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order} and limited to
+     * the specified {@code page}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @param order
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Order order) {
+        return load(clazz, order, page);
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @return a {@link Set set} of {@link Record} objects
+     * @deprecated Use {@link #load(Class, Order)} instead
+     */
+    @Deprecated
     public default <T extends Record> Set<T> load(Class<T> clazz,
             String order) {
         Set<T> records = load(clazz);
@@ -400,9 +465,11 @@ public interface DatabaseInterface {
      * 
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
+     * @deprecated Use {@link #loadAny(Class, Order)} instead
      */
+    @Deprecated
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            String order) {
+            List<String> order) {
         Set<T> records = loadAny(clazz);
         return sort(records, order);
     }
@@ -420,10 +487,89 @@ public interface DatabaseInterface {
      * </p>
      * 
      * @param clazz
+     * @param order
      * @return a {@link Set set} of {@link Record} objects
      */
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} and limited to the specified {@code page}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param order
+     * @param page
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+            Page page);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and limited to the specified {@code page}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} and limited to the specified {@code page}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @param order
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Order order) {
+        return loadAny(clazz, order, page);
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @return a {@link Set set} of {@link Record} objects
+     * @deprecated Use {@link #loadAny(Class, Order)} instead
+     */
+    @Deprecated
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            List<String> order) {
+            String order) {
         Set<T> records = loadAny(clazz);
         return sort(records, order);
     }
