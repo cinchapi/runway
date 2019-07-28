@@ -697,22 +697,6 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return a JSON string containing this {@link Record}'s readable and
-     * temporary data from the specified {@code keys}.
-     * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
-     * </p>
-     * 
-     * @param keys
-     * @return json string
-     */
-    public String json(String... keys) {
-        return json(SerializationOptions.defaults(), keys);
-    }
-
-    /**
-     * Return a JSON string containing this {@link Record}'s readable and
      * temporary data.
      *
      * @param options
@@ -740,6 +724,22 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data from the specified {@code keys}.
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @param keys
+     * @return json string
+     */
+    public String json(String... keys) {
+        return json(SerializationOptions.defaults(), keys);
+    }
+
+    /**
      * Return a map that contains "readable" data from this {@link Record}.
      * <p>
      * If no {@code keys} are provided, all the readable data will be
@@ -755,25 +755,6 @@ public abstract class Record implements Comparable<Record> {
      */
     public Map<String, Object> map() {
         return map(Array.containing());
-    }
-
-    /**
-     * Return a map that contains "readable" data from this {@link Record}.
-     * <p>
-     * If no {@code keys} are provided, all the readable data will be
-     * returned.
-     * </p>
-     * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
-     * </p>
-     * 
-     * @param keys
-     * @return the data in this record
-     */
-    public Map<String, Object> map(String... keys) {
-        return map(SerializationOptions.defaults(), keys);
     }
 
     /**
@@ -835,6 +816,25 @@ public abstract class Record implements Comparable<Record> {
         Map<String, Object> data = pool.filter(filter).collect(
                 LinkedHashMap::new, accumulator, MergeStrategies::upsert);
         return data;
+    }
+
+    /**
+     * Return a map that contains "readable" data from this {@link Record}.
+     * <p>
+     * If no {@code keys} are provided, all the readable data will be
+     * returned.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @param keys
+     * @return the data in this record
+     */
+    public Map<String, Object> map(String... keys) {
+        return map(SerializationOptions.defaults(), keys);
     }
 
     /**

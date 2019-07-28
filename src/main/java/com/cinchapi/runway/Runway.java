@@ -87,6 +87,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private static long METADATA_RECORD = -1;
 
+    static {
+        // NOTE: Scanning the classpath adds startup costs proportional to the
+        // number of classes defined. We do this once at startup to minimize the
+        // effect of the cost.
+        hierarchies = HashMultimap.create();
+        Logging.disable(Reflections.class);
+        Reflections.log = null; // turn off reflection logging
+        Reflections reflection = new Reflections(new SubTypesScanner());
+        reflection.getSubTypesOf(Record.class).forEach(type -> {
+            hierarchies.put(type, type);
+            reflection.getSubTypesOf(type)
+                    .forEach(subType -> hierarchies.put(type, subType));
+        });
+    }
+
     /**
      * Return a builder that can be used to precisely configure a {@link Runway}
      * instance.
@@ -157,21 +172,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return Criteria.where().key(Record.SECTION_KEY)
                 .operator(Operator.EQUALS).value(clazz.getName()).and()
                 .group(criteria).build();
-    }
-
-    static {
-        // NOTE: Scanning the classpath adds startup costs proportional to the
-        // number of classes defined. We do this once at startup to minimize the
-        // effect of the cost.
-        hierarchies = HashMultimap.create();
-        Logging.disable(Reflections.class);
-        Reflections.log = null; // turn off reflection logging
-        Reflections reflection = new Reflections(new SubTypesScanner());
-        reflection.getSubTypesOf(Record.class).forEach(type -> {
-            hierarchies.put(type, type);
-            reflection.getSubTypesOf(type)
-                    .forEach(subType -> hierarchies.put(type, subType));
-        });
     }
 
     /**
