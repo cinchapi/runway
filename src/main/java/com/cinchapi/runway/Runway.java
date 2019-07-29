@@ -269,9 +269,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $find(concourse, clazz, criteria, NO_ORDER,
-                    NO_PAGINATION);
-            return instantiate(clazz, ids);
+            Map<Long, Map<String, Set<Object>>> data = $find(concourse, clazz,
+                    criteria, NO_ORDER, NO_PAGINATION);
+            return instantiateAll(clazz, data);
         }
         finally {
             connections.release(concourse);
@@ -285,9 +285,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $find(concourse, clazz, criteria, order,
-                        NO_PAGINATION);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $find(concourse,
+                        clazz, criteria, order, NO_PAGINATION);
+                return instantiateAll(clazz, data);
             }
             finally {
                 connections.release(concourse);
@@ -305,8 +305,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $find(concourse, clazz, criteria, order, page);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $find(concourse,
+                        clazz, criteria, order, page);
+                return instantiateAll(clazz, data);
             }
             finally {
                 connections.release(concourse);
@@ -325,9 +326,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $find(concourse, clazz, criteria, NO_ORDER,
-                        NO_PAGINATION);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $find(concourse,
+                        clazz, criteria, NO_ORDER, NO_PAGINATION);
+                return instantiateAll(clazz, data);
             }
             finally {
                 connections.release(concourse);
@@ -345,9 +346,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $findAny(concourse, clazz, criteria, NO_ORDER,
-                    NO_PAGINATION);
-            return instantiate(ids);
+            Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
+                    clazz, criteria, NO_ORDER, NO_PAGINATION);
+            return instantiateAll(data);
         }
         finally {
             connections.release(concourse);
@@ -361,9 +362,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $findAny(concourse, clazz, criteria, order,
-                        NO_PAGINATION);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
+                        clazz, criteria, order, NO_PAGINATION);
+                return instantiateAll(data);
             }
             finally {
                 connections.release(concourse);
@@ -381,9 +382,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $findAny(concourse, clazz, criteria, order,
-                        page);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
+                        clazz, criteria, order, page);
+                return instantiateAll(data);
             }
             finally {
                 connections.release(concourse);
@@ -402,9 +403,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $findAny(concourse, clazz, criteria, NO_ORDER,
-                        page);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
+                        clazz, criteria, NO_ORDER, page);
+                return instantiateAll(data);
             }
             finally {
                 connections.release(concourse);
@@ -422,13 +423,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $findAny(concourse, clazz, criteria, NO_ORDER,
-                    NO_PAGINATION);
-            if(ids.isEmpty()) {
+            Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
+                    clazz, criteria, NO_ORDER, NO_PAGINATION);
+            if(data.isEmpty()) {
                 return null;
             }
-            else if(ids.size() == 1) {
-                return load(clazz, ids.iterator().next());
+            else if(data.size() == 1) {
+                return (T) instantiate(clazz, data.keySet().iterator().next(),
+                        data.values().iterator().next());
             }
             else {
                 throw new DuplicateEntryException(
@@ -478,13 +480,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $find(concourse, clazz, criteria, NO_ORDER,
-                    NO_PAGINATION);
-            if(ids.isEmpty()) {
+            Map<Long, Map<String, Set<Object>>> data = $find(concourse, clazz,
+                    criteria, NO_ORDER, NO_PAGINATION);
+            if(data.isEmpty()) {
                 return null;
             }
-            else if(ids.size() == 1) {
-                return load(clazz, ids.iterator().next());
+            else if(data.size() == 1) {
+                return (T) instantiate(clazz, data.keySet().iterator().next(),
+                        data.values().iterator().next());
             }
             else {
                 throw new DuplicateEntryException(
@@ -503,8 +506,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> load(Class<T> clazz) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $load(concourse, clazz, NO_ORDER, NO_PAGINATION);
-            return instantiate(clazz, ids);
+            Map<Long, Map<String, Set<Object>>> data = $load(concourse, clazz,
+                    NO_ORDER, NO_PAGINATION);
+            return instantiateAll(clazz, data);
         }
         finally {
             connections.release(concourse);
@@ -527,7 +531,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 connections.release(connection);
             }
         }
-        return instantiate(clazz, id, new TLongObjectHashMap<Record>(), null);
+        return instantiate(clazz, id, null);
     }
 
     @SuppressWarnings("deprecation")
@@ -536,8 +540,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $load(concourse, clazz, order, NO_PAGINATION);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $load(concourse,
+                        clazz, order, NO_PAGINATION);
+                return instantiateAll(clazz, data);
             }
             finally {
                 connections.release(concourse);
@@ -555,8 +560,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $load(concourse, clazz, order, page);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $load(concourse,
+                        clazz, order, page);
+                return instantiateAll(clazz, data);
             }
             finally {
                 connections.release(concourse);
@@ -574,8 +580,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $load(concourse, clazz, NO_ORDER, page);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $load(concourse,
+                        clazz, NO_ORDER, page);
+                return instantiateAll(clazz, data);
             }
             finally {
                 connections.release(concourse);
@@ -591,8 +598,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> loadAny(Class<T> clazz) {
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $loadAny(concourse, clazz, NO_ORDER, NO_PAGINATION);
-            return instantiate(ids);
+            Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
+                    clazz, NO_ORDER, NO_PAGINATION);
+            return instantiateAll(data);
         }
         finally {
             connections.release(concourse);
@@ -605,9 +613,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $loadAny(concourse, clazz, order,
-                        NO_PAGINATION);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
+                        clazz, order, NO_PAGINATION);
+                return instantiateAll(data);
             }
             finally {
                 connections.release(concourse);
@@ -625,8 +633,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $loadAny(concourse, clazz, order, page);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
+                        clazz, order, page);
+                return instantiateAll(data);
             }
             finally {
                 connections.release(concourse);
@@ -644,8 +653,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
-                Set<Long> ids = $loadAny(concourse, clazz, NO_ORDER, page);
-                return instantiate(ids);
+                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
+                        clazz, NO_ORDER, page);
+                return instantiateAll(data);
             }
             finally {
                 connections.release(concourse);
@@ -724,7 +734,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Concourse concourse = connections.request();
         try {
             Set<Long> ids = $search(concourse, clazz, query, keys);
-            return instantiate(clazz, ids);
+            return instantiateAll(clazz, ids);
         }
         finally {
             connections.release(concourse);
@@ -745,7 +755,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Concourse concourse = connections.request();
         try {
             Set<Long> ids = $searchAny(concourse, clazz, query, keys);
-            return instantiate(ids);
+            return instantiateAll(ids);
         }
         finally {
             connections.release(concourse);
@@ -760,10 +770,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param criteria
      * @return the result set
      */
-    private <T> Set<Long> $find(Concourse concourse, Class<T> clazz,
-            Criteria criteria, @Nullable Order order, @Nullable Page page) {
+    private <T> Map<Long, Map<String, Set<Object>>> $find(Concourse concourse,
+            Class<T> clazz, Criteria criteria, @Nullable Order order,
+            @Nullable Page page) {
         criteria = $Criteria.withinClass(clazz, criteria);
-        return find0(concourse, criteria, order, page);
+        return select(concourse, criteria, order, page);
     }
 
     /**
@@ -776,10 +787,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param page
      * @return the result set
      */
-    private <T> Set<Long> $findAny(Concourse concourse, Class<T> clazz,
-            Criteria criteria, @Nullable Order order, @Nullable Page page) {
+    private <T> Map<Long, Map<String, Set<Object>>> $findAny(
+            Concourse concourse, Class<T> clazz, Criteria criteria,
+            @Nullable Order order, @Nullable Page page) {
         criteria = $Criteria.accrossClassHierachy(clazz, criteria);
-        return find0(concourse, criteria, order, page);
+        return select(concourse, criteria, order, page);
     }
 
     /**
@@ -790,10 +802,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz
      * @return the records in the class
      */
-    private <T> Set<Long> $load(Concourse concourse, Class<T> clazz,
-            @Nullable Order order, @Nullable Page page) {
+    private <T> Map<Long, Map<String, Set<Object>>> $load(Concourse concourse,
+            Class<T> clazz, @Nullable Order order, @Nullable Page page) {
         Criteria criteria = $Criteria.forClass(clazz);
-        return find0(concourse, criteria, order, page);
+        return select(concourse, criteria, order, page);
     }
 
     /**
@@ -804,10 +816,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz
      * @return the records in the class hierarchy
      */
-    private <T> Set<Long> $loadAny(Concourse concourse, Class<T> clazz,
-            @Nullable Order order, @Nullable Page page) {
+    private <T> Map<Long, Map<String, Set<Object>>> $loadAny(
+            Concourse concourse, Class<T> clazz, @Nullable Order order,
+            @Nullable Page page) {
         Criteria criteria = $Criteria.forClassHierarchy(clazz);
-        return find0(concourse, criteria, order, page);
+        return select(concourse, criteria, order, page);
     }
 
     /**
@@ -859,35 +872,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Internal utility method to dispatch a "find" request" for a
-     * {@code criteria} based on whether the {@code order} and/or {@code page}
-     * params are non-null.
-     * 
-     * @param concourse
-     * @param criteria
-     * @param order
-     * @param page
-     * @return the ids of the matching records
-     */
-    private Set<Long> find0(Concourse concourse, Criteria criteria, Order order,
-            @Nullable Page page) {
-        Set<Long> ids;
-        if(order != null && page != null) {
-            ids = concourse.find(criteria, order, page);
-        }
-        else if(order == null && page == null) {
-            ids = concourse.find(criteria);
-        }
-        else if(order != null) {
-            ids = concourse.find(criteria, order);
-        }
-        else { // page != null
-            ids = concourse.find(criteria, page);
-        }
-        return ids;
-    }
-
-    /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
      * that is contained within the specified {@code clazz} and
@@ -910,40 +894,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     @SuppressWarnings("unchecked")
     private <T extends Record> T instantiate(Class<T> clazz, long id,
-            TLongObjectHashMap<Record> existing,
             @Nullable Map<String, Set<Object>> data) {
         Record record;
         try {
             record = cache.get(id, () -> {
-                return Record.load(clazz, id, existing, connections, this,
-                        data);
+                return Record.load(clazz, id, new TLongObjectHashMap<>(),
+                        connections, this, data);
             });
         }
         catch (ExecutionException e) {
             throw CheckedExceptions.wrapAsRuntimeException(e);
         }
         return (T) record;
-    }
-
-    /**
-     * Create a {@link Record} instance of type {@code clazz} (or one of its
-     * descendants) for each of the {@code ids}.
-     * 
-     * @param clazz
-     * @param ids
-     * @return the instantiated {@link Record}s
-     */
-    private <T extends Record> Set<T> instantiate(Class<T> clazz,
-            Set<Long> ids) {
-        TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
-        AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
-        Set<T> records = LazyTransformSet.of(ids, id -> {
-            if(data.get() == null) {
-                data.set(select(ids));
-            }
-            return instantiate(clazz, id, existing, data.get().get(id));
-        });
-        return records;
     }
 
     /**
@@ -974,7 +936,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     @SuppressWarnings("unchecked")
     private <T extends Record> T instantiate(long id,
-            TLongObjectHashMap<Record> existing,
             @Nullable Map<String, Set<Object>> data) {
         Record record;
         try {
@@ -994,14 +955,64 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 String section = (String) Iterables
                         .getLast($data.get(Record.SECTION_KEY));
                 Class<T> clazz = Reflection.getClassCasted(section);
-                return Record.load(clazz, id, existing, connections, this,
-                        data);
+                return Record.load(clazz, id, new TLongObjectHashMap<>(),
+                        connections, this, data);
             });
         }
         catch (ExecutionException e) {
             throw CheckedExceptions.wrapAsRuntimeException(e);
         }
         return (T) record;
+    }
+
+    /**
+     * Create a {@link Record} instance of type {@code clazz} (or one of its
+     * descendants) for each entry in the {@code data}
+     * 
+     * @param clazz
+     * @param data
+     * @return the instantiated {@link Record}s
+     */
+    private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
+            Map<Long, Map<String, Set<Object>>> data) {
+        Set<T> records = LazyTransformSet.of(data.keySet(), id -> {
+            return instantiate(clazz, id, data.get(id));
+        });
+        return records;
+    }
+
+    /**
+     * Create a {@link Record} instance of type {@code clazz} (or one of its
+     * descendants) for each of the {@code ids}.
+     * 
+     * @param clazz
+     * @param ids
+     * @return the instantiated {@link Record}s
+     */
+    private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
+            Set<Long> ids) {
+        AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        Set<T> records = LazyTransformSet.of(ids, id -> {
+            if(data.get() == null) {
+                data.set(selectAsync(ids));
+            }
+            return instantiate(clazz, id, data.get().get(id));
+        });
+        return records;
+    }
+
+    /**
+     * Create a {@link Record} instance for each entry in the {@code data}
+     * 
+     * @param data
+     * @return the instantiated {@link Record}s
+     */
+    private <T extends Record> Set<T> instantiateAll(
+            Map<Long, Map<String, Set<Object>>> data) {
+        Set<T> records = LazyTransformSet.of(data.keySet(), id -> {
+            return instantiate(id, data.get(id));
+        });
+        return records;
     }
 
     /**
@@ -1014,27 +1025,60 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param ids
      * @return the instantiated {@link Record}s
      */
-    private <T extends Record> Set<T> instantiate(Set<Long> ids) {
-        TLongObjectHashMap<Record> existing = new TLongObjectHashMap<Record>();
+    private <T extends Record> Set<T> instantiateAll(Set<Long> ids) {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
-                data.set(select(ids));
+                data.set(selectAsync(ids));
             }
-            return instantiate(id, existing, data.get().get(id));
+            return instantiate(id, data.get().get(id));
         });
         return records;
     }
 
     /**
+     * Internal utility method to dispatch a "select" request" for a
+     * {@code criteria} based on whether the {@code order} and/or {@code page}
+     * params are non-null.
+     * 
+     * @param concourse
+     * @param criteria
+     * @param order
+     * @param page
+     * @return the ids of the matching records
+     */
+    private Map<Long, Map<String, Set<Object>>> select(Concourse concourse,
+            Criteria criteria, Order order, @Nullable Page page) {
+        Map<Long, Map<String, Set<Object>>> data;
+        if(order != null && page != null) {
+            data = concourse.select(criteria, order, page);
+        }
+        else if(order == null && page == null) {
+            data = concourse.select(criteria);
+        }
+        else if(order != null) {
+            data = concourse.select(criteria, order);
+        }
+        else { // page != null
+            data = concourse.select(criteria, page);
+        }
+        return data;
+    }
+
+    /**
      * Intelligently select all the data for the {@code ids} from
      * {@code concourse}.
+     * <p>
+     * This method assumes that it will be executed asynchronously from a normal
+     * read operations so it takes its own connection from the
+     * {@link #connections} pool instead of being passed one.
+     * </p>
      * 
      * @param concourse
      * @param ids
      * @return the selected data
      */
-    private Map<Long, Map<String, Set<Object>>> select(Set<Long> ids) {
+    private Map<Long, Map<String, Set<Object>>> selectAsync(Set<Long> ids) {
         Concourse concourse = connections.request();
         try {
             // TODO: stagger/stream/buffer the load if there are a lot of ids

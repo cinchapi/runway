@@ -27,8 +27,7 @@ import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.sort.Order;
-import com.cinchapi.concourse.test.CrossVersionTest;
-import com.cinchapi.concourse.test.runners.CrossVersionTestRunner.Versions;
+import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.google.common.cache.Cache;
@@ -42,8 +41,12 @@ import com.google.common.collect.ImmutableSet;
  *
  * @author Jeff Nelson
  */
-@Versions({ "0.9.6", "latest" })
-public class RunwayTest extends CrossVersionTest {
+public class RunwayTest extends ClientServerTest {
+    
+    @Override
+    protected String getServerVersion() {
+        return "latest";
+    }
 
     private Runway runway;
 
