@@ -35,7 +35,7 @@ import com.cinchapi.concourse.time.Time;
  *
  * @author Jeff Nelson
  */
-@Versions({ "latest", "0.9.6" })
+@Versions({ "0.9.6", "latest" })
 public class RunwayCrossVersionTest extends CrossVersionTest {
     
     private Runway runway;
