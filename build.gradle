@@ -30,7 +30,7 @@ repositories {
 }
 
 // Set the version for all Concourse dependencies
-ext.concourseVersion = '0.10.0-SNAPSHOT' // TODO: Change to non-snapshot before merging
+ext.concourseVersion = '0.10.0' // TODO: Change to non-snapshot before merging
 
 dependencies {
 	compile 'com.google.guava:guava:18.0'
@@ -97,6 +97,8 @@ publishing {
     publications {
         BintrayPublication(MavenPublication) {
             from components.java
+            artifact sourcesJar
+            artifact javadocJar
             groupId group
             artifactId project.name
             version mavenVersion
