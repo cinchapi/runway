@@ -30,7 +30,7 @@ repositories {
 }
 
 // Set the version for all Concourse dependencies
-ext.concourseVersion = '0.10.0' // TODO: Change to non-snapshot before merging
+ext.concourseVersion = '0.10.0'
 
 dependencies {
 	compile 'com.google.guava:guava:18.0'

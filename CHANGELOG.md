@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.4.0 (TBD)
+* Added support for native database sorting and pagination that is introduced in Concourse version `0.10.0`. The `Runway` driver now contains read methods that accept `Order` and `Page` parameters. If the connected server does not support native sorting and pagination, Runway will fallback to local sorting and pagination that was used prior to Concourse `0.10.0`.
+
 #### Version 1.3.1 (July 15, 2019)
 * Improved `load` performance by removing extraneous data loading.
 

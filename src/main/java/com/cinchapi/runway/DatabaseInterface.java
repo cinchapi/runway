@@ -173,7 +173,7 @@ public interface DatabaseInterface {
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria);
 
     /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants sorted by the specified {@code order}.
      * 
      * @param clazz
@@ -190,7 +190,7 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants sorted by the specified {@code order}.
      * 
      * @param clazz
@@ -202,7 +202,7 @@ public interface DatabaseInterface {
             Order order);
 
     /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants sorted by the specified {@code order} and
      * limited to the specified {@code page}.
      * 
@@ -216,7 +216,7 @@ public interface DatabaseInterface {
             Order order, Page page);
 
     /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants limited to the specified {@code page}.
      * 
      * @param clazz
@@ -228,7 +228,7 @@ public interface DatabaseInterface {
             Page page);
 
     /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants sorted by the specified {@code order} and
      * limited to the specified {@code page}.
      * 
@@ -244,7 +244,7 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, BuildableState)} query for {@code clazz}
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants sorted by the specified {@code order}.
      * 
      * @param clazz
