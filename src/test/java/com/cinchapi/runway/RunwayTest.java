@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
@@ -34,7 +35,7 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-
+import com.google.common.collect.Lists;
 
 /**
  * Unit tests for {@link Runway}.
@@ -300,6 +301,77 @@ public class RunwayTest extends ClientServerTest {
         Set<User> users = runway.loadAny(User.class);
         Assert.assertEquals(0, cache.size());
         Assert.assertEquals(ImmutableSet.of(a, b, c), users);
+    }
+
+    @Test
+    public void testLoadDeferredReference() {
+        Jock jock = new Jock("A");
+        jock.mentor = new DeferredReference<>(new Jock("B"));
+        jock.save();
+        jock = runway.load(Jock.class, jock.id());
+        Assert.assertNull(jock.mentor.$ref());
+        Assert.assertEquals("B", jock.mentor.get().name);
+        Assert.assertNotNull(jock.mentor.$ref());
+    }
+
+    @Test
+    public void testLoadDeferredReferenceDynamicGet() {
+        Jock jock = new Jock("A");
+        jock.mentor = new DeferredReference<>(new Jock("B"));
+        jock.save();
+        jock = runway.load(Jock.class, jock.id());
+        Jock mentor = jock.get("mentor");
+        Assert.assertEquals("B", mentor.name);
+    }
+
+    @Test
+    public void testLoadDeferredReferenceMap() {
+        Jock jock = new Jock("A");
+        jock.mentor = new DeferredReference<>(new Jock("B"));
+        jock.mentor.get().friends.add(new DeferredReference<>(jock));
+        jock.save();
+        jock = runway.load(Jock.class, jock.id());
+        jock.map().values().forEach(value -> {
+            Assert.assertFalse(value instanceof DeferredReference);
+        });
+    }
+
+    @Test
+    public void testLoadDeferredReferenceExplicitMap() {
+        Jock jock = new Jock("A");
+        jock.mentor = new DeferredReference<>(new Jock("B"));
+        jock.mentor.get().friends.add(new DeferredReference<>(jock));
+        jock.save();
+        jock = runway.load(Jock.class, jock.id());
+        jock.map("mentor").values().forEach(value -> {
+            Assert.assertFalse(value instanceof DeferredReference);
+            Assert.assertTrue(value instanceof Jock);
+        });
+    }
+
+    @Test
+    public void testLoadDeferredExplictMapCollection() {
+        Jock jock = new Jock("A");
+        jock.friends.add(new DeferredReference<>(new Jock("B")));
+        jock.friends.add(new DeferredReference<>(new Jock("C")));
+        jock.save();
+        jock = runway.load(Jock.class, jock.id());
+        ((List<?>) jock.map("friends").get("friends")).forEach(value -> {
+            Assert.assertFalse(value instanceof DeferredReference);
+            Assert.assertTrue(value instanceof Jock);
+        });
+    }
+
+    class Jock extends Record {
+
+        public String name;
+        public DeferredReference<Jock> mentor;
+        public List<DeferredReference<Jock>> friends = Lists.newArrayList();
+
+        public Jock(String name) {
+            this.name = name;
+        }
+
     }
 
     abstract class User extends Record {

@@ -28,10 +28,12 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.AbstractMap.SimpleEntry;
+import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
@@ -49,6 +51,7 @@ import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.collect.MergeStrategies;
+import com.cinchapi.common.collect.Sequences;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -69,7 +72,6 @@ import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Strings;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -175,6 +177,36 @@ public abstract class Record implements Comparable<Record> {
      */
     private static final Set<String> ZOMBIE_DESCRIPTION = Sets
             .newHashSet(SECTION_KEY);
+
+    /**
+     * Dereference the {@code value} stored for {@code field} if it is a
+     * {@link DeferredReference} or a {@link Sequence} of them.
+     * 
+     * @param field
+     * @param value
+     * @return the dereferenced value if it can be dereferenced or the original
+     *         input
+     */
+    private static Object dereference(Field field, Object value) {
+        if(value == null) {
+            return value;
+        }
+        else if(value instanceof DeferredReference) {
+            value = ((DeferredReference<?>) value).get();
+        }
+        else if(Sequences.isSequence(value)) {
+            Collection<Class<?>> typeArgs = Reflection.getTypeArguments(field);
+            if(typeArgs.contains(DeferredReference.class)
+                    || typeArgs.contains(Object.class)) {
+                value = Sequences.stream(value)
+                        .map(item -> dereference(field, item))
+                        .collect(Collectors.toCollection(
+                                value instanceof Set ? LinkedHashSet::new
+                                        : ArrayList::new));
+            }
+        }
+        return value;
+    }
 
     /**
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
@@ -545,7 +577,8 @@ public abstract class Record implements Comparable<Record> {
                 try {
                     Field field = Reflection.getDeclaredField(key, this);
                     if(isReadableField(field)) {
-                        return (T) field.get(this);
+                        value = field.get(this);
+                        value = dereference(field, value);
                     }
                 }
                 catch (Exception e) {/* ignore */}
@@ -1021,20 +1054,18 @@ public abstract class Record implements Comparable<Record> {
     private Object convert(String key, Class<?> type, Object stored,
             Concourse concourse, TLongObjectMap<Record> alreadyLoaded) {
         Object converted = null;
-        if(Record.class.isAssignableFrom(type)) {
+        if(Record.class.isAssignableFrom(type)
+                || type == DeferredReference.class) {
             Link link = (Link) stored;
             long target = link.longValue();
             converted = alreadyLoaded.get(target);
             if(converted == null) {
-                String section = concourse.get(SECTION_KEY, target);
-                if(Strings.isNullOrEmpty(section)) {
-                    concourse.remove(key, stored, id); // do some ad-hoc cleanup
+                if(type == DeferredReference.class) {
+                    converted = new DeferredReference(target, runway);
                 }
                 else {
-                    Class<? extends Record> targetClass = Reflection
-                            .getClassCasted(section);
-                    converted = load(targetClass, target, alreadyLoaded,
-                            connections, concourse, runway, null);
+                    converted = load(type, target, alreadyLoaded, connections,
+                            concourse, runway, null);
                 }
             }
         }
@@ -1103,6 +1134,7 @@ public abstract class Record implements Comparable<Record> {
                 Object value;
                 if(isReadableField(field)) {
                     value = field.get(this);
+                    value = dereference(field, value);
                     data.put(field.getName(), value);
                 }
             }
@@ -1268,7 +1300,17 @@ public abstract class Record implements Comparable<Record> {
             else {
                 concourse.verifyOrSet(key, Link.to(record.id), id);
             }
-
+        }
+        else if(value instanceof DeferredReference) {
+            DeferredReference deferred = (DeferredReference) value;
+            Record ref = deferred.$ref();
+            if(ref != null) {
+                store(key, ref, concourse, append, seen);
+            }
+            else {
+                // no-op because the reference was not loaded and therefore has
+                // no changes to save...
+            }
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
             // TODO use reconcile() function once 0.5.0 comes out...

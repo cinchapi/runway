@@ -1093,6 +1093,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Load a record by {@code id} without knowing its class.
+     * 
+     * @param id
+     * @return the loaded record
+     */
+    <T extends Record> T load(long id) {
+        return instantiate(id, null);
+    }
+
+    /**
      * Builder for {@link Runway} connections. This is returned from
      * {@link #builder()}.
      *
