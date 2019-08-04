@@ -55,8 +55,9 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
-import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.paginate.Page;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
@@ -124,6 +125,22 @@ public abstract class Record implements Comparable<Record> {
                                                          // to avoid collisions
 
     /**
+     * The prefix applied to a key provided to the
+     * {@link #compareTo(Record, String)} methods when it is desirable to
+     * compare the values stored under that key in ascending (i.e. normal)
+     * order.
+     */
+    static final String SORT_DIRECTION_ASCENDING_PREFIX = ">";
+
+    /**
+     * The prefix applied to a key provided to the
+     * {@link #compareTo(Record, String)} methods when it is desirable to
+     * compare the values stored under that key in descending (i.e. reverse)
+     * order.
+     */
+    static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
+
+    /**
      * The {@link Field fields} that are defined in the base class.
      */
     private static Set<Field> INTERNAL_FIELDS = Sets.newHashSet(
@@ -142,26 +159,10 @@ public abstract class Record implements Comparable<Record> {
     private static final int SORT_DIRECTION_ASCENDING_COEFFICIENT = 1;
 
     /**
-     * The prefix applied to a key provided to the
-     * {@link #compareTo(Record, String)} methods when it is desirable to
-     * compare the values stored under that key in ascending (i.e. normal)
-     * order.
-     */
-    private static final String SORT_DIRECTION_ASCENDING_PREFIX = ">";
-
-    /**
      * The coefficient multiplied by the result of a comparison to push the
      * sorting in the descending direction.
      */
     private static final int SORT_DIRECTION_DESCENDING_COEFFICIENT = -1;
-
-    /**
-     * The prefix applied to a key provided to the
-     * {@link #compareTo(Record, String)} methods when it is desirable to
-     * compare the values stored under that key in descending (i.e. reverse)
-     * order.
-     */
-    private static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
 
     /**
      * Instance of {@link sun.misc.Unsafe} to use for hacky operations.
@@ -1595,18 +1596,6 @@ public abstract class Record implements Comparable<Record> {
 
         @Override
         public <T extends Record> Set<T> find(Class<T> clazz,
-                BuildableState criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz,
                 Criteria criteria) {
             if(tracked.runway != null) {
                 return tracked.runway.find(clazz, criteria);
@@ -1618,10 +1607,34 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                BuildableState criteria) {
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Order order) {
             if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria);
+                return tracked.runway.find(clazz, criteria, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Order order, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, page);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1642,10 +1655,34 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
-        public <T extends Record> T findAnyUnique(Class<T> clazz,
-                BuildableState criteria) {
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Order order) {
             if(tracked.runway != null) {
-                return tracked.runway.findAnyUnique(clazz, criteria);
+                return tracked.runway.findAny(clazz, criteria, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Order order, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, page);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1658,18 +1695,6 @@ public abstract class Record implements Comparable<Record> {
                 Criteria criteria) {
             if(tracked.runway != null) {
                 return tracked.runway.findAnyUnique(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findUnique(Class<T> clazz,
-                BuildableState criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findUnique(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1712,9 +1737,77 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Order order) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+                Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
         public <T extends Record> Set<T> loadAny(Class<T> clazz) {
             if(tracked.runway != null) {
                 return tracked.runway.loadAny(clazz);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+                Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, page);
             }
             else {
                 throw new UnsupportedOperationException(

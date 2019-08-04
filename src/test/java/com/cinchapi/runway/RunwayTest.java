@@ -17,6 +17,7 @@ package com.cinchapi.runway;
 
 import java.util.Iterator;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import org.junit.Assert;
@@ -25,6 +26,7 @@ import org.junit.Test;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
@@ -33,7 +35,6 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
-import edu.emory.mathcs.backport.java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Unit tests for {@link Runway}.
@@ -41,13 +42,13 @@ import edu.emory.mathcs.backport.java.util.concurrent.atomic.AtomicBoolean;
  * @author Jeff Nelson
  */
 public class RunwayTest extends ClientServerTest {
-
-    private Runway runway;
-
+    
     @Override
     protected String getServerVersion() {
-        return "0.9.6";
+        return "0.10.0";
     }
+
+    private Runway runway;
 
     @Override
     public void beforeEachTest() {
@@ -252,7 +253,7 @@ public class RunwayTest extends ClientServerTest {
         Manager c = new Manager("A");
         Manager d = new Manager("V");
         runway.save(a, b, c, d);
-        Set<Manager> managers = runway.load(Manager.class, "name");
+        Set<Manager> managers = runway.load(Manager.class, Order.by("name"));
         Iterator<Manager> expectedIt = ImmutableList.of(c, b, d, a).iterator();
         Iterator<Manager> actualIt = managers.iterator();
         while (expectedIt.hasNext()) {
@@ -283,7 +284,7 @@ public class RunwayTest extends ClientServerTest {
         });
         Assert.assertTrue(passed.get());
     }
-    
+
     @Test
     public void testLoadAcrossClassHiearchyPerformsLazyLoad() throws Exception {
         Manager a = new Manager("A");
