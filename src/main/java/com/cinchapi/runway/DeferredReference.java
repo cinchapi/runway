@@ -22,8 +22,8 @@ import com.google.common.base.MoreObjects;
 
 /**
  * A {@link DeferredReference} is a {@link Record} reference (e.g. {@link Link})
- * in another {@link Record} that is only {@link Runway#load(Class, long)} from
- * the database if it is being {@link #get() accessed}.
+ * in another {@link Record} that is only {@link Runway#load(Class, long)
+ * loaded} from the database if it is being {@link #get() accessed}.
  * <p>
  * A {@link DeferredReference} can be used to improve load performance by
  * deferring the loading of linked {@link Record records} until they are
