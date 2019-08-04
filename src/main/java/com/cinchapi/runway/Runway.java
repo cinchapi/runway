@@ -763,16 +763,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Load a record by {@code id} without knowing its class.
-     * 
-     * @param id
-     * @return the loaded record
-     */
-    <T extends Record> T load(long id) {
-        return instantiate(id, new TLongObjectHashMap<Record>(), null);
-    }
-
-    /**
      * Perform the find operation using the {@code concourse} handler.
      * 
      * @param concourse
@@ -1100,6 +1090,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         finally {
             connections.release(concourse);
         }
+    }
+
+    /**
+     * Load a record by {@code id} without knowing its class.
+     * 
+     * @param id
+     * @return the loaded record
+     */
+    <T extends Record> T load(long id) {
+        return instantiate(id, null);
     }
 
     /**
