@@ -31,7 +31,7 @@ repositories {
 
 
 // Set the version for all Concourse dependencies
-ext.concourseVersion = '0.10.0'
+ext.concourseVersion = '0.10.1'
 
 dependencies {
 	compile 'com.google.guava:guava:18.0'
