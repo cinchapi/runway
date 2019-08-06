@@ -52,6 +52,7 @@ import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
+import com.cinchapi.common.describe.Empty;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -1064,8 +1065,19 @@ public abstract class Record implements Comparable<Record> {
                     converted = new DeferredReference(target, runway);
                 }
                 else {
-                    converted = load(type, target, alreadyLoaded, connections,
-                            concourse, runway, null);
+                    Map<String, Set<Object>> data = concourse.select(target);
+                    String section = (String) Iterables
+                            .getLast(data.get(SECTION_KEY), null);
+                    if(Empty.ness().describes(section)) {
+                        concourse.remove(key, stored, id); // do some ad-hoc
+                                                           // cleanup
+                    }
+                    else {
+                        Class<? extends Record> targetClass = Reflection
+                                .getClassCasted(section);
+                        converted = load(targetClass, target, alreadyLoaded,
+                                connections, concourse, runway, data);
+                    }
                 }
             }
         }

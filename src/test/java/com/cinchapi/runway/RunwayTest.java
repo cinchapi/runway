@@ -361,6 +361,17 @@ public class RunwayTest extends ClientServerTest {
             Assert.assertTrue(value instanceof Jock);
         });
     }
+    
+    @Test
+    public void testLoadLinkWithAbstractClassReferenceRepro() {
+        Human human = new Human();
+        human.name = "Jeff Nelson";
+        Team team = new Team();
+        team.entity = human;
+        team.save();
+        team = runway.load(Team.class, team.id());
+        Assert.assertEquals(human, team.entity);
+    }
 
     class Jock extends Record {
 
@@ -447,6 +458,19 @@ public class RunwayTest extends ClientServerTest {
             return db.find(Person.class, Criteria.where().key("organization")
                     .operator(Operator.LINKS_TO).value(id()));
         }
+    }
+    
+    abstract class Entity extends Record {
+        String name;
+    }
+    
+    class Human extends Entity {
+        
+    }
+    
+    class Team extends Record {
+        
+        Entity entity;
     }
 
 }
