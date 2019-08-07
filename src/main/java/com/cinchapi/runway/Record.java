@@ -604,9 +604,21 @@ public abstract class Record implements Comparable<Record> {
                 // traverse the document graph.
                 String stop = stops[0];
                 Object destination = get(stop);
+                String path = StringUtils.join(stops, '.', 1, stops.length);
                 if(destination instanceof Record) {
-                    String path = StringUtils.join(stops, '.', 1, stops.length);
                     return (T) ((Record) destination).get(path);
+                }
+                else if(Sequences.isSequence(destination)) {
+                    Collection<Object> seq = destination instanceof Set
+                            ? Sets.newLinkedHashSet()
+                            : Lists.newArrayList();
+                    Sequences.forEach(destination, item -> {
+                        if(item instanceof Record) {
+                            Object next = ((Record) item).get(path);
+                            seq.add(next);
+                        }
+                    });
+                    return !seq.isEmpty() ? (T) seq : null;
                 }
                 else {
                     return null;
