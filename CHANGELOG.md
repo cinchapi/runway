@@ -3,6 +3,7 @@
 #### Version 1.4.0 (TBD)
 * Added a `DeferredReference` type that can be used to wrap a `Record` link within another `Record`. When a `DeferredReference` is used, the linked `Record` isn't loaded from the database until it is actually referenced for usage.
 * Added support for native database sorting and pagination that is introduced in Concourse version `0.10.0`. The `Runway` driver now contains read methods that accept `Order` and `Page` parameters. If the connected server does not support native sorting and pagination, Runway will fallback to local sorting and pagination that was used prior to Concourse `0.10.0`.
+* Added support for link navigation in the `#get` and `map` methods. If a `navigation key` is provided, `Runway` will traverse linked `Record` references to return the destination value(s). In the case of `map`, those destination values will be associated with the original `navigation key` in the `Map` that is returned.
 
 #### Version 1.3.1 (July 15, 2019)
 * Improved `load` performance by removing extraneous data loading.
