@@ -45,6 +45,8 @@ import java.util.stream.Stream;
 
 import javax.annotation.Nullable;
 
+import org.apache.commons.lang.StringUtils;
+
 import com.cinchapi.common.base.AnyObjects;
 import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
@@ -573,27 +575,55 @@ public abstract class Record implements Comparable<Record> {
             return (T) new Long(id);
         }
         else {
-            Object value = dynamicData.get(key);
-            if(value == null) {
-                try {
-                    Field field = Reflection.getDeclaredField(key, this);
-                    if(isReadableField(field)) {
-                        value = field.get(this);
-                        value = dereference(field, value);
+            String[] stops = key.split("\\.");
+            if(stops.length == 1) {
+                Object value = dynamicData.get(key);
+                if(value == null) {
+                    try {
+                        Field field = Reflection.getDeclaredField(key, this);
+                        if(isReadableField(field)) {
+                            value = field.get(this);
+                            value = dereference(field, value);
+                        }
+                    }
+                    catch (Exception e) {/* ignore */}
+                }
+                if(value == null) {
+                    value = derived().get(key);
+                }
+                if(value == null) {
+                    Supplier<?> computer = computed().get(key);
+                    if(computer != null) {
+                        value = computer.get();
                     }
                 }
-                catch (Exception e) {/* ignore */}
+                return (T) value;
             }
-            if(value == null) {
-                value = derived().get(key);
-            }
-            if(value == null) {
-                Supplier<?> computer = computed().get(key);
-                if(computer != null) {
-                    value = computer.get();
+            else {
+                // The presented key is a navigation key, so incrementally
+                // traverse the document graph.
+                String stop = stops[0];
+                Object destination = get(stop);
+                String path = StringUtils.join(stops, '.', 1, stops.length);
+                if(destination instanceof Record) {
+                    return (T) ((Record) destination).get(path);
+                }
+                else if(Sequences.isSequence(destination)) {
+                    Collection<Object> seq = destination instanceof Set
+                            ? Sets.newLinkedHashSet()
+                            : Lists.newArrayList();
+                    Sequences.forEach(destination, item -> {
+                        if(item instanceof Record) {
+                            Object next = ((Record) item).get(path);
+                            seq.add(next);
+                        }
+                    });
+                    return !seq.isEmpty() ? (T) seq : null;
+                }
+                else {
+                    return null;
                 }
             }
-            return (T) value;
         }
     }
 

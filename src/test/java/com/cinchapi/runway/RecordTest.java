@@ -676,7 +676,69 @@ public class RecordTest extends ClientServerTest {
                 .collect(Collectors.toSet());
         jock.save();
         Assert.assertEquals(expected, client.select("friends", jock.id()));
-    }    
+    }   
+    
+    @Test
+    public void testGetNavigation(){
+        Sock sock = new Sock("A", new Dock("B"));
+        Assert.assertEquals("B", sock.get("dock.dock"));
+    }
+    
+    @Test
+    public void testGetNavigationCollection() {
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        a.friends.add(c);
+        Assert.assertEquals(ImmutableList.of("b", "c"), a.get("friends.label"));
+    }
+    
+    @Test
+    public void testMapNavigationCollection() {
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        a.friends.add(c);
+        Assert.assertEquals(ImmutableMap.of("friends.label", ImmutableList.of("b", "c")), a.map("friends.label"));
+    }
+    
+    @Test
+    public void testGetNavigationCollectionNested() {
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        a.friends.add(c);
+        Node d = new Node("d");
+        Node e = new Node("e");
+        b.friends.add(d);
+        c.friends.add(e);
+        c.friends.add(a);
+        Assert.assertEquals(ImmutableList.of(ImmutableList.of("d"), ImmutableList.of("e", "a")), a.get("friends.friends.label"));
+    }
+    
+    @Test
+    public void testMapNavigationCollectionNested() {
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        a.friends.add(c);
+        Node d = new Node("d");
+        Node e = new Node("e");
+        b.friends.add(d);
+        c.friends.add(e);
+        c.friends.add(a);
+        Assert.assertEquals(ImmutableMap.of("friends.friends.label", ImmutableList.of(ImmutableList.of("d"), ImmutableList.of("e", "a"))), a.map("friends.friends.label"));
+    }
+    
+    @Test
+    public void testMapNavigation() {
+        Sock sock = new Sock("A", new Dock("B"));
+        Assert.assertEquals(ImmutableMap.of("dock.dock", "B"), sock.map("dock.dock"));
+    }
 
     class Node extends Record {
 
