@@ -29,7 +29,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
-import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.Continuation;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -732,7 +731,6 @@ public class RecordTest extends ClientServerTest {
         b.friends.add(d);
         c.friends.add(e);
         c.friends.add(a);
-        System.out.println(Association.of(a.map("friends.friends.label")));
         Assert.assertEquals(ImmutableMap.of("friends.friends.label", ImmutableList.of(ImmutableList.of("d"), ImmutableList.of("e", "a"))), a.map("friends.friends.label"));
     }
     
