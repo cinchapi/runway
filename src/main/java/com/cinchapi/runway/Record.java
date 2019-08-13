@@ -36,6 +36,7 @@ import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -864,7 +865,7 @@ public abstract class Record implements Comparable<Record> {
                     && (collection = (Collection<?>) value).size() == 1) {
                 value = Iterables.getOnlyElement(collection);
             }
-            map.put(entry.getKey(), value);
+            map.merge(entry.getKey(), value, MergeStrategies::upsert);
         };
         Stream<Entry<String, Object>> pool;
         if(include.isEmpty()) {
@@ -875,13 +876,57 @@ public abstract class Record implements Comparable<Record> {
             // explicitly excluded, which will have no affect here since
             // #include and #exclude will never both have values at the same
             // time.
-            pool = include.stream()
-                    .map(key -> new SimpleEntry<>(key, get(key)));
+            pool = include.stream().map(key -> {
+                Object value;
+                String[] stops = key.split("\\.");
+                if(stops.length > 1) {
+                    // For mapping navigation keys, we must manually perform the
+                    // navigation and collect a series of nested maps/sequences
+                    // so that merging multiple navigation keys can be done
+                    // sensibly.
+                    value = this;
+                    AtomicBoolean navigable = new AtomicBoolean(false);
+                    for (int i = 0; i < stops.length; ++i) {
+                        String stop = stops[i];
+                        boolean isDestination = (i + 1) == stops.length;
+                        if(value instanceof Record) {
+                            navigable.set(true);
+                            value = ((Record) value).get(stop);
+                        }
+                        else if(Sequences.isSequence(value)) {
+                            List<Object> $value = Lists.newArrayList();
+                            navigable.set(false);
+                            Sequences.forEach(value, item -> {
+                                if(item instanceof Record) {
+                                    navigable.set(true);
+                                    Record $item = (Record) item;
+                                    $value.add(!isDestination ? $item
+                                            : $item.map(stop));
+                                }
+                            });
+                            value = $value;
+                        }
+                        else {
+                            break;
+                        }
+                    }
+                    if(navigable.get()) {
+                        key = stops[0];
+                    }
+                    else {
+                        value = null;
+                    }
+                }
+                else {
+                    value = get(key);
+                }
+                return new SimpleEntry<>(key, value);
+            });
         }
         Map<String, Object> data = pool.filter(filter).collect(
                 LinkedHashMap::new, accumulator, MergeStrategies::upsert);
         return data;
-    }
+    };
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
