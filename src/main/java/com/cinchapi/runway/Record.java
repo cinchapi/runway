@@ -888,10 +888,9 @@ public abstract class Record implements Comparable<Record> {
                     // navigation and collect a series of nested maps/sequences
                     // so that merging multiple navigation keys can be done
                     // sensibly.
-                    String stop = stops[0];
-                    key = stop;
+                    key = stops[0];
                     String path = StringUtils.join(stops, '.', 1, stops.length);
-                    Object destination = get(stop);
+                    Object destination = get(key);
                     if(destination instanceof Record) {
                         value = ((Record) destination).map(path);
                     }
