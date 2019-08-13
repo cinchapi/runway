@@ -740,14 +740,20 @@ public class RecordTest extends ClientServerTest {
         b.friends.add(d);
         c.friends.add(e);
         c.friends.add(a);
-        System.out
-                .println(a.map("friends.friends.label", "friends.friends.id"));
-        System.out.println(Association
-                .of(a.map("friends.friends.label", "friends.friends.id")));
         Assert.assertEquals(
-                ImmutableMap.of("friends.friends.label",
-                        ImmutableList.of(ImmutableList.of("d"),
-                                ImmutableList.of("e", "a"))),
+                ImmutableMap
+                        .of("friends",
+                                ImmutableList.of(
+                                        ImmutableMap.of("friends",
+                                                ImmutableList
+                                                        .of(ImmutableMap.of(
+                                                                "label", "d"))),
+                                        ImmutableMap.of("friends",
+                                                ImmutableList.of(
+                                                        ImmutableMap.of("label",
+                                                                "e"),
+                                                        ImmutableMap.of("label",
+                                                                "a"))))),
                 a.map("friends.friends.label"));
     }
 
