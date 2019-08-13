@@ -63,6 +63,53 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Return the number of {@link Records} in the {@code clazz}.
+     * 
+     * @param clazz
+     * @return the number of {@link Records} in {@code clazz}.
+     */
+    public default <T extends Record> int count(Class<T> clazz) {
+        return load(clazz).size();
+    }
+
+    /**
+     * Return the number of {@link Records} in the {@code clazz} that match the
+     * {@code criteria}.
+     * 
+     * @param clazz
+     * @return the number of {@link Records} in {@code clazz} that match the
+     *         {@code criteria}.
+     */
+    public default <T extends Record> int count(Class<T> clazz,
+            Criteria criteria) {
+        return find(clazz, criteria).size();
+    }
+
+    /**
+     * Return the number of {@link Records} across the hierarchy of
+     * {@code clazz}.
+     * 
+     * @param clazz
+     * @return the number of {@link Records} in {@code clazz}.
+     */
+    public default <T extends Record> int countAny(Class<T> clazz) {
+        return load(clazz).size();
+    }
+
+    /**
+     * Return the number of {@link Records} across the hierarchy of
+     * {@code clazz} that match the {@code criteria}.
+     * 
+     * @param clazz
+     * @return the number of {@link Records} in {@code clazz} that match the
+     *         {@code criteria}.
+     */
+    public default <T extends Record> int countAny(Class<T> clazz,
+            Criteria criteria) {
+        return find(clazz, criteria).size();
+    }
+
+    /**
      * Find and return all the records of type {@code clazz} that match the
      * {@code criteria}.
      * 

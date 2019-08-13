@@ -93,21 +93,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private static long METADATA_RECORD = -1;
 
-    static {
-        // NOTE: Scanning the classpath adds startup costs proportional to the
-        // number of classes defined. We do this once at startup to minimize the
-        // effect of the cost.
-        hierarchies = HashMultimap.create();
-        Logging.disable(Reflections.class);
-        Reflections.log = null; // turn off reflection logging
-        Reflections reflection = new Reflections(new SubTypesScanner());
-        reflection.getSubTypesOf(Record.class).forEach(type -> {
-            hierarchies.put(type, type);
-            reflection.getSubTypesOf(type)
-                    .forEach(subType -> hierarchies.put(type, subType));
-        });
-    }
-
     /**
      * Placeholder for a {@code null} {@link Order} parameter.
      */
@@ -198,6 +183,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return components;
     }
 
+    static {
+        // NOTE: Scanning the classpath adds startup costs proportional to the
+        // number of classes defined. We do this once at startup to minimize the
+        // effect of the cost.
+        hierarchies = HashMultimap.create();
+        Logging.disable(Reflections.class);
+        Reflections.log = null; // turn off reflection logging
+        Reflections reflection = new Reflections(new SubTypesScanner());
+        reflection.getSubTypesOf(Record.class).forEach(type -> {
+            hierarchies.put(type, type);
+            reflection.getSubTypesOf(type)
+                    .forEach(subType -> hierarchies.put(type, subType));
+        });
+    }
+
     /**
      * A connection pool to the underlying Concourse database.
      */
@@ -263,6 +263,26 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             Record.PINNED_RUNWAY_INSTANCE = null;
         }
+    }
+
+    @Override
+    public <T extends Record> int count(Class<T> clazz) {
+        return count($Criteria.forClass(clazz));
+    }
+
+    @Override
+    public <T extends Record> int count(Class<T> clazz, Criteria criteria) {
+        return count($Criteria.withinClass(clazz, criteria));
+    }
+
+    @Override
+    public <T extends Record> int countAny(Class<T> clazz) {
+        return count($Criteria.forClassHierarchy(clazz));
+    }
+
+    @Override
+    public <T extends Record> int countAny(Class<T> clazz, Criteria criteria) {
+        return count($Criteria.accrossClassHierachy(clazz, criteria));
     }
 
     @Override
@@ -763,6 +783,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Load a record by {@code id} without knowing its class.
+     * 
+     * @param id
+     * @return the loaded record
+     */
+    <T extends Record> T load(long id) {
+        return instantiate(id, null);
+    }
+
+    /**
      * Perform the find operation using the {@code concourse} handler.
      * 
      * @param concourse
@@ -869,6 +899,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return Arrays.stream(keys).map(key -> concourse.search(key, query))
                 .flatMap(Set::stream).filter(filter)
                 .collect(Collectors.toSet());
+    }
+
+    /**
+     * Return the number of {@link Record records} that match the
+     * {@code criteria}.
+     * 
+     * @param criteria
+     * @return the number of matching records
+     */
+    private int count(Criteria criteria) {
+        Concourse concourse = connections.request();
+        try {
+            return concourse.find(criteria).size();
+        }
+        finally {
+            connections.release(concourse);
+        }
     }
 
     /**
@@ -1090,16 +1137,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         finally {
             connections.release(concourse);
         }
-    }
-
-    /**
-     * Load a record by {@code id} without knowing its class.
-     * 
-     * @param id
-     * @return the loaded record
-     */
-    <T extends Record> T load(long id) {
-        return instantiate(id, null);
     }
 
     /**
