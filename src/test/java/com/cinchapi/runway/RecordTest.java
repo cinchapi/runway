@@ -29,6 +29,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.Continuation;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -43,6 +44,7 @@ import com.cinchapi.runway.Required;
 import com.cinchapi.runway.Unique;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.gson.GsonBuilder;
@@ -676,14 +678,14 @@ public class RecordTest extends ClientServerTest {
                 .collect(Collectors.toSet());
         jock.save();
         Assert.assertEquals(expected, client.select("friends", jock.id()));
-    }   
-    
+    }
+
     @Test
-    public void testGetNavigation(){
+    public void testGetNavigation() {
         Sock sock = new Sock("A", new Dock("B"));
         Assert.assertEquals("B", sock.get("dock.dock"));
     }
-    
+
     @Test
     public void testGetNavigationCollection() {
         Node a = new Node("a");
@@ -693,7 +695,7 @@ public class RecordTest extends ClientServerTest {
         a.friends.add(c);
         Assert.assertEquals(ImmutableList.of("b", "c"), a.get("friends.label"));
     }
-    
+
     @Test
     public void testMapNavigationCollection() {
         Node a = new Node("a");
@@ -701,9 +703,13 @@ public class RecordTest extends ClientServerTest {
         Node c = new Node("c");
         a.friends.add(b);
         a.friends.add(c);
-        Assert.assertEquals(ImmutableMap.of("friends.label", ImmutableList.of("b", "c")), a.map("friends.label"));
+        Assert.assertEquals(
+                ImmutableMap.of("friends",
+                        ImmutableList.of(ImmutableMap.of("label", "b"),
+                                ImmutableMap.of("label", "c"))),
+                a.map("friends.label"));
     }
-    
+
     @Test
     public void testGetNavigationCollectionNested() {
         Node a = new Node("a");
@@ -716,9 +722,12 @@ public class RecordTest extends ClientServerTest {
         b.friends.add(d);
         c.friends.add(e);
         c.friends.add(a);
-        Assert.assertEquals(ImmutableList.of(ImmutableList.of("d"), ImmutableList.of("e", "a")), a.get("friends.friends.label"));
+        Assert.assertEquals(
+                ImmutableList.of(ImmutableList.of("d"),
+                        ImmutableList.of("e", "a")),
+                a.get("friends.friends.label"));
     }
-    
+
     @Test
     public void testMapNavigationCollectionNested() {
         Node a = new Node("a");
@@ -731,13 +740,45 @@ public class RecordTest extends ClientServerTest {
         b.friends.add(d);
         c.friends.add(e);
         c.friends.add(a);
-        Assert.assertEquals(ImmutableMap.of("friends.friends.label", ImmutableList.of(ImmutableList.of("d"), ImmutableList.of("e", "a"))), a.map("friends.friends.label"));
+        Assert.assertEquals(
+                ImmutableMap
+                        .of("friends",
+                                ImmutableList.of(
+                                        ImmutableMap.of("friends",
+                                                ImmutableList
+                                                        .of(ImmutableMap.of(
+                                                                "label", "d"))),
+                                        ImmutableMap.of("friends",
+                                                ImmutableList.of(
+                                                        ImmutableMap.of("label",
+                                                                "e"),
+                                                        ImmutableMap.of("label",
+                                                                "a"))))),
+                a.map("friends.friends.label"));
     }
-    
+
     @Test
     public void testMapNavigation() {
         Sock sock = new Sock("A", new Dock("B"));
-        Assert.assertEquals(ImmutableMap.of("dock.dock", "B"), sock.map("dock.dock"));
+        Assert.assertEquals(ImmutableSet.of("dock.dock"),
+                Association.of(sock.map("dock.dock")).flatten().keySet());
+        Assert.assertEquals(
+                ImmutableMap.of("dock", ImmutableMap.of("dock", "B")),
+                sock.map("dock.dock"));
+    }
+
+    @Test
+    public void testMapNavigationComplex() {
+        Company company = new Company("Cinchapi");
+        User a = new User("a", "a@a.com", company);
+        User b = new User("b", "b@b.com", company);
+        runway.save(company, a, b);
+        Map<String, Object> data = company.map("users.name", "users.email");
+        Map<String, Object> expected = ImmutableMap.of("users",
+                ImmutableList.of(
+                        ImmutableMap.of("name", "a", "email", "a@a.com"),
+                        ImmutableMap.of("name", "b", "email", "b@b.com")));
+        Assert.assertEquals(expected, data);
     }
 
     class Node extends Record {
@@ -926,6 +967,37 @@ public class RecordTest extends ClientServerTest {
             this.name = name;
         }
 
+    }
+
+    class User extends Record {
+        String name;
+        String email;
+        Company company;
+
+        public User(String name, String email, Company company) {
+            this.name = name;
+            this.email = email;
+            this.company = company;
+        }
+    }
+
+    class Company extends Record {
+
+        String name;
+
+        public Company(String name) {
+            this.name = name;
+        }
+
+        public Set<User> users() {
+            return db.find(User.class, Criteria.where().key("company")
+                    .operator(Operator.LINKS_TO).value(id()));
+        }
+
+        @Override
+        public Map<String, Supplier<Object>> computed() {
+            return ImmutableMap.of("users", () -> users());
+        }
     }
 
 }

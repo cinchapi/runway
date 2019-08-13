@@ -864,7 +864,12 @@ public abstract class Record implements Comparable<Record> {
                     && (collection = (Collection<?>) value).size() == 1) {
                 value = Iterables.getOnlyElement(collection);
             }
-            map.put(entry.getKey(), value);
+            if(value != null) {
+                map.merge(entry.getKey(), value, MergeStrategies::upsert);
+            }
+            else {
+                map.put(entry.getKey(), value);
+            }
         };
         Stream<Entry<String, Object>> pool;
         if(include.isEmpty()) {
@@ -875,13 +880,43 @@ public abstract class Record implements Comparable<Record> {
             // explicitly excluded, which will have no affect here since
             // #include and #exclude will never both have values at the same
             // time.
-            pool = include.stream()
-                    .map(key -> new SimpleEntry<>(key, get(key)));
+            pool = include.stream().map(key -> {
+                Object value;
+                String[] stops = key.split("\\.");
+                if(stops.length > 1) {
+                    // For mapping navigation keys, we must manually perform the
+                    // navigation and collect a series of nested maps/sequences
+                    // so that merging multiple navigation keys can be done
+                    // sensibly.
+                    key = stops[0];
+                    String path = StringUtils.join(stops, '.', 1, stops.length);
+                    Object destination = get(key);
+                    if(destination instanceof Record) {
+                        value = ((Record) destination).map(path);
+                    }
+                    else if(Sequences.isSequence(destination)) {
+                        List<Object> $value = Lists.newArrayList();
+                        Sequences.forEach(destination, item -> {
+                            if(item instanceof Record) {
+                                $value.add(((Record) item).map(path));
+                            }
+                        });
+                        value = $value;
+                    }
+                    else {
+                        value = null;
+                    }                    
+                }
+                else {
+                    value = get(key);
+                }
+                return new SimpleEntry<>(key, value);
+            });
         }
         Map<String, Object> data = pool.filter(filter).collect(
                 LinkedHashMap::new, accumulator, MergeStrategies::upsert);
         return data;
-    }
+    };
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
