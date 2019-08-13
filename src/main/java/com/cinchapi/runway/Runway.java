@@ -327,7 +327,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION);
+                        clazz, criteria, NO_ORDER, page);
                 return instantiateAll(clazz, data);
             }
             finally {
