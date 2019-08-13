@@ -865,7 +865,12 @@ public abstract class Record implements Comparable<Record> {
                     && (collection = (Collection<?>) value).size() == 1) {
                 value = Iterables.getOnlyElement(collection);
             }
-            map.merge(entry.getKey(), value, MergeStrategies::upsert);
+            if(value != null) {
+                map.merge(entry.getKey(), value, MergeStrategies::upsert);
+            }
+            else {
+                map.put(entry.getKey(), value);
+            }
         };
         Stream<Entry<String, Object>> pool;
         if(include.isEmpty()) {
