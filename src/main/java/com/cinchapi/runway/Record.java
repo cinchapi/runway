@@ -36,7 +36,6 @@ import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -889,38 +888,25 @@ public abstract class Record implements Comparable<Record> {
                     // navigation and collect a series of nested maps/sequences
                     // so that merging multiple navigation keys can be done
                     // sensibly.
-                    value = this;
-                    AtomicBoolean navigable = new AtomicBoolean(false);
-                    for (int i = 0; i < stops.length; ++i) {
-                        String stop = stops[i];
-                        boolean isDestination = (i + 1) == stops.length;
-                        if(value instanceof Record) {
-                            navigable.set(true);
-                            value = ((Record) value).get(stop);
-                        }
-                        else if(Sequences.isSequence(value)) {
-                            List<Object> $value = Lists.newArrayList();
-                            navigable.set(false);
-                            Sequences.forEach(value, item -> {
-                                if(item instanceof Record) {
-                                    navigable.set(true);
-                                    Record $item = (Record) item;
-                                    $value.add(!isDestination ? $item
-                                            : $item.map(stop));
-                                }
-                            });
-                            value = $value;
-                        }
-                        else {
-                            break;
-                        }
+                    String stop = stops[0];
+                    key = stop;
+                    String path = StringUtils.join(stops, '.', 1, stops.length);
+                    Object destination = get(stop);
+                    if(destination instanceof Record) {
+                        value = ((Record) destination).map(path);
                     }
-                    if(navigable.get()) {
-                        key = stops[0];
+                    else if(Sequences.isSequence(destination)) {
+                        List<Object> $value = Lists.newArrayList();
+                        Sequences.forEach(destination, item -> {
+                            if(item instanceof Record) {
+                                $value.add(((Record) item).map(path));
+                            }
+                        });
+                        value = $value;
                     }
                     else {
                         value = null;
-                    }
+                    }                    
                 }
                 else {
                     value = get(key);
