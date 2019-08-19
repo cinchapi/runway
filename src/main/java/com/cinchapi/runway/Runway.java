@@ -15,11 +15,13 @@
  */
 package com.cinchapi.runway;
 
+import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -54,6 +56,7 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
 
 import gnu.trove.map.TLongObjectMap;
@@ -102,6 +105,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Placeholder for a {@code null} {@link Page} parameter.
      */
     private static Page NO_PAGINATION = null;
+
+    /**
+     * The maximum number of records to buffer in memory when selecting data
+     * from the database.
+     */
+    private int recordsPerSelectBufferSize = 100;
 
     /**
      * Return a builder that can be used to precisely configure a {@link Runway}
@@ -1041,7 +1050,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
-                data.set(selectAsync(ids));
+                data.set(stream(ids));
             }
             return instantiate(clazz, id, data.get().get(id));
         });
@@ -1076,7 +1085,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
-                data.set(selectAsync(ids));
+                data.set(stream(ids));
             }
             return instantiate(id, data.get().get(id));
         });
@@ -1101,10 +1110,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             data = concourse.select(criteria, order, page);
         }
         else if(order == null && page == null) {
-            data = concourse.select(criteria);
+            Set<Long> ids = concourse.find(criteria);
+            data = stream(ids);
         }
         else if(order != null) {
-            data = concourse.select(criteria, order);
+            Set<Long> ids = concourse.find(criteria, order);
+            data = stream(ids);
         }
         else { // page != null
             data = concourse.select(criteria, page);
@@ -1125,18 +1136,68 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param ids
      * @return the selected data
      */
-    private Map<Long, Map<String, Set<Object>>> selectAsync(Set<Long> ids) {
-        Concourse concourse = connections.request();
-        try {
-            // TODO: stagger/stream/buffer the load if there are a lot of ids
-            // (possibly using a continuation) so that a group of records are
-            // fetched on the fly only when necessary so as to prevent holding
-            // so much data in memory
-            return concourse.select(ids);
-        }
-        finally {
-            connections.release(concourse);
-        }
+    private Map<Long, Map<String, Set<Object>>> stream(Set<Long> ids) {
+        // The data for the ids is asynchronously selected in the background in
+        // a manner that staggers/buffers the amount of data by only selecting
+        // {@link #recordsPerSelectBufferSize} from the database at a time.
+        return new AbstractMap<Long, Map<String, Set<Object>>>() {
+
+            /**
+             * A FIFO list of record ids that are pending database
+             * selection. Items from this queue are popped off in increments
+             * of {@value #BULK_SELECT_BUFFER_SIZE} and selected from
+             * Concourse.
+             */
+            Queue<Long> pending = Queues.newArrayDeque(ids);
+
+            /**
+             * The data that has been loaded from the data into memory. For
+             * the items that have been pulled from the {@link #pending}
+             * queue.
+             */
+            Map<Long, Map<String, Set<Object>>> loaded = null;
+            
+            @Override
+            public Set<Long> keySet() {
+                return ids;
+            }
+
+            @Override
+            public Set<Entry<Long, Map<String, Set<Object>>>> entrySet() {
+                return LazyTransformSet.of(ids, id -> {
+                    Map<String, Set<Object>> data = loaded != null
+                            ? loaded.get(id)
+                            : null;
+                    while (data == null) {
+                        // There is currently no data loaded OR the
+                        // currently loaded data does not contain the id. If
+                        // that is the case, assume that all unconsumed ids
+                        // prior to this one have been skipped and buffer in
+                        // data incrementally until the data for this id is
+                        // found.
+                        int i = 0;
+                        Set<Long> records = Sets
+                                .newLinkedHashSetWithExpectedSize(
+                                        recordsPerSelectBufferSize);
+                        while (pending.peek() != null
+                                && i < recordsPerSelectBufferSize) {
+                            records.add(pending.poll());
+                        }
+                        Concourse concourse = connections.request();
+                        try {
+                            loaded = concourse.select(records);
+                        }
+                        finally {
+                            connections.release(concourse);
+                        }
+                        data = loaded.get(id);
+                    }
+                    return new AbstractMap.SimpleImmutableEntry<>(id, data);
+                });
+            }
+
+        };
+
     }
 
     /**
@@ -1153,6 +1214,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private String password = "admin";
         private int port = 1717;
         private String username = "admin";
+        private int recordsPerSelectBufferSize = 100;
 
         /**
          * Build the configured {@link Runway} and return the instance.
@@ -1160,8 +1222,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * @return a {@link Runway} instance
          */
         public Runway build() {
-            return new Runway(ConnectionPool.newCachedConnectionPool(host, port,
-                    username, password, environment), cache);
+            Runway db = new Runway(ConnectionPool.newCachedConnectionPool(host,
+                    port, username, password, environment), cache);
+            db.recordsPerSelectBufferSize = recordsPerSelectBufferSize;
+            return db;
         }
 
         /**
@@ -1227,6 +1291,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         public Builder username(String username) {
             this.username = username;
+            return this;
+        }
+
+        /**
+         * Set the maximum number of records that should be buffered in memory
+         * when selecting data.
+         * 
+         * @param max
+         * @return this builder
+         */
+        public Builder recordsPerSelectBufferSize(int max) {
+            this.recordsPerSelectBufferSize = max;
             return this;
         }
     }

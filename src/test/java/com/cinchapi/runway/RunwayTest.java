@@ -25,17 +25,20 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
+import com.cinchapi.concourse.util.Random;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 
 /**
  * Unit tests for {@link Runway}.
@@ -43,10 +46,10 @@ import com.google.common.collect.Lists;
  * @author Jeff Nelson
  */
 public class RunwayTest extends ClientServerTest {
-    
+
     @Override
     protected String getServerVersion() {
-        return "0.10.0";
+        return "0.10.1";
     }
 
     private Runway runway;
@@ -361,7 +364,7 @@ public class RunwayTest extends ClientServerTest {
             Assert.assertTrue(value instanceof Jock);
         });
     }
-    
+
     @Test
     public void testLoadLinkWithAbstractClassReferenceRepro() {
         Human human = new Human();
@@ -371,6 +374,44 @@ public class RunwayTest extends ClientServerTest {
         team.save();
         team = runway.load(Team.class, team.id());
         Assert.assertEquals(human, team.entity);
+    }
+
+    @Test
+    public void testBulkSelect() {
+        Set<Manager> expected = Sets.newHashSet();
+        Reflection.set("recordsPerSelectBufferSize",
+                new java.util.Random().nextInt(10) + 1, runway);
+        for (int i = 0; i < Random.getScaleCount(); ++i) {
+            Manager manager = new Manager("" + Time.now());
+            manager.save();
+            expected.add(manager);
+        }
+        Set<Manager> actual = runway.load(Manager.class);
+        Assert.assertEquals(expected, actual);
+    }
+    
+    @Test
+    public void testBulkSelectSkipSupport() {
+        Set<Manager> expected = Sets.newLinkedHashSet();
+        Reflection.set("recordsPerSelectBufferSize",
+                new java.util.Random().nextInt(10) + 1, runway);
+        for (int i = 0; i < Random.getScaleCount(); ++i) {
+            Manager manager = new Manager("" + Time.now());
+            manager.save();
+            expected.add(manager);
+        }
+        Set<Manager> actual = runway.load(Manager.class);
+        Set<Manager> $expected = Sets.newLinkedHashSet();
+        int i = 0;
+        int skip = expected.size() / 3;
+        for(Manager manager : runway.load(Manager.class)) {
+            if(i >= skip) {
+                $expected.add(manager);
+            }
+            ++i;
+        }       
+        actual = actual.stream().skip(skip).collect(Collectors.toSet());
+        Assert.assertEquals($expected, actual);
     }
 
     class Jock extends Record {
@@ -459,17 +500,17 @@ public class RunwayTest extends ClientServerTest {
                     .operator(Operator.LINKS_TO).value(id()));
         }
     }
-    
+
     abstract class Entity extends Record {
         String name;
     }
-    
+
     class Human extends Entity {
-        
+
     }
-    
+
     class Team extends Record {
-        
+
         Entity entity;
     }
 
