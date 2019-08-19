@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,6 +31,7 @@ import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.Association;
+import com.cinchapi.common.collect.Collections;
 import com.cinchapi.common.collect.Continuation;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -774,11 +776,11 @@ public class RecordTest extends ClientServerTest {
         User b = new User("b", "b@b.com", company);
         runway.save(company, a, b);
         Map<String, Object> data = company.map("users.name", "users.email");
-        Map<String, Object> expected = ImmutableMap.of("users",
-                ImmutableList.of(
-                        ImmutableMap.of("name", "a", "email", "a@a.com"),
-                        ImmutableMap.of("name", "b", "email", "b@b.com")));
-        Assert.assertEquals(expected, data);
+        Set<?> expected = ImmutableSet.of(
+                ImmutableMap.of("name", "a", "email", "a@a.com"),
+                ImmutableMap.of("name", "b", "email", "b@b.com"));
+        Set<?> actual = Collections.ensureSet((Collection<?>) data.get("users"));
+        Assert.assertEquals(expected, actual);
     }
 
     class Node extends Record {
