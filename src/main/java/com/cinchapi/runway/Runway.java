@@ -15,9 +15,11 @@
  */
 package com.cinchapi.runway;
 
+import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -46,6 +48,7 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
 
 import gnu.trove.map.TLongObjectMap;
@@ -84,6 +87,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * within the specific transaction) and we clear it before commit time.
      */
     private static long METADATA_RECORD = -1;
+
+    /**
+     * The maximum number of records to buffer in memory when selecting data
+     * from the database.
+     */
+    private int recordsPerSelectBufferSize = 100;
 
     /**
      * Return a builder that can be used to precisely configure a {@link Runway}
@@ -594,17 +603,66 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the selected data
      */
     private Map<Long, Map<String, Set<Object>>> $select(Set<Long> ids) {
-        Concourse concourse = connections.request();
-        try {
-            // TODO: stagger/stream/buffer the load if there are a lot of ids
-            // (possibly using a continuation) so that a group of records are
-            // fetched on the fly only when necessary so as to prevent holding
-            // so much data in memory
-            return concourse.select(ids);
-        }
-        finally {
-            connections.release(concourse);
-        }
+        // The data for the ids is asynchronously selected in the background in
+        // a manner that staggers/buffers the amount of data by only selecting
+        // {@link #recordsPerSelectBufferSize} from the database at a time.
+        return new AbstractMap<Long, Map<String, Set<Object>>>() {
+
+            /**
+             * A FIFO list of record ids that are pending database
+             * selection. Items from this queue are popped off in increments
+             * of {@value #BULK_SELECT_BUFFER_SIZE} and selected from
+             * Concourse.
+             */
+            Queue<Long> pending = Queues.newArrayDeque(ids);
+
+            /**
+             * The data that has been loaded from the data into memory. For
+             * the items that have been pulled from the {@link #pending}
+             * queue.
+             */
+            Map<Long, Map<String, Set<Object>>> loaded = null;
+
+            @Override
+            public Set<Long> keySet() {
+                return ids;
+            }
+
+            @Override
+            public Set<Entry<Long, Map<String, Set<Object>>>> entrySet() {
+                return LazyTransformSet.of(ids, id -> {
+                    Map<String, Set<Object>> data = loaded != null
+                            ? loaded.get(id)
+                            : null;
+                    while (data == null) {
+                        // There is currently no data loaded OR the
+                        // currently loaded data does not contain the id. If
+                        // that is the case, assume that all unconsumed ids
+                        // prior to this one have been skipped and buffer in
+                        // data incrementally until the data for this id is
+                        // found.
+                        int i = 0;
+                        Set<Long> records = Sets
+                                .newLinkedHashSetWithExpectedSize(
+                                        recordsPerSelectBufferSize);
+                        while (pending.peek() != null
+                                && i < recordsPerSelectBufferSize) {
+                            records.add(pending.poll());
+                        }
+                        Concourse concourse = connections.request();
+                        try {
+                            loaded = concourse.select(records);
+                        }
+                        finally {
+                            connections.release(concourse);
+                        }
+                        data = loaded.get(id);
+                    }
+                    return new AbstractMap.SimpleImmutableEntry<>(id, data);
+                });
+            }
+
+        };
     }
 
     /**
