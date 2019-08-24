@@ -49,7 +49,7 @@ public class RunwayTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.10.1";
+        return "0.10.2";
     }
 
     private Runway runway;
