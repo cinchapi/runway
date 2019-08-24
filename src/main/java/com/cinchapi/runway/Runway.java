@@ -1123,7 +1123,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Future<Map<Long, Map<String, Set<Object>>>> future = executor
                     .submit(() -> concourse.select(criteria));
             try {
-                return future.get(bulkSelectTimeoutMillis,
+                data = future.get(bulkSelectTimeoutMillis,
                         TimeUnit.MILLISECONDS);
             }
             catch (InterruptedException | ExecutionException
@@ -1145,7 +1145,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Future<Map<Long, Map<String, Set<Object>>>> future = executor
                     .submit(() -> concourse.select(criteria, order));
             try {
-                return future.get(bulkSelectTimeoutMillis,
+                data = future.get(bulkSelectTimeoutMillis,
                         TimeUnit.MILLISECONDS);
             }
             catch (InterruptedException | ExecutionException
