@@ -1131,14 +1131,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 // The bulk select took too long or an error occurred. In eithr
                 // case, fall back to finding the matching ids and incrementally
                 // stream the result set.
-                Concourse backup = Concourse.copyExistingConnection(concourse);
-                try {
-                    Set<Long> ids = backup.find(criteria);
-                    data = stream(ids);
-                }
-                finally {
-                    backup.close();
-                }
+                future.cancel(true);
+                Set<Long> ids = concourse.find(criteria);
+                data = stream(ids);
             }
         }
         else if(order != null) {
@@ -1153,14 +1148,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 // The bulk select took too long or an error occurred. In eithr
                 // case, fall back to finding the matching ids and incrementally
                 // stream the result set.
-                Concourse backup = Concourse.copyExistingConnection(concourse);
-                try {
-                    Set<Long> ids = backup.find(criteria, order);
-                    data = stream(ids);
-                }
-                finally {
-                    backup.close();
-                }
+                future.cancel(true);
+                Set<Long> ids = concourse.find(criteria, order);
+                data = stream(ids);
             }
         }
         else { // page != null
