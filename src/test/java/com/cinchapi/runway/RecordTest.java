@@ -16,11 +16,13 @@
 package com.cinchapi.runway;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -28,9 +30,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.common.collect.Association;
+import com.cinchapi.common.collect.Collections;
 import com.cinchapi.common.collect.Continuation;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
@@ -41,6 +46,7 @@ import com.cinchapi.runway.Required;
 import com.cinchapi.runway.Unique;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.gson.GsonBuilder;
@@ -56,7 +62,7 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.9.6";
+        return "0.10.2";
     }
 
     @Override
@@ -654,6 +660,129 @@ public class RecordTest extends ClientServerTest {
 
     }
 
+    @Test
+    public void testSaveDeferredReference() {
+        Jock jock = new Jock("A");
+        jock.mentor = new DeferredReference<>(new Jock("B"));
+        long id = jock.mentor.get().id();
+        jock.save();
+        Assert.assertEquals(Link.to(id), client.get("mentor", jock.id()));
+    }
+
+    @Test
+    public void testSaveDeferredReferenceCollection() {
+        Jock jock = new Jock("A");
+        jock.friends.add(new DeferredReference<>(new Jock("B")));
+        jock.friends.add(new DeferredReference<>(new Jock("C")));
+        jock.friends.add(new DeferredReference<>(new Jock("D")));
+        Set<Link> expected = jock.friends.stream()
+                .map(ref -> Link.to(ref.get().id()))
+                .collect(Collectors.toSet());
+        jock.save();
+        Assert.assertEquals(expected, client.select("friends", jock.id()));
+    }
+
+    @Test
+    public void testGetNavigation() {
+        Sock sock = new Sock("A", new Dock("B"));
+        Assert.assertEquals("B", sock.get("dock.dock"));
+    }
+
+    @Test
+    public void testGetNavigationCollection() {
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        a.friends.add(c);
+        Assert.assertEquals(ImmutableList.of("b", "c"), a.get("friends.label"));
+    }
+
+    @Test
+    public void testMapNavigationCollection() {
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        a.friends.add(c);
+        Assert.assertEquals(
+                ImmutableMap.of("friends",
+                        ImmutableList.of(ImmutableMap.of("label", "b"),
+                                ImmutableMap.of("label", "c"))),
+                a.map("friends.label"));
+    }
+
+    @Test
+    public void testGetNavigationCollectionNested() {
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        a.friends.add(c);
+        Node d = new Node("d");
+        Node e = new Node("e");
+        b.friends.add(d);
+        c.friends.add(e);
+        c.friends.add(a);
+        Assert.assertEquals(
+                ImmutableList.of(ImmutableList.of("d"),
+                        ImmutableList.of("e", "a")),
+                a.get("friends.friends.label"));
+    }
+
+    @Test
+    public void testMapNavigationCollectionNested() {
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        a.friends.add(c);
+        Node d = new Node("d");
+        Node e = new Node("e");
+        b.friends.add(d);
+        c.friends.add(e);
+        c.friends.add(a);
+        Assert.assertEquals(
+                ImmutableMap
+                        .of("friends",
+                                ImmutableList.of(
+                                        ImmutableMap.of("friends",
+                                                ImmutableList
+                                                        .of(ImmutableMap.of(
+                                                                "label", "d"))),
+                                        ImmutableMap.of("friends",
+                                                ImmutableList.of(
+                                                        ImmutableMap.of("label",
+                                                                "e"),
+                                                        ImmutableMap.of("label",
+                                                                "a"))))),
+                a.map("friends.friends.label"));
+    }
+
+    @Test
+    public void testMapNavigation() {
+        Sock sock = new Sock("A", new Dock("B"));
+        Assert.assertEquals(ImmutableSet.of("dock.dock"),
+                Association.of(sock.map("dock.dock")).flatten().keySet());
+        Assert.assertEquals(
+                ImmutableMap.of("dock", ImmutableMap.of("dock", "B")),
+                sock.map("dock.dock"));
+    }
+
+    @Test
+    public void testMapNavigationComplex() {
+        Company company = new Company("Cinchapi");
+        User a = new User("a", "a@a.com", company);
+        User b = new User("b", "b@b.com", company);
+        runway.save(company, a, b);
+        Map<String, Object> data = company.map("users.name", "users.email");
+        Set<?> expected = ImmutableSet.of(
+                ImmutableMap.of("name", "a", "email", "a@a.com"),
+                ImmutableMap.of("name", "b", "email", "b@b.com"));
+        Set<?> actual = Collections.ensureSet((Collection<?>) data.get("users"));
+        Assert.assertEquals(expected, actual);
+    }
+
     class Node extends Record {
 
         public String label;
@@ -827,6 +956,49 @@ public class RecordTest extends ClientServerTest {
         public Map<String, Supplier<Object>> computed() {
             return ImmutableMap.of("state",
                     () -> Continuation.of(UUID::randomUUID));
+        }
+    }
+
+    class Jock extends Record {
+
+        public String name;
+        public DeferredReference<Jock> mentor;
+        public List<DeferredReference<Jock>> friends = Lists.newArrayList();
+
+        public Jock(String name) {
+            this.name = name;
+        }
+
+    }
+
+    class User extends Record {
+        String name;
+        String email;
+        Company company;
+
+        public User(String name, String email, Company company) {
+            this.name = name;
+            this.email = email;
+            this.company = company;
+        }
+    }
+
+    class Company extends Record {
+
+        String name;
+
+        public Company(String name) {
+            this.name = name;
+        }
+
+        public Set<User> users() {
+            return db.find(User.class, Criteria.where().key("company")
+                    .operator(Operator.LINKS_TO).value(id()));
+        }
+
+        @Override
+        public Map<String, Supplier<Object>> computed() {
+            return ImmutableMap.of("users", () -> users());
         }
     }
 

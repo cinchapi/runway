@@ -28,10 +28,12 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.AbstractMap.SimpleEntry;
+import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
@@ -43,20 +45,25 @@ import java.util.stream.Stream;
 
 import javax.annotation.Nullable;
 
+import org.apache.commons.lang.StringUtils;
+
 import com.cinchapi.common.base.AnyObjects;
 import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.collect.MergeStrategies;
+import com.cinchapi.common.collect.Sequences;
+import com.cinchapi.common.describe.Empty;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
-import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.paginate.Page;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
@@ -68,7 +75,6 @@ import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Strings;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -124,6 +130,22 @@ public abstract class Record implements Comparable<Record> {
                                                          // to avoid collisions
 
     /**
+     * The prefix applied to a key provided to the
+     * {@link #compareTo(Record, String)} methods when it is desirable to
+     * compare the values stored under that key in ascending (i.e. normal)
+     * order.
+     */
+    static final String SORT_DIRECTION_ASCENDING_PREFIX = ">";
+
+    /**
+     * The prefix applied to a key provided to the
+     * {@link #compareTo(Record, String)} methods when it is desirable to
+     * compare the values stored under that key in descending (i.e. reverse)
+     * order.
+     */
+    static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
+
+    /**
      * The {@link Field fields} that are defined in the base class.
      */
     private static Set<Field> INTERNAL_FIELDS = Sets.newHashSet(
@@ -142,26 +164,10 @@ public abstract class Record implements Comparable<Record> {
     private static final int SORT_DIRECTION_ASCENDING_COEFFICIENT = 1;
 
     /**
-     * The prefix applied to a key provided to the
-     * {@link #compareTo(Record, String)} methods when it is desirable to
-     * compare the values stored under that key in ascending (i.e. normal)
-     * order.
-     */
-    private static final String SORT_DIRECTION_ASCENDING_PREFIX = ">";
-
-    /**
      * The coefficient multiplied by the result of a comparison to push the
      * sorting in the descending direction.
      */
     private static final int SORT_DIRECTION_DESCENDING_COEFFICIENT = -1;
-
-    /**
-     * The prefix applied to a key provided to the
-     * {@link #compareTo(Record, String)} methods when it is desirable to
-     * compare the values stored under that key in descending (i.e. reverse)
-     * order.
-     */
-    private static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
 
     /**
      * Instance of {@link sun.misc.Unsafe} to use for hacky operations.
@@ -174,6 +180,36 @@ public abstract class Record implements Comparable<Record> {
      */
     private static final Set<String> ZOMBIE_DESCRIPTION = Sets
             .newHashSet(SECTION_KEY);
+
+    /**
+     * Dereference the {@code value} stored for {@code field} if it is a
+     * {@link DeferredReference} or a {@link Sequence} of them.
+     * 
+     * @param field
+     * @param value
+     * @return the dereferenced value if it can be dereferenced or the original
+     *         input
+     */
+    private static Object dereference(Field field, Object value) {
+        if(value == null) {
+            return value;
+        }
+        else if(value instanceof DeferredReference) {
+            value = ((DeferredReference<?>) value).get();
+        }
+        else if(Sequences.isSequence(value)) {
+            Collection<Class<?>> typeArgs = Reflection.getTypeArguments(field);
+            if(typeArgs.contains(DeferredReference.class)
+                    || typeArgs.contains(Object.class)) {
+                value = Sequences.stream(value)
+                        .map(item -> dereference(field, item))
+                        .collect(Collectors.toCollection(
+                                value instanceof Set ? LinkedHashSet::new
+                                        : ArrayList::new));
+            }
+        }
+        return value;
+    }
 
     /**
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
@@ -539,26 +575,55 @@ public abstract class Record implements Comparable<Record> {
             return (T) new Long(id);
         }
         else {
-            Object value = dynamicData.get(key);
-            if(value == null) {
-                try {
-                    Field field = Reflection.getDeclaredField(key, this);
-                    if(isReadableField(field)) {
-                        return (T) field.get(this);
+            String[] stops = key.split("\\.");
+            if(stops.length == 1) {
+                Object value = dynamicData.get(key);
+                if(value == null) {
+                    try {
+                        Field field = Reflection.getDeclaredField(key, this);
+                        if(isReadableField(field)) {
+                            value = field.get(this);
+                            value = dereference(field, value);
+                        }
+                    }
+                    catch (Exception e) {/* ignore */}
+                }
+                if(value == null) {
+                    value = derived().get(key);
+                }
+                if(value == null) {
+                    Supplier<?> computer = computed().get(key);
+                    if(computer != null) {
+                        value = computer.get();
                     }
                 }
-                catch (Exception e) {/* ignore */}
+                return (T) value;
             }
-            if(value == null) {
-                value = derived().get(key);
-            }
-            if(value == null) {
-                Supplier<?> computer = computed().get(key);
-                if(computer != null) {
-                    value = computer.get();
+            else {
+                // The presented key is a navigation key, so incrementally
+                // traverse the document graph.
+                String stop = stops[0];
+                Object destination = get(stop);
+                String path = StringUtils.join(stops, '.', 1, stops.length);
+                if(destination instanceof Record) {
+                    return (T) ((Record) destination).get(path);
+                }
+                else if(Sequences.isSequence(destination)) {
+                    Collection<Object> seq = destination instanceof Set
+                            ? Sets.newLinkedHashSet()
+                            : Lists.newArrayList();
+                    Sequences.forEach(destination, item -> {
+                        if(item instanceof Record) {
+                            Object next = ((Record) item).get(path);
+                            seq.add(next);
+                        }
+                    });
+                    return !seq.isEmpty() ? (T) seq : null;
+                }
+                else {
+                    return null;
                 }
             }
-            return (T) value;
         }
     }
 
@@ -697,22 +762,6 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return a JSON string containing this {@link Record}'s readable and
-     * temporary data from the specified {@code keys}.
-     * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
-     * </p>
-     * 
-     * @param keys
-     * @return json string
-     */
-    public String json(String... keys) {
-        return json(SerializationOptions.defaults(), keys);
-    }
-
-    /**
-     * Return a JSON string containing this {@link Record}'s readable and
      * temporary data.
      *
      * @param options
@@ -740,6 +789,22 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return a JSON string containing this {@link Record}'s readable and
+     * temporary data from the specified {@code keys}.
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @param keys
+     * @return json string
+     */
+    public String json(String... keys) {
+        return json(SerializationOptions.defaults(), keys);
+    }
+
+    /**
      * Return a map that contains "readable" data from this {@link Record}.
      * <p>
      * If no {@code keys} are provided, all the readable data will be
@@ -755,25 +820,6 @@ public abstract class Record implements Comparable<Record> {
      */
     public Map<String, Object> map() {
         return map(Array.containing());
-    }
-
-    /**
-     * Return a map that contains "readable" data from this {@link Record}.
-     * <p>
-     * If no {@code keys} are provided, all the readable data will be
-     * returned.
-     * </p>
-     * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
-     * </p>
-     * 
-     * @param keys
-     * @return the data in this record
-     */
-    public Map<String, Object> map(String... keys) {
-        return map(SerializationOptions.defaults(), keys);
     }
 
     /**
@@ -818,7 +864,12 @@ public abstract class Record implements Comparable<Record> {
                     && (collection = (Collection<?>) value).size() == 1) {
                 value = Iterables.getOnlyElement(collection);
             }
-            map.put(entry.getKey(), value);
+            if(value != null) {
+                map.merge(entry.getKey(), value, MergeStrategies::upsert);
+            }
+            else {
+                map.put(entry.getKey(), value);
+            }
         };
         Stream<Entry<String, Object>> pool;
         if(include.isEmpty()) {
@@ -829,12 +880,61 @@ public abstract class Record implements Comparable<Record> {
             // explicitly excluded, which will have no affect here since
             // #include and #exclude will never both have values at the same
             // time.
-            pool = include.stream()
-                    .map(key -> new SimpleEntry<>(key, get(key)));
+            pool = include.stream().map(key -> {
+                Object value;
+                String[] stops = key.split("\\.");
+                if(stops.length > 1) {
+                    // For mapping navigation keys, we must manually perform the
+                    // navigation and collect a series of nested maps/sequences
+                    // so that merging multiple navigation keys can be done
+                    // sensibly.
+                    key = stops[0];
+                    String path = StringUtils.join(stops, '.', 1, stops.length);
+                    Object destination = get(key);
+                    if(destination instanceof Record) {
+                        value = ((Record) destination).map(path);
+                    }
+                    else if(Sequences.isSequence(destination)) {
+                        List<Object> $value = Lists.newArrayList();
+                        Sequences.forEach(destination, item -> {
+                            if(item instanceof Record) {
+                                $value.add(((Record) item).map(path));
+                            }
+                        });
+                        value = $value;
+                    }
+                    else {
+                        value = null;
+                    }                    
+                }
+                else {
+                    value = get(key);
+                }
+                return new SimpleEntry<>(key, value);
+            });
         }
         Map<String, Object> data = pool.filter(filter).collect(
                 LinkedHashMap::new, accumulator, MergeStrategies::upsert);
         return data;
+    };
+
+    /**
+     * Return a map that contains "readable" data from this {@link Record}.
+     * <p>
+     * If no {@code keys} are provided, all the readable data will be
+     * returned.
+     * </p>
+     * <p>
+     * This method also supports <strong>negative filtering</strong>. You can
+     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
+     * </p>
+     * 
+     * @param keys
+     * @return the data in this record
+     */
+    public Map<String, Object> map(String... keys) {
+        return map(SerializationOptions.defaults(), keys);
     }
 
     /**
@@ -1020,20 +1120,29 @@ public abstract class Record implements Comparable<Record> {
     private Object convert(String key, Class<?> type, Object stored,
             Concourse concourse, TLongObjectMap<Record> alreadyLoaded) {
         Object converted = null;
-        if(Record.class.isAssignableFrom(type)) {
+        if(Record.class.isAssignableFrom(type)
+                || type == DeferredReference.class) {
             Link link = (Link) stored;
             long target = link.longValue();
             converted = alreadyLoaded.get(target);
             if(converted == null) {
-                String section = concourse.get(SECTION_KEY, target);
-                if(Strings.isNullOrEmpty(section)) {
-                    concourse.remove(key, stored, id); // do some ad-hoc cleanup
+                if(type == DeferredReference.class) {
+                    converted = new DeferredReference(target, runway);
                 }
                 else {
-                    Class<? extends Record> targetClass = Reflection
-                            .getClassCasted(section);
-                    converted = load(targetClass, target, alreadyLoaded,
-                            connections, concourse, runway, null);
+                    Map<String, Set<Object>> data = concourse.select(target);
+                    String section = (String) Iterables
+                            .getLast(data.get(SECTION_KEY), null);
+                    if(Empty.ness().describes(section)) {
+                        concourse.remove(key, stored, id); // do some ad-hoc
+                                                           // cleanup
+                    }
+                    else {
+                        Class<? extends Record> targetClass = Reflection
+                                .getClassCasted(section);
+                        converted = load(targetClass, target, alreadyLoaded,
+                                connections, concourse, runway, data);
+                    }
                 }
             }
         }
@@ -1102,6 +1211,7 @@ public abstract class Record implements Comparable<Record> {
                 Object value;
                 if(isReadableField(field)) {
                     value = field.get(this);
+                    value = dereference(field, value);
                     data.put(field.getName(), value);
                 }
             }
@@ -1267,7 +1377,17 @@ public abstract class Record implements Comparable<Record> {
             else {
                 concourse.verifyOrSet(key, Link.to(record.id), id);
             }
-
+        }
+        else if(value instanceof DeferredReference) {
+            DeferredReference deferred = (DeferredReference) value;
+            Record ref = deferred.$ref();
+            if(ref != null) {
+                store(key, ref, concourse, append, seen);
+            }
+            else {
+                // no-op because the reference was not loaded and therefore has
+                // no changes to save...
+            }
         }
         else if(value instanceof Collection || value.getClass().isArray()) {
             // TODO use reconcile() function once 0.5.0 comes out...
@@ -1595,18 +1715,6 @@ public abstract class Record implements Comparable<Record> {
 
         @Override
         public <T extends Record> Set<T> find(Class<T> clazz,
-                BuildableState criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz,
                 Criteria criteria) {
             if(tracked.runway != null) {
                 return tracked.runway.find(clazz, criteria);
@@ -1618,10 +1726,34 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                BuildableState criteria) {
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Order order) {
             if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria);
+                return tracked.runway.find(clazz, criteria, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Order order, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, page);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1642,10 +1774,34 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
-        public <T extends Record> T findAnyUnique(Class<T> clazz,
-                BuildableState criteria) {
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Order order) {
             if(tracked.runway != null) {
-                return tracked.runway.findAnyUnique(clazz, criteria);
+                return tracked.runway.findAny(clazz, criteria, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Order order, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, page);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1658,18 +1814,6 @@ public abstract class Record implements Comparable<Record> {
                 Criteria criteria) {
             if(tracked.runway != null) {
                 return tracked.runway.findAnyUnique(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findUnique(Class<T> clazz,
-                BuildableState criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findUnique(clazz, criteria);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1712,9 +1856,77 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Order order) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+                Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
         public <T extends Record> Set<T> loadAny(Class<T> clazz) {
             if(tracked.runway != null) {
                 return tracked.runway.loadAny(clazz);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+                Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, page);
             }
             else {
                 throw new UnsupportedOperationException(

@@ -16,7 +16,9 @@
 package com.cinchapi.runway;
 
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import org.junit.Assert;
@@ -26,6 +28,7 @@ import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
@@ -34,9 +37,8 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-
-import edu.emory.mathcs.backport.java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Unit tests for {@link Runway}.
@@ -45,12 +47,12 @@ import edu.emory.mathcs.backport.java.util.concurrent.atomic.AtomicBoolean;
  */
 public class RunwayTest extends ClientServerTest {
 
-    private Runway runway;
-
     @Override
     protected String getServerVersion() {
-        return "0.9.6";
+        return "0.10.2";
     }
+
+    private Runway runway;
 
     @Override
     public void beforeEachTest() {
@@ -255,7 +257,7 @@ public class RunwayTest extends ClientServerTest {
         Manager c = new Manager("A");
         Manager d = new Manager("V");
         runway.save(a, b, c, d);
-        Set<Manager> managers = runway.load(Manager.class, "name");
+        Set<Manager> managers = runway.load(Manager.class, Order.by("name"));
         Iterator<Manager> expectedIt = ImmutableList.of(c, b, d, a).iterator();
         Iterator<Manager> actualIt = managers.iterator();
         while (expectedIt.hasNext()) {
@@ -286,7 +288,7 @@ public class RunwayTest extends ClientServerTest {
         });
         Assert.assertTrue(passed.get());
     }
-    
+
     @Test
     public void testLoadAcrossClassHiearchyPerformsLazyLoad() throws Exception {
         Manager a = new Manager("A");
@@ -340,6 +342,128 @@ public class RunwayTest extends ClientServerTest {
         }       
         actual = actual.stream().skip(skip).collect(Collectors.toSet());
         Assert.assertEquals($expected, actual);
+    }
+
+    @Test
+    public void testLoadDeferredReference() {
+        Jock jock = new Jock("A");
+        jock.mentor = new DeferredReference<>(new Jock("B"));
+        jock.save();
+        jock = runway.load(Jock.class, jock.id());
+        Assert.assertNull(jock.mentor.$ref());
+        Assert.assertEquals("B", jock.mentor.get().name);
+        Assert.assertNotNull(jock.mentor.$ref());
+    }
+
+    @Test
+    public void testLoadDeferredReferenceDynamicGet() {
+        Jock jock = new Jock("A");
+        jock.mentor = new DeferredReference<>(new Jock("B"));
+        jock.save();
+        jock = runway.load(Jock.class, jock.id());
+        Jock mentor = jock.get("mentor");
+        Assert.assertEquals("B", mentor.name);
+    }
+
+    @Test
+    public void testLoadDeferredReferenceMap() {
+        Jock jock = new Jock("A");
+        jock.mentor = new DeferredReference<>(new Jock("B"));
+        jock.mentor.get().friends.add(new DeferredReference<>(jock));
+        jock.save();
+        jock = runway.load(Jock.class, jock.id());
+        jock.map().values().forEach(value -> {
+            Assert.assertFalse(value instanceof DeferredReference);
+        });
+    }
+
+    @Test
+    public void testLoadDeferredReferenceExplicitMap() {
+        Jock jock = new Jock("A");
+        jock.mentor = new DeferredReference<>(new Jock("B"));
+        jock.mentor.get().friends.add(new DeferredReference<>(jock));
+        jock.save();
+        jock = runway.load(Jock.class, jock.id());
+        jock.map("mentor").values().forEach(value -> {
+            Assert.assertFalse(value instanceof DeferredReference);
+            Assert.assertTrue(value instanceof Jock);
+        });
+    }
+
+    @Test
+    public void testLoadDeferredExplictMapCollection() {
+        Jock jock = new Jock("A");
+        jock.friends.add(new DeferredReference<>(new Jock("B")));
+        jock.friends.add(new DeferredReference<>(new Jock("C")));
+        jock.save();
+        jock = runway.load(Jock.class, jock.id());
+        ((List<?>) jock.map("friends").get("friends")).forEach(value -> {
+            Assert.assertFalse(value instanceof DeferredReference);
+            Assert.assertTrue(value instanceof Jock);
+        });
+    }
+
+    @Test
+    public void testLoadLinkWithAbstractClassReferenceRepro() {
+        Human human = new Human();
+        human.name = "Jeff Nelson";
+        Team team = new Team();
+        team.entity = human;
+        team.save();
+        team = runway.load(Team.class, team.id());
+        Assert.assertEquals(human, team.entity);
+    }
+
+    @Test
+    public void testStreaminBulkSelect() {
+        runway.bulkSelectTimeoutMillis = 0; // force streaming bulk select
+        Set<Manager> expected = Sets.newHashSet();
+        Reflection.set("recordsPerSelectBufferSize",
+                new java.util.Random().nextInt(10) + 1, runway);
+        for (int i = 0; i < Random.getScaleCount(); ++i) {
+            Manager manager = new Manager("" + Time.now());
+            manager.save();
+            expected.add(manager);
+        }
+        Set<Manager> actual = runway.load(Manager.class);
+        Assert.assertEquals(expected, actual);
+    }
+    
+    @Test
+    public void testStreamingBulkSelectSkipSupport() {
+        runway.bulkSelectTimeoutMillis = 0; // force streaming bulk select
+        Set<Manager> expected = Sets.newLinkedHashSet();
+        Reflection.set("recordsPerSelectBufferSize",
+                new java.util.Random().nextInt(10) + 1, runway);
+        for (int i = 0; i < Random.getScaleCount(); ++i) {
+            Manager manager = new Manager("" + Time.now());
+            manager.save();
+            expected.add(manager);
+        }
+        Set<Manager> actual = runway.load(Manager.class);
+        Set<Manager> $expected = Sets.newLinkedHashSet();
+        int i = 0;
+        int skip = expected.size() / 3;
+        for(Manager manager : runway.load(Manager.class)) {
+            if(i >= skip) {
+                $expected.add(manager);
+            }
+            ++i;
+        }       
+        actual = actual.stream().skip(skip).collect(Collectors.toSet());
+        Assert.assertEquals($expected, actual);
+    }
+
+    class Jock extends Record {
+
+        public String name;
+        public DeferredReference<Jock> mentor;
+        public List<DeferredReference<Jock>> friends = Lists.newArrayList();
+
+        public Jock(String name) {
+            this.name = name;
+        }
+
     }
 
     abstract class User extends Record {
@@ -415,6 +539,19 @@ public class RunwayTest extends ClientServerTest {
             return db.find(Person.class, Criteria.where().key("organization")
                     .operator(Operator.LINKS_TO).value(id()));
         }
+    }
+
+    abstract class Entity extends Record {
+        String name;
+    }
+
+    class Human extends Entity {
+
+    }
+
+    class Team extends Record {
+
+        Entity entity;
     }
 
 }

@@ -29,16 +29,18 @@ repositories {
     }
 }
 
+
 // Set the version for all Concourse dependencies
-ext.concourseVersion = '0.9.6'
+ext.concourseVersion = '0.10.2'
 
 dependencies {
 	compile 'com.google.guava:guava:18.0'
-	compile (group: 'com.cinchapi', name: 'accent4j', version: '1.6.1', changing:true) {
+	compile (group: 'com.cinchapi', name: 'accent4j', version: '1.8.0', changing:true) {
         force = true
     }
 	compile group: 'com.cinchapi', name: 'concourse-driver-java', version: concourseVersion, changing:true
   	compile group: 'com.cinchapi', name: 'concourse-import', version: concourseVersion, changing:true
+	compile group: 'com.cinchapi', name: 'concourse-plugin-core', version: concourseVersion, changing:true
 	compile 'org.slf4j:slf4j-api:1.7.5'
 	compile 'ch.qos.logback:logback-classic:1.0.13'
 	compile 'com.google.code.gson:gson:2.2.4'
@@ -96,6 +98,8 @@ publishing {
     publications {
         BintrayPublication(MavenPublication) {
             from components.java
+            artifact sourcesJar
+            artifact javadocJar
             groupId group
             artifactId project.name
             version mavenVersion
