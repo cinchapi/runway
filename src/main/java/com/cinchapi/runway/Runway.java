@@ -55,6 +55,7 @@ import com.google.common.cache.Cache;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
@@ -110,7 +111,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The maximum number of records to buffer in memory when selecting data
      * from the database.
      */
-    private int recordsPerSelectBufferSize = 100;
+    private int recordsPerSelectBufferSize = 1000;
 
     /**
      * Return a builder that can be used to precisely configure a {@link Runway}
@@ -1155,8 +1156,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
              * the items that have been pulled from the {@link #pending}
              * queue.
              */
-            Map<Long, Map<String, Set<Object>>> loaded = null;
-            
+            Map<Long, Map<String, Set<Object>>> loaded = Maps
+                    .newHashMapWithExpectedSize(ids.size()); //TODO: create compound hashmap... that will look across multiple hashmaps until it finds the right value
+
             @Override
             public Set<Long> keySet() {
                 return ids;
@@ -1165,9 +1167,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             @Override
             public Set<Entry<Long, Map<String, Set<Object>>>> entrySet() {
                 return LazyTransformSet.of(ids, id -> {
-                    Map<String, Set<Object>> data = loaded != null
-                            ? loaded.get(id)
-                            : null;
+                    Map<String, Set<Object>> data = loaded.get(id);
                     while (data == null) {
                         // There is currently no data loaded OR the
                         // currently loaded data does not contain the id. If
@@ -1185,7 +1185,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         }
                         Concourse concourse = connections.request();
                         try {
-                            loaded = concourse.select(records);
+                            loaded.putAll(concourse.select(records));
                         }
                         finally {
                             connections.release(concourse);
