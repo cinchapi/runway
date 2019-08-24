@@ -377,7 +377,8 @@ public class RunwayTest extends ClientServerTest {
     }
 
     @Test
-    public void testBulkSelect() {
+    public void testStreaminBulkSelect() {
+        runway.bulkSelectTimeoutMillis = 0; // force streaming bulk select
         Set<Manager> expected = Sets.newHashSet();
         Reflection.set("recordsPerSelectBufferSize",
                 new java.util.Random().nextInt(10) + 1, runway);
@@ -391,7 +392,8 @@ public class RunwayTest extends ClientServerTest {
     }
     
     @Test
-    public void testBulkSelectSkipSupport() {
+    public void testStreamingBulkSelectSkipSupport() {
+        runway.bulkSelectTimeoutMillis = 0; // force streaming bulk select
         Set<Manager> expected = Sets.newLinkedHashSet();
         Reflection.set("recordsPerSelectBufferSize",
                 new java.util.Random().nextInt(10) + 1, runway);

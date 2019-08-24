@@ -24,6 +24,11 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -51,6 +56,7 @@ import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
 import com.cinchapi.runway.cache.NoOpCache;
 import com.github.zafarkhaja.semver.Version;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.Cache;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
@@ -107,11 +113,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private static Page NO_PAGINATION = null;
 
-    /**
-     * The maximum number of records to buffer in memory when selecting data
-     * from the database.
-     */
-    private int recordsPerSelectBufferSize = 1000;
+    static {
+        // NOTE: Scanning the classpath adds startup costs proportional to the
+        // number of classes defined. We do this once at startup to minimize the
+        // effect of the cost.
+        hierarchies = HashMultimap.create();
+        Logging.disable(Reflections.class);
+        Reflections.log = null; // turn off reflection logging
+        Reflections reflection = new Reflections(new SubTypesScanner());
+        reflection.getSubTypesOf(Record.class).forEach(type -> {
+            hierarchies.put(type, type);
+            reflection.getSubTypesOf(type)
+                    .forEach(subType -> hierarchies.put(type, subType));
+        });
+    }
 
     /**
      * Return a builder that can be used to precisely configure a {@link Runway}
@@ -193,20 +208,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return components;
     }
 
-    static {
-        // NOTE: Scanning the classpath adds startup costs proportional to the
-        // number of classes defined. We do this once at startup to minimize the
-        // effect of the cost.
-        hierarchies = HashMultimap.create();
-        Logging.disable(Reflections.class);
-        Reflections.log = null; // turn off reflection logging
-        Reflections reflection = new Reflections(new SubTypesScanner());
-        reflection.getSubTypesOf(Record.class).forEach(type -> {
-            hierarchies.put(type, type);
-            reflection.getSubTypesOf(type)
-                    .forEach(subType -> hierarchies.put(type, subType));
-        });
-    }
+    /**
+     * The maximum number of records to buffer in memory when selecting data
+     * from the database.
+     */
+    private int recordsPerSelectBufferSize = 1000;
+
+    /**
+     * The amount of time to wait for a bulk select to complete before streaming
+     * the data.
+     */
+    @VisibleForTesting
+    protected int bulkSelectTimeoutMillis = 5000; // make configurable?
+
+    /**
+     * An {@link ExecutorService} for async tasks.
+     */
+    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     /**
      * A connection pool to the underlying Concourse database.
@@ -273,6 +291,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             Record.PINNED_RUNWAY_INSTANCE = null;
         }
+        executor.shutdownNow();
     }
 
     @Override
@@ -793,16 +812,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Load a record by {@code id} without knowing its class.
-     * 
-     * @param id
-     * @return the loaded record
-     */
-    <T extends Record> T load(long id) {
-        return instantiate(id, null);
-    }
-
-    /**
      * Perform the find operation using the {@code concourse} handler.
      * 
      * @param concourse
@@ -1102,7 +1111,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param criteria
      * @param order
      * @param page
-     * @return the ids of the matching records
+     * @return the data for the matching records
      */
     private Map<Long, Map<String, Set<Object>>> select(Concourse concourse,
             Criteria criteria, Order order, @Nullable Page page) {
@@ -1111,12 +1120,48 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             data = concourse.select(criteria, order, page);
         }
         else if(order == null && page == null) {
-            Set<Long> ids = concourse.find(criteria);
-            data = stream(ids);
+            Future<Map<Long, Map<String, Set<Object>>>> future = executor
+                    .submit(() -> concourse.select(criteria));
+            try {
+                return future.get(bulkSelectTimeoutMillis,
+                        TimeUnit.MILLISECONDS);
+            }
+            catch (InterruptedException | ExecutionException
+                    | TimeoutException e) {
+                // The bulk select took too long or an error occurred. In eithr
+                // case, fall back to finding the matching ids and incrementally
+                // stream the result set.
+                Concourse backup = Concourse.copyExistingConnection(concourse);
+                try {
+                    Set<Long> ids = backup.find(criteria);
+                    data = stream(ids);
+                }
+                finally {
+                    backup.close();
+                }
+            }
         }
         else if(order != null) {
-            Set<Long> ids = concourse.find(criteria, order);
-            data = stream(ids);
+            Future<Map<Long, Map<String, Set<Object>>>> future = executor
+                    .submit(() -> concourse.select(criteria, order));
+            try {
+                return future.get(bulkSelectTimeoutMillis,
+                        TimeUnit.MILLISECONDS);
+            }
+            catch (InterruptedException | ExecutionException
+                    | TimeoutException e) {
+                // The bulk select took too long or an error occurred. In eithr
+                // case, fall back to finding the matching ids and incrementally
+                // stream the result set.
+                Concourse backup = Concourse.copyExistingConnection(concourse);
+                try {
+                    Set<Long> ids = backup.find(criteria, order);
+                    data = stream(ids);
+                }
+                finally {
+                    backup.close();
+                }
+            }
         }
         else { // page != null
             data = concourse.select(criteria, page);
@@ -1157,12 +1202,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
              * queue.
              */
             Map<Long, Map<String, Set<Object>>> loaded = Maps
-                    .newHashMapWithExpectedSize(ids.size()); //TODO: create compound hashmap... that will look across multiple hashmaps until it finds the right value
-
-            @Override
-            public Set<Long> keySet() {
-                return ids;
-            }
+                    .newHashMapWithExpectedSize(ids.size()); // TODO: create
+                                                             // compound
+                                                             // hashmap... that
+                                                             // will look across
+                                                             // multiple
+                                                             // hashmaps until
+                                                             // it finds the
+                                                             // right value
 
             @Override
             public Set<Entry<Long, Map<String, Set<Object>>>> entrySet() {
@@ -1196,8 +1243,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 });
             }
 
+            @Override
+            public Set<Long> keySet() {
+                return ids;
+            }
+
         };
 
+    }
+
+    /**
+     * Load a record by {@code id} without knowing its class.
+     * 
+     * @param id
+     * @return the loaded record
+     */
+    <T extends Record> T load(long id) {
+        return instantiate(id, null);
     }
 
     /**
@@ -1284,17 +1346,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
         /**
-         * Set the connection's username.
-         * 
-         * @param username
-         * @return this builder
-         */
-        public Builder username(String username) {
-            this.username = username;
-            return this;
-        }
-
-        /**
          * Set the maximum number of records that should be buffered in memory
          * when selecting data.
          * 
@@ -1303,6 +1354,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         public Builder recordsPerSelectBufferSize(int max) {
             this.recordsPerSelectBufferSize = max;
+            return this;
+        }
+
+        /**
+         * Set the connection's username.
+         * 
+         * @param username
+         * @return this builder
+         */
+        public Builder username(String username) {
+            this.username = username;
             return this;
         }
     }
