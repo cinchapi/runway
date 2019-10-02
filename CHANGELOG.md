@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.4.1 (October 2, 2019)
+* Fixed a regression bug where the `Runway#findAnyUnique` failed because an attempt was made to instantiate an object of the provided class instead of the record's stored class.
+
 #### Version 1.4.0 (August 24, 2019)
 * Added a `DeferredReference` type that can be used to wrap a `Record` link within another `Record`. When a `DeferredReference` is used, the linked `Record` isn't loaded from the database until it is actually referenced for usage.
 * Added support for native database sorting and pagination that is introduced in Concourse version `0.10.0`. The `Runway` driver now contains read methods that accept `Order` and `Page` parameters. If the connected server does not support native sorting and pagination, Runway will fallback to local sorting and pagination that was used prior to Concourse `0.10.0`.
