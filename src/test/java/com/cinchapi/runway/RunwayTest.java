@@ -428,7 +428,7 @@ public class RunwayTest extends ClientServerTest {
         Set<Manager> actual = runway.load(Manager.class);
         Assert.assertEquals(expected, actual);
     }
-    
+
     @Test
     public void testStreamingBulkSelectSkipSupport() {
         runway.bulkSelectTimeoutMillis = 0; // force streaming bulk select
@@ -444,14 +444,23 @@ public class RunwayTest extends ClientServerTest {
         Set<Manager> $expected = Sets.newLinkedHashSet();
         int i = 0;
         int skip = expected.size() / 3;
-        for(Manager manager : runway.load(Manager.class)) {
+        for (Manager manager : runway.load(Manager.class)) {
             if(i >= skip) {
                 $expected.add(manager);
             }
             ++i;
-        }       
+        }
         actual = actual.stream().skip(skip).collect(Collectors.toSet());
         Assert.assertEquals($expected, actual);
+    }
+
+    @Test
+    public void testFindAnyAndInstantiateBaseClass() {
+        Manager user = new Manager("Jeff Nelson");
+        user.save();
+        User actual = runway.findAnyUnique(User.class, Criteria.where()
+                .key("name").operator(Operator.LIKE).value("%Jeff%"));
+        Assert.assertEquals(user, actual);
     }
 
     class Jock extends Record {

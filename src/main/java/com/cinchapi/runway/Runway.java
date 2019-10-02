@@ -467,6 +467,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public <T extends Record> T findAnyUnique(Class<T> clazz,
             Criteria criteria) {
@@ -478,7 +479,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return null;
             }
             else if(data.size() == 1) {
-                return (T) instantiate(clazz, data.keySet().iterator().next(),
+                return (T) instantiate(data.keySet().iterator().next(),
                         data.values().iterator().next());
             }
             else {
