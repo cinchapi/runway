@@ -18,7 +18,6 @@ package com.cinchapi.runway;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import org.junit.Assert;
@@ -279,14 +278,8 @@ public class RunwayTest extends ClientServerTest {
         Assert.assertSame(a, b);
         Manager c = new Manager("Ashleah Nelson");
         c.save();
-        Set<Manager> managers = runway.load(Manager.class);
-        AtomicBoolean passed = new AtomicBoolean(false);
-        managers.forEach(mgr -> {
-            if(mgr == a) {
-                passed.set(true);
-            }
-        });
-        Assert.assertTrue(passed.get());
+        Manager mgr = runway.load(Manager.class, manager.id());
+        Assert.assertSame(mgr, a);
     }
 
     @Test
