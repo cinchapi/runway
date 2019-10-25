@@ -964,6 +964,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             @Nullable Map<String, Set<Object>> data) {
         Record record;
         try {
+            if(data != null) {
+                // Perform cache invalidation to force an inherent "refresh"
+                // with the freshly provided.
+                cache.invalidate(id);
+            }
             record = cache.get(id, () -> {
                 return Record.load(clazz, id, new TLongObjectHashMap<>(),
                         connections, this, data);
@@ -1006,6 +1011,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             @Nullable Map<String, Set<Object>> data) {
         Record record;
         try {
+            if(data != null) {
+                // Perform cache invalidation to force an inherent "refresh"
+                // with the freshly provided.
+                cache.invalidate(id);
+            }
             record = cache.get(id, () -> {
                 Map<String, Set<Object>> $data = data;
                 if($data == null) {
