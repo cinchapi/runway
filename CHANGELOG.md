@@ -1,5 +1,9 @@
 # Changelog
 
+#### Version 1.5.0 (TBD)
+* Fixed a bug that caused the `countAny` methods to return the wrong data.
+* Added methods to the `Runway` driver that support filtering data. Unlike a `Criteria` or `Condition` a `filter` is a `Predicate` that receives the loaded `Record` as input and executes business logic to determine whether the `Record` should be included in the result set. For example, filtering can be used to seamlessly enforce permissions in a `Runway` method call by passing in a predicate that checks whether the caller has access to the `Record`.
+
 #### Version 1.4.1 (October 2, 2019)
 * Fixed a regression bug where the `Runway#findAnyUnique` failed because an attempt was made to instantiate an object of the provided class instead of the record's stored class.
 
