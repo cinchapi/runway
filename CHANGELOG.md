@@ -3,11 +3,7 @@
 #### Version 1.5.0 (TBD)
 * Fixed a bug that caused the `countAny` methods to return the wrong data.
 * Added methods to the `Runway` driver that support filtering data. Unlike a `Criteria` or `Condition` a `filter` is a `Predicate` that receives the loaded `Record` as input and executes business logic to determine whether the `Record` should be included in the result set. For example, filtering can be used to seamlessly enforce permissions in a `Runway` method call by passing in a predicate that checks whether the caller has access to the `Record`.
-* Fixed a bug that caused `Runway` to return stale data from a cache in situations where the invalidity of that data was inherently known. This occured in situations where 
-  * `Runway` was distributed across multiple servers (or instances), 
-  * one instance modified a record locally, and
-  * another instance indirectly loaded the modified record (e.g. an operation other than `load(class, id)` was performed).
-This bug existed because Runway always lazily fetches fresh data when performing an indirect read (e.g. an operation other than a direcct `load(class, id)`), but the caching logic ignored the fresh data if older data was available.
+* Remove support for record caching. The `Runway#builder#cache` method has been deprecated. Providing a record cache to Runway no longer has any effect. 
 
 #### Version 1.4.1 (October 2, 2019)
 * Fixed a regression bug where the `Runway#findAnyUnique` failed because an attempt was made to instantiate an object of the provided class instead of the record's stored class.

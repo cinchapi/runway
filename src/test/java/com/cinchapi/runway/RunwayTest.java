@@ -32,8 +32,6 @@ import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Random;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
@@ -267,39 +265,6 @@ public class RunwayTest extends ClientServerTest {
     }
 
     @Test
-    public void testLoadFromCache() throws Exception {
-        runway.close();
-        runway = Runway.builder().host("localhost").port(server.getClientPort())
-                .cache(CacheBuilder.newBuilder().build()).build();
-        Manager manager = new Manager("Jeff Nelson");
-        manager.save();
-        Manager a = runway.load(Manager.class, manager.id());
-        Manager b = runway.load(Manager.class, manager.id());
-        Assert.assertSame(a, b);
-        Manager c = new Manager("Ashleah Nelson");
-        c.save();
-        Manager mgr = runway.load(Manager.class, manager.id());
-        Assert.assertSame(mgr, a);
-    }
-
-    @Test
-    public void testLoadAcrossClassHiearchyPerformsLazyLoad() throws Exception {
-        Manager a = new Manager("A");
-        Admin b = new Admin("A", "B");
-        SuperAdmin c = new SuperAdmin("C", "C", "C");
-        a.save();
-        b.save();
-        c.save();
-        runway.close();
-        Cache<Long, Record> cache = CacheBuilder.newBuilder().build();
-        runway = Runway.builder().host("localhost").port(server.getClientPort())
-                .cache(cache).build();
-        Set<User> users = runway.loadAny(User.class);
-        Assert.assertEquals(0, cache.size());
-        Assert.assertEquals(ImmutableSet.of(a, b, c), users);
-    }
-
-    @Test
     public void testLoadDeferredReference() {
         Jock jock = new Jock("A");
         jock.mentor = new DeferredReference<>(new Jock("B"));
@@ -416,54 +381,6 @@ public class RunwayTest extends ClientServerTest {
         User actual = runway.findAnyUnique(User.class, Criteria.where()
                 .key("name").operator(Operator.LIKE).value("%Jeff%"));
         Assert.assertEquals(user, actual);
-    }
-
-    @Test
-    public void testInherentCacheRefresh() throws Exception {
-        runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .cache(CacheBuilder.newBuilder().build()).build();
-        Admin a1 = new Admin("A", "A");
-        a1.save();
-        a1 = runway.findUnique(Admin.class, Criteria.where().key("name")
-                .operator(Operator.EQUALS).value("A"));
-        Runway runway2 = Runway.builder().port(server.getClientPort())
-                .cache(CacheBuilder.newBuilder().build()).build();
-        Admin a2 = runway2.findUnique(Admin.class, Criteria.where().key("name")
-                .operator(Operator.EQUALS).value("A"));
-        Assert.assertEquals(a1, a2);
-        a2.set("foo", "B");
-        runway2.save(a2);
-        a1 = runway.findUnique(Admin.class, Criteria.where().key("name")
-                .operator(Operator.EQUALS).value("A"));
-        Assert.assertEquals("B", a1.foo);
-    }
-
-    @Test
-    public void testInherentCacheRefreshAny() throws Exception {
-
-        runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .cache(CacheBuilder.newBuilder().build()).build();
-        User a1 = new Admin("A", "A");
-        a1.save();
-        a1 = runway.findAnyUnique(User.class, Criteria.where().key("name")
-                .operator(Operator.EQUALS).value("A"));
-        Runway runway2 = Runway.builder().port(server.getClientPort())
-                .cache(CacheBuilder.newBuilder().build()).build();
-        try {
-            User a2 = runway2.findAnyUnique(User.class, Criteria.where()
-                    .key("name").operator(Operator.EQUALS).value("A"));
-            Assert.assertEquals(a1, a2);
-            a2.set("foo", "B");
-            runway2.save(a2);
-            a1 = runway.findAnyUnique(User.class, Criteria.where().key("name")
-                    .operator(Operator.EQUALS).value("A"));
-            Assert.assertEquals("B", a1.get("foo"));
-        }
-        finally {
-            runway2.close();
-        }
     }
 
     class Jock extends Record {
