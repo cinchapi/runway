@@ -48,13 +48,24 @@ public class CachingConcourseTest extends ClientServerTest {
     }
     
     @Test
-    public void testSelectUseCache() {
+    public void testSelectUsesCache() {
         long record = client.insert(ImmutableMap.of("name", "Jeff Nelson", "company", "Cinchapi", "age", 100));
         Map<String, Set<Object>> expected = client.select(record);
         Map<String, Set<Object>> actual = db.select(record);
         Assert.assertEquals(expected, actual);
         Assert.assertNotSame(expected, client.select(record));
         Assert.assertSame(actual, db.select(record));
+    }
+    
+    @Test
+    public void testAddInvalidatesCache() {
+        long record = client.insert(ImmutableMap.of("name", "Jeff Nelson", "company", "Cinchapi", "age", 100));
+        Map<String, Set<Object>> a = db.select(record);
+        db.add("score", 5, record);
+        Map<String, Set<Object>> b = db.select(record);
+        Assert.assertEquals(b, client.select(record));
+        Assert.assertNotSame(a, b);
+        Assert.assertSame(db.select(record), b);
     }
 
 }
