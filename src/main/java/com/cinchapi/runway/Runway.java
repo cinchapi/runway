@@ -53,6 +53,7 @@ import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
+import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.Cache;
@@ -1247,7 +1248,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private String password = "admin";
         private int port = 1717;
         private String username = "admin";
-        private int recordsPerSelectBufferSize = 100;    
+        private int recordsPerSelectBufferSize = 100;
+        private Cache<Long, Map<String, Set<Object>>> cache;
         
 
         /**
@@ -1258,8 +1260,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Runway build() {
             // TODO: need to make a new ConnectionPool that returns
             // CachingConcourse instances..
-            Runway db = new Runway(ConnectionPool.newCachedConnectionPool(host,
-                    port, username, password, environment));
+            ConnectionPool connections = cache == null ? ConnectionPool.newCachedConnectionPool(host,
+                    port, username, password, environment) : new CachingConnectionPool(host, port, username, password, environment, cache);
+            Runway db = new Runway(connections);
             db.recordsPerSelectBufferSize = recordsPerSelectBufferSize;
             return db;
         }
@@ -1275,6 +1278,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         @Deprecated
         public Builder cache(Cache<Long, Record> cache) {
+            return this;
+        }
+        
+        public Builder caching(Cache<Long, Map<String, Set<Object>>> cache) {
+            this.cache = cache;
             return this;
         }
 

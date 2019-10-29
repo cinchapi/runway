@@ -1,0 +1,60 @@
+/*
+ * Copyright (c) 2013-2019 Cinchapi Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.cinchapi.runway.cache;
+
+import java.util.Map;
+import java.util.Set;
+
+import org.junit.Assert;
+import org.junit.Test;
+
+import com.cinchapi.concourse.test.ClientServerTest;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.collect.ImmutableMap;
+
+/**
+ * Unit tests for {@link CachingConcourse}.
+ *
+ * @author Jeff Nelson
+ */
+public class CachingConcourseTest extends ClientServerTest {
+    
+    private CachingConcourse db;
+    private Cache<Long, Map<String, Set<Object>>> cache;
+
+    @Override
+    protected String getServerVersion() {
+        return ClientServerTest.LATEST_SNAPSHOT_VERSION;
+    }
+    
+    @Override
+    public void beforeEachTest() {
+        cache = CacheBuilder.newBuilder().build();
+        db = new CachingConcourse(client, cache);
+    }
+    
+    @Test
+    public void testSelectUseCache() {
+        long record = client.insert(ImmutableMap.of("name", "Jeff Nelson", "company", "Cinchapi", "age", 100));
+        Map<String, Set<Object>> expected = client.select(record);
+        Map<String, Set<Object>> actual = db.select(record);
+        Assert.assertEquals(expected, actual);
+        Assert.assertNotSame(expected, client.select(record));
+        Assert.assertSame(actual, db.select(record));
+    }
+
+}
