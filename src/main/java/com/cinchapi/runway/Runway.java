@@ -1256,8 +1256,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * @return a {@link Runway} instance
          */
         public Runway build() {
-            // TODO: need to make a new ConnectionPool that returns
-            // CachingConcourse instances..
             ConnectionPool connections = cache == null
                     ? ConnectionPool.newCachedConnectionPool(host, port,
                             username, password, environment)
@@ -1279,11 +1277,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         @Deprecated
         public Builder cache(Cache<Long, Record> cache) {
-            return this;
-        }
-
-        public Builder caching(Cache<Long, Map<String, Set<Object>>> cache) {
-            this.cache = cache;
             return this;
         }
 
@@ -1351,6 +1344,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         public Builder username(String username) {
             this.username = username;
+            return this;
+        }
+
+        /**
+         * Set the connection's cache.
+         * 
+         * @param cache
+         * @return this builder
+         */
+        public Builder withCache(Cache<Long, Map<String, Set<Object>>> cache) {
+            this.cache = cache;
             return this;
         }
     }
