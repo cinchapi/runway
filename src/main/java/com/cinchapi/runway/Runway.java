@@ -985,20 +985,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> T instantiate(long id,
             @Nullable Map<String, Set<Object>> data) {
-        Map<String, Set<Object>> $data = data;
-        if($data == null) {
+        if(data == null) {
             // Since the desired class isn't specified, we must
             // prematurely select the record's data to determine it.
             Concourse connection = connections.request();
             try {
-                $data = connection.select(id);
+                data = connection.select(id);
             }
             finally {
                 connections.release(connection);
             }
         }
         String section = (String) Iterables
-                .getLast($data.get(Record.SECTION_KEY));
+                .getLast(data.get(Record.SECTION_KEY));
         Class<T> clazz = Reflection.getClassCasted(section);
         return Record.load(clazz, id, new TLongObjectHashMap<>(), connections,
                 this, data);
@@ -1250,7 +1249,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private String username = "admin";
         private int recordsPerSelectBufferSize = 100;
         private Cache<Long, Map<String, Set<Object>>> cache;
-        
 
         /**
          * Build the configured {@link Runway} and return the instance.
@@ -1260,8 +1258,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Runway build() {
             // TODO: need to make a new ConnectionPool that returns
             // CachingConcourse instances..
-            ConnectionPool connections = cache == null ? ConnectionPool.newCachedConnectionPool(host,
-                    port, username, password, environment) : new CachingConnectionPool(host, port, username, password, environment, cache);
+            ConnectionPool connections = cache == null
+                    ? ConnectionPool.newCachedConnectionPool(host, port,
+                            username, password, environment)
+                    : new CachingConnectionPool(host, port, username, password,
+                            environment, cache);
             Runway db = new Runway(connections);
             db.recordsPerSelectBufferSize = recordsPerSelectBufferSize;
             return db;
@@ -1280,7 +1281,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder cache(Cache<Long, Record> cache) {
             return this;
         }
-        
+
         public Builder caching(Cache<Long, Map<String, Set<Object>>> cache) {
             this.cache = cache;
             return this;

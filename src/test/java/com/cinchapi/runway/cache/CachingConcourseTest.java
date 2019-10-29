@@ -24,6 +24,7 @@ import org.junit.Test;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
 /**
@@ -66,6 +67,25 @@ public class CachingConcourseTest extends ClientServerTest {
         Assert.assertEquals(b, client.select(record));
         Assert.assertNotSame(a, b);
         Assert.assertSame(db.select(record), b);
+    }
+    
+    @Test
+    public void testSelectMultipleRecordsCachesThemAll() {
+        long a = client.insert(ImmutableMap.of("name", "Jeff Nelson", "company", "Cinchapi", "age", 100));
+        long b = client.insert(ImmutableMap.of("name", "Jeff Nelson", "company", "Cinchapi", "age", 100));
+        long c = client.insert(ImmutableMap.of("name", "Jeff Nelson", "company", "Cinchapi", "age", 100));
+        Map<Long, Map<String, Set<Object>>> data = db.select(ImmutableList.of(a,b,c));
+        while(cache.getIfPresent(a) == null || cache.getIfPresent(b) == null || cache.getIfPresent(c) == null) {
+            // Wait for cache to populate in background
+            continue;
+        }
+        Assert.assertSame(data.get(a), db.select(a));
+        Assert.assertSame(data.get(b), db.select(b));
+        Assert.assertSame(data.get(c), db.select(c));
+        db.add("artist", "Common", a);
+        Assert.assertNotSame(data.get(a), db.select(a));
+        Assert.assertSame(data.get(b), db.select(b));
+        Assert.assertSame(data.get(c), db.select(c));
     }
 
 }

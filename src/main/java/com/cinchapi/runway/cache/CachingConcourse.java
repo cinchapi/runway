@@ -19,29 +19,58 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import com.cinchapi.concourse.Concourse;
-import com.cinchapi.concourse.DelegatingConcourse;
+import com.cinchapi.concourse.ForwardingConcourse;
 import com.cinchapi.concourse.Timestamp;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.paginate.Page;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.google.common.cache.Cache;
 
 /**
  * A {@link Concourse} wrapper that caches data {@link #select(Long) selected}
- * for faster
- * subsequent lookups.
+ * for faster subsequent lookups.
  * <p>
- * This class will automatically invalidate the cache when it detects a write
- * for any cached record.
+ * This class eagerly tries to cache an entire record's data whenever it is
+ * selected from Concourse and will automatically invalidate the cache when it
+ * detects a write for any cached record.
+ * </p>
+ * <p>
+ * <strong>WARNING:</strong> This class assumes that external writes that would
+ * cause the cache to become stale are handled externally. So, it is possible
+ * for this class to return stale data if the provider isn't careful to ensure
+ * that either 1) writes don't occur externally or 2) cache invalidation is
+ * handled externally when appropriate.
  * </p>
  *
  * @author Jeff Nelson
  */
-class CachingConcourse extends DelegatingConcourse {
+class CachingConcourse extends ForwardingConcourse {
+
+    /**
+     * Cast the data returned from Concourse to a form that can be cached.
+     * 
+     * @param data
+     * @return the cacheable data
+     */
+    @SuppressWarnings("unchecked")
+    private static <T> Map<Long, Map<String, Set<Object>>> cast(
+            Map<Long, Map<String, Set<T>>> data) {
+        return Map.class.cast(data);
+    }
 
     /**
      * The cache.
      */
     private final Cache<Long, Map<String, Set<Object>>> cache;
+
+    /**
+     * An executor service used for populating cache entries in the background.
+     */
+    private final ExecutorService bg = Executors.newSingleThreadExecutor();
 
     /**
      * Construct a new instance.
@@ -230,6 +259,102 @@ class CachingConcourse extends DelegatingConcourse {
     }
 
     @Override
+    public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records) {
+        Map<Long, Map<String, Set<T>>> data = super.select(records);
+        try {
+            return data;
+        }
+        finally {
+            bg.execute(() -> cache.putAll(cast(data)));
+        }
+    }
+
+    @Override
+    public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records,
+            Order order) {
+        Map<Long, Map<String, Set<T>>> data = super.select(records, order);
+        try {
+            return data;
+        }
+        finally {
+            bg.execute(() -> cache.putAll(cast(data)));
+        }
+    }
+
+    @Override
+    public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records,
+            Order order, Page page) {
+        Map<Long, Map<String, Set<T>>> data = super.select(records, order,
+                page);
+        try {
+            return data;
+        }
+        finally {
+            bg.execute(() -> cache.putAll(cast(data)));
+        }
+    }
+
+    @Override
+    public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records,
+            Page page) {
+        Map<Long, Map<String, Set<T>>> data = super.select(records, page);
+        try {
+            return data;
+        }
+        finally {
+            bg.execute(() -> cache.putAll(cast(data)));
+        }
+    }
+
+    @Override
+    public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria) {
+        Map<Long, Map<String, Set<T>>> data = super.select(criteria);
+        try {
+            return data;
+        }
+        finally {
+            bg.execute(() -> cache.putAll(cast(data)));
+        }
+    }
+
+    @Override
+    public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria,
+            Order order) {
+        Map<Long, Map<String, Set<T>>> data = super.select(criteria, order);
+        try {
+            return data;
+        }
+        finally {
+            bg.execute(() -> cache.putAll(cast(data)));
+        }
+    }
+
+    @Override
+    public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria,
+            Order order, Page page) {
+        Map<Long, Map<String, Set<T>>> data = super.select(criteria, order,
+                page);
+        try {
+            return data;
+        }
+        finally {
+            bg.execute(() -> cache.putAll(cast(data)));
+        }
+    }
+
+    @Override
+    public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria,
+            Page page) {
+        Map<Long, Map<String, Set<T>>> data = super.select(criteria, page);
+        try {
+            return data;
+        }
+        finally {
+            bg.execute(() -> cache.putAll(cast(data)));
+        }
+    }
+
+    @Override
     public Map<String, Set<Object>> select(long record) {
         try {
             return cache.get(record, () -> super.select(record));
@@ -285,6 +410,11 @@ class CachingConcourse extends DelegatingConcourse {
         finally {
             cache.invalidate(record);
         }
+    }
+
+    @Override
+    protected ForwardingConcourse $this(Concourse concourse) {
+        return new CachingConcourse(concourse, cache);
     }
 
 }
