@@ -26,12 +26,12 @@ import com.cinchapi.concourse.util.ConcurrentLoadingQueue;
 import com.google.common.cache.Cache;
 
 /**
- * A {@link ConnectionPool} with supports for data {@link CacheEnabledConcourse
+ * A {@link ConnectionPool} with supports for data {@link CachingConcourse
  * caching}.
  *
  * @author Jeff Nelson
  */
-public class CacheEnabledConnectionPool extends ConnectionPool {
+public class CachingConnectionPool extends ConnectionPool {
 
     // Connection Info
     private final String host;
@@ -51,7 +51,7 @@ public class CacheEnabledConnectionPool extends ConnectionPool {
      * @param environment
      * @param poolSize
      */
-    public CacheEnabledConnectionPool(String host, int port, String username,
+    public CachingConnectionPool(String host, int port, String username,
             String password, String environment,
             Cache<Long, Map<String, Set<Object>>> cache) {
         super(host, port, username, password, environment, ConnectionPool.DEFAULT_POOL_SIZE);
@@ -69,7 +69,7 @@ public class CacheEnabledConnectionPool extends ConnectionPool {
 
             @Override
             public Concourse call() throws Exception {
-                return new CacheEnabledConcourse(Concourse.connect(host, port,
+                return new CachingConcourse(Concourse.connect(host, port,
                         username, password, environment), cache);
             }
 

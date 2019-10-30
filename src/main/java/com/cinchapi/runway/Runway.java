@@ -53,7 +53,7 @@ import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
-import com.cinchapi.runway.cache.CacheEnabledConnectionPool;
+import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.Cache;
@@ -1259,7 +1259,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             ConnectionPool connections = cache == null
                     ? ConnectionPool.newCachedConnectionPool(host, port,
                             username, password, environment)
-                    : new CacheEnabledConnectionPool(host, port, username, password,
+                    : new CachingConnectionPool(host, port, username, password,
                             environment, cache);
             Runway db = new Runway(connections);
             db.recordsPerSelectBufferSize = recordsPerSelectBufferSize;
