@@ -22,6 +22,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import com.cinchapi.common.collect.concurrent.ThreadFactories;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ForwardingConcourse;
 import com.cinchapi.concourse.Timestamp;
@@ -70,7 +71,8 @@ class CachingConcourse extends ForwardingConcourse {
     /**
      * An executor service used for populating cache entries in the background.
      */
-    private final ExecutorService bg = Executors.newSingleThreadExecutor();
+    private final ExecutorService bg = Executors.newSingleThreadExecutor(
+            ThreadFactories.namingDaemonThreadFactory("runway-concourse-cacher-%d"));
 
     /**
      * Construct a new instance.
