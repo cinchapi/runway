@@ -48,7 +48,7 @@ import com.google.common.cache.Cache;
  *
  * @author Jeff Nelson
  */
-class CachingConcourse extends ForwardingConcourse {
+class CacheEnabledConcourse extends ForwardingConcourse {
 
     /**
      * Cast the data returned from Concourse to a form that can be cached.
@@ -78,7 +78,7 @@ class CachingConcourse extends ForwardingConcourse {
      * @param concourse
      * @param cache
      */
-    public CachingConcourse(Concourse concourse,
+    public CacheEnabledConcourse(Concourse concourse,
             Cache<Long, Map<String, Set<Object>>> cache) {
         super(concourse);
         this.cache = cache;
@@ -414,7 +414,7 @@ class CachingConcourse extends ForwardingConcourse {
 
     @Override
     protected ForwardingConcourse $this(Concourse concourse) {
-        return new CachingConcourse(concourse, cache);
+        return new CacheEnabledConcourse(concourse, cache);
     }
 
 }

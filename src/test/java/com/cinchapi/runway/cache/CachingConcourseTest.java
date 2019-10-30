@@ -28,13 +28,13 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
 /**
- * Unit tests for {@link CachingConcourse}.
+ * Unit tests for {@link CacheEnabledConcourse}.
  *
  * @author Jeff Nelson
  */
 public class CachingConcourseTest extends ClientServerTest {
     
-    private CachingConcourse db;
+    private CacheEnabledConcourse db;
     private Cache<Long, Map<String, Set<Object>>> cache;
 
     @Override
@@ -45,7 +45,7 @@ public class CachingConcourseTest extends ClientServerTest {
     @Override
     public void beforeEachTest() {
         cache = CacheBuilder.newBuilder().build();
-        db = new CachingConcourse(client, cache);
+        db = new CacheEnabledConcourse(client, cache);
     }
     
     @Test
