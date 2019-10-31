@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import javax.annotation.Nullable;
+
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -382,6 +384,20 @@ public class RunwayTest extends ClientServerTest {
                 .key("name").operator(Operator.LIKE).value("%Jeff%"));
         Assert.assertEquals(user, actual);
     }
+    
+    @Test
+    public void testOnLoadSimulateUpgradeTask() {
+        Student stud = new Student();
+        stud.ccat = 20.0f;
+        stud.save();
+        Assert.assertTrue(stud.scores.isEmpty());
+        stud = runway.load(Student.class, stud.id());
+        Assert.assertFalse(stud.scores.isEmpty());
+        stud.save();
+        stud = runway.load(Student.class, stud.id());
+        Assert.assertEquals(1, stud.scores.size());
+        System.out.println(stud);
+    }
 
     class Jock extends Record {
 
@@ -481,6 +497,32 @@ public class RunwayTest extends ClientServerTest {
     class Team extends Record {
 
         Entity entity;
+    }
+    
+    class ScoreReport extends Record {
+        public final String name;
+        public final float score;
+        
+        public ScoreReport(String name, float score) {
+            this.name = name;
+            this.score = score;
+        }
+    }
+    
+    class Student extends Record {
+        
+        @Nullable
+        private Float ccat;
+        
+        public Set<ScoreReport> scores = Sets.newLinkedHashSet();
+        
+        @Override
+        public void onLoad() {
+            if(ccat != null && scores.isEmpty()) {
+                scores.add(new ScoreReport("ccat", ccat));
+            }
+        }
+        
     }
 
 }

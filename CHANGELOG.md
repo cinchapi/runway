@@ -5,6 +5,7 @@
 * Added methods to the `Runway` driver that support filtering data. Unlike a `Criteria` or `Condition` a `filter` is a `Predicate` that receives the loaded `Record` as input and executes business logic to determine whether the `Record` should be included in the result set. For example, filtering can be used to seamlessly enforce permissions in a `Runway` method call by passing in a predicate that checks whether the caller has access to the `Record`.
 * Remove support for record caching. The `Runway#builder#cache` method has been deprecated. Providing a record cache to Runway no longer has any effect. 
 * Added support **data caching**. This feature can be enabled by passing a `Cache` to the `Runway#builder#withCache` method. Data caching is an improvement over record caching. With this new feature, caching is managed closer to the level of database interaction to ensure greater performance and scalability.
+* Added an `onLoad` hook to the `Record` class that can be used to provide a routine that is executed whenever an existing Record is loaded from the database.
 
 #### Version 1.4.1 (October 2, 2019)
 * Fixed a regression bug where the `Runway#findAnyUnique` failed because an attempt was made to instantiate an object of the provided class instead of the record's stored class.
