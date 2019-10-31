@@ -18,7 +18,6 @@ package com.cinchapi.runway.cache;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.Callable;
 
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -54,7 +53,8 @@ public class CachingConnectionPool extends ConnectionPool {
     public CachingConnectionPool(String host, int port, String username,
             String password, String environment,
             Cache<Long, Map<String, Set<Object>>> cache) {
-        super(host, port, username, password, environment, ConnectionPool.DEFAULT_POOL_SIZE);
+        super(host, port, username, password, environment,
+                ConnectionPool.DEFAULT_POOL_SIZE);
         this.host = host;
         this.port = port;
         this.username = username;
@@ -65,20 +65,21 @@ public class CachingConnectionPool extends ConnectionPool {
 
     @Override
     protected Queue<Concourse> buildQueue(int size) {
-        return ConcurrentLoadingQueue.create(new Callable<Concourse>() {
-
-            @Override
-            public Concourse call() throws Exception {
-                return new CachingConcourse(Concourse.connect(host, port,
-                        username, password, environment), cache);
-            }
-
-        });
+        return ConcurrentLoadingQueue.create(() -> createConnection(host, port,
+                username, password, environment));
     }
 
     @Override
     protected Concourse getConnection() {
         return available.poll();
+    }
+
+    @Override
+    protected Concourse createConnection(String host, int port, String username,
+            String password, String environment) {
+        return new CachingConcourse(
+                Concourse.connect(host, port, username, password, environment),
+                cache);
     }
 
 }
