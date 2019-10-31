@@ -32,14 +32,6 @@ import com.google.common.cache.Cache;
  */
 public class CachingConnectionPool extends ConnectionPool {
 
-    // Connection Info
-    private final String host;
-    private final int port;
-    private String username;
-    private final String password;
-    private final String environment;
-    private final Cache<Long, Map<String, Set<Object>>> cache;
-
     /**
      * Construct a new instance.
      * 
@@ -53,33 +45,19 @@ public class CachingConnectionPool extends ConnectionPool {
     public CachingConnectionPool(String host, int port, String username,
             String password, String environment,
             Cache<Long, Map<String, Set<Object>>> cache) {
-        super(host, port, username, password, environment,
-                ConnectionPool.DEFAULT_POOL_SIZE);
-        this.host = host;
-        this.port = port;
-        this.username = username;
-        this.password = password;
-        this.environment = environment;
-        this.cache = cache;
+        super(() -> new CachingConcourse(
+                Concourse.connect(host, port, username, password, environment),
+                cache), ConnectionPool.DEFAULT_POOL_SIZE);
     }
 
     @Override
     protected Queue<Concourse> buildQueue(int size) {
-        return ConcurrentLoadingQueue.create(() -> createConnection(host, port,
-                username, password, environment));
+        return ConcurrentLoadingQueue.create(supplier::get);
     }
 
     @Override
     protected Concourse getConnection() {
         return available.poll();
-    }
-
-    @Override
-    protected Concourse createConnection(String host, int port, String username,
-            String password, String environment) {
-        return new CachingConcourse(
-                Concourse.connect(host, port, username, password, environment),
-                cache);
     }
 
 }
