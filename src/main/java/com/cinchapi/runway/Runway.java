@@ -1347,16 +1347,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return this;
         }
 
-        /**
-         * Set the connection's cache.
-         * 
-         * @param cache
-         * @return this builder
-         */
-        public Builder withCache(Cache<Long, Map<String, Set<Object>>> cache) {
-            this.cache = cache;
-            return this;
-        }
+        // @formatter:off
+        // TODO: This feature is just not ready...
+//        /**
+//         * Set the connection's cache.
+//         * 
+//         * @param cache
+//         * @return this builder
+//         */
+//        public Builder withCache(Cache<Long, Map<String, Set<Object>>> cache) {
+//            this.cache = cache;
+//            return this;
+//        }
+        // @formatter:on
     }
 
     /**
