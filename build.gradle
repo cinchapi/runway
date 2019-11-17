@@ -31,11 +31,11 @@ repositories {
 
 
 // Set the version for all Concourse dependencies
-ext.concourseVersion = '0.10.2'
+ext.concourseVersion = '0.10.3'
 
 dependencies {
 	compile 'com.google.guava:guava:18.0'
-	compile (group: 'com.cinchapi', name: 'accent4j', version: '1.8.0', changing:true) {
+	compile (group: 'com.cinchapi', name: 'accent4j', version: '1.8.4', changing:true) {
         force = true
     }
 	compile group: 'com.cinchapi', name: 'concourse-driver-java', version: concourseVersion, changing:true

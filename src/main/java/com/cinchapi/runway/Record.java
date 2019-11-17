@@ -338,6 +338,7 @@ public abstract class Record implements Comparable<Record> {
         Reflection.set("id", id, record); /* (authorized) */
         record.assign(runway);
         record.load(concourse, existing, data);
+        record.onLoad();
         return record;
     }
 
@@ -892,20 +893,20 @@ public abstract class Record implements Comparable<Record> {
                     String path = StringUtils.join(stops, '.', 1, stops.length);
                     Object destination = get(key);
                     if(destination instanceof Record) {
-                        value = ((Record) destination).map(path);
+                        value = ((Record) destination).map(options, path);
                     }
                     else if(Sequences.isSequence(destination)) {
                         List<Object> $value = Lists.newArrayList();
                         Sequences.forEach(destination, item -> {
                             if(item instanceof Record) {
-                                $value.add(((Record) item).map(path));
+                                $value.add(((Record) item).map(options, path));
                             }
                         });
                         value = $value;
                     }
                     else {
                         value = null;
-                    }                    
+                    }
                 }
                 else {
                     value = get(key);
@@ -1455,6 +1456,17 @@ public abstract class Record implements Comparable<Record> {
     protected Map<String, Object> derived() {
         return Maps.newHashMap();
     }
+
+    /**
+     * A hook that is run whenever this {@link Record} is loaded from the
+     * database. This method can contain logic to perform upgrade tasks or other
+     * maintenance operations on stored data based on the evolution of business
+     * logic.
+     * <p>
+     * <strong>NOTE:</strong> This method should be idempotent.
+     * </p>
+     */
+    protected void onLoad() {}
 
     /**
      * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be

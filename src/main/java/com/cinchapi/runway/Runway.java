@@ -38,7 +38,6 @@ import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
 
 import com.cinchapi.common.base.AnyStrings;
-import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -54,7 +53,7 @@ import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
-import com.cinchapi.runway.cache.NoOpCache;
+import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.Cache;
@@ -232,12 +231,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /* package */ final ConnectionPool connections;
 
     /**
-     * A pluggable {@link Cache} that can be used to make repeated record
-     * {@link #instantiate(Class, long, TLongObjectHashMap)} more efficient.
-     */
-    private final Cache<Long, Record> cache;
-
-    /**
      * A flag that indicates whether the connected server supports result set
      * sorting and pagination.
      */
@@ -256,7 +249,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * 
      * @param connections a Concourse {@link ConnectionPool}
      */
-    private Runway(ConnectionPool connections, Cache<Long, Record> cache) {
+    private Runway(ConnectionPool connections) {
         this.connections = connections;
         instances.add(this);
         if(instances.size() > 1) {
@@ -265,7 +258,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             Record.PINNED_RUNWAY_INSTANCE = this;
         }
-        this.cache = cache;
         Concourse concourse = connections.request();
         try {
             Version target = Version.forIntegers(0, 10);
@@ -959,20 +951,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param data
      * @return the loaded {@link Record} instance
      */
-    @SuppressWarnings("unchecked")
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             @Nullable Map<String, Set<Object>> data) {
-        Record record;
-        try {
-            record = cache.get(id, () -> {
-                return Record.load(clazz, id, new TLongObjectHashMap<>(),
-                        connections, this, data);
-            });
-        }
-        catch (ExecutionException e) {
-            throw CheckedExceptions.wrapAsRuntimeException(e);
-        }
-        return (T) record;
+        return Record.load(clazz, id, new TLongObjectHashMap<>(), connections,
+                this, data);
     }
 
     /**
@@ -1001,35 +983,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param data
      * @return the loaded {@link Record} instance
      */
-    @SuppressWarnings("unchecked")
     private <T extends Record> T instantiate(long id,
             @Nullable Map<String, Set<Object>> data) {
-        Record record;
-        try {
-            record = cache.get(id, () -> {
-                Map<String, Set<Object>> $data = data;
-                if($data == null) {
-                    // Since the desired class isn't specified, we must
-                    // prematurely select the record's data to determine it.
-                    Concourse connection = connections.request();
-                    try {
-                        $data = connection.select(id);
-                    }
-                    finally {
-                        connections.release(connection);
-                    }
-                }
-                String section = (String) Iterables
-                        .getLast($data.get(Record.SECTION_KEY));
-                Class<T> clazz = Reflection.getClassCasted(section);
-                return Record.load(clazz, id, new TLongObjectHashMap<>(),
-                        connections, this, data);
-            });
+        if(data == null) {
+            // Since the desired class isn't specified, we must
+            // prematurely select the record's data to determine it.
+            Concourse connection = connections.request();
+            try {
+                data = connection.select(id);
+            }
+            finally {
+                connections.release(connection);
+            }
         }
-        catch (ExecutionException e) {
-            throw CheckedExceptions.wrapAsRuntimeException(e);
-        }
-        return (T) record;
+        String section = (String) Iterables
+                .getLast(data.get(Record.SECTION_KEY));
+        Class<T> clazz = Reflection.getClassCasted(section);
+        return Record.load(clazz, id, new TLongObjectHashMap<>(), connections,
+                this, data);
     }
 
     /**
@@ -1271,13 +1242,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public static class Builder {
 
-        private Cache<Long, Record> cache = new NoOpCache<>();
         private String environment = "";
         private String host = "localhost";
         private String password = "admin";
         private int port = 1717;
         private String username = "admin";
         private int recordsPerSelectBufferSize = 100;
+        private Cache<Long, Map<String, Set<Object>>> cache;
 
         /**
          * Build the configured {@link Runway} and return the instance.
@@ -1285,8 +1256,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * @return a {@link Runway} instance
          */
         public Runway build() {
-            Runway db = new Runway(ConnectionPool.newCachedConnectionPool(host,
-                    port, username, password, environment), cache);
+            ConnectionPool connections = cache == null
+                    ? ConnectionPool.newCachedConnectionPool(host, port,
+                            username, password, environment)
+                    : new CachingConnectionPool(host, port, username, password,
+                            environment, cache);
+            Runway db = new Runway(connections);
             db.recordsPerSelectBufferSize = recordsPerSelectBufferSize;
             return db;
         }
@@ -1296,9 +1271,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * 
          * @param cache
          * @return this builder
+         * @deprecated {@link Record} caching has been deprecated in favor of
+         *             raw data caching for better performance; please use
+         *             {@link #withCache(Cache)} to provide a cache instance.
          */
+        @Deprecated
         public Builder cache(Cache<Long, Record> cache) {
-            this.cache = cache;
             return this;
         }
 
@@ -1368,6 +1346,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             this.username = username;
             return this;
         }
+
+        // @formatter:off
+        // TODO: This feature is just not ready...
+//        /**
+//         * Set the connection's cache.
+//         * 
+//         * @param cache
+//         * @return this builder
+//         */
+//        public Builder withCache(Cache<Long, Map<String, Set<Object>>> cache) {
+//            this.cache = cache;
+//            return this;
+//        }
+        // @formatter:on
     }
 
     /**

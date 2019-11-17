@@ -18,8 +18,9 @@ package com.cinchapi.runway;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -33,8 +34,6 @@ import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Random;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
@@ -268,83 +267,6 @@ public class RunwayTest extends ClientServerTest {
     }
 
     @Test
-    public void testLoadFromCache() throws Exception {
-        runway.close();
-        runway = Runway.builder().host("localhost").port(server.getClientPort())
-                .cache(CacheBuilder.newBuilder().build()).build();
-        Manager manager = new Manager("Jeff Nelson");
-        manager.save();
-        Manager a = runway.load(Manager.class, manager.id());
-        Manager b = runway.load(Manager.class, manager.id());
-        Assert.assertSame(a, b);
-        Manager c = new Manager("Ashleah Nelson");
-        c.save();
-        Set<Manager> managers = runway.load(Manager.class);
-        AtomicBoolean passed = new AtomicBoolean(false);
-        managers.forEach(mgr -> {
-            if(mgr == a) {
-                passed.set(true);
-            }
-        });
-        Assert.assertTrue(passed.get());
-    }
-
-    @Test
-    public void testLoadAcrossClassHiearchyPerformsLazyLoad() throws Exception {
-        Manager a = new Manager("A");
-        Admin b = new Admin("A", "B");
-        SuperAdmin c = new SuperAdmin("C", "C", "C");
-        a.save();
-        b.save();
-        c.save();
-        runway.close();
-        Cache<Long, Record> cache = CacheBuilder.newBuilder().build();
-        runway = Runway.builder().host("localhost").port(server.getClientPort())
-                .cache(cache).build();
-        Set<User> users = runway.loadAny(User.class);
-        Assert.assertEquals(0, cache.size());
-        Assert.assertEquals(ImmutableSet.of(a, b, c), users);
-    }
-    
-    @Test
-    public void testBulkSelect() {
-        Set<Manager> expected = Sets.newHashSet();
-        Reflection.set("recordsPerSelectBufferSize",
-                new java.util.Random().nextInt(10) + 1, runway);
-        for (int i = 0; i < Random.getScaleCount(); ++i) {
-            Manager manager = new Manager("" + Time.now());
-            manager.save();
-            expected.add(manager);
-        }
-        Set<Manager> actual = runway.load(Manager.class);
-        Assert.assertEquals(expected, actual);
-    }
-
-     @Test
-    public void testBulkSelectSkipSupport() {
-        Set<Manager> expected = Sets.newLinkedHashSet();
-        Reflection.set("recordsPerSelectBufferSize",
-                new java.util.Random().nextInt(10) + 1, runway);
-        for (int i = 0; i < Random.getScaleCount(); ++i) {
-            Manager manager = new Manager("" + Time.now());
-            manager.save();
-            expected.add(manager);
-        }
-        Set<Manager> actual = runway.load(Manager.class);
-        Set<Manager> $expected = Sets.newLinkedHashSet();
-        int i = 0;
-        int skip = expected.size() / 3;
-        for(Manager manager : runway.load(Manager.class)) {
-            if(i >= skip) {
-                $expected.add(manager);
-            }
-            ++i;
-        }       
-        actual = actual.stream().skip(skip).collect(Collectors.toSet());
-        Assert.assertEquals($expected, actual);
-    }
-
-    @Test
     public void testLoadDeferredReference() {
         Jock jock = new Jock("A");
         jock.mentor = new DeferredReference<>(new Jock("B"));
@@ -462,6 +384,20 @@ public class RunwayTest extends ClientServerTest {
                 .key("name").operator(Operator.LIKE).value("%Jeff%"));
         Assert.assertEquals(user, actual);
     }
+    
+    @Test
+    public void testOnLoadSimulateUpgradeTask() {
+        Student stud = new Student();
+        stud.ccat = 20.0f;
+        stud.save();
+        Assert.assertTrue(stud.scores.isEmpty());
+        stud = runway.load(Student.class, stud.id());
+        Assert.assertFalse(stud.scores.isEmpty());
+        stud.save();
+        stud = runway.load(Student.class, stud.id());
+        Assert.assertEquals(1, stud.scores.size());
+        System.out.println(stud);
+    }
 
     class Jock extends Record {
 
@@ -561,6 +497,32 @@ public class RunwayTest extends ClientServerTest {
     class Team extends Record {
 
         Entity entity;
+    }
+    
+    class ScoreReport extends Record {
+        public final String name;
+        public final float score;
+        
+        public ScoreReport(String name, float score) {
+            this.name = name;
+            this.score = score;
+        }
+    }
+    
+    class Student extends Record {
+        
+        @Nullable
+        private Float ccat;
+        
+        public Set<ScoreReport> scores = Sets.newLinkedHashSet();
+        
+        @Override
+        public void onLoad() {
+            if(ccat != null && scores.isEmpty()) {
+                scores.add(new ScoreReport("ccat", ccat));
+            }
+        }
+        
     }
 
 }
