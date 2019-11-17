@@ -893,13 +893,13 @@ public abstract class Record implements Comparable<Record> {
                     String path = StringUtils.join(stops, '.', 1, stops.length);
                     Object destination = get(key);
                     if(destination instanceof Record) {
-                        value = ((Record) destination).map(path);
+                        value = ((Record) destination).map(options, path);
                     }
                     else if(Sequences.isSequence(destination)) {
                         List<Object> $value = Lists.newArrayList();
                         Sequences.forEach(destination, item -> {
                             if(item instanceof Record) {
-                                $value.add(((Record) item).map(path));
+                                $value.add(((Record) item).map(options, path));
                             }
                         });
                         value = $value;
