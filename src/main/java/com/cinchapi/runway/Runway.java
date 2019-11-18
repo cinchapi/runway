@@ -1093,7 +1093,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
         else if(order == null && page == null) {
             Future<Map<Long, Map<String, Set<Object>>>> future = executor
-                    .submit(() -> concourse.select(criteria));
+                    .submit(() -> {
+                        Concourse backup = Concourse
+                                .copyExistingConnection(concourse);
+                        try {
+                            return backup.select(criteria);
+                        }
+                        finally {
+                            backup.close();
+                        }
+                    });
             try {
                 data = future.get(bulkSelectTimeoutMillis,
                         TimeUnit.MILLISECONDS);
@@ -1115,7 +1124,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
         else if(order != null) {
             Future<Map<Long, Map<String, Set<Object>>>> future = executor
-                    .submit(() -> concourse.select(criteria, order));
+                    .submit(() -> {
+                        Concourse backup = Concourse
+                                .copyExistingConnection(concourse);
+                        try {
+                            return backup.select(criteria, order);
+                        }
+                        finally {
+                            backup.close();
+                        }
+                    });
             try {
                 data = future.get(bulkSelectTimeoutMillis,
                         TimeUnit.MILLISECONDS);
@@ -1435,5 +1453,4 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
     }
-
 }

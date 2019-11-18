@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.5.1 (TBD)
+* Fixed a bug that caused `Runway` operations to occassionally trigger an `out of sequence response` error in the underlying Concourse connections. 
+
 #### Version 1.5.0 (November 17, 2019)
 * Fixed a bug that caused the `countAny` methods to return the wrong data.
 * Added methods to the `Runway` driver that support filtering data. Unlike a `Criteria` or `Condition` a `filter` is a `Predicate` that receives the loaded `Record` as input and executes business logic to determine whether the `Record` should be included in the result set. For example, filtering can be used to seamlessly enforce permissions in a `Runway` method call by passing in a predicate that checks whether the caller has access to the `Record`.

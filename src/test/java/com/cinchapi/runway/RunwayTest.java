@@ -18,6 +18,7 @@ package com.cinchapi.runway;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
@@ -48,7 +49,7 @@ public class RunwayTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.10.2";
+        return "0.10.3";
     }
 
     private Runway runway;
@@ -384,7 +385,7 @@ public class RunwayTest extends ClientServerTest {
                 .key("name").operator(Operator.LIKE).value("%Jeff%"));
         Assert.assertEquals(user, actual);
     }
-    
+
     @Test
     public void testOnLoadSimulateUpgradeTask() {
         Student stud = new Student();
@@ -397,6 +398,39 @@ public class RunwayTest extends ClientServerTest {
         stud = runway.load(Student.class, stud.id());
         Assert.assertEquals(1, stud.scores.size());
         System.out.println(stud);
+    }
+
+    @Test
+    public void testPreventOutOfSequenceResponse() {
+        int bulkSelectTimeoutMillis = runway.bulkSelectTimeoutMillis;
+        runway.bulkSelectTimeoutMillis = 1;
+        List<Long> ids = Lists.newArrayList();
+        try {
+            for (int i = 0; i < 10000; ++i) {
+                Admin admin = new Admin("Jeff Nelson", "foo");
+                admin.save();
+                ids.add(admin.id());
+            }
+            runway.load(Admin.class);
+            AtomicBoolean done = new AtomicBoolean(false);
+            AtomicBoolean failed = new AtomicBoolean(false);
+            long now = System.currentTimeMillis();
+            while (!done.get() && System.currentTimeMillis() - now <= 3000) {
+                try {
+                    runway.load(Admin.class,
+                            ids.get(Math.abs(Random.getInt()) % ids.size()));
+                }
+                catch (Exception e) {
+                    e.printStackTrace();
+                    done.set(true);
+                    failed.set(true);
+                }
+            }
+            Assert.assertFalse(failed.get());
+        }
+        finally {
+            runway.bulkSelectTimeoutMillis = bulkSelectTimeoutMillis;
+        }
     }
 
     class Jock extends Record {
@@ -498,31 +532,31 @@ public class RunwayTest extends ClientServerTest {
 
         Entity entity;
     }
-    
+
     class ScoreReport extends Record {
         public final String name;
         public final float score;
-        
+
         public ScoreReport(String name, float score) {
             this.name = name;
             this.score = score;
         }
     }
-    
+
     class Student extends Record {
-        
+
         @Nullable
         private Float ccat;
-        
+
         public Set<ScoreReport> scores = Sets.newLinkedHashSet();
-        
+
         @Override
         public void onLoad() {
             if(ccat != null && scores.isEmpty()) {
                 scores.add(new ScoreReport("ccat", ccat));
             }
         }
-        
+
     }
 
 }
