@@ -64,7 +64,7 @@ class CachingConcourse extends ForwardingConcourse {
     }
 
     /**
-     * The cache.
+     * The data cache.
      */
     private final Cache<Long, Map<String, Set<Object>>> cache;
 

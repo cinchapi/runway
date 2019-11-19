@@ -26,7 +26,9 @@ import org.junit.Test;
 
 import com.cinchapi.common.profile.Benchmark;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
+import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -106,9 +108,9 @@ public class CachingConcourseTest extends ClientServerTest {
     public void testCachevsNonCachePerformance() throws InterruptedException {
         List<Long> records = Lists.newArrayList();
         for (int i = 0; i < 10000; ++i) {
-            records.add(client.insert(ImmutableMap.of("name", Random.getString(), "count",
-                    i, "foo", Random.getString(), "bar", Random.getBoolean(),
-                    "baz", Random.getNumber())));
+            records.add(client.insert(ImmutableMap.of("name",
+                    Random.getString(), "count", i, "foo", Random.getString(),
+                    "bar", Random.getBoolean(), "baz", Random.getNumber())));
         }
         client.select("count >= 0");
         Concourse client2 = Concourse.connect("localhost",
@@ -118,7 +120,9 @@ public class CachingConcourseTest extends ClientServerTest {
 
                 @Override
                 public void action() {
-                    db.select(records);
+                    db.select(Criteria.where().key("count")
+                            .operator(Operator.GREATER_THAN_OR_EQUALS)
+                            .value(0));
                 }
 
             };
@@ -127,7 +131,9 @@ public class CachingConcourseTest extends ClientServerTest {
 
                 @Override
                 public void action() {
-                    client2.select(records);
+                    client2.select(Criteria.where().key("count")
+                            .operator(Operator.GREATER_THAN_OR_EQUALS)
+                            .value(0));
                 }
 
             };
@@ -145,6 +151,7 @@ public class CachingConcourseTest extends ClientServerTest {
             t2.join();
             System.out.println("No cache took " + noCacheTime
                     + " ms and cache took " + cacheTime + " ms");
+            Assert.assertTrue(cacheTime.get() - noCacheTime.get() <= 100);
         }
         finally {
             client2.close();
