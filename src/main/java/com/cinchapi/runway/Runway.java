@@ -218,7 +218,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * the data.
      */
     @VisibleForTesting
-    protected int bulkSelectTimeoutMillis = 2000; // make configurable?
+    protected int bulkSelectTimeoutMillis = 5000; // make configurable?
 
     /**
      * An {@link ExecutorService} for async tasks.
@@ -1173,6 +1173,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the selected data
      */
     private Map<Long, Map<String, Set<Object>>> stream(Set<Long> ids) {
+        System.out.println("DEBUG: STREAMING...");
         // The data for the ids is asynchronously selected in the background in
         // a manner that staggers/buffers the amount of data by only selecting
         // {@link #recordsPerSelectBufferSize} from the database at a time.
