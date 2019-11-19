@@ -218,7 +218,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * the data.
      */
     @VisibleForTesting
-    protected int bulkSelectTimeoutMillis = 5000; // make configurable?
+    protected int bulkSelectTimeoutMillis = 2000; // make configurable?
 
     /**
      * An {@link ExecutorService} for async tasks.
