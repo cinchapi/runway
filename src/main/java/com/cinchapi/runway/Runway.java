@@ -21,6 +21,7 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -37,7 +38,9 @@ import javax.annotation.Nullable;
 import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
 
+import com.cinchapi.ccl.Parser;
 import com.cinchapi.common.base.AnyStrings;
+import com.cinchapi.common.collect.Multimaps;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -53,7 +56,9 @@ import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
+import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.runway.cache.CachingConnectionPool;
+import com.cinchapi.runway.util.Paging;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.Cache;
@@ -83,49 +88,6 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  * @author Jeff Nelson
  */
 public final class Runway implements AutoCloseable, DatabaseInterface {
-
-    /**
-     * A mapping from each {@link Record} class to all of its descendants. This
-     * facilitates querying across hierarchies.
-     */
-    private static final Multimap<Class<?>, Class<?>> hierarchies;
-
-    /**
-     * A collection of all the active {@link Runway} instances.
-     */
-    private static Set<Runway> instances = Sets.newHashSet();
-
-    /**
-     * The record where metadata is stored. We typically store some transient
-     * metadata for transaction routing within this record (so its only visible
-     * within the specific transaction) and we clear it before commit time.
-     */
-    private static long METADATA_RECORD = -1;
-
-    /**
-     * Placeholder for a {@code null} {@link Order} parameter.
-     */
-    private static Order NO_ORDER = null;
-
-    /**
-     * Placeholder for a {@code null} {@link Page} parameter.
-     */
-    private static Page NO_PAGINATION = null;
-
-    static {
-        // NOTE: Scanning the classpath adds startup costs proportional to the
-        // number of classes defined. We do this once at startup to minimize the
-        // effect of the cost.
-        hierarchies = HashMultimap.create();
-        Logging.disable(Reflections.class);
-        Reflections.log = null; // turn off reflection logging
-        Reflections reflection = new Reflections(new SubTypesScanner());
-        reflection.getSubTypesOf(Record.class).forEach(type -> {
-            hierarchies.put(type, type);
-            reflection.getSubTypesOf(type)
-                    .forEach(subType -> hierarchies.put(type, subType));
-        });
-    }
 
     /**
      * Return a builder that can be used to precisely configure a {@link Runway}
@@ -208,10 +170,47 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * The maximum number of records to buffer in memory when selecting data
-     * from the database.
+     * A mapping from each {@link Record} class to all of its descendants. This
+     * facilitates querying across hierarchies.
      */
-    private int recordsPerSelectBufferSize = 1000;
+    private static final Multimap<Class<?>, Class<?>> hierarchies;
+
+    /**
+     * A collection of all the active {@link Runway} instances.
+     */
+    private static Set<Runway> instances = Sets.newHashSet();
+
+    /**
+     * The record where metadata is stored. We typically store some transient
+     * metadata for transaction routing within this record (so its only visible
+     * within the specific transaction) and we clear it before commit time.
+     */
+    private static long METADATA_RECORD = -1;
+
+    /**
+     * Placeholder for a {@code null} {@link Order} parameter.
+     */
+    private static Order NO_ORDER = null;
+
+    /**
+     * Placeholder for a {@code null} {@link Page} parameter.
+     */
+    private static Page NO_PAGINATION = null;
+
+    static {
+        // NOTE: Scanning the classpath adds startup costs proportional to the
+        // number of classes defined. We do this once at startup to minimize the
+        // effect of the cost.
+        hierarchies = HashMultimap.create();
+        Logging.disable(Reflections.class);
+        Reflections.log = null; // turn off reflection logging
+        Reflections reflection = new Reflections(new SubTypesScanner());
+        reflection.getSubTypesOf(Record.class).forEach(type -> {
+            hierarchies.put(type, type);
+            reflection.getSubTypesOf(type)
+                    .forEach(subType -> hierarchies.put(type, subType));
+        });
+    }
 
     /**
      * The amount of time to wait for a bulk select to complete before streaming
@@ -221,14 +220,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     protected int bulkSelectTimeoutMillis = 1500; // make configurable?
 
     /**
-     * An {@link ExecutorService} for async tasks.
-     */
-    private final ExecutorService executor = Executors.newCachedThreadPool();
-
-    /**
      * A connection pool to the underlying Concourse database.
      */
     /* package */ final ConnectionPool connections;
+
+    /**
+     * An {@link ExecutorService} for async tasks.
+     */
+    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     /**
      * A flag that indicates whether the connected server supports result set
@@ -237,17 +236,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean hasNativeSortingAndPagination;
 
     /**
+     * The maximum number of records to buffer in memory when selecting data
+     * from the database.
+     */
+    private int recordsPerSelectBufferSize = 1000;
+
+    /**
      * A mapping from a transaction id to the set of records that are waiting to
      * be saved within that transaction. We use this collection to ensure that a
      * record being saved only links to an existing record in the database or a
      * record that will later exist (e.g. waiting to be saved).
      */
     private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
-    
-    /**
-     * A lazy mapping from each Record {@link Class} to the native fields in the class.
-     */
-    private final Map<Class<? extends Record>, Set<String>> fields = Maps.newHashMap();
 
     /**
      * Construct a new instance.
@@ -810,6 +810,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Load a record by {@code id} without knowing its class.
+     * 
+     * @param id
+     * @return the loaded record
+     */
+    <T extends Record> T load(long id) {
+        return instantiate(id, null);
+    }
+
+    /**
      * Perform the find operation using the {@code concourse} handler.
      * 
      * @param concourse
@@ -817,11 +827,26 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param criteria
      * @return the result set
      */
-    private <T> Map<Long, Map<String, Set<Object>>> $find(Concourse concourse,
-            Class<T> clazz, Criteria criteria, @Nullable Order order,
-            @Nullable Page page) {
-        criteria = $Criteria.withinClass(clazz, criteria);
-        return select(concourse, criteria, order, page);
+    private <T extends Record> Map<Long, Map<String, Set<Object>>> $find(
+            Concourse concourse, Class<T> clazz, Criteria criteria,
+            @Nullable Order order, @Nullable Page page) {
+        boolean needsLocalData = !Record.isDatabaseResolvableCondition(clazz,
+                criteria);
+        if(!needsLocalData) {
+            criteria = $Criteria.withinClass(clazz, criteria);
+            return select(concourse, criteria, order, page);
+        }
+        else {
+            Criteria c = $Criteria.forClass(clazz);
+            Map<Long, Map<String, Set<Object>>> data = select(concourse, c,
+                    order, null);
+            Parser parser = Parsers.create(criteria);
+            data = data.entrySet().stream().filter(e -> {
+                return parser.evaluate(Multimaps.from(e.getValue()));
+            }).collect(Collectors.toMap(Entry::getKey, Entry::getValue));
+            return page != null ? Paging.paginate(data, page) : data;
+        }
+
     }
 
     /**
@@ -834,7 +859,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param page
      * @return the result set
      */
-    private <T> Map<Long, Map<String, Set<Object>>> $findAny(
+    private <T extends Record> Map<Long, Map<String, Set<Object>>> $findAny(
             Concourse concourse, Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page) {
         criteria = $Criteria.accrossClassHierachy(clazz, criteria);
@@ -849,8 +874,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz
      * @return the records in the class
      */
-    private <T> Map<Long, Map<String, Set<Object>>> $load(Concourse concourse,
-            Class<T> clazz, @Nullable Order order, @Nullable Page page) {
+    private <T extends Record> Map<Long, Map<String, Set<Object>>> $load(
+            Concourse concourse, Class<T> clazz, @Nullable Order order,
+            @Nullable Page page) {
         Criteria criteria = $Criteria.forClass(clazz);
         return select(concourse, criteria, order, page);
     }
@@ -863,7 +889,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz
      * @return the records in the class hierarchy
      */
-    private <T> Map<Long, Map<String, Set<Object>>> $loadAny(
+    private <T extends Record> Map<Long, Map<String, Set<Object>>> $loadAny(
             Concourse concourse, Class<T> clazz, @Nullable Order order,
             @Nullable Page page) {
         Criteria criteria = $Criteria.forClassHierarchy(clazz);
@@ -879,8 +905,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param keys
      * @return the ids of the records that match the search
      */
-    private <T> Set<Long> $search(Concourse concourse, Class<T> clazz,
-            String query, String... keys) {
+    private <T extends Record> Set<Long> $search(Concourse concourse,
+            Class<T> clazz, String query, String... keys) {
         return Arrays.stream(keys).map(key -> concourse.search(key, query))
                 .flatMap(Set::stream)
                 .filter(record -> concourse.get(Record.SECTION_KEY, record)
@@ -899,8 +925,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the ids of the records that match the search
      */
     @SuppressWarnings("rawtypes")
-    private <T> Set<Long> $searchAny(Concourse concourse, Class<T> clazz,
-            String query, String... keys) {
+    private <T extends Record> Set<Long> $searchAny(Concourse concourse,
+            Class<T> clazz, String query, String... keys) {
         Collection<Class<?>> hierarchy = hierarchies.get(clazz);
         Predicate<Long> filter = null;
         for (Class cls : hierarchy) {
@@ -1185,14 +1211,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return new AbstractMap<Long, Map<String, Set<Object>>>() {
 
             /**
-             * A FIFO list of record ids that are pending database
-             * selection. Items from this queue are popped off in increments
-             * of {@value #BULK_SELECT_BUFFER_SIZE} and selected from
-             * Concourse.
-             */
-            Queue<Long> pending = Queues.newArrayDeque(ids);
-
-            /**
              * The data that has been loaded from the data into memory. For
              * the items that have been pulled from the {@link #pending}
              * queue.
@@ -1206,6 +1224,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                                              // hashmaps until
                                                              // it finds the
                                                              // right value
+
+            /**
+             * A FIFO list of record ids that are pending database
+             * selection. Items from this queue are popped off in increments
+             * of {@value #BULK_SELECT_BUFFER_SIZE} and selected from
+             * Concourse.
+             */
+            Queue<Long> pending = Queues.newArrayDeque(ids);
 
             @Override
             public Set<Entry<Long, Map<String, Set<Object>>>> entrySet() {
@@ -1249,16 +1275,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Load a record by {@code id} without knowing its class.
-     * 
-     * @param id
-     * @return the loaded record
-     */
-    <T extends Record> T load(long id) {
-        return instantiate(id, null);
-    }
-
-    /**
      * Builder for {@link Runway} connections. This is returned from
      * {@link #builder()}.
      *
@@ -1266,13 +1282,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public static class Builder {
 
+        private Cache<Long, Map<String, Set<Object>>> cache;
         private String environment = "";
         private String host = "localhost";
         private String password = "admin";
         private int port = 1717;
-        private String username = "admin";
         private int recordsPerSelectBufferSize = 100;
-        private Cache<Long, Map<String, Set<Object>>> cache;
+        private String username = "admin";
 
         /**
          * Build the configured {@link Runway} and return the instance.
