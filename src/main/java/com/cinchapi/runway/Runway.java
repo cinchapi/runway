@@ -243,6 +243,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * record that will later exist (e.g. waiting to be saved).
      */
     private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
+    
+    /**
+     * A lazy mapping from each Record {@link Class} to the native fields in the class.
+     */
+    private final Map<Class<? extends Record>, Set<String>> fields = Maps.newHashMap();
 
     /**
      * Construct a new instance.
