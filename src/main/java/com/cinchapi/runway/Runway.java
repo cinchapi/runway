@@ -24,12 +24,12 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -41,7 +41,9 @@ import org.reflections.scanners.SubTypesScanner;
 import com.cinchapi.ccl.Parser;
 import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.common.collect.Multimaps;
+import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
+import com.cinchapi.common.concurrent.ExecutorRaceService;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -1116,6 +1118,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param page
      * @return the data for the matching records
      */
+    @SuppressWarnings("unchecked")
     private Map<Long, Map<String, Set<Object>>> select(Concourse concourse,
             Criteria criteria, Order order, @Nullable Page page) {
         Map<Long, Map<String, Set<Object>>> data;
@@ -1123,65 +1126,73 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             data = concourse.select(criteria, order, page);
         }
         else if(order == null && page == null) {
-            Future<Map<Long, Map<String, Set<Object>>>> future = executor
-                    .submit(() -> {
-                        Concourse backup = Concourse
-                                .copyExistingConnection(concourse);
-                        try {
-                            return backup.select(criteria);
-                        }
-                        finally {
-                            backup.close();
-                        }
-                    });
-            try {
-                data = future.get(bulkSelectTimeoutMillis,
-                        TimeUnit.MILLISECONDS);
-            }
-            catch (InterruptedException | ExecutionException
-                    | TimeoutException e) {
-                // The bulk select took too long or an error occurred. In eithr
-                // case, fall back to finding the matching ids and incrementally
+            Callable<Map<Long, Map<String, Set<Object>>>> bulk = () -> {
+                Concourse backup = Concourse.copyExistingConnection(concourse);
+                try {
+                    return backup.select(criteria);
+                }
+                finally {
+                    backup.close();
+                }
+            };
+            Callable<Map<Long, Map<String, Set<Object>>>> stream = () -> {
+                // In case the bulk select takes too long or an error occurs,
+                // fall back to finding the matching ids and incrementally
                 // stream the result set.
                 Concourse backup = Concourse.copyExistingConnection(concourse);
                 try {
                     Set<Long> ids = backup.find(criteria);
-                    data = stream(ids);
+                    return stream(ids);
                 }
                 finally {
                     backup.close();
                 }
+            };
+            ExecutorRaceService<Map<Long, Map<String, Set<Object>>>> track = new ExecutorRaceService<>(
+                    executor);
+            Future<Map<Long, Map<String, Set<Object>>>> future;
+            try {
+                future = track.raceWithHeadStart(bulkSelectTimeoutMillis,
+                        TimeUnit.MILLISECONDS, bulk, stream);
+                data = future.get();
+            }
+            catch (InterruptedException | ExecutionException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
             }
         }
         else if(order != null) {
-            Future<Map<Long, Map<String, Set<Object>>>> future = executor
-                    .submit(() -> {
-                        Concourse backup = Concourse
-                                .copyExistingConnection(concourse);
-                        try {
-                            return backup.select(criteria, order);
-                        }
-                        finally {
-                            backup.close();
-                        }
-                    });
-            try {
-                data = future.get(bulkSelectTimeoutMillis,
-                        TimeUnit.MILLISECONDS);
-            }
-            catch (InterruptedException | ExecutionException
-                    | TimeoutException e) {
-                // The bulk select took too long or an error occurred. In eithr
-                // case, fall back to finding the matching ids and incrementally
+            Callable<Map<Long, Map<String, Set<Object>>>> bulk = () -> {
+                Concourse backup = Concourse.copyExistingConnection(concourse);
+                try {
+                    return backup.select(criteria, order);
+                }
+                finally {
+                    backup.close();
+                }
+            };
+            Callable<Map<Long, Map<String, Set<Object>>>> stream = () -> {
+                // In case the bulk select takes too long or an error occurs,
+                // fall back to finding the matching ids and incrementally
                 // stream the result set.
                 Concourse backup = Concourse.copyExistingConnection(concourse);
                 try {
                     Set<Long> ids = backup.find(criteria, order);
-                    data = stream(ids);
+                    return stream(ids);
                 }
                 finally {
                     backup.close();
                 }
+            };
+            ExecutorRaceService<Map<Long, Map<String, Set<Object>>>> track = new ExecutorRaceService<>(
+                    executor);
+            Future<Map<Long, Map<String, Set<Object>>>> future;
+            try {
+                future = track.raceWithHeadStart(bulkSelectTimeoutMillis,
+                        TimeUnit.MILLISECONDS, bulk, stream);
+                data = future.get();
+            }
+            catch (InterruptedException | ExecutionException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
             }
         }
         else { // page != null
@@ -1204,7 +1215,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the selected data
      */
     private Map<Long, Map<String, Set<Object>>> stream(Set<Long> ids) {
-        System.out.println("DEBUG: STREAMING...");
         // The data for the ids is asynchronously selected in the background in
         // a manner that staggers/buffers the amount of data by only selecting
         // {@link #recordsPerSelectBufferSize} from the database at a time.
