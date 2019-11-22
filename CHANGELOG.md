@@ -3,6 +3,7 @@
 #### Version 1.5.1 (TBD)
 * Fixed a bug that caused `Runway` operations to occassionally trigger an `out of sequence response` error in the underlying Concourse connections. 
 * Added support **data caching**. This feature can be enabled by passing a `Cache` to the `Runway#builder#withCache` method. Data caching is an improvement over record caching. With this new feature, caching is managed closer to the level of database interaction to ensure greater performance, timely invalidation and scalability.
+* Improved internal logic that determines whether `Runway` serves a request by bulk selecting data or incrementally streaming.
 
 #### Version 1.5.0 (November 17, 2019)
 * Fixed a bug that caused the `countAny` methods to return the wrong data.
