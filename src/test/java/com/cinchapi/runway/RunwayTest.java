@@ -17,8 +17,10 @@ package com.cinchapi.runway;
 
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
@@ -36,6 +38,7 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Random;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -433,6 +436,77 @@ public class RunwayTest extends ClientServerTest {
         }
     }
 
+    @Test
+    public void testQueryDerivedData() {
+        Player a = new Player("a", 30);
+        Player b = new Player("b", 15);
+        Player c = new Player("c", 20);
+        Player d = new Player("d", 100);
+        runway.save(a, b, c, d);
+        Set<Player> players = runway.find(Player.class, Criteria.where()
+                .key("isAllstar").operator(Operator.EQUALS).value(true));
+        Assert.assertEquals(ImmutableSet.of(a, d), players);
+    }
+
+    @Test
+    public void testQueryComputedData() {
+        Player a = new Player("a", 30);
+        Player b = new Player("b", 15);
+        Player c = new Player("c", 20);
+        Player d = new Player("d", 100);
+        runway.save(a, b, c, d);
+        Set<Player> players = runway.find(Player.class, Criteria.where()
+                .key("isAboveAverage").operator(Operator.EQUALS).value(true));
+        Assert.assertEquals(ImmutableSet.of(d), players);
+        players = runway.find(Player.class, Criteria.where()
+                .key("isBelowAverage").operator(Operator.EQUALS).value(true));
+        Assert.assertEquals(ImmutableSet.of(a, b, c), players);
+    }
+
+    @Test
+    public void testQueryNavigationKey() {
+        Organization cinchapi = new Organization("Cinchapi");
+        Organization blavity = new Organization("Blavity");
+        Person a = new Person("a", cinchapi);
+        Person b = new Person("a", blavity);
+        runway.save(cinchapi, blavity, a, b);
+        Set<Person> people = runway.find(Person.class,
+                Criteria.where().key("organization.name")
+                        .operator(Operator.EQUALS).value("Cinchapi"));
+        Assert.assertEquals(ImmutableSet.of(a), people);
+    }
+
+    class Player extends Record {
+        String name;
+        int score;
+
+        public Player(String name, int score) {
+            this.name = name;
+            this.score = score;
+        }
+
+        @Override
+        protected Map<String, Object> derived() {
+            return ImmutableMap.of("isAllstar", score > 20);
+        }
+
+        @Override
+        protected Map<String, Supplier<Object>> computed() {
+            return ImmutableMap.of("isAboveAverage", () -> {
+                double average = db.load(Player.class).stream()
+                        .mapToInt(player -> player.score).summaryStatistics()
+                        .getAverage();
+                return score > average;
+            }, "isBelowAverage", () -> {
+                double average = db.load(Player.class).stream()
+                        .mapToInt(player -> player.score).summaryStatistics()
+                        .getAverage();
+                return score < average;
+            });
+        }
+
+    }
+
     class Jock extends Record {
 
         public String name;
@@ -517,6 +591,11 @@ public class RunwayTest extends ClientServerTest {
         public Set<Person> members() {
             return db.find(Person.class, Criteria.where().key("organization")
                     .operator(Operator.LINKS_TO).value(id()));
+        }
+
+        @Override
+        protected Map<String, Object> derived() {
+            return ImmutableMap.of("members", members());
         }
     }
 

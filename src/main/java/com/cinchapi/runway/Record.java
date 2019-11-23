@@ -47,6 +47,7 @@ import javax.annotation.Nullable;
 
 import org.apache.commons.lang.StringUtils;
 
+import com.cinchapi.ccl.Parser;
 import com.cinchapi.common.base.AnyObjects;
 import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
@@ -54,6 +55,7 @@ import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
+import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.describe.Empty;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -69,7 +71,9 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
 import com.cinchapi.concourse.util.Numbers;
+import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.concourse.util.TypeAdapters;
+import com.cinchapi.concourse.validate.Keys;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
@@ -79,6 +83,7 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
@@ -119,67 +124,53 @@ import com.google.gson.stream.JsonWriter;
 @SuppressWarnings({ "restriction", "deprecation" })
 public abstract class Record implements Comparable<Record> {
 
-    /* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
+    /**
+     * Return {@code true} if the matching {@code condition} for data that is
+     * part of the specified {@code clazz} can be resolved entirely by the
+     * database, or must be done so locally because it touches {@link #derived()
+     * derived} or {@link #computed() computed} data.
+     * 
+     * @param <T>
+     * @param clazz
+     * @param condition
+     * @return a boolean that indicates if the {@code condition} can be resolved
+     *         by the database or not
+     */
+    public static <T extends Record> boolean isDatabaseResolvableCondition(
+            Class<T> clazz, Criteria condition) {
+        Set<String> intrinsic = INTRINSIC_PROPERTY_CACHE.computeIfAbsent(clazz,
+                c -> LazyTransformSet.of(getFields(c), Field::getName));
+        Parser parser = Parsers.create(condition);
+        for (String key : parser.analyze().keys()) {
+            if(!Keys.isNavigationKey(key) && !intrinsic.contains(key)) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /**
-     * The key used to hold the section metadata.
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id}.
+     * 
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @return the loaded Record
      */
-    /* package */ static final String SECTION_KEY = "_"; // just want a
-                                                         // simple/short key
-                                                         // name that is likely
-                                                         // to avoid collisions
-
-    /**
-     * The prefix applied to a key provided to the
-     * {@link #compareTo(Record, String)} methods when it is desirable to
-     * compare the values stored under that key in ascending (i.e. normal)
-     * order.
-     */
-    static final String SORT_DIRECTION_ASCENDING_PREFIX = ">";
-
-    /**
-     * The prefix applied to a key provided to the
-     * {@link #compareTo(Record, String)} methods when it is desirable to
-     * compare the values stored under that key in descending (i.e. reverse)
-     * order.
-     */
-    static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
-
-    /**
-     * The {@link Field fields} that are defined in the base class.
-     */
-    private static Set<Field> INTERNAL_FIELDS = Sets.newHashSet(
-            Arrays.asList(Reflection.getAllDeclaredFields(Record.class)));
-
-    /**
-     * A placeholder id used to indicate that a record has been deleted or
-     * doesn't actually exist in the database.
-     */
-    private static long NULL_ID = -1;
-
-    /**
-     * The coefficient multiplied by the result of a comparison to push the
-     * sorting in the ascending direction.
-     */
-    private static final int SORT_DIRECTION_ASCENDING_COEFFICIENT = 1;
-
-    /**
-     * The coefficient multiplied by the result of a comparison to push the
-     * sorting in the descending direction.
-     */
-    private static final int SORT_DIRECTION_DESCENDING_COEFFICIENT = -1;
-
-    /**
-     * Instance of {@link sun.misc.Unsafe} to use for hacky operations.
-     */
-    private static final sun.misc.Unsafe unsafe = Reflection
-            .getStatic("theUnsafe", sun.misc.Unsafe.class);
-
-    /**
-     * The description of a record that is considered to be in "zombie" state.
-     */
-    private static final Set<String> ZOMBIE_DESCRIPTION = Sets
-            .newHashSet(SECTION_KEY);
+    protected static <T extends Record> T load(Class<?> clazz, long id,
+            TLongObjectMap<Record> existing, ConnectionPool connections,
+            Runway runway, @Nullable Map<String, Set<Object>> data) {
+        Concourse concourse = connections.request();
+        try {
+            return load(clazz, id, existing, connections, concourse, runway,
+                    data);
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
 
     /**
      * Dereference the {@code value} stored for {@code field} if it is a
@@ -292,6 +283,18 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return all the non-internal {@link Field fields} in this {@code clazz}.
+     * 
+     * @param clazz
+     * @return the non-internal {@link Field fields}
+     */
+    private static Set<Field> getFields(Class<? extends Record> clazz) {
+        return Arrays.asList(Reflection.getAllDeclaredFields(clazz)).stream()
+                .filter(field -> !INTERNAL_FIELDS.contains(field))
+                .collect(Collectors.toSet());
+    }
+
+    /**
      * Return {@code true} if the record identified by {@code id} is in a
      * "zombie" state meaning it exists in the database without any actual data.
      * 
@@ -374,35 +377,73 @@ public abstract class Record implements Comparable<Record> {
         }
     }
 
-    /**
-     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
-     * {@code id}.
-     * 
-     * @param clazz
-     * @param id
-     * @param existing
-     * @param connections
-     * @return the loaded Record
-     */
-    protected static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections,
-            Runway runway, @Nullable Map<String, Set<Object>> data) {
-        Concourse concourse = connections.request();
-        try {
-            return load(clazz, id, existing, connections, concourse, runway,
-                    data);
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
+    /* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
 
     /**
-     * A log of any suppressed errors related to this Record. A concatenation of
-     * these errors can be thrown at anytime from the
-     * {@link #throwSupressedExceptions()} method.
+     * The key used to hold the section metadata.
      */
-    /* package */ transient List<Throwable> errors = Lists.newArrayList();
+    /* package */ static final String SECTION_KEY = "_"; // just want a
+                                                         // simple/short key
+                                                         // name that is likely
+                                                         // to avoid collisions
+
+    /**
+     * The prefix applied to a key provided to the
+     * {@link #compareTo(Record, String)} methods when it is desirable to
+     * compare the values stored under that key in ascending (i.e. normal)
+     * order.
+     */
+    static final String SORT_DIRECTION_ASCENDING_PREFIX = ">";
+
+    /**
+     * The prefix applied to a key provided to the
+     * {@link #compareTo(Record, String)} methods when it is desirable to
+     * compare the values stored under that key in descending (i.e. reverse)
+     * order.
+     */
+    static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
+
+    /**
+     * The {@link Field fields} that are defined in the base class.
+     */
+    private static Set<Field> INTERNAL_FIELDS = Sets.newHashSet(
+            Arrays.asList(Reflection.getAllDeclaredFields(Record.class)));
+
+    /**
+     * A cache of the {@link #intrinsic() properties} for each {@link Class}.
+     */
+    private static Map<Class<? extends Record>, Set<String>> INTRINSIC_PROPERTY_CACHE = Maps
+            .newHashMap();
+
+    /**
+     * A placeholder id used to indicate that a record has been deleted or
+     * doesn't actually exist in the database.
+     */
+    private static long NULL_ID = -1;
+
+    /**
+     * The coefficient multiplied by the result of a comparison to push the
+     * sorting in the ascending direction.
+     */
+    private static final int SORT_DIRECTION_ASCENDING_COEFFICIENT = 1;
+
+    /**
+     * The coefficient multiplied by the result of a comparison to push the
+     * sorting in the descending direction.
+     */
+    private static final int SORT_DIRECTION_DESCENDING_COEFFICIENT = -1;
+
+    /**
+     * Instance of {@link sun.misc.Unsafe} to use for hacky operations.
+     */
+    private static final sun.misc.Unsafe unsafe = Reflection
+            .getStatic("theUnsafe", sun.misc.Unsafe.class);
+
+    /**
+     * The description of a record that is considered to be in "zombie" state.
+     */
+    private static final Set<String> ZOMBIE_DESCRIPTION = Sets
+            .newHashSet(SECTION_KEY);
 
     /**
      * The {@link DatabaseInterface} that can be used to make queries within the
@@ -410,6 +451,13 @@ public abstract class Record implements Comparable<Record> {
      */
     protected final transient DatabaseInterface db = new ReactiveDatabaseInterface(
             this);
+
+    /**
+     * A log of any suppressed errors related to this Record. A concatenation of
+     * these errors can be thrown at anytime from the
+     * {@link #throwSupressedExceptions()} method.
+     */
+    /* package */ transient List<Throwable> errors = Lists.newArrayList();
 
     /**
      * The variable that holds the name of the section in the database where
@@ -803,7 +851,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public String json(String... keys) {
         return json(SerializationOptions.defaults(), keys);
-    }
+    };
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
@@ -917,7 +965,7 @@ public abstract class Record implements Comparable<Record> {
         Map<String, Object> data = pool.filter(filter).collect(
                 LinkedHashMap::new, accumulator, MergeStrategies::upsert);
         return data;
-    };
+    }
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
@@ -1005,6 +1053,322 @@ public abstract class Record implements Comparable<Record> {
     @Override
     public final String toString() {
         return json();
+    }
+
+    /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its native fields and is "computed" on-demand.
+     * <p>
+     * Unlike {@link #derived()} attributes, computed data is generally
+     * expensive to generate and should only be calculated when explicitly
+     * requested.
+     * </p>
+     * <p>
+     * NOTE: Computed attributes are never cached. Each time one is requested,
+     * the computation that generates the value is done anew.
+     * </p>
+     * 
+     * @return the computed data
+     */
+    protected Map<String, Supplier<Object>> computed() {
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Provide additional data about this Record that might not be encapsulated
+     * in its fields. For example, this is a good way to provide template
+     * specific information that isn't persisted to the database.
+     * 
+     * @return the additional data
+     */
+    protected Map<String, Object> derived() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
+     * 
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
+     * @deprecated use {@link #typeAdapters()} instead
+     */
+    @Deprecated
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
+     * use when generating the {@link #json()} for this {@link Record}.
+     * 
+     * @return a mapping from a {@link Class} to a corresponding
+     *         {@link JsonTypeWriter}.
+     * @deprecated use {@link #typeAdapters()} instead
+     */
+    @Deprecated
+    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
+        return Maps.newHashMap();
+    }
+
+    /**
+     * A hook that is run whenever this {@link Record} is loaded from the
+     * database. This method can contain logic to perform upgrade tasks or other
+     * maintenance operations on stored data based on the evolution of business
+     * logic.
+     * <p>
+     * <strong>NOTE:</strong> This method should be idempotent.
+     * </p>
+     */
+    protected void onLoad() {}
+
+    /**
+     * Return additional {@link TypeAdapter TypeAdapters} that should be used
+     * when generating the {@link #json()} for this {@link Record}.
+     * <p>
+     * Each {@link TypeAdapter} should be mapped from the most generic class or
+     * interface for which the adapter applies.
+     * </p>
+     * 
+     * @return the type adapters to use when serializing the Record to JSON.
+     */
+    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
+        return ImmutableMap.of();
+    }
+
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param concourse
+     * @param existing
+     */
+    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
+        load(concourse, existing, null);
+    }
+
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param concourse
+     * @param existing
+     * @param data data that is pre-loaded from {@code concourse}; this should
+     *            only be provided from a trusted source
+     */
+    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
+    final void load(Concourse concourse, TLongObjectMap<Record> existing,
+            @Nullable Map<String, Set<Object>> data) {
+        Preconditions.checkState(id != NULL_ID);
+        existing.put(id, this); // add the current object so we don't
+                                // recurse infinitely
+        checkConstraints(concourse, data);
+        if(inZombieState(id, concourse, data)) {
+            concourse.clear(id);
+            throw new ZombieException();
+        }
+        data = data == null ? concourse.select(id) : data;
+        for (Field field : fields()) {
+            try {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    String key = field.getName();
+                    Class<?> type = field.getType();
+                    Object value = null;
+                    if(Collection.class.isAssignableFrom(type)
+                            || type.isArray()) {
+                        Set<?> stored = data.getOrDefault(key,
+                                ImmutableSet.of());
+                        Class<?> collectedType = type
+                                .isArray()
+                                        ? type.getComponentType()
+                                        : Iterables.getFirst(
+                                                Reflection.getTypeArguments(key,
+                                                        this.getClass()),
+                                                Object.class);
+                        ArrayBuilder collector = ArrayBuilder.builder();
+                        stored.forEach(item -> {
+                            Object converted = convert(key, collectedType, item,
+                                    concourse, existing);
+                            if(converted != null) {
+                                collector.add(converted);
+                            }
+                            else {
+                                // TODO: should we remove the object from
+                                // Concourse since it results in a #null value?
+                            }
+                        });
+                        if(type.isArray()) {
+                            value = collector.build();
+                        }
+                        else {
+                            if(!Modifier.isAbstract(type.getModifiers())
+                                    && !Modifier
+                                            .isInterface(type.getModifiers())) {
+                                // This is a concrete Collection type that can
+                                // be instantiated
+                                value = Reflection.newInstance(type);
+                            }
+                            else if(type == Set.class) {
+                                value = Sets.newLinkedHashSet();
+                            }
+                            else { // assume List
+                                value = Lists.newArrayList();
+                            }
+                            Collections.addAll((Collection) value,
+                                    collector.length() > 0 ? collector.build()
+                                            : Array.containing());
+                        }
+                    }
+                    else {
+                        // Populate a non-collection variable with the most
+                        // recently stored value for the #key in Concourse.
+                        Set<Object> values = data.getOrDefault(key,
+                                ImmutableSet.of());
+                        Object stored = Iterables.getFirst(values, null);
+                        if(stored != null) {
+                            value = convert(key, type, stored, concourse,
+                                    existing);
+                        }
+                    }
+                    if(value != null) {
+                        field.set(this, value);
+                    }
+                    else {
+                        // no-op; NOTE: Java doesn't allow primitive types to
+                        // hold null values
+                    }
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        }
+    }
+
+    /**
+     * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
+     * 
+     * @return the data {@link Multimap}
+     */
+    /* package */ Multimap<String, Object> mmap() {
+        return mmap(Array.containing());
+    }
+
+    /**
+     * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
+     * 
+     * @param options
+     * @param keys
+     * @return the data {@link Multimap}
+     */
+    /* package */ Multimap<String, Object> mmap(SerializationOptions options,
+            String... keys) {
+        Map<String, Object> data = map(options, keys);
+        Multimap<String, Object> mmap = LinkedHashMultimap.create();
+        for (Entry<String, Object> entry : data.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if(Sequences.isSequence(value)) {
+                Sequences.forEach(value, v -> mmap.put(key, v));
+            }
+            else {
+                mmap.put(key, value);
+            }
+        }
+        return mmap;
+    }
+
+    /**
+     * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
+     * 
+     * @param keys
+     * @return the data {@link Multimap}
+     */
+    /* package */ Multimap<String, Object> mmap(String... keys) {
+        return mmap(SerializationOptions.defaults(), keys);
+    }
+
+    /**
+     * Save all changes that have been made to this record using an ACID
+     * transaction with the provided {@code runway} instance.
+     * <p>
+     * Use {@link Runway#save(Record...)} to save changes in multiple records
+     * within a single ACID transaction. Even if saving a single record, prefer
+     * to use the save method in the {@link Runway} class instead of this for
+     * consistent semantics.
+     * </p>
+     * 
+     * @return {@code true} if all the changes have been atomically saved.
+     */
+    /* package */ final boolean save(Concourse concourse, Set<Record> seen,
+            Runway runway) {
+        assign(runway);
+        try {
+            Preconditions.checkState(!inViolation);
+            errors.clear();
+            concourse.stage();
+            if(deleted) {
+                delete(concourse);
+            }
+            else {
+                saveWithinTransaction(concourse, seen);
+            }
+            return concourse.commit();
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            if(inZombieState(concourse)) {
+                concourse.clear(id);
+            }
+            errors.add(t);
+            return false;
+        }
+    }
+
+    /**
+     * Save the data in this record using the specified {@code concourse}
+     * connection. This method assumes that the caller has already started an
+     * transaction, if necessary and will commit the transaction after this
+     * method completes.
+     * 
+     * @param concourse
+     */
+    /* package */ void saveWithinTransaction(final Concourse concourse,
+            Set<Record> seen) {
+        concourse.verifyOrSet(SECTION_KEY, __, id);
+        fields().forEach(field -> {
+            try {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    final String key = field.getName();
+                    final Object value = field.get(this);
+                    if(field.isAnnotationPresent(ValidatedBy.class)) {
+                        Class<? extends Validator> validatorClass = field
+                                .getAnnotation(ValidatedBy.class).value();
+                        Validator validator = Reflection
+                                .newInstance(validatorClass);
+                        Preconditions.checkState(validator.validate(value),
+                                validator.getErrorMessage());
+                    }
+                    if(field.isAnnotationPresent(Unique.class)) {
+                        Preconditions.checkState(
+                                isUnique(concourse, key, value),
+                                field.getName() + " must be unique");
+                    }
+                    if(field.isAnnotationPresent(Required.class)) {
+                        Preconditions.checkState(
+                                !AnyObjects.isNullOrEmpty(value),
+                                field.getName() + " is required");
+                    }
+                    if(value != null) {
+                        store(key, value, concourse, false, seen);
+                    }
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
+        });
+
     }
 
     /**
@@ -1240,9 +1604,7 @@ public abstract class Record implements Comparable<Record> {
      * @return the non-internal {@link Field fields}
      */
     private Set<Field> fields() {
-        return Arrays.asList(Reflection.getAllDeclaredFields(this)).stream()
-                .filter(field -> !INTERNAL_FIELDS.contains(field))
-                .collect(Collectors.toSet());
+        return getFields(this.getClass());
     }
 
     /**
@@ -1425,279 +1787,6 @@ public abstract class Record implements Comparable<Record> {
             Tag json = Tag.create(gson.toJson(value));
             store(key, json, concourse, append, seen);
         }
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its native fields and is "computed" on-demand.
-     * <p>
-     * Unlike {@link #derived()} attributes, computed data is generally
-     * expensive to generate and should only be calculated when explicitly
-     * requested.
-     * </p>
-     * <p>
-     * NOTE: Computed attributes are never cached. Each time one is requested,
-     * the computation that generates the value is done anew.
-     * </p>
-     * 
-     * @return the computed data
-     */
-    protected Map<String, Supplier<Object>> computed() {
-        return Collections.emptyMap();
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its fields. For example, this is a good way to provide template
-     * specific information that isn't persisted to the database.
-     * 
-     * @return the additional data
-     */
-    protected Map<String, Object> derived() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * A hook that is run whenever this {@link Record} is loaded from the
-     * database. This method can contain logic to perform upgrade tasks or other
-     * maintenance operations on stored data based on the evolution of business
-     * logic.
-     * <p>
-     * <strong>NOTE:</strong> This method should be idempotent.
-     * </p>
-     */
-    protected void onLoad() {}
-
-    /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
-     * 
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
-     * @deprecated use {@link #typeAdapters()} instead
-     */
-    @Deprecated
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
-     * 
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
-     * @deprecated use {@link #typeAdapters()} instead
-     */
-    @Deprecated
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link TypeAdapter TypeAdapters} that should be used
-     * when generating the {@link #json()} for this {@link Record}.
-     * <p>
-     * Each {@link TypeAdapter} should be mapped from the most generic class or
-     * interface for which the adapter applies.
-     * </p>
-     * 
-     * @return the type adapters to use when serializing the Record to JSON.
-     */
-    protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
-        return ImmutableMap.of();
-    }
-
-    /**
-     * Load an existing record from the database and add all of it to this
-     * instance in memory.
-     * 
-     * @param concourse
-     * @param existing
-     */
-    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
-        load(concourse, existing, null);
-    }
-
-    /**
-     * Load an existing record from the database and add all of it to this
-     * instance in memory.
-     * 
-     * @param concourse
-     * @param existing
-     * @param data data that is pre-loaded from {@code concourse}; this should
-     *            only be provided from a trusted source
-     */
-    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
-    final void load(Concourse concourse, TLongObjectMap<Record> existing,
-            @Nullable Map<String, Set<Object>> data) {
-        Preconditions.checkState(id != NULL_ID);
-        existing.put(id, this); // add the current object so we don't
-                                // recurse infinitely
-        checkConstraints(concourse, data);
-        if(inZombieState(id, concourse, data)) {
-            concourse.clear(id);
-            throw new ZombieException();
-        }
-        data = data == null ? concourse.select(id) : data;
-        for (Field field : fields()) {
-            try {
-                if(!Modifier.isTransient(field.getModifiers())) {
-                    String key = field.getName();
-                    Class<?> type = field.getType();
-                    Object value = null;
-                    if(Collection.class.isAssignableFrom(type)
-                            || type.isArray()) {
-                        Set<?> stored = data.getOrDefault(key,
-                                ImmutableSet.of());
-                        Class<?> collectedType = type
-                                .isArray()
-                                        ? type.getComponentType()
-                                        : Iterables.getFirst(
-                                                Reflection.getTypeArguments(key,
-                                                        this.getClass()),
-                                                Object.class);
-                        ArrayBuilder collector = ArrayBuilder.builder();
-                        stored.forEach(item -> {
-                            Object converted = convert(key, collectedType, item,
-                                    concourse, existing);
-                            if(converted != null) {
-                                collector.add(converted);
-                            }
-                            else {
-                                // TODO: should we remove the object from
-                                // Concourse since it results in a #null value?
-                            }
-                        });
-                        if(type.isArray()) {
-                            value = collector.build();
-                        }
-                        else {
-                            if(!Modifier.isAbstract(type.getModifiers())
-                                    && !Modifier
-                                            .isInterface(type.getModifiers())) {
-                                // This is a concrete Collection type that can
-                                // be instantiated
-                                value = Reflection.newInstance(type);
-                            }
-                            else if(type == Set.class) {
-                                value = Sets.newLinkedHashSet();
-                            }
-                            else { // assume List
-                                value = Lists.newArrayList();
-                            }
-                            Collections.addAll((Collection) value,
-                                    collector.length() > 0 ? collector.build()
-                                            : Array.containing());
-                        }
-                    }
-                    else {
-                        // Populate a non-collection variable with the most
-                        // recently stored value for the #key in Concourse.
-                        Set<Object> values = data.getOrDefault(key,
-                                ImmutableSet.of());
-                        Object stored = Iterables.getFirst(values, null);
-                        if(stored != null) {
-                            value = convert(key, type, stored, concourse,
-                                    existing);
-                        }
-                    }
-                    if(value != null) {
-                        field.set(this, value);
-                    }
-                    else {
-                        // no-op; NOTE: Java doesn't allow primitive types to
-                        // hold null values
-                    }
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        }
-    }
-
-    /**
-     * Save all changes that have been made to this record using an ACID
-     * transaction with the provided {@code runway} instance.
-     * <p>
-     * Use {@link Runway#save(Record...)} to save changes in multiple records
-     * within a single ACID transaction. Even if saving a single record, prefer
-     * to use the save method in the {@link Runway} class instead of this for
-     * consistent semantics.
-     * </p>
-     * 
-     * @return {@code true} if all the changes have been atomically saved.
-     */
-    /* package */ final boolean save(Concourse concourse, Set<Record> seen,
-            Runway runway) {
-        assign(runway);
-        try {
-            Preconditions.checkState(!inViolation);
-            errors.clear();
-            concourse.stage();
-            if(deleted) {
-                delete(concourse);
-            }
-            else {
-                saveWithinTransaction(concourse, seen);
-            }
-            return concourse.commit();
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            if(inZombieState(concourse)) {
-                concourse.clear(id);
-            }
-            errors.add(t);
-            return false;
-        }
-    }
-
-    /**
-     * Save the data in this record using the specified {@code concourse}
-     * connection. This method assumes that the caller has already started an
-     * transaction, if necessary and will commit the transaction after this
-     * method completes.
-     * 
-     * @param concourse
-     */
-    /* package */ void saveWithinTransaction(final Concourse concourse,
-            Set<Record> seen) {
-        concourse.verifyOrSet(SECTION_KEY, __, id);
-        fields().forEach(field -> {
-            try {
-                if(!Modifier.isTransient(field.getModifiers())) {
-                    final String key = field.getName();
-                    final Object value = field.get(this);
-                    if(field.isAnnotationPresent(ValidatedBy.class)) {
-                        Class<? extends Validator> validatorClass = field
-                                .getAnnotation(ValidatedBy.class).value();
-                        Validator validator = Reflection
-                                .newInstance(validatorClass);
-                        Preconditions.checkState(validator.validate(value),
-                                validator.getErrorMessage());
-                    }
-                    if(field.isAnnotationPresent(Unique.class)) {
-                        Preconditions.checkState(
-                                isUnique(concourse, key, value),
-                                field.getName() + " must be unique");
-                    }
-                    if(field.isAnnotationPresent(Required.class)) {
-                        Preconditions.checkState(
-                                !AnyObjects.isNullOrEmpty(value),
-                                field.getName() + " is required");
-                    }
-                    if(value != null) {
-                        store(key, value, concourse, false, seen);
-                    }
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        });
-
     }
 
     /**
