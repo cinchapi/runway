@@ -447,7 +447,7 @@ public class RunwayTest extends ClientServerTest {
                 .key("isAllstar").operator(Operator.EQUALS).value(true));
         Assert.assertEquals(ImmutableSet.of(a, d), players);
     }
-    
+
     @Test
     public void testQueryComputedData() {
         Player a = new Player("a", 30);
@@ -460,7 +460,20 @@ public class RunwayTest extends ClientServerTest {
         Assert.assertEquals(ImmutableSet.of(d), players);
         players = runway.find(Player.class, Criteria.where()
                 .key("isBelowAverage").operator(Operator.EQUALS).value(true));
-        Assert.assertEquals(ImmutableSet.of(a,b,c), players);
+        Assert.assertEquals(ImmutableSet.of(a, b, c), players);
+    }
+
+    @Test
+    public void testQueryNavigationKey() {
+        Organization cinchapi = new Organization("Cinchapi");
+        Organization blavity = new Organization("Blavity");
+        Person a = new Person("a", cinchapi);
+        Person b = new Person("a", blavity);
+        runway.save(cinchapi, blavity, a, b);
+        Set<Person> people = runway.find(Person.class,
+                Criteria.where().key("organization.name")
+                        .operator(Operator.EQUALS).value("Cinchapi"));
+        Assert.assertEquals(ImmutableSet.of(a), people);
     }
 
     class Player extends Record {
@@ -473,12 +486,12 @@ public class RunwayTest extends ClientServerTest {
         }
 
         @Override
-        public Map<String, Object> derived() {
+        protected Map<String, Object> derived() {
             return ImmutableMap.of("isAllstar", score > 20);
         }
 
         @Override
-        public Map<String, Supplier<Object>> computed() {
+        protected Map<String, Supplier<Object>> computed() {
             return ImmutableMap.of("isAboveAverage", () -> {
                 double average = db.load(Player.class).stream()
                         .mapToInt(player -> player.score).summaryStatistics()
@@ -578,6 +591,11 @@ public class RunwayTest extends ClientServerTest {
         public Set<Person> members() {
             return db.find(Person.class, Criteria.where().key("organization")
                     .operator(Operator.LINKS_TO).value(id()));
+        }
+
+        @Override
+        protected Map<String, Object> derived() {
+            return ImmutableMap.of("members", members());
         }
     }
 
