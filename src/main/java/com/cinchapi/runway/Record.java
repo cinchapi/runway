@@ -73,6 +73,7 @@ import com.cinchapi.concourse.util.ByteBuffers;
 import com.cinchapi.concourse.util.Numbers;
 import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.concourse.util.TypeAdapters;
+import com.cinchapi.concourse.validate.Keys;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
@@ -82,6 +83,7 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
@@ -140,7 +142,7 @@ public abstract class Record implements Comparable<Record> {
                 c -> LazyTransformSet.of(getFields(c), Field::getName));
         Parser parser = Parsers.create(condition);
         for (String key : parser.analyze().keys()) {
-            if(!intrinsic.contains(key)) {
+            if(!Keys.isNavigationKey(key) && !intrinsic.contains(key)) {
                 return false;
             }
         }
@@ -442,254 +444,6 @@ public abstract class Record implements Comparable<Record> {
      */
     private static final Set<String> ZOMBIE_DESCRIPTION = Sets
             .newHashSet(SECTION_KEY);
-
-    /**
-     * A {@link DatabaseInterface} that reacts to the state of the
-     * {@link #runway} variable and delegates to it or throws an
-     * {@link UnsupportedOperationException} if it is {@code null}.
-     *
-     * @author Jeff Nelson
-     */
-    private static class ReactiveDatabaseInterface implements
-            DatabaseInterface {
-
-        /**
-         * A reference to the enclosing {@link Record} whose state is watched
-         * and reacted to. This is needed since this class is static.
-         */
-        private final Record tracked;
-
-        /**
-         * Construct a new instance.
-         * 
-         * @param tracked
-         */
-        private ReactiveDatabaseInterface(Record tracked) {
-            this.tracked = tracked;
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Order order, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Order order, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findAnyUnique(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAnyUnique(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findUnique(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findUnique(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T load(Class<T> clazz, long id) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, id);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-                Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-                Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-    }
 
     /**
      * The {@link DatabaseInterface} that can be used to make queries within the
@@ -1081,7 +835,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public String json(SerializationOptions options, String... keys) {
         return json(options, HashMultimap.create(), keys);
-    };
+    }
 
     /**
      * Return a JSON string containing this {@link Record}'s readable and
@@ -1097,7 +851,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public String json(String... keys) {
         return json(SerializationOptions.defaults(), keys);
-    }
+    };
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
@@ -1489,6 +1243,49 @@ public abstract class Record implements Comparable<Record> {
                 throw CheckedExceptions.throwAsRuntimeException(e);
             }
         }
+    }
+
+    /**
+     * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
+     * 
+     * @return the data {@link Multimap}
+     */
+    /* package */ Multimap<String, Object> mmap() {
+        return mmap(Array.containing());
+    }
+
+    /**
+     * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
+     * 
+     * @param options
+     * @param keys
+     * @return the data {@link Multimap}
+     */
+    /* package */ Multimap<String, Object> mmap(SerializationOptions options,
+            String... keys) {
+        Map<String, Object> data = map(options, keys);
+        Multimap<String, Object> mmap = LinkedHashMultimap.create();
+        for (Entry<String, Object> entry : data.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if(Sequences.isSequence(value)) {
+                Sequences.forEach(value, v -> mmap.put(key, v));
+            }
+            else {
+                mmap.put(key, value);
+            }
+        }
+        return mmap;
+    }
+
+    /**
+     * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
+     * 
+     * @param keys
+     * @return the data {@link Multimap}
+     */
+    /* package */ Multimap<String, Object> mmap(String... keys) {
+        return mmap(SerializationOptions.defaults(), keys);
     }
 
     /**
@@ -1990,6 +1787,254 @@ public abstract class Record implements Comparable<Record> {
             Tag json = Tag.create(gson.toJson(value));
             store(key, json, concourse, append, seen);
         }
+    }
+
+    /**
+     * A {@link DatabaseInterface} that reacts to the state of the
+     * {@link #runway} variable and delegates to it or throws an
+     * {@link UnsupportedOperationException} if it is {@code null}.
+     *
+     * @author Jeff Nelson
+     */
+    private static class ReactiveDatabaseInterface implements
+            DatabaseInterface {
+
+        /**
+         * A reference to the enclosing {@link Record} whose state is watched
+         * and reacted to. This is needed since this class is static.
+         */
+        private final Record tracked;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param tracked
+         */
+        private ReactiveDatabaseInterface(Record tracked) {
+            this.tracked = tracked;
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz,
+                Criteria criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Order order) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Order order, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Order order) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Order order, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T findAnyUnique(Class<T> clazz,
+                Criteria criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAnyUnique(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T findUnique(Class<T> clazz,
+                Criteria criteria) {
+            if(tracked.runway != null) {
+                return tracked.runway.findUnique(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T load(Class<T> clazz, long id) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, id);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Order order) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+                Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, order);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+                Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, order, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
     }
 
 }
