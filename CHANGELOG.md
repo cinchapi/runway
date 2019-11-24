@@ -1,5 +1,11 @@
 # Changelog
 
+#### Version 1.6.0 (November 23, 2019)
+* Fixed a bug that caused `Runway` operations to occassionally trigger an `out of sequence response` error in the underlying Concourse connections. 
+* Added support **data caching**. This feature can be enabled by passing a `Cache` to the `Runway#builder#withCache` method. Data caching is an improvement over record caching. With this new feature, caching is managed closer to the level of database interaction to ensure greater performance, timely invalidation and scalability.
+* Improved internal logic that determines whether `Runway` serves a request by bulk selecting data or incrementally streaming.
+* Added initial support for `find`ing and `count`ing `Criteria` conditions that touch `computed` and `derived` data. There is currently no support for querying on non-intrinsic data of linked Records (e.g. no navigation). 
+
 #### Version 1.5.0 (November 17, 2019)
 * Fixed a bug that caused the `countAny` methods to return the wrong data.
 * Added methods to the `Runway` driver that support filtering data. Unlike a `Criteria` or `Condition` a `filter` is a `Predicate` that receives the loaded `Record` as input and executes business logic to determine whether the `Record` should be included in the result set. For example, filtering can be used to seamlessly enforce permissions in a `Runway` method call by passing in a predicate that checks whether the caller has access to the `Record`.

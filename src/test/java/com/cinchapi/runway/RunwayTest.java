@@ -17,7 +17,10 @@ package com.cinchapi.runway;
 
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
@@ -35,6 +38,7 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Random;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -48,7 +52,7 @@ public class RunwayTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.10.2";
+        return "0.10.3";
     }
 
     private Runway runway;
@@ -384,7 +388,7 @@ public class RunwayTest extends ClientServerTest {
                 .key("name").operator(Operator.LIKE).value("%Jeff%"));
         Assert.assertEquals(user, actual);
     }
-    
+
     @Test
     public void testOnLoadSimulateUpgradeTask() {
         Student stud = new Student();
@@ -397,6 +401,110 @@ public class RunwayTest extends ClientServerTest {
         stud = runway.load(Student.class, stud.id());
         Assert.assertEquals(1, stud.scores.size());
         System.out.println(stud);
+    }
+
+    @Test
+    public void testPreventOutOfSequenceResponse() {
+        int bulkSelectTimeoutMillis = runway.bulkSelectTimeoutMillis;
+        runway.bulkSelectTimeoutMillis = 1;
+        List<Long> ids = Lists.newArrayList();
+        try {
+            for (int i = 0; i < 10000; ++i) {
+                Admin admin = new Admin("Jeff Nelson", "foo");
+                admin.save();
+                ids.add(admin.id());
+            }
+            runway.load(Admin.class);
+            AtomicBoolean done = new AtomicBoolean(false);
+            AtomicBoolean failed = new AtomicBoolean(false);
+            long now = System.currentTimeMillis();
+            while (!done.get() && System.currentTimeMillis() - now <= 3000) {
+                try {
+                    runway.load(Admin.class,
+                            ids.get(Math.abs(Random.getInt()) % ids.size()));
+                }
+                catch (Exception e) {
+                    e.printStackTrace();
+                    done.set(true);
+                    failed.set(true);
+                }
+            }
+            Assert.assertFalse(failed.get());
+        }
+        finally {
+            runway.bulkSelectTimeoutMillis = bulkSelectTimeoutMillis;
+        }
+    }
+
+    @Test
+    public void testQueryDerivedData() {
+        Player a = new Player("a", 30);
+        Player b = new Player("b", 15);
+        Player c = new Player("c", 20);
+        Player d = new Player("d", 100);
+        runway.save(a, b, c, d);
+        Set<Player> players = runway.find(Player.class, Criteria.where()
+                .key("isAllstar").operator(Operator.EQUALS).value(true));
+        Assert.assertEquals(ImmutableSet.of(a, d), players);
+    }
+
+    @Test
+    public void testQueryComputedData() {
+        Player a = new Player("a", 30);
+        Player b = new Player("b", 15);
+        Player c = new Player("c", 20);
+        Player d = new Player("d", 100);
+        runway.save(a, b, c, d);
+        Set<Player> players = runway.find(Player.class, Criteria.where()
+                .key("isAboveAverage").operator(Operator.EQUALS).value(true));
+        Assert.assertEquals(ImmutableSet.of(d), players);
+        players = runway.find(Player.class, Criteria.where()
+                .key("isBelowAverage").operator(Operator.EQUALS).value(true));
+        Assert.assertEquals(ImmutableSet.of(a, b, c), players);
+    }
+
+    @Test
+    public void testQueryNavigationKey() {
+        Organization cinchapi = new Organization("Cinchapi");
+        Organization blavity = new Organization("Blavity");
+        Person a = new Person("a", cinchapi);
+        Person b = new Person("a", blavity);
+        runway.save(cinchapi, blavity, a, b);
+        Set<Person> people = runway.find(Person.class,
+                Criteria.where().key("organization.name")
+                        .operator(Operator.EQUALS).value("Cinchapi"));
+        Assert.assertEquals(ImmutableSet.of(a), people);
+    }
+
+    class Player extends Record {
+        String name;
+        int score;
+
+        public Player(String name, int score) {
+            this.name = name;
+            this.score = score;
+        }
+
+        @Override
+        protected Map<String, Object> derived() {
+            return ImmutableMap.of("isAllstar", score > 20);
+        }
+
+        @Override
+        protected Map<String, Supplier<Object>> computed() {
+            return ImmutableMap.of("isAboveAverage", () -> {
+                double average = db.load(Player.class).stream()
+                        .mapToInt(player -> player.score).summaryStatistics()
+                        .getAverage();
+                return score > average;
+            }, "isBelowAverage", () -> {
+                double average = db.load(Player.class).stream()
+                        .mapToInt(player -> player.score).summaryStatistics()
+                        .getAverage();
+                return score < average;
+            });
+        }
+
     }
 
     class Jock extends Record {
@@ -484,6 +592,11 @@ public class RunwayTest extends ClientServerTest {
             return db.find(Person.class, Criteria.where().key("organization")
                     .operator(Operator.LINKS_TO).value(id()));
         }
+
+        @Override
+        protected Map<String, Object> derived() {
+            return ImmutableMap.of("members", members());
+        }
     }
 
     abstract class Entity extends Record {
@@ -498,31 +611,31 @@ public class RunwayTest extends ClientServerTest {
 
         Entity entity;
     }
-    
+
     class ScoreReport extends Record {
         public final String name;
         public final float score;
-        
+
         public ScoreReport(String name, float score) {
             this.name = name;
             this.score = score;
         }
     }
-    
+
     class Student extends Record {
-        
+
         @Nullable
         private Float ccat;
-        
+
         public Set<ScoreReport> scores = Sets.newLinkedHashSet();
-        
+
         @Override
         public void onLoad() {
             if(ccat != null && scores.isEmpty()) {
                 scores.add(new ScoreReport("ccat", ccat));
             }
         }
-        
+
     }
 
 }
