@@ -15,14 +15,14 @@
  */
 package com.cinchapi.runway.cache;
 
+import java.util.AbstractMap;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-import com.cinchapi.common.collect.concurrent.ThreadFactories;
+import com.cinchapi.common.collect.Collections;
+import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ForwardingConcourse;
 import com.cinchapi.concourse.Timestamp;
@@ -30,6 +30,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.google.common.cache.Cache;
+import com.google.common.collect.Collections2;
 
 /**
  * A {@link Concourse} wrapper that caches data {@link #select(Long) selected}
@@ -52,27 +53,9 @@ import com.google.common.cache.Cache;
 class CachingConcourse extends ForwardingConcourse {
 
     /**
-     * Cast the data returned from Concourse to a form that can be cached.
-     * 
-     * @param data
-     * @return the cacheable data
-     */
-    @SuppressWarnings("unchecked")
-    private static <T> Map<Long, Map<String, Set<Object>>> cast(
-            Map<Long, Map<String, Set<T>>> data) {
-        return Map.class.cast(data);
-    }
-
-    /**
      * The data cache.
      */
     private final Cache<Long, Map<String, Set<Object>>> cache;
-
-    /**
-     * An executor service used for populating cache entries in the background.
-     */
-    private final ExecutorService bg = Executors.newSingleThreadExecutor(
-            ThreadFactories.namingDaemonThreadFactory("runway-concourse-cacher-%d"));
 
     /**
      * Construct a new instance.
@@ -262,98 +245,62 @@ class CachingConcourse extends ForwardingConcourse {
 
     @Override
     public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records) {
+        ConcurrentMap<Long, Map<String, Set<Object>>> view = cache.asMap();
+        Collection<Long> $records = Collections2.filter(records,
+                record -> !view.containsKey(record));
         Map<Long, Map<String, Set<T>>> data = super.select(records);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
+        return new AbstractMap<Long, Map<String, Set<T>>>() {
+
+            @Override
+            public Set<Entry<Long, Map<String, Set<T>>>> entrySet() {
+                return LazyTransformSet.of(Collections.ensureSet($records),
+                        record -> new AbstractMap.SimpleImmutableEntry<>(record,
+                                data.computeIfAbsent(record,
+                                        r -> select((r)))));
+            }
+
+        };
     }
 
     @Override
     public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records,
             Order order) {
-        Map<Long, Map<String, Set<T>>> data = super.select(records, order);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
+        return super.select(records, order);
     }
 
     @Override
     public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records,
             Order order, Page page) {
-        Map<Long, Map<String, Set<T>>> data = super.select(records, order,
-                page);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
+        return super.select(records, order, page);
     }
 
     @Override
     public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records,
             Page page) {
-        Map<Long, Map<String, Set<T>>> data = super.select(records, page);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
+        return super.select(records, page);
     }
 
     @Override
     public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria) {
-        Map<Long, Map<String, Set<T>>> data = super.select(criteria);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
+        return super.select(criteria);
     }
 
     @Override
     public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria,
             Order order) {
-        Map<Long, Map<String, Set<T>>> data = super.select(criteria, order);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
+        return super.select(criteria, order);
     }
 
     @Override
     public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria,
             Order order, Page page) {
-        Map<Long, Map<String, Set<T>>> data = super.select(criteria, order,
-                page);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
+        return super.select(criteria, order, page);
     }
 
     @Override
     public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria,
             Page page) {
-        Map<Long, Map<String, Set<T>>> data = super.select(criteria, page);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
+        return super.select(criteria, page);
     }
 
     @Override
