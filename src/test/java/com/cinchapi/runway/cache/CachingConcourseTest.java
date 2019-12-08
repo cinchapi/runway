@@ -80,7 +80,7 @@ public class CachingConcourseTest extends ClientServerTest {
     }
 
     @Test
-    public void testCachevsNonCachePerformance() throws InterruptedException {
+    public void testCachevsNonCachePerformanceQuery() throws InterruptedException {
         List<Long> records = Lists.newArrayList();
         for (int i = 0; i < 10000; ++i) {
             records.add(client.insert(ImmutableMap.of("name",
@@ -109,6 +109,59 @@ public class CachingConcourseTest extends ClientServerTest {
                     client2.select(Criteria.where().key("count")
                             .operator(Operator.GREATER_THAN_OR_EQUALS)
                             .value(0));
+                }
+
+            };
+            AtomicReference<Double> cacheTime = new AtomicReference<>(null);
+            AtomicReference<Double> noCacheTime = new AtomicReference<>(null);
+            Thread t1 = new Thread(() -> {
+                cacheTime.set(cache.average(10));
+            });
+            Thread t2 = new Thread(() -> {
+                noCacheTime.set(noCache.average(10));
+            });
+            t1.start();
+            t2.start();
+            t1.join();
+            t2.join();
+            System.out.println("No cache took " + noCacheTime
+                    + " ms and cache took " + cacheTime + " ms");
+            Assert.assertTrue(cacheTime.get() - noCacheTime.get() <= 100);
+        }
+        finally {
+            client2.close();
+        }
+    }
+    
+    @Test
+    public void testCachevsNonCachePerformanceBulkSelect() throws InterruptedException {
+        List<Long> records = Lists.newArrayList();
+        for (int i = 0; i < 10000; ++i) {
+            records.add(client.insert(ImmutableMap.of("name",
+                    Random.getString(), "count", i, "foo", Random.getString(),
+                    "bar", Random.getBoolean(), "baz", Random.getNumber())));
+        }
+        client.select("count >= 0");
+        Concourse client2 = Concourse.connect("localhost",
+                server.getClientPort(), "admin", "admin");
+        for(long record : records) { // Warm up the cache...
+            db.select(record);
+        }
+        try {
+            Benchmark cache = new Benchmark(TimeUnit.MILLISECONDS) {
+
+                @Override
+                public void action() {
+                    db.select(records);
+                }
+
+            };
+
+            Benchmark noCache = new Benchmark(TimeUnit.MILLISECONDS) {
+
+                @Override
+                public void action() {
+                    client2.select(records);
                 }
 
             };

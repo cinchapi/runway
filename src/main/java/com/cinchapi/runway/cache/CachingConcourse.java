@@ -248,7 +248,7 @@ class CachingConcourse extends ForwardingConcourse {
         ConcurrentMap<Long, Map<String, Set<Object>>> view = cache.asMap();
         Collection<Long> $records = Collections2.filter(records,
                 record -> !view.containsKey(record));
-        Map<Long, Map<String, Set<T>>> data = super.select(records);
+        Map<Long, Map<String, Set<T>>> data = super.select($records);
         return new AbstractMap<Long, Map<String, Set<T>>>() {
 
             @Override
