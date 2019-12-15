@@ -39,7 +39,7 @@ import com.cinchapi.concourse.util.Random;
  *
  * @author Jeff Nelson
  */
-@Versions({ "0.9.6", "0.10.2" })
+@Versions({ "0.9.6", "0.10.4" })
 public class RunwayCrossVersionTest extends CrossVersionTest {
 
     private Runway runway;

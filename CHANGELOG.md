@@ -2,6 +2,7 @@
 
 #### Version 1.6.1 (TBD)
 * Fixed a bug that caused `Runway` to exhibit poor performance when using the `withCache` option.
+* Fixed bugs that caused Runway's data caching to exhibit inconsistent behaviour where stale data could be added to the cache.
 
 #### Version 1.6.0 (November 23, 2019)
 * Fixed a bug that caused `Runway` operations to occassionally trigger an `out of sequence response` error in the underlying Concourse connections. 
