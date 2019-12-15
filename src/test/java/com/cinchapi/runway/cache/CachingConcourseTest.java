@@ -207,7 +207,7 @@ public class CachingConcourseTest extends ClientServerTest {
     }
     
     @Test
-    public void testCacheInvalidateAfterStageIsCommitted() {
+    public void testCacheInvalidatedAfterStageIsCommitted() {
         long record = db.insert(ImmutableMap.of("foo", "bar"));
         db.select(record);
         Assert.assertNotNull(cache.getIfPresent(record));

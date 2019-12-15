@@ -305,8 +305,10 @@ class CachingConcourse extends ForwardingConcourse {
                                 // subsequently been created, use
                                 // #select(record) to get the most up-to-date
                                 // snapshot
-                                stored = data.computeIfAbsent(record,
-                                        $ -> select(record));
+                                stored = data.get(record);
+                                if(stored == null) {
+                                    stored = select(record);
+                                }
                                 delegate.put(lease, record,
                                         Map.class.cast(stored));
                             }
