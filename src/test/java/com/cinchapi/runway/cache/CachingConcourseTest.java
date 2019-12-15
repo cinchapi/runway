@@ -185,5 +185,37 @@ public class CachingConcourseTest extends ClientServerTest {
             client2.close();
         }
     }
+    
+    @Test
+    public void testCacheNotPopulatedWhileStaged() {
+        long record = db.insert(ImmutableMap.of("foo", "bar"));
+        db.stage();
+        db.select(record);
+        Assert.assertNull(cache.getIfPresent(record));
+        db.abort();
+    }
+    
+    @Test
+    public void testCacheDoesNotInvalidateWhileStaged() {
+        long record = db.insert(ImmutableMap.of("foo", "bar"));
+        db.select(record);
+        Assert.assertNotNull(cache.getIfPresent(record));
+        db.stage();
+        db.add("name", "jeff", record);
+        Assert.assertNotNull(cache.getIfPresent(record));
+        db.abort();
+    }
+    
+    @Test
+    public void testCacheInvalidateAfterStageIsCommitted() {
+        long record = db.insert(ImmutableMap.of("foo", "bar"));
+        db.select(record);
+        Assert.assertNotNull(cache.getIfPresent(record));
+        db.stage();
+        db.add("name", "jeff", record);
+        Assert.assertNotNull(cache.getIfPresent(record));
+        db.commit();
+        Assert.assertNull(cache.getIfPresent(record));
+    }
 
 }

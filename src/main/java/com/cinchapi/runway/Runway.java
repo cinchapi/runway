@@ -1279,8 +1279,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     executor);
             Future<Map<Long, Map<String, Set<Object>>>> future;
             try {
-                future = track.raceWithHeadStart(bulkSelectTimeoutMillis,
-                        TimeUnit.MILLISECONDS, bulk, stream);
+                future = bulkSelectTimeoutMillis > 0
+                        ? track.raceWithHeadStart(bulkSelectTimeoutMillis,
+                                TimeUnit.MILLISECONDS, bulk, stream)
+                        : track.race(bulk, stream);
                 data = future.get();
             }
             catch (InterruptedException | ExecutionException e) {
@@ -1314,8 +1316,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     executor);
             Future<Map<Long, Map<String, Set<Object>>>> future;
             try {
-                future = track.raceWithHeadStart(bulkSelectTimeoutMillis,
-                        TimeUnit.MILLISECONDS, bulk, stream);
+                future = bulkSelectTimeoutMillis > 0
+                        ? track.raceWithHeadStart(bulkSelectTimeoutMillis,
+                                TimeUnit.MILLISECONDS, bulk, stream)
+                        : track.race(bulk, stream);
                 data = future.get();
             }
             catch (InterruptedException | ExecutionException e) {
