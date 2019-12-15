@@ -1247,7 +1247,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     @SuppressWarnings("unchecked")
     private Map<Long, Map<String, Set<Object>>> select(Concourse concourse,
-            Criteria criteria, Order order, @Nullable Page page) {
+            Criteria criteria, @Nullable Order order, @Nullable Page page) {
         Map<Long, Map<String, Set<Object>>> data;
         if(order != null && page != null) {
             data = concourse.select(criteria, order, page);
@@ -1374,36 +1374,44 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
              */
             Queue<Long> pending = Queues.newArrayDeque(ids);
 
+            /**
+             * The cached {@link #entrySet()}.
+             */
+            Set<Entry<Long, Map<String, Set<Object>>>> entrySet = null;
+
             @Override
             public Set<Entry<Long, Map<String, Set<Object>>>> entrySet() {
-                return LazyTransformSet.of(ids, id -> {
-                    Map<String, Set<Object>> data = loaded.get(id);
-                    while (data == null) {
-                        // There is currently no data loaded OR the
-                        // currently loaded data does not contain the id. If
-                        // that is the case, assume that all unconsumed ids
-                        // prior to this one have been skipped and buffer in
-                        // data incrementally until the data for this id is
-                        // found.
-                        int i = 0;
-                        Set<Long> records = Sets
-                                .newLinkedHashSetWithExpectedSize(
-                                        recordsPerSelectBufferSize);
-                        while (pending.peek() != null
-                                && i < recordsPerSelectBufferSize) {
-                            records.add(pending.poll());
+                if(entrySet == null) {
+                    entrySet = LazyTransformSet.of(ids, id -> {
+                        Map<String, Set<Object>> data = loaded.get(id);
+                        while (data == null) {
+                            // There is currently no data loaded OR the
+                            // currently loaded data does not contain the id. If
+                            // that is the case, assume that all unconsumed ids
+                            // prior to this one have been skipped and buffer in
+                            // data incrementally until the data for this id is
+                            // found.
+                            int i = 0;
+                            Set<Long> records = Sets
+                                    .newLinkedHashSetWithExpectedSize(
+                                            recordsPerSelectBufferSize);
+                            while (pending.peek() != null
+                                    && i < recordsPerSelectBufferSize) {
+                                records.add(pending.poll());
+                            }
+                            Concourse concourse = connections.request();
+                            try {
+                                loaded.putAll(concourse.select(records));
+                            }
+                            finally {
+                                connections.release(concourse);
+                            }
+                            data = loaded.get(id);
                         }
-                        Concourse concourse = connections.request();
-                        try {
-                            loaded.putAll(concourse.select(records));
-                        }
-                        finally {
-                            connections.release(concourse);
-                        }
-                        data = loaded.get(id);
-                    }
-                    return new AbstractMap.SimpleImmutableEntry<>(id, data);
-                });
+                        return new AbstractMap.SimpleImmutableEntry<>(id, data);
+                    });
+                }
+                return entrySet;
             }
 
             @Override

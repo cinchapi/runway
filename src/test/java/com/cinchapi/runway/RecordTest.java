@@ -62,7 +62,7 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.10.3";
+        return "0.10.4";
     }
 
     @Override
