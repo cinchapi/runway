@@ -30,6 +30,7 @@ import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.TransactionException;
 import com.google.common.cache.Cache;
 import com.google.common.collect.Collections2;
+import com.google.common.collect.ImmutableMap;
 
 /**
  * A {@link Concourse} wrapper that caches data {@link #select(Long) selected}
@@ -287,7 +288,9 @@ class CachingConcourse extends ForwardingConcourse {
         Collection<Long> $records = Collections2.filter(records,
                 record -> !view.containsKey(record));
         Map<Long, Long> leases = delegate.lease($records);
-        Map<Long, Map<String, Set<T>>> data = super.select($records);
+        Map<Long, Map<String, Set<T>>> data = $records.isEmpty()
+                ? ImmutableMap.of()
+                : super.select($records);
         return new AbstractMap<Long, Map<String, Set<T>>>() {
 
             @SuppressWarnings("unchecked")
