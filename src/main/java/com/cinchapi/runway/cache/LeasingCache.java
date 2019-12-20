@@ -15,7 +15,6 @@
  */
 package com.cinchapi.runway.cache;
 
-import java.util.AbstractMap;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
@@ -23,8 +22,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 
-import com.cinchapi.common.collect.Collections;
-import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.google.common.cache.Cache;
 import com.google.common.cache.ForwardingCache;
 import com.google.common.collect.Maps;
@@ -143,16 +140,11 @@ class LeasingCache<K, V> extends ForwardingCache<K, V> {
      * @return the current lease values
      */
     public Map<K, Long> lease(Collection<K> keys) {
-        return new AbstractMap<K, Long>() {
-
-            @Override
-            public Set<Entry<K, Long>> entrySet() {
-                return LazyTransformSet.of(Collections.ensureSet(keys),
-                        key -> new AbstractMap.SimpleImmutableEntry<>(key,
-                                lease(key)));
-            }
-
-        };
+        Map<K, Long> leases = Maps.newHashMapWithExpectedSize(keys.size());
+        for (K key : keys) {
+            leases.put(key, lease(key));
+        }
+        return leases;
     }
 
     /**
