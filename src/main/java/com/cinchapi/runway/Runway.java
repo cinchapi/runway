@@ -1576,8 +1576,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
     }
 
+    /**
+     * The {@link ReadStrategy} determines how {@link Runway}
+     * {@link Runway#read(Concourse, Criteria, Order, Page) reads} data from
+     * Concourse in response to a request.
+     *
+     * @author Jeff Nelson
+     */
     public enum ReadStrategy {
-        AUTO, BULK, STREAM
+        /**
+         * Select the {@link #BULK} or {@link #STREAM} strategy on a
+         * read-by-read basis (usually depending upon which will return results
+         * faster).
+         */
+        AUTO,
+
+        /**
+         * Use Concourse's {@code select} method to read all the data for all
+         * the records that match a request, at once.
+         */
+        BULK,
+
+        /**
+         * Use Concourse's {@code find} method to find the ids of all the
+         * records that match a request and incrementally read the data for
+         * those records on-the-fly, as needed. When using this strategy,
+         * further tuning is possible using
+         * {@link Runway#Builder#streamingReadBufferSize(int)}.
+         */
+        STREAM
     }
 
     /**
