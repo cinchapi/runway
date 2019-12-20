@@ -295,38 +295,44 @@ class CachingConcourse extends ForwardingConcourse {
 
             @SuppressWarnings("unchecked")
             @Override
+            public Map<String, Set<T>> get(Object key) {
+                if(records.contains(key)) {
+                    Long record = (Long) key;
+                    Long lease = leases.get(record);
+                    Map<String, Set<T>> stored;
+                    if(lease != null) {
+                        // The record was not previously cached, so pull it from
+                        // the #data that was fetched and try to populate the
+                        // cache using the reserved ticket. If the record, did
+                        // not exist, but has subsequently been created, use
+                        // #select(record) to get the most up-to-date snapshot
+                        stored = data.get(record);
+                        if(stored == null) {
+                            stored = select(record);
+                        }
+                        delegate.put(lease, record, Map.class.cast(stored));
+                    }
+                    else {
+                        // The item was previously cached, so rely on the
+                        // #select(record) implementation to capture if. If, for
+                        // some reason, the cache was intermittently
+                        // invalidated, the #select(record) call will reload it
+                        stored = select(record);
+                    }
+                    return stored;
+                }
+                else {
+                    return null;
+                }
+            }
+
+            @Override
             public Set<Entry<Long, Map<String, Set<T>>>> entrySet() {
                 return LazyTransformSet.of(Collections.ensureSet(records),
-                        record -> {
-                            Long lease = leases.get(record);
-                            Map<String, Set<T>> stored;
-                            if(lease != null) {
-                                // The record was not previously cached, so pull
-                                // it from the #data that was fetched and try to
-                                // populate the cache using the reserved ticket.
-                                // If the record, did not exist, but has
-                                // subsequently been created, use
-                                // #select(record) to get the most up-to-date
-                                // snapshot
-                                stored = data.get(record);
-                                if(stored == null) {
-                                    stored = select(record);
-                                }
-                                delegate.put(lease, record,
-                                        Map.class.cast(stored));
-                            }
-                            else {
-                                // The item was previously cached, so rely on
-                                // the #select(record) implementation to capture
-                                // if. If, for some reason, the cache was
-                                // intermittently invalidated, the
-                                // #select(record) call will reload it
-                                stored = select(record);
-                            }
-                            return new AbstractMap.SimpleImmutableEntry<>(
-                                    record, stored);
-                        });
+                        record -> new SimpleImmutableEntry<>(record,
+                                get(record)));
             }
+
         };
 
     }
