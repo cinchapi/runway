@@ -53,6 +53,7 @@ import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
+import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
@@ -962,8 +963,8 @@ public abstract class Record implements Comparable<Record> {
                 return new SimpleEntry<>(key, value);
             });
         }
-        Map<String, Object> data = pool.filter(filter).collect(
-                LinkedHashMap::new, accumulator, MergeStrategies::upsert);
+        Map<String, Object> data = pool.filter(filter).collect(Association::of,
+                accumulator, MergeStrategies::upsert);
         return data;
     }
 

@@ -293,10 +293,12 @@ class CachingConcourse extends ForwardingConcourse {
                 : super.select($records);
         return new AbstractMap<Long, Map<String, Set<T>>>() {
 
+            Set<Long> keys = Collections.ensureSet(records);
+
             @SuppressWarnings("unchecked")
             @Override
             public Map<String, Set<T>> get(Object key) {
-                if(records.contains(key)) {
+                if(keys.contains(key)) {
                     Long record = (Long) key;
                     Long lease = leases.get(record);
                     Map<String, Set<T>> stored;
@@ -328,9 +330,14 @@ class CachingConcourse extends ForwardingConcourse {
 
             @Override
             public Set<Entry<Long, Map<String, Set<T>>>> entrySet() {
-                return LazyTransformSet.of(Collections.ensureSet(records),
+                return LazyTransformSet.of(keys,
                         record -> new SimpleImmutableEntry<>(record,
                                 get(record)));
+            }
+
+            @Override
+            public int size() {
+                return keys.size();
             }
 
         };
