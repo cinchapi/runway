@@ -52,7 +52,7 @@ public class RunwayTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.10.3";
+        return "0.10.4";
     }
 
     private Runway runway;
@@ -344,7 +344,7 @@ public class RunwayTest extends ClientServerTest {
     public void testStreaminBulkSelect() {
         runway.bulkSelectTimeoutMillis = 0; // force streaming bulk select
         Set<Manager> expected = Sets.newHashSet();
-        Reflection.set("recordsPerSelectBufferSize",
+        Reflection.set("streamingReadBufferSize",
                 new java.util.Random().nextInt(10) + 1, runway);
         for (int i = 0; i < Random.getScaleCount(); ++i) {
             Manager manager = new Manager("" + Time.now());
@@ -357,27 +357,37 @@ public class RunwayTest extends ClientServerTest {
 
     @Test
     public void testStreamingBulkSelectSkipSupport() {
-        runway.bulkSelectTimeoutMillis = 0; // force streaming bulk select
-        Set<Manager> expected = Sets.newLinkedHashSet();
-        Reflection.set("recordsPerSelectBufferSize",
-                new java.util.Random().nextInt(10) + 1, runway);
-        for (int i = 0; i < Random.getScaleCount(); ++i) {
-            Manager manager = new Manager("" + Time.now());
-            manager.save();
-            expected.add(manager);
-        }
-        Set<Manager> actual = runway.load(Manager.class);
-        Set<Manager> $expected = Sets.newLinkedHashSet();
-        int i = 0;
-        int skip = expected.size() / 3;
-        for (Manager manager : runway.load(Manager.class)) {
-            if(i >= skip) {
-                $expected.add(manager);
+        int bulkSelectTimeoutMillis = runway.bulkSelectTimeoutMillis;
+        int streamingReadBufferSize = Reflection.get("streamingReadBufferSize",
+                runway);
+        try {
+            runway.bulkSelectTimeoutMillis = 0; // force streaming bulk select
+            Set<Manager> expected = Sets.newLinkedHashSet();
+            Reflection.set("streamingReadBufferSize",
+                    new java.util.Random().nextInt(10) + 1, runway);
+            for (int i = 0; i < Random.getScaleCount(); ++i) {
+                Manager manager = new Manager("" + Time.now());
+                manager.save();
+                expected.add(manager);
             }
-            ++i;
+            Set<Manager> actual = runway.load(Manager.class);
+            Set<Manager> $expected = Sets.newLinkedHashSet();
+            int i = 0;
+            int skip = expected.size() / 3;
+            for (Manager manager : runway.load(Manager.class)) {
+                if(i >= skip) {
+                    $expected.add(manager);
+                }
+                ++i;
+            }
+            actual = actual.stream().skip(skip).collect(Collectors.toSet());
+            Assert.assertEquals($expected, actual);
         }
-        actual = actual.stream().skip(skip).collect(Collectors.toSet());
-        Assert.assertEquals($expected, actual);
+        finally {
+            runway.bulkSelectTimeoutMillis = bulkSelectTimeoutMillis;
+            Reflection.set("streamingReadBufferSize", streamingReadBufferSize,
+                    runway);
+        }
     }
 
     @Test

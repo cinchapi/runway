@@ -1,5 +1,15 @@
 # Changelog
 
+#### Version 1.7.0 (January 1, 2020)
+* Fixed a bug that caused `Runway` to exhibit poor performance when using the `withCache` option.
+* Fixed bugs that caused Runway's data caching to exhibit inconsistent behaviour where stale data could be added to the cache.
+* Added a `Runway#builder` option to specify a `readStrategy`. Runway's **read strategy** determines how Runway reads data from Concourse. 
+  * The `BULK` strategy uses Concourse's `select` method to pull in all the data for all the records that match a read at the same time. 
+  * The `STREAM` option uses Concourse's `find` method to find the ids of all the records that match a read in order to stream the data for those records on-the-fly when needed.
+  * The `AUTO` option contextually uses the `BULK` or `STREAM` option on a read-by-read basis (usually depending on which option will return results faster).
+By default, Runway uses the `AUTO` strategy unless a `cache` is provided, in which case, the `STREAM` option is used by default since data streaming is more cache-friendly and is consistent with the way record caching previously worked in previous versions of Runway.  
+* Deprecated the `recordsPerSelectBufferSize` option in the `Runway#builder` in favor of the `streamingReadBufferSize` option which has the same effect.
+
 #### Version 1.6.0 (November 23, 2019)
 * Fixed a bug that caused `Runway` operations to occassionally trigger an `out of sequence response` error in the underlying Concourse connections. 
 * Added support **data caching**. This feature can be enabled by passing a `Cache` to the `Runway#builder#withCache` method. Data caching is an improvement over record caching. With this new feature, caching is managed closer to the level of database interaction to ensure greater performance, timely invalidation and scalability.

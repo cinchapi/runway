@@ -30,6 +30,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
@@ -62,6 +63,7 @@ import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.cinchapi.runway.util.Paging;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.MoreObjects;
 import com.google.common.cache.Cache;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterables;
@@ -222,7 +224,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * the data.
      */
     @VisibleForTesting
-    protected int bulkSelectTimeoutMillis = 1500; // make configurable?
+    protected int bulkSelectTimeoutMillis = 0; // make configurable?
 
     /**
      * A connection pool to the underlying Concourse database.
@@ -241,10 +243,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean hasNativeSortingAndPagination;
 
     /**
-     * The maximum number of records to buffer in memory when selecting data
-     * from the database.
+     * The strategy for {@link #read(Concourse, Criteria, Order, Page)
+     * loading} data from the database.
      */
-    private int recordsPerSelectBufferSize = 1000;
+    private ReadStrategy readStrategy = ReadStrategy.AUTO;
+
+    /**
+     * The maximum number of records to buffer in memory when selecting data
+     * from the database. This is only relevant when the {@link #readStrategy}
+     * is not {@link ReadStrategy#BULK}.
+     */
+    private int streamingReadBufferSize = 1000;
 
     /**
      * A mapping from a transaction id to the set of records that are waiting to
@@ -927,7 +936,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Concourse concourse, Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page) {
         criteria = $Criteria.withinClass(clazz, criteria);
-        return select(concourse, criteria, order, page);
+        return read(concourse, criteria, order, page);
     }
 
     /**
@@ -944,7 +953,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Concourse concourse, Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page) {
         criteria = $Criteria.accrossClassHierachy(clazz, criteria);
-        return select(concourse, criteria, order, page);
+        return read(concourse, criteria, order, page);
     }
 
     /**
@@ -959,7 +968,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Concourse concourse, Class<T> clazz, @Nullable Order order,
             @Nullable Page page) {
         Criteria criteria = $Criteria.forClass(clazz);
-        return select(concourse, criteria, order, page);
+        return read(concourse, criteria, order, page);
     }
 
     /**
@@ -974,7 +983,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Concourse concourse, Class<T> clazz, @Nullable Order order,
             @Nullable Page page) {
         Criteria criteria = $Criteria.forClassHierarchy(clazz);
-        return select(concourse, criteria, order, page);
+        return read(concourse, criteria, order, page);
     }
 
     /**
@@ -1246,52 +1255,41 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the data for the matching records
      */
     @SuppressWarnings("unchecked")
-    private Map<Long, Map<String, Set<Object>>> select(Concourse concourse,
-            Criteria criteria, Order order, @Nullable Page page) {
-        Map<Long, Map<String, Set<Object>>> data;
+    private Map<Long, Map<String, Set<Object>>> read(Concourse concourse,
+            Criteria criteria, @Nullable Order order, @Nullable Page page) {
+        // Define the execution paths
+        Function<Concourse, Map<Long, Map<String, Set<Object>>>> select;
+        Function<Concourse, Set<Long>> find;
         if(order != null && page != null) {
-            data = concourse.select(criteria, order, page);
+            select = c -> c.select(criteria, order, page);
+            find = c -> c.find(criteria, order, page);
         }
         else if(order == null && page == null) {
-            Callable<Map<Long, Map<String, Set<Object>>>> bulk = () -> {
-                Concourse backup = Concourse.copyExistingConnection(concourse);
-                try {
-                    return backup.select(criteria);
-                }
-                finally {
-                    backup.close();
-                }
-            };
-            Callable<Map<Long, Map<String, Set<Object>>>> stream = () -> {
-                // In case the bulk select takes too long or an error occurs,
-                // fall back to finding the matching ids and incrementally
-                // stream the result set.
-                Concourse backup = Concourse.copyExistingConnection(concourse);
-                try {
-                    Set<Long> ids = backup.find(criteria);
-                    return stream(ids);
-                }
-                finally {
-                    backup.close();
-                }
-            };
-            ExecutorRaceService<Map<Long, Map<String, Set<Object>>>> track = new ExecutorRaceService<>(
-                    executor);
-            Future<Map<Long, Map<String, Set<Object>>>> future;
-            try {
-                future = track.raceWithHeadStart(bulkSelectTimeoutMillis,
-                        TimeUnit.MILLISECONDS, bulk, stream);
-                data = future.get();
-            }
-            catch (InterruptedException | ExecutionException e) {
-                throw CheckedExceptions.wrapAsRuntimeException(e);
-            }
+            select = c -> c.select(criteria);
+            find = c -> c.find(criteria);
         }
         else if(order != null) {
+            select = c -> c.select(criteria, order);
+            find = c -> c.find(criteria, order);
+        }
+        else { // page != null
+            select = c -> c.select(criteria, page);
+            find = c -> c.find(criteria, page);
+        }
+        // Choose the execution path based on the #readStrategy
+        Map<Long, Map<String, Set<Object>>> data;
+        if(readStrategy == ReadStrategy.BULK) {
+            data = select.apply(concourse);
+        }
+        else if(readStrategy == ReadStrategy.STREAM) {
+            Set<Long> ids = find.apply(concourse);
+            data = stream(ids);
+        }
+        else { // ReadStrategy.AUTO
             Callable<Map<Long, Map<String, Set<Object>>>> bulk = () -> {
                 Concourse backup = Concourse.copyExistingConnection(concourse);
                 try {
-                    return backup.select(criteria, order);
+                    return select.apply(backup);
                 }
                 finally {
                     backup.close();
@@ -1303,7 +1301,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 // stream the result set.
                 Concourse backup = Concourse.copyExistingConnection(concourse);
                 try {
-                    Set<Long> ids = backup.find(criteria, order);
+                    Set<Long> ids = find.apply(backup);
                     return stream(ids);
                 }
                 finally {
@@ -1314,16 +1312,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     executor);
             Future<Map<Long, Map<String, Set<Object>>>> future;
             try {
-                future = track.raceWithHeadStart(bulkSelectTimeoutMillis,
-                        TimeUnit.MILLISECONDS, bulk, stream);
+                future = bulkSelectTimeoutMillis > 0
+                        ? track.raceWithHeadStart(bulkSelectTimeoutMillis,
+                                TimeUnit.MILLISECONDS, bulk, stream)
+                        : track.race(bulk, stream);
                 data = future.get();
             }
             catch (InterruptedException | ExecutionException e) {
                 throw CheckedExceptions.wrapAsRuntimeException(e);
             }
-        }
-        else { // page != null
-            data = concourse.select(criteria, page);
         }
         return data;
     }
@@ -1346,6 +1343,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         // a manner that staggers/buffers the amount of data by only selecting
         // {@link #recordsPerSelectBufferSize} from the database at a time.
         return new AbstractMap<Long, Map<String, Set<Object>>>() {
+
+            /**
+             * The cached {@link #entrySet()}.
+             */
+            Set<Entry<Long, Map<String, Set<Object>>>> entrySet = null;
 
             /**
              * The data that has been loaded from the data into memory. For
@@ -1372,34 +1374,37 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
             @Override
             public Set<Entry<Long, Map<String, Set<Object>>>> entrySet() {
-                return LazyTransformSet.of(ids, id -> {
-                    Map<String, Set<Object>> data = loaded.get(id);
-                    while (data == null) {
-                        // There is currently no data loaded OR the
-                        // currently loaded data does not contain the id. If
-                        // that is the case, assume that all unconsumed ids
-                        // prior to this one have been skipped and buffer in
-                        // data incrementally until the data for this id is
-                        // found.
-                        int i = 0;
-                        Set<Long> records = Sets
-                                .newLinkedHashSetWithExpectedSize(
-                                        recordsPerSelectBufferSize);
-                        while (pending.peek() != null
-                                && i < recordsPerSelectBufferSize) {
-                            records.add(pending.poll());
+                if(entrySet == null) {
+                    entrySet = LazyTransformSet.of(ids, id -> {
+                        Map<String, Set<Object>> data = loaded.get(id);
+                        while (data == null) {
+                            // There is currently no data loaded OR the
+                            // currently loaded data does not contain the id. If
+                            // that is the case, assume that all unconsumed ids
+                            // prior to this one have been skipped and buffer in
+                            // data incrementally until the data for this id is
+                            // found.
+                            int i = 0;
+                            Set<Long> records = Sets
+                                    .newLinkedHashSetWithExpectedSize(
+                                            streamingReadBufferSize);
+                            while (pending.peek() != null
+                                    && i < streamingReadBufferSize) {
+                                records.add(pending.poll());
+                            }
+                            Concourse concourse = connections.request();
+                            try {
+                                loaded.putAll(concourse.select(records));
+                            }
+                            finally {
+                                connections.release(concourse);
+                            }
+                            data = loaded.get(id);
                         }
-                        Concourse concourse = connections.request();
-                        try {
-                            loaded.putAll(concourse.select(records));
-                        }
-                        finally {
-                            connections.release(concourse);
-                        }
-                        data = loaded.get(id);
-                    }
-                    return new AbstractMap.SimpleImmutableEntry<>(id, data);
-                });
+                        return new AbstractMap.SimpleImmutableEntry<>(id, data);
+                    });
+                }
+                return entrySet;
             }
 
             @Override
@@ -1424,7 +1429,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private String host = "localhost";
         private String password = "admin";
         private int port = 1717;
-        private int recordsPerSelectBufferSize = 100;
+        private ReadStrategy readStrategy = null;
+        private int streamingReadBufferSize = 100;
         private String username = "admin";
 
         /**
@@ -1439,7 +1445,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     : new CachingConnectionPool(host, port, username, password,
                             environment, cache);
             Runway db = new Runway(connections);
-            db.recordsPerSelectBufferSize = recordsPerSelectBufferSize;
+            db.streamingReadBufferSize = streamingReadBufferSize;
+            db.readStrategy = MoreObjects.firstNonNull(readStrategy,
+                    cache != null ? ReadStrategy.STREAM : ReadStrategy.AUTO);
             return db;
         }
 
@@ -1502,14 +1510,46 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
         /**
+         * Set the {@link ReadStrategy} for the {@link Runway} instance.
+         * <p>
+         * The default {@link ReadStrategy} varies based on the
+         * {@link #withCache(Cache) cache} setting.
+         * </p>
+         * 
+         * @param readStrategy
+         * @return this builder
+         */
+        public Builder readStrategy(ReadStrategy readStrategy) {
+            this.readStrategy = readStrategy;
+            return this;
+        }
+
+        /**
          * Set the maximum number of records that should be buffered in memory
-         * when selecting data.
+         * when streaming data from the database. This is only relevant if the
+         * {@link #readStrategy(ReadStrategy) read strategy} is not
+         * {@link ReadStrategy#BULK}.
+         * 
+         * @param max
+         * @return this builder
+         * @deprecated use {@link #streamingReadBufferSize(int)} instead
+         */
+        @Deprecated
+        public Builder recordsPerSelectBufferSize(int max) {
+            return streamingReadBufferSize(max);
+        }
+
+        /**
+         * Set the maximum number of records that should be buffered in memory
+         * when streaming data from the database. This is only relevant if the
+         * {@link #readStrategy(ReadStrategy) read strategy} is not
+         * {@link ReadStrategy#BULK}.
          * 
          * @param max
          * @return this builder
          */
-        public Builder recordsPerSelectBufferSize(int max) {
-            this.recordsPerSelectBufferSize = max;
+        public Builder streamingReadBufferSize(int max) {
+            this.streamingReadBufferSize = max;
             return this;
         }
 
@@ -1534,6 +1574,37 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             this.cache = cache;
             return this;
         }
+    }
+
+    /**
+     * The {@link ReadStrategy} determines how {@link Runway}
+     * {@link Runway#read(Concourse, Criteria, Order, Page) reads} data from
+     * Concourse in response to a request.
+     *
+     * @author Jeff Nelson
+     */
+    public enum ReadStrategy {
+        /**
+         * Select the {@link #BULK} or {@link #STREAM} strategy on a
+         * read-by-read basis (usually depending upon which will return results
+         * faster).
+         */
+        AUTO,
+
+        /**
+         * Use Concourse's {@code select} method to read all the data for all
+         * the records that match a request, at once.
+         */
+        BULK,
+
+        /**
+         * Use Concourse's {@code find} method to find the ids of all the
+         * records that match a request and incrementally read the data for
+         * those records on-the-fly, as needed. When using this strategy,
+         * further tuning is possible using
+         * {@link Runway#Builder#streamingReadBufferSize(int)}.
+         */
+        STREAM
     }
 
     /**

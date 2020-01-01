@@ -32,7 +32,6 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 
@@ -81,31 +80,7 @@ public class CachingConcourseTest extends ClientServerTest {
     }
 
     @Test
-    public void testSelectMultipleRecordsCachesThemAll() {
-        long a = client.insert(ImmutableMap.of("name", "Jeff Nelson", "company",
-                "Cinchapi", "age", 100));
-        long b = client.insert(ImmutableMap.of("name", "Jeff Nelson", "company",
-                "Cinchapi", "age", 100));
-        long c = client.insert(ImmutableMap.of("name", "Jeff Nelson", "company",
-                "Cinchapi", "age", 100));
-        Map<Long, Map<String, Set<Object>>> data = db
-                .select(ImmutableList.of(a, b, c));
-        while (cache.getIfPresent(a) == null || cache.getIfPresent(b) == null
-                || cache.getIfPresent(c) == null) {
-            // Wait for cache to populate in background
-            continue;
-        }
-        Assert.assertSame(data.get(a), db.select(a));
-        Assert.assertSame(data.get(b), db.select(b));
-        Assert.assertSame(data.get(c), db.select(c));
-        db.add("artist", "Common", a);
-        Assert.assertNotSame(data.get(a), db.select(a));
-        Assert.assertSame(data.get(b), db.select(b));
-        Assert.assertSame(data.get(c), db.select(c));
-    }
-
-    @Test
-    public void testCachevsNonCachePerformance() throws InterruptedException {
+    public void testCachevsNonCachePerformanceQuery() throws InterruptedException {
         List<Long> records = Lists.newArrayList();
         for (int i = 0; i < 10000; ++i) {
             records.add(client.insert(ImmutableMap.of("name",
@@ -156,6 +131,91 @@ public class CachingConcourseTest extends ClientServerTest {
         finally {
             client2.close();
         }
+    }
+    
+    @Test
+    public void testCachevsNonCachePerformanceBulkSelect() throws InterruptedException {
+        List<Long> records = Lists.newArrayList();
+        for (int i = 0; i < 10000; ++i) {
+            records.add(client.insert(ImmutableMap.of("name",
+                    Random.getString(), "count", i, "foo", Random.getString(),
+                    "bar", Random.getBoolean(), "baz", Random.getNumber())));
+        }
+        client.select("count >= 0");
+        Concourse client2 = Concourse.connect("localhost",
+                server.getClientPort(), "admin", "admin");
+        for(long record : records) { // Warm up the cache...
+            db.select(record);
+        }
+        try {
+            Benchmark cache = new Benchmark(TimeUnit.MILLISECONDS) {
+
+                @Override
+                public void action() {
+                    db.select(records);
+                }
+
+            };
+
+            Benchmark noCache = new Benchmark(TimeUnit.MILLISECONDS) {
+
+                @Override
+                public void action() {
+                    client2.select(records);
+                }
+
+            };
+            AtomicReference<Double> cacheTime = new AtomicReference<>(null);
+            AtomicReference<Double> noCacheTime = new AtomicReference<>(null);
+            Thread t1 = new Thread(() -> {
+                cacheTime.set(cache.average(10));
+            });
+            Thread t2 = new Thread(() -> {
+                noCacheTime.set(noCache.average(10));
+            });
+            t1.start();
+            t2.start();
+            t1.join();
+            t2.join();
+            System.out.println("No cache took " + noCacheTime
+                    + " ms and cache took " + cacheTime + " ms");
+            Assert.assertTrue(cacheTime.get() - noCacheTime.get() <= 100);
+        }
+        finally {
+            client2.close();
+        }
+    }
+    
+    @Test
+    public void testCacheNotPopulatedWhileStaged() {
+        long record = db.insert(ImmutableMap.of("foo", "bar"));
+        db.stage();
+        db.select(record);
+        Assert.assertNull(cache.getIfPresent(record));
+        db.abort();
+    }
+    
+    @Test
+    public void testCacheDoesNotInvalidateWhileStaged() {
+        long record = db.insert(ImmutableMap.of("foo", "bar"));
+        db.select(record);
+        Assert.assertNotNull(cache.getIfPresent(record));
+        db.stage();
+        db.add("name", "jeff", record);
+        Assert.assertNotNull(cache.getIfPresent(record));
+        db.abort();
+    }
+    
+    @Test
+    public void testCacheInvalidatedAfterStageIsCommitted() {
+        long record = db.insert(ImmutableMap.of("foo", "bar"));
+        db.select(record);
+        Assert.assertNotNull(cache.getIfPresent(record));
+        db.stage();
+        db.add("name", "jeff", record);
+        Assert.assertNotNull(cache.getIfPresent(record));
+        db.commit();
+        Assert.assertNull(cache.getIfPresent(record));
     }
 
 }

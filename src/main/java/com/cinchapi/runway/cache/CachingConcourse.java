@@ -15,21 +15,22 @@
  */
 package com.cinchapi.runway.cache;
 
+import java.util.AbstractMap;
 import java.util.Collection;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-import com.cinchapi.common.collect.concurrent.ThreadFactories;
+import com.cinchapi.common.collect.Collections;
+import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ForwardingConcourse;
 import com.cinchapi.concourse.Timestamp;
-import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.lang.paginate.Page;
-import com.cinchapi.concourse.lang.sort.Order;
+import com.cinchapi.concourse.TransactionException;
 import com.google.common.cache.Cache;
+import com.google.common.collect.Collections2;
+import com.google.common.collect.ImmutableMap;
 
 /**
  * A {@link Concourse} wrapper that caches data {@link #select(Long) selected}
@@ -52,27 +53,16 @@ import com.google.common.cache.Cache;
 class CachingConcourse extends ForwardingConcourse {
 
     /**
-     * Cast the data returned from Concourse to a form that can be cached.
-     * 
-     * @param data
-     * @return the cacheable data
-     */
-    @SuppressWarnings("unchecked")
-    private static <T> Map<Long, Map<String, Set<Object>>> cast(
-            Map<Long, Map<String, Set<T>>> data) {
-        return Map.class.cast(data);
-    }
-
-    /**
      * The data cache.
      */
-    private final Cache<Long, Map<String, Set<Object>>> cache;
+    private final LeasingCache<Long, Map<String, Set<Object>>> cache;
 
     /**
-     * An executor service used for populating cache entries in the background.
+     * The current delegate. Points to {@link #cache} when {@link #stage()
+     * staging} is not enabled. Otherwise points to a new
+     * {@link NoOpLeasingCache}.
      */
-    private final ExecutorService bg = Executors.newSingleThreadExecutor(
-            ThreadFactories.namingDaemonThreadFactory("runway-concourse-cacher-%d"));
+    private LeasingCache<Long, Map<String, Set<Object>>> delegate;
 
     /**
      * Construct a new instance.
@@ -83,7 +73,18 @@ class CachingConcourse extends ForwardingConcourse {
     public CachingConcourse(Concourse concourse,
             Cache<Long, Map<String, Set<Object>>> cache) {
         super(concourse);
-        this.cache = cache;
+        this.cache = new LeasingCache<>(cache);
+        this.delegate = this.cache;
+    }
+
+    @Override
+    public void abort() {
+        try {
+            super.abort();
+        }
+        finally {
+            delegate = this.cache;
+        }
     }
 
     @Override
@@ -94,7 +95,7 @@ class CachingConcourse extends ForwardingConcourse {
         }
         finally {
             for (long record : records) {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
     }
@@ -106,7 +107,7 @@ class CachingConcourse extends ForwardingConcourse {
                 return true;
             }
             finally {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
         else {
@@ -120,7 +121,7 @@ class CachingConcourse extends ForwardingConcourse {
             super.clear(record);
         }
         finally {
-            cache.invalidate(record);
+            delegate.invalidate(record);
         }
     }
 
@@ -131,7 +132,7 @@ class CachingConcourse extends ForwardingConcourse {
         }
         finally {
             for (long record : records) {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
     }
@@ -142,7 +143,29 @@ class CachingConcourse extends ForwardingConcourse {
             super.clear(key, record);
         }
         finally {
-            cache.invalidate(record);
+            delegate.invalidate(record);
+        }
+    }
+
+    @Override
+    public boolean commit() {
+        try {
+            if(super.commit()) {
+                // NOTE: The use of #cache instead of #delegate is intentional
+                Map<Long, Long> leases = cache.lease(delegate.leased());
+                for (Entry<Long, Long> entry : leases.entrySet()) {
+                    long record = entry.getKey();
+                    long lease = entry.getValue();
+                    cache.invalidate(lease, record);
+                }
+                return true;
+            }
+            else {
+                return false;
+            }
+        }
+        finally {
+            delegate = cache;
         }
     }
 
@@ -154,7 +177,7 @@ class CachingConcourse extends ForwardingConcourse {
         }
         finally {
             for (long record : records) {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
     }
@@ -166,7 +189,7 @@ class CachingConcourse extends ForwardingConcourse {
                 return true;
             }
             finally {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
         else {
@@ -180,7 +203,7 @@ class CachingConcourse extends ForwardingConcourse {
             super.reconcile(key, record, values);
         }
         finally {
-            cache.invalidate(record);
+            delegate.invalidate(record);
         }
     }
 
@@ -192,10 +215,9 @@ class CachingConcourse extends ForwardingConcourse {
         }
         finally {
             for (long record : records) {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
-
     }
 
     @Override
@@ -205,7 +227,7 @@ class CachingConcourse extends ForwardingConcourse {
                 return true;
             }
             finally {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
         else {
@@ -221,7 +243,7 @@ class CachingConcourse extends ForwardingConcourse {
         }
         finally {
             for (long record : records) {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
     }
@@ -233,7 +255,7 @@ class CachingConcourse extends ForwardingConcourse {
             super.revert(keys, record, timestamp);
         }
         finally {
-            cache.invalidate(record);
+            delegate.invalidate(record);
         }
     }
 
@@ -245,7 +267,7 @@ class CachingConcourse extends ForwardingConcourse {
         }
         finally {
             for (long record : records) {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
     }
@@ -256,110 +278,76 @@ class CachingConcourse extends ForwardingConcourse {
             super.revert(key, record, timestamp);
         }
         finally {
-            cache.invalidate(record);
+            delegate.invalidate(record);
         }
     }
 
     @Override
     public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records) {
-        Map<Long, Map<String, Set<T>>> data = super.select(records);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
-    }
+        ConcurrentMap<Long, Map<String, Set<Object>>> view = delegate.asMap();
+        Collection<Long> $records = Collections2.filter(records,
+                record -> !view.containsKey(record));
+        Map<Long, Long> leases = delegate.lease($records);
+        Map<Long, Map<String, Set<T>>> data = $records.isEmpty()
+                ? ImmutableMap.of()
+                : super.select($records);
+        return new AbstractMap<Long, Map<String, Set<T>>>() {
 
-    @Override
-    public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records,
-            Order order) {
-        Map<Long, Map<String, Set<T>>> data = super.select(records, order);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
-    }
+            Set<Long> keys = Collections.ensureSet(records);
 
-    @Override
-    public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records,
-            Order order, Page page) {
-        Map<Long, Map<String, Set<T>>> data = super.select(records, order,
-                page);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
-    }
+            @SuppressWarnings("unchecked")
+            @Override
+            public Map<String, Set<T>> get(Object key) {
+                if(keys.contains(key)) {
+                    Long record = (Long) key;
+                    Long lease = leases.get(record);
+                    Map<String, Set<T>> stored;
+                    if(lease != null) {
+                        // The record was not previously cached, so pull it from
+                        // the #data that was fetched and try to populate the
+                        // cache using the reserved ticket. If the record, did
+                        // not exist, but has subsequently been created, use
+                        // #select(record) to get the most up-to-date snapshot
+                        stored = data.get(record);
+                        if(stored == null) {
+                            stored = select(record);
+                        }
+                        delegate.put(lease, record, Map.class.cast(stored));
+                    }
+                    else {
+                        // The item was previously cached, so rely on the
+                        // #select(record) implementation to capture if. If, for
+                        // some reason, the cache was intermittently
+                        // invalidated, the #select(record) call will reload it
+                        stored = select(record);
+                    }
+                    return stored;
+                }
+                else {
+                    return null;
+                }
+            }
 
-    @Override
-    public <T> Map<Long, Map<String, Set<T>>> select(Collection<Long> records,
-            Page page) {
-        Map<Long, Map<String, Set<T>>> data = super.select(records, page);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
-    }
+            @Override
+            public Set<Entry<Long, Map<String, Set<T>>>> entrySet() {
+                return LazyTransformSet.of(keys,
+                        record -> new SimpleImmutableEntry<>(record,
+                                get(record)));
+            }
 
-    @Override
-    public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria) {
-        Map<Long, Map<String, Set<T>>> data = super.select(criteria);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
-    }
+            @Override
+            public int size() {
+                return keys.size();
+            }
 
-    @Override
-    public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria,
-            Order order) {
-        Map<Long, Map<String, Set<T>>> data = super.select(criteria, order);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
-    }
+        };
 
-    @Override
-    public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria,
-            Order order, Page page) {
-        Map<Long, Map<String, Set<T>>> data = super.select(criteria, order,
-                page);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
-    }
-
-    @Override
-    public <T> Map<Long, Map<String, Set<T>>> select(Criteria criteria,
-            Page page) {
-        Map<Long, Map<String, Set<T>>> data = super.select(criteria, page);
-        try {
-            return data;
-        }
-        finally {
-            bg.execute(() -> cache.putAll(cast(data)));
-        }
     }
 
     @Override
     public Map<String, Set<Object>> select(long record) {
         try {
-            return cache.get(record, () -> super.select(record));
+            return delegate.get(record, () -> super.select(record));
         }
         catch (ExecutionException e) {
             return super.select(record);
@@ -373,7 +361,7 @@ class CachingConcourse extends ForwardingConcourse {
         }
         finally {
             for (long record : records) {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
     }
@@ -384,7 +372,17 @@ class CachingConcourse extends ForwardingConcourse {
             super.set(key, value, record);
         }
         finally {
-            cache.invalidate(record);
+            delegate.invalidate(record);
+        }
+    }
+
+    @Override
+    public void stage() throws TransactionException {
+        try {
+            super.stage();
+        }
+        finally {
+            delegate = new NoOpLeasingCache<>();
         }
     }
 
@@ -396,7 +394,7 @@ class CachingConcourse extends ForwardingConcourse {
                 return true;
             }
             finally {
-                cache.invalidate(record);
+                delegate.invalidate(record);
             }
         }
         else {
@@ -410,7 +408,7 @@ class CachingConcourse extends ForwardingConcourse {
             super.verifyOrSet(key, value, record);
         }
         finally {
-            cache.invalidate(record);
+            delegate.invalidate(record);
         }
     }
 
