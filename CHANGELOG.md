@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 1.7.0 (TBD)
+#### Version 1.7.0 (January 1, 2020)
 * Fixed a bug that caused `Runway` to exhibit poor performance when using the `withCache` option.
 * Fixed bugs that caused Runway's data caching to exhibit inconsistent behaviour where stale data could be added to the cache.
 * Added a `Runway#builder` option to specify a `readStrategy`. Runway's **read strategy** determines how Runway reads data from Concourse. 
