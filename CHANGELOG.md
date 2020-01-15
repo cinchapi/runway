@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.7.1 (TBD)
+* Improved validation exception messages by including the class name of the Record that fails to validate. 
+
 #### Version 1.7.0 (January 1, 2020)
 * Fixed a bug that caused `Runway` to exhibit poor performance when using the `withCache` option.
 * Fixed bugs that caused Runway's data caching to exhibit inconsistent behaviour where stale data could be added to the cache.
