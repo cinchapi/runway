@@ -575,7 +575,7 @@ public class RecordTest extends ClientServerTest {
                 Assert.fail();
             }
             catch (RuntimeException e) {
-                Assert.assertEquals("name must be unique", e.getMessage());
+                Assert.assertTrue(e.getMessage().startsWith("name must be unique"));
             }
 
         }

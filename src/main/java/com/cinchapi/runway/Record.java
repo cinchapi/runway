@@ -1352,7 +1352,7 @@ public abstract class Record implements Comparable<Record> {
                     if(field.isAnnotationPresent(Unique.class)) {
                         Preconditions.checkState(
                                 isUnique(concourse, key, value),
-                                field.getName() + " must be unique " + __);
+                                field.getName() + " must be unique in " + __);
                     }
                     if(field.isAnnotationPresent(Required.class)) {
                         Preconditions.checkState(
