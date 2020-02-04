@@ -1362,6 +1362,9 @@ public abstract class Record implements Comparable<Record> {
                     if(value != null) {
                         store(key, value, concourse, false, seen);
                     }
+                    else {
+                        concourse.clear(key, id);
+                    }
                 }
             }
             catch (ReflectiveOperationException e) {

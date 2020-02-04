@@ -782,6 +782,20 @@ public class RecordTest extends ClientServerTest {
         Set<?> actual = Collections.ensureSet((Collection<?>) data.get("users"));
         Assert.assertEquals(expected, actual);
     }
+    
+    @Test
+    public void testSetValueToNullRemovesFromDatabase() {
+        Mock mock = new Mock();
+        mock.alive = true;
+        mock.age = 10;
+        mock.name = "Mock";
+        mock.bar = false;
+        mock.save();
+        mock.age = null;
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        Assert.assertNull(mock.age);
+    }
 
     class Node extends Record {
 
