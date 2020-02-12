@@ -28,6 +28,7 @@ import javax.annotation.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.DuplicateEntryException;
@@ -486,6 +487,88 @@ public class RunwayTest extends ClientServerTest {
         Assert.assertEquals(ImmutableSet.of(a), people);
     }
 
+    @Test
+    public void testLoadFailureHandlerWhenLoadingMany() throws Exception {
+        runway.close();
+        AtomicBoolean passed = new AtomicBoolean(false);
+        runway = Runway.builder().port(server.getClientPort())
+                .onLoadFailure((clazz, record, error) -> {
+                    passed.set(true);
+                    System.out.println(AnyStrings.format(
+                            "Error when loading {} from {}: {}", record, clazz,
+                            error.getMessage()));
+                }).build();
+        Adult a = new Adult("Jeff Nelson", "jeff@email.com");
+        a.save();
+        Adult b = new Adult("Ashleah Nelson", "ashleah@email.com");
+        b.save();
+        client.clear("name", a.id());
+        try {
+            Set<Adult> adults = runway.load(Adult.class);
+            adults.forEach(adult -> {
+                System.out.println(adult); // force the record to be loaded
+            });
+            Assert.fail();
+        }
+        catch (NullPointerException e) {
+            Assert.assertTrue(passed.get());
+        }
+    }
+
+    @Test
+    public void testLoadFailureHandlerWhenFinding() throws Exception {
+        runway.close();
+        AtomicBoolean passed = new AtomicBoolean(false);
+        runway = Runway.builder().port(server.getClientPort())
+                .onLoadFailure((clazz, record, error) -> {
+                    passed.set(true);
+                    System.out.println(AnyStrings.format(
+                            "Error when loading {} from {}: {}", record, clazz,
+                            error.getMessage()));
+                }).build();
+        Adult a = new Adult("Jeff Nelson", "jeff@email.com");
+        a.save();
+        Adult b = new Adult("Ashleah Nelson", "ashleah@email.com");
+        b.save();
+        client.clear("name", a.id());
+        try {
+            Set<Adult> adults = runway.find(Adult.class, Criteria.where()
+                    .key("email").operator(Operator.LIKE).value("%email.com%"));
+            adults.forEach(adult -> {
+                System.out.println(adult); // force the record to be loaded
+            });
+            Assert.fail();
+        }
+        catch (NullPointerException e) {
+            Assert.assertTrue(passed.get());
+        }
+    }
+
+    @Test
+    public void testLoadFailureHandlerWhenLoadingSingle() throws Exception {
+        runway.close();
+        AtomicBoolean passed = new AtomicBoolean(false);
+        runway = Runway.builder().port(server.getClientPort())
+                .onLoadFailure((clazz, record, error) -> {
+                    passed.set(true);
+                    System.out.println(AnyStrings.format(
+                            "Error when loading {} from {}: {}", record, clazz,
+                            error.getMessage()));
+                }).build();
+        Adult a = new Adult("Jeff Nelson", "jeff@email.com");
+        a.save();
+        Adult b = new Adult("Ashleah Nelson", "ashleah@email.com");
+        b.save();
+        client.clear("name", a.id());
+        try {
+            runway.load(Adult.class, a.id());
+            Assert.fail();
+        }
+        catch (NullPointerException e) {
+            Assert.assertTrue(passed.get());
+        }
+    }
+
     class Player extends Record {
         String name;
         int score;
@@ -620,6 +703,30 @@ public class RunwayTest extends ClientServerTest {
     class Team extends Record {
 
         Entity entity;
+    }
+
+    class Adult extends Human {
+
+        transient String firstName;
+        transient String lastName;
+        String email;
+
+        public Adult(String name, String email) {
+            this.name = name;
+            this.email = email;
+        }
+
+        @Override
+        protected void onLoad() {
+            super.onLoad();
+
+            String[] toks = name.split("\\s");
+            firstName = toks[0];
+            if(toks.length > 1) {
+                lastName = toks[toks.length - 1];
+            }
+        }
+
     }
 
     class ScoreReport extends Record {
