@@ -44,6 +44,7 @@ import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.concurrent.ExecutorRaceService;
+import com.cinchapi.common.function.TriConsumer;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
@@ -177,6 +178,38 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Call
+     * {@link Record#load(Class, long, TLongObjectMap, ConnectionPool, Runway, Map)}
+     * and handle any errors with the {@link #onLoadFailureHandler}.
+     * 
+     * @param <T>
+     * @param clazz
+     * @param id
+     * @param connections
+     * @param runway
+     * @param data
+     * @return the loaded {@link Record} instance
+     */
+    private static <T extends Record> T loadWithErrorHandling(Class<T> clazz,
+            long id, ConnectionPool connections, Runway runway,
+            @Nullable Map<String, Set<Object>> data) {
+        try {
+            return Record.load(clazz, id, new TLongObjectHashMap<>(),
+                    connections, runway, data);
+        }
+        catch (Exception e) {
+            runway.onLoadFailureHandler.accept(clazz, id, e);
+            throw e;
+        }
+    }
+
+    /**
+     * The default {@link #onLoadFailureHandler}.
+     */
+    private static TriConsumer<Class<? extends Record>, Long, Throwable> DEFAULT_ON_LOAD_FAILURE_HANDLER = (
+            clazz, record, error) -> record.toString();
+
+    /**
      * A mapping from each {@link Record} class to all of its descendants. This
      * facilitates querying across hierarchies.
      */
@@ -241,6 +274,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * sorting and pagination.
      */
     private final boolean hasNativeSortingAndPagination;
+
+    /**
+     * Whenever an exception is thrown during a {@link Runway#load(long)
+     * load} operation, the provided {@code onLoadFailureHandler} receives
+     * the record's class, id and error for processing.
+     */
+    private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = DEFAULT_ON_LOAD_FAILURE_HANDLER;
 
     /**
      * The strategy for {@link #read(Concourse, Criteria, Order, Page)
@@ -1122,8 +1162,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             @Nullable Map<String, Set<Object>> data) {
-        return Record.load(clazz, id, new TLongObjectHashMap<>(), connections,
-                this, data);
+        return loadWithErrorHandling(clazz, id, connections, this, data);
     }
 
     /**
@@ -1168,8 +1207,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         String section = (String) Iterables
                 .getLast(data.get(Record.SECTION_KEY));
         Class<T> clazz = Reflection.getClassCasted(section);
-        return Record.load(clazz, id, new TLongObjectHashMap<>(), connections,
-                this, data);
+        return loadWithErrorHandling(clazz, id, connections, this, data);
     }
 
     /**
@@ -1427,6 +1465,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private Cache<Long, Map<String, Set<Object>>> cache;
         private String environment = "";
         private String host = "localhost";
+        private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = null;
         private String password = "admin";
         private int port = 1717;
         private ReadStrategy readStrategy = null;
@@ -1448,6 +1487,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             db.streamingReadBufferSize = streamingReadBufferSize;
             db.readStrategy = MoreObjects.firstNonNull(readStrategy,
                     cache != null ? ReadStrategy.STREAM : ReadStrategy.AUTO);
+            if(onLoadFailureHandler != null) {
+                db.onLoadFailureHandler = onLoadFailureHandler;
+            }
             return db;
         }
 
@@ -1484,6 +1526,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         public Builder host(String host) {
             this.host = host;
+            return this;
+        }
+
+        /**
+         * Set the handler for processing load failures.
+         * <p>
+         * Whenever an exception is thrown during a {@link Runway#load(long)
+         * load} operation, the provided {@code onLoadFailureHandler} receives
+         * the record's class, id and error for processing.
+         * </p>
+         * 
+         * @param onLoadFailureHandler
+         * @return this builder
+         */
+        public Builder onLoadFailure(
+                TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler) {
+            this.onLoadFailureHandler = onLoadFailureHandler;
             return this;
         }
 

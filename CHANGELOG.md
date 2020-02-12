@@ -1,5 +1,9 @@
 # Changelog
 
+#### Version 1.8.0 (February 12, 2020)
+* Improved validation exception messages by including the class name of the Record that fails to validate.
+* Added a `onLoadFailure` hook to the `Runway.builder` that can be used to get insight and perform processing on errors that occur when loading records from the database. Depending on the error, load failures can be fatal (e.g. the entire load operation fails). The `onLoadFailure` hook does not change this, but it does ensure that fatal errors can be caught and inspected. By default, Runway uses a non-operational `onLoadFailure` hook. The hook can be customized by providing a `TriConsumer` accepting three inputs: the record's `Class` and `id` and the `Throwable` that represents the error.
+
 #### Version 1.7.0 (January 1, 2020)
 * Fixed a bug that caused `Runway` to exhibit poor performance when using the `withCache` option.
 * Fixed bugs that caused Runway's data caching to exhibit inconsistent behaviour where stale data could be added to the cache.

@@ -48,7 +48,6 @@ import javax.annotation.Nullable;
 import org.apache.commons.lang.StringUtils;
 
 import com.cinchapi.ccl.Parser;
-import com.cinchapi.common.base.AnyObjects;
 import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
@@ -1353,15 +1352,18 @@ public abstract class Record implements Comparable<Record> {
                     if(field.isAnnotationPresent(Unique.class)) {
                         Preconditions.checkState(
                                 isUnique(concourse, key, value),
-                                field.getName() + " must be unique");
+                                field.getName() + " must be unique in " + __);
                     }
                     if(field.isAnnotationPresent(Required.class)) {
                         Preconditions.checkState(
-                                !AnyObjects.isNullOrEmpty(value),
-                                field.getName() + " is required");
+                                !Empty.ness().describes(value),
+                                field.getName() + " is required in " + __);
                     }
                     if(value != null) {
                         store(key, value, concourse, false, seen);
+                    }
+                    else {
+                        concourse.clear(key, id);
                     }
                 }
             }
