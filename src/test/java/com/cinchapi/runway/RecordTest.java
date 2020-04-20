@@ -575,7 +575,8 @@ public class RecordTest extends ClientServerTest {
                 Assert.fail();
             }
             catch (RuntimeException e) {
-                Assert.assertTrue(e.getMessage().startsWith("name must be unique"));
+                Assert.assertTrue(
+                        e.getMessage().startsWith("name must be unique"));
             }
 
         }
@@ -779,10 +780,11 @@ public class RecordTest extends ClientServerTest {
         Set<?> expected = ImmutableSet.of(
                 ImmutableMap.of("name", "a", "email", "a@a.com"),
                 ImmutableMap.of("name", "b", "email", "b@b.com"));
-        Set<?> actual = Collections.ensureSet((Collection<?>) data.get("users"));
+        Set<?> actual = Collections
+                .ensureSet((Collection<?>) data.get("users"));
         Assert.assertEquals(expected, actual);
     }
-    
+
     @Test
     public void testSetValueToNullRemovesFromDatabase() {
         Mock mock = new Mock();
@@ -795,6 +797,19 @@ public class RecordTest extends ClientServerTest {
         mock.save();
         mock = runway.load(Mock.class, mock.id());
         Assert.assertNull(mock.age);
+    }
+
+    @Test
+    public void testCannotDynamicallySetIntrinsicAttributeWithInvalidType() {
+        Mock mock = new Mock();
+        try {
+            mock.set("age", "10");
+            Assert.fail();
+        }
+        catch (Exception e) {
+            Assert.assertTrue(true);
+        }
+        Assert.assertNotEquals("10", mock.age);
     }
 
     class Node extends Record {
