@@ -36,6 +36,7 @@ import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -48,6 +49,7 @@ import javax.annotation.Nullable;
 import org.apache.commons.lang.StringUtils;
 
 import com.cinchapi.ccl.Parser;
+import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
@@ -63,6 +65,7 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
+import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -1344,6 +1347,7 @@ public abstract class Record implements Comparable<Record> {
     /* package */ void saveWithinTransaction(final Concourse concourse,
             Set<Record> seen) {
         concourse.verifyOrSet(SECTION_KEY, __, id);
+        Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
         fields().forEach(field -> {
             try {
                 if(!Modifier.isTransient(field.getModifiers())) {
@@ -1358,9 +1362,39 @@ public abstract class Record implements Comparable<Record> {
                                 validator.getErrorMessage());
                     }
                     if(field.isAnnotationPresent(Unique.class)) {
-                        Preconditions.checkState(
-                                isUnique(concourse, key, value),
-                                field.getName() + " must be unique in " + __);
+                        Unique constraint = field.getAnnotation(Unique.class);
+                        String name = constraint.name();
+                        if(name.length() == 0) {
+                            Preconditions
+                                    .checkState(isUnique(concourse, key, value),
+                                            field.getName()
+                                                    + " must be unique in "
+                                                    + __);
+                        }
+                        else if(!alreadyVerifiedUniqueConstraints
+                                .contains(name)) {
+                            // Find all the fields that have this constraint and
+                            // check for uniquness.
+                            Map<String, Object> values = Maps.newHashMap();
+                            values.put(key, value);
+                            fields().stream().filter($field -> $field != field)
+                                    .filter($field -> field
+                                            .isAnnotationPresent(Unique.class))
+                                    .filter($field -> field
+                                            .getAnnotation(Unique.class).name()
+                                            .equals(name))
+                                    .forEach($field -> {
+                                        values.put($field.getName(), Reflection
+                                                .get($field.getName(), this));
+                                    });
+                            if(isUnique(concourse, values)) {
+                                alreadyVerifiedUniqueConstraints.add(name);
+                            }
+                            else {
+                                throw new IllegalStateException(AnyStrings
+                                        .format("{} must be unique", name));
+                            }
+                        }
                     }
                     if(field.isAnnotationPresent(Required.class)) {
                         Preconditions.checkState(!Empty.ness().describes(value),
@@ -1642,22 +1676,46 @@ public abstract class Record implements Comparable<Record> {
      *         for this class
      */
     private boolean isUnique(Concourse concourse, String key, Object value) {
-        if(value instanceof Iterable<?> || value.getClass().isArray()) {
-            for (Object obj : (Iterable<?>) value) {
-                if(!isUnique(concourse, key, obj)) {
-                    return false;
-                }
+        return isUnique(concourse, ImmutableMap.of(key, value));
+    }
+
+    /**
+     * Return {@code true} if all the key/value pairs in {@code data} are
+     * collectively unique for this class. This means that there is no other
+     * record in the database for this class with all the mappings.
+     * <p>
+     * If any of the values in {@code data} are a
+     * {@link Sequences#isSequence(Object) sequence}, this method will return
+     * {@code true} if and only if every element in every
+     * {@link Sequences#isSequence(Object) sequence} is unique.
+     * </p>
+     * 
+     * @param concourse
+     * @param data
+     * @return
+     */
+    private boolean isUnique(Concourse concourse, Map<String, Object> data) {
+        AtomicReference<BuildableState> $criteria = new AtomicReference<>(
+                Criteria.where().key(SECTION_KEY).operator(Operator.EQUALS)
+                        .value(getClass().getName()));
+        for (Entry<String, Object> entry : data.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if(Sequences.isSequence(value)) {
+                // TODO: do this as a disjunction
+                Sequences.forEach(value, item -> {
+
+                });
             }
-            return true;
+            else {
+                $criteria.set($criteria.get().and().key(key)
+                        .operator(Operator.EQUALS).value(value));
+            }
         }
-        else {
-            Criteria criteria = Criteria.where().key(SECTION_KEY)
-                    .operator(Operator.EQUALS).value(getClass().getName()).and()
-                    .key(key).operator(Operator.EQUALS).value(value).build();
-            Set<Long> records = concourse.find(criteria);
-            return records.isEmpty()
-                    || (records.contains(id) && records.size() == 1);
-        }
+        Criteria criteria = $criteria.get();
+        Set<Long> records = concourse.find(criteria);
+        return records.isEmpty()
+                || (records.contains(id) && records.size() == 1);
     }
 
     /**
