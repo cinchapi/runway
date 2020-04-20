@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.8.1 (April 20, 2020)
+* Fixed a bug that allowed for dynamically `set`ing an intrinsic attribute of a `Record` with a value of an invalid type. In this scenario, Runway should have thrown an error, but it didn't. While the value with the invalid type was not persisted when saving the Record, it was return on intermediate reads of the Record.
+
 #### Version 1.8.0 (February 12, 2020)
 * Improved validation exception messages by including the class name of the Record that fails to validate.
 * Added a `onLoadFailure` hook to the `Runway.builder` that can be used to get insight and perform processing on errors that occur when loading records from the database. Depending on the error, load failures can be fatal (e.g. the entire load operation fails). The `onLoadFailure` hook does not change this, but it does ensure that fatal errors can be caught and inspected. By default, Runway uses a non-operational `onLoadFailure` hook. The hook can be customized by providing a `TriConsumer` accepting three inputs: the record's `Class` and `id` and the `Throwable` that represents the error.
