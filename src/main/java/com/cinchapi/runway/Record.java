@@ -1020,7 +1020,15 @@ public abstract class Record implements Comparable<Record> {
                 Reflection.set(key, value, this);
             }
             catch (Exception e) {
-                dynamicData.put(key, value);
+                Set<String> intrinsic = INTRINSIC_PROPERTY_CACHE
+                        .computeIfAbsent(this.getClass(), c -> LazyTransformSet
+                                .of(getFields(c), Field::getName));
+                if(intrinsic.contains(key)) {
+                    throw e;
+                }
+                else {
+                    dynamicData.put(key, value);
+                }
             }
         }
     }
@@ -1355,8 +1363,7 @@ public abstract class Record implements Comparable<Record> {
                                 field.getName() + " must be unique in " + __);
                     }
                     if(field.isAnnotationPresent(Required.class)) {
-                        Preconditions.checkState(
-                                !Empty.ness().describes(value),
+                        Preconditions.checkState(!Empty.ness().describes(value),
                                 field.getName() + " is required in " + __);
                     }
                     if(value != null) {
