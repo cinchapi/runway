@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.8.2 (TBD)
+* Fixed a bug where the `Required` annotation was not enforced when loading data from the database. If a record was modified outside of Runway such that a required field was nullified, Runway would previously load the record without enforcing the constraint. This caused applications to encounter some unexpected `NullPointerException`s.
+
 #### Version 1.8.1 (April 20, 2020)
 * Fixed a bug that allowed for dynamically `set`ing an intrinsic attribute of a `Record` with a value of an invalid type. In this scenario, Runway should have thrown an error, but it didn't. While the value with the invalid type was not persisted when saving the Record, it was return on intermediate reads of the Record.
 
