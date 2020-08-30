@@ -53,7 +53,7 @@ public class RunwayTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.10.4";
+        return Testing.CONCOURSE_VERSION;
     }
 
     private Runway runway;
