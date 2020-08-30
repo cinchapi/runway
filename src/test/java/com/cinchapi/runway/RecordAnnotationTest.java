@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import java.util.List;
 import java.util.Map;
 
 import org.junit.Assert;
@@ -26,6 +27,7 @@ import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.time.Time;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
 
 /**
  * Unit tests for {@link Record} annotations.
@@ -80,7 +82,7 @@ public class RecordAnnotationTest extends ClientServerTest {
             Assert.fail();
         }
         catch (Exception e) {
-            Assert.assertEquals("foo must be unique", e.getMessage());
+            Assert.assertTrue( e.getMessage().startsWith("foo must be unique"));
         }
     }
 
@@ -171,6 +173,49 @@ public class RecordAnnotationTest extends ClientServerTest {
                     }
                 });
     }
+    
+    @Test
+    public void testMultiUniqueConstraintWithSequence() {
+        Waddle a = new Waddle();
+        a.name = "Jeff";
+        a.nicknames.add("A");
+        a.nicknames.add("C");
+        Waddle b = new Waddle();
+        b.name = "Ashleah";
+        b.nicknames.add("B");
+        a.save();
+        b.save();
+        Waddle c = new Waddle();
+        c.name = "Jeff";
+        c.nicknames.add("C");
+        Assert.assertFalse(c.save());
+        try {
+            c.throwSupressedExceptions();
+            Assert.fail();
+        }
+        catch (Exception e) {
+            Assert.assertTrue( e.getMessage().startsWith("foo must be unique"));
+        }              
+    }
+    
+    @Test
+    public void testUniqueConstraintWithSequence() {
+        Computer a = new Computer();
+        a.names.add("A");
+        a.names.add("B");
+        a.names.add("C");
+        Assert.assertTrue(a.save());
+        Computer b = new Computer();
+        b.names.add("B");
+        Assert.assertFalse(b.save());
+        try {
+            b.throwSupressedExceptions();
+            Assert.fail();
+        }
+        catch (Exception e) {
+            Assert.assertTrue( e.getMessage().startsWith("names must be unique"));
+        } 
+    }
 
     class Invitation extends Record {
 
@@ -210,6 +255,20 @@ public class RecordAnnotationTest extends ClientServerTest {
         @Unique
         Job job;
 
+    }
+    
+    class Waddle extends Record {
+        @Unique(name = "foo")
+        String name;
+        
+        @Unique(name = "foo")
+        List<String> nicknames = Lists.newArrayList();
+    }
+    
+    class Computer extends Record {
+        
+        @Unique
+        List<String> names = Lists.newArrayList();
     }
 
 }
