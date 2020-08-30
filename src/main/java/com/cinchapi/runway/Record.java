@@ -1444,7 +1444,8 @@ public abstract class Record implements Comparable<Record> {
                             }
                             else {
                                 throw new IllegalStateException(AnyStrings
-                                        .format("{} must be unique", name));
+                                        .format("{} must be unique in {}", name,
+                                                __));
                             }
                         }
                     }
