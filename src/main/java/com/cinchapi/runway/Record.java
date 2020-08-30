@@ -1290,6 +1290,12 @@ public abstract class Record implements Comparable<Record> {
                     if(value != null) {
                         field.set(this, value);
                     }
+                    else if(value == null
+                            && field.isAnnotationPresent(Required.class)) {
+                        throw new IllegalStateException("Record " + id
+                                + " cannot be loaded because '" + key
+                                + "' is a required field, but no value is present in the database.");
+                    }
                     else {
                         // no-op; NOTE: Java doesn't allow primitive types to
                         // hold null values
