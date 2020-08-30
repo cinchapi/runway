@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.9.0 (TBD)
+* Added support for multi-field `Unique` value constraints. When applying the `Unique` constraint to a `Record` field, you can now provide a `name` parameter (e.g. `@Unique(name = "identity"))`. If multiple `Unique` annotated fields have the same `name`, then Runway will enforce a unique combination of values for all the fields across all `Records` in the same class. If a `Unique` annoted field is a `Sequence`, Runway will consider uniqueness to be violated if any items in the sequence are shared with other records along with values for other related `Unique` annotated fields.
+
 #### Version 1.8.2 (TBD)
 * Fixed a bug where the `Required` annotation was not enforced when loading data from the database. If a record was modified outside of Runway such that a required field was nullified, Runway would previously load the record without enforcing the constraint. This caused applications to encounter some unexpected `NullPointerException`s.
 
