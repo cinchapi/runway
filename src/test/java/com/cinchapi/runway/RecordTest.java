@@ -41,9 +41,6 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
-import com.cinchapi.runway.Record;
-import com.cinchapi.runway.Required;
-import com.cinchapi.runway.Unique;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -810,6 +807,47 @@ public class RecordTest extends ClientServerTest {
             Assert.assertTrue(true);
         }
         Assert.assertNotEquals("10", mock.age);
+    }
+    
+    @Test(expected = IllegalStateException.class)
+    public void testRequiredConstraintEnforcedOnExplicitLoad() {
+        Mock mock = new Mock();
+        mock.name = "Jeff Nelson";
+        mock.age = 32;
+        mock.save();
+        Concourse concourse = Concourse.at().port(server.getClientPort()).connect();
+        try {
+            concourse.clear("name", mock.id());
+        }
+        finally {
+            concourse.close();
+        }
+        mock = runway.load(Mock.class, mock.id());     
+    }
+    
+    @Test(expected = IllegalStateException.class)
+    public void testRequiredConstraintEnforcedOnImplicitLoad() {
+        for(int i = 0; i < Random.getScaleCount(); ++i) {
+            Mock m = new Mock();
+            m.name = Random.getSimpleString();
+            m.age = i;
+            m.save();
+        }
+        Mock mock = new Mock();
+        mock.name = "Jeff Nelson";
+        mock.age = 32;
+        mock.save();
+        Concourse concourse = Concourse.at().port(server.getClientPort()).connect();
+        try {
+            concourse.clear("name", mock.id());
+        }
+        finally {
+            concourse.close();
+        }    
+        Set<Mock> mocks = runway.find(Mock.class, Criteria.where().key("age").operator(Operator.LESS_THAN_OR_EQUALS).value(32));
+        for(Mock m : mocks) {
+            System.out.println(m.name);
+        }
     }
 
     class Node extends Record {
