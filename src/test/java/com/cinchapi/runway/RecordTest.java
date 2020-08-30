@@ -41,9 +41,6 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
-import com.cinchapi.runway.Record;
-import com.cinchapi.runway.Required;
-import com.cinchapi.runway.Unique;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -62,7 +59,7 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.10.4";
+        return Testing.CONCOURSE_VERSION;
     }
 
     @Override

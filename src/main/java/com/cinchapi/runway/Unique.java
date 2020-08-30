@@ -33,4 +33,7 @@ public @interface Unique {
      */
     String name() default "";
 
+    // TODO: In future, add a field String[] names to allow a field to be a part
+    // of multiple unique constraints
+
 }
