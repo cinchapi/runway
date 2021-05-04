@@ -573,7 +573,26 @@ public interface DatabaseInterface {
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
      */
-    public <T extends Record> Set<T> load(Class<T> clazz);
+    public default <T extends Record> Set<T> load(Class<T> clazz) {
+        return load(clazz, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} among the {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> load(Class<T> clazz, Realms realms);
 
     /**
      * Load all the Records that are contained within the specified
@@ -611,7 +630,25 @@ public interface DatabaseInterface {
      * @param id
      * @return the existing Record
      */
-    public <T extends Record> T load(Class<T> clazz, long id);
+    public default <T extends Record> T load(Class<T> clazz, long id) {
+        return load(clazz, id, Realms.any());
+    }
+
+    /**
+     * Load the Record that is contained within the specified {@code clazz} and
+     * has the specified {@code id} if it exist in any of the {@code realms}.
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param id
+     * @return the existing Record
+     */
+    public <T extends Record> T load(Class<T> clazz, long id, Realms realms);
 
     /**
      * Load all the Records that are contained within the specified
@@ -628,7 +665,29 @@ public interface DatabaseInterface {
      * @param order
      * @return a {@link Set set} of {@link Record} objects
      */
-    public <T extends Record> Set<T> load(Class<T> clazz, Order order);
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order) {
+        return load(clazz, order, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order} among the
+     * {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param order
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Realms realms);
 
     /**
      * Load all the Records that are contained within the specified
@@ -647,8 +706,31 @@ public interface DatabaseInterface {
      * @param page
      * @return a {@link Set set} of {@link Record} objects
      */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Page page) {
+        return load(clazz, order, page, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order} and limited to
+     * the specified {@code page} among the {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param order
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
     public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page);
+            Page page, Realms realms);
 
     /**
      * Load all the Records that are contained within the specified
@@ -670,7 +752,32 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Page page, Predicate<T> filter) {
-        Set<T> unfiltered = load(clazz, order);
+        return load(clazz, order, page, filter, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, sorted using the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param order
+     * @param page
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Page page, Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = load(clazz, order, realms);
         Set<T> filtered = Sets.filter(unfiltered, filter::test);
         return Paging.paginate(filtered, page);
     }
@@ -694,7 +801,30 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Predicate<T> filter) {
-        Set<T> unfiltered = load(clazz, order);
+        return load(clazz, order, filter, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, sorted using the specified
+     * {@code order} among the {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param order
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = load(clazz, order, realms);
         return Sets.filter(unfiltered, filter::test);
     }
 
@@ -713,7 +843,29 @@ public interface DatabaseInterface {
      * @param page
      * @return a {@link Set set} of {@link Record} objects
      */
-    public <T extends Record> Set<T> load(Class<T> clazz, Page page);
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page) {
+        return load(clazz, page, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and limited to the specified {@code page} among the
+     * {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Realms realms);
 
     /**
      * Load all the Records that are contained within the specified
@@ -757,7 +909,32 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Order order, Predicate<T> filter) {
-        return load(clazz, order, page, filter);
+        return load(clazz, page, order, filter, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, sorted using the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @param order
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Order order, Predicate<T> filter, Realms realms) {
+        return load(clazz, order, page, filter, realms);
     }
 
     /**
@@ -779,7 +956,30 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Predicate<T> filter) {
-        Set<T> unfiltered = load(clazz);
+        return load(clazz, page, filter, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, limited to the specified
+     * {@code page} among the {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = load(clazz, realms);
         Set<T> filtered = Sets.filter(unfiltered, filter::test);
         return Paging.paginate(filtered, page);
     }
@@ -800,7 +1000,27 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz,
             Predicate<T> filter) {
-        Set<T> unfiltered = load(clazz);
+        return load(clazz, filter, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and pass the {@code filter} among the {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz,
+            Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = load(clazz, realms);
         return Sets.filter(unfiltered, filter::test);
     }
 
@@ -840,7 +1060,26 @@ public interface DatabaseInterface {
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
      */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz);
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz) {
+        return loadAny(clazz, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants among the {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Realms realms);
 
     /**
      * Load all the Records that are contained within the specified
@@ -881,7 +1120,30 @@ public interface DatabaseInterface {
      * @param order
      * @return a {@link Set set} of {@link Record} objects
      */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order);
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order) {
+        return loadAny(clazz, order, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} among {@code realms}
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param order
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+            Realms realms);
 
     /**
      * Load all the Records that are contained within the specified
@@ -900,8 +1162,32 @@ public interface DatabaseInterface {
      * @param page
      * @return a {@link Set set} of {@link Record} objects
      */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order, Page page) {
+        return loadAny(clazz, order, page, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param order
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-            Page page);
+            Page page, Realms realms);
 
     /**
      * Load all the Records that are contained within the specified
@@ -924,7 +1210,32 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order, Page page, Predicate<T> filter) {
-        Set<T> unfiltered = loadAny(clazz, order);
+        return loadAny(clazz, order, page, filter, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants that pass the {@code filter},
+     * sorted using the specified {@code order} and limited to the specified
+     * {@code page} among the {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param order
+     * @param page
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order, Page page, Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = loadAny(clazz, order, realms);
         Set<T> filtered = Sets.filter(unfiltered, filter::test);
         return Paging.paginate(filtered, page);
     }
@@ -948,7 +1259,30 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order, Predicate<T> filter) {
-        Set<T> unfiltered = loadAny(clazz, order);
+        return loadAny(clazz, order, filter, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants that pass the {@code filter},
+     * sorted using the specified {@code order} among the {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param order
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order, Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = loadAny(clazz, order, realms);
         return Sets.filter(unfiltered, filter::test);
     }
 
@@ -967,7 +1301,30 @@ public interface DatabaseInterface {
      * @param page
      * @return a {@link Set set} of {@link Record} objects
      */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page);
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Page page) {
+        return loadAny(clazz, page, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and limited to the specified {@code page} among the
+     * {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Realms realms);
 
     /**
      * Load all the Records that are contained within the specified
@@ -988,7 +1345,31 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Order order) {
-        return loadAny(clazz, order, page);
+        return loadAny(clazz, order, page, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @param order
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Order order, Realms realms) {
+        return loadAny(clazz, page, order, realms);
     }
 
     /**
@@ -1012,7 +1393,32 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Order order, Predicate<T> filter) {
-        return loadAny(clazz, order, page, filter);
+        return loadAny(clazz, page, order, filter, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants that pass the {@code filter},
+     * sorted using the specified {@code order} and limited to the specified
+     * {@code page}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @param order
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Order order, Predicate<T> filter, Realms realms) {
+        return loadAny(clazz, order, page, filter, realms);
     }
 
     /**
@@ -1034,7 +1440,30 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Predicate<T> filter) {
-        Set<T> unfiltered = loadAny(clazz);
+        return loadAny(clazz, page, filter, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, limited to the specified
+     * {@code page} among the {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param page
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = loadAny(clazz, realms);
         Set<T> filtered = Sets.filter(unfiltered, filter::test);
         return Paging.paginate(filtered, page);
     }
@@ -1056,7 +1485,29 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Predicate<T> filter) {
-        Set<T> unfiltered = loadAny(clazz);
+        return loadAny(clazz, filter, Realms.any());
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and pass the {@code filter} amomg
+     * the {@code realms}.
+     * 
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     * 
+     * @param clazz
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = loadAny(clazz, realms);
         return Sets.filter(unfiltered, filter::test);
     }
 
