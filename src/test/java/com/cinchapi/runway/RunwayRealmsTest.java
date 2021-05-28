@@ -22,14 +22,13 @@ import org.junit.Test;
 
 import com.google.common.collect.ImmutableSet;
 
-
 /**
  * Unit test for the {@link Realms} feature support in {@link Runway}.
  *
  * @author Jeff Nelson
  */
 public class RunwayRealmsTest extends RunwayBaseClientServerTest {
-    
+
     @Test
     public void testDefaultLoadIsRealmAgnostic() {
         Player a = new Player("a", 1);
@@ -41,7 +40,7 @@ public class RunwayRealmsTest extends RunwayBaseClientServerTest {
         Set<Player> records = runway.load(Player.class);
         Assert.assertEquals(ImmutableSet.of(a, b, c), records);
     }
-    
+
     @Test
     public void testLoadRecordsInSingleRealm() {
         Player a = new Player("a", 1);
@@ -53,7 +52,7 @@ public class RunwayRealmsTest extends RunwayBaseClientServerTest {
         Set<Player> records = runway.load(Player.class, Realms.only("test"));
         Assert.assertEquals(ImmutableSet.of(a, c), records);
     }
-    
+
     @Test
     public void testLoadRecordsInMultipleRealms() {
         Player a = new Player("a", 1);
@@ -64,10 +63,11 @@ public class RunwayRealmsTest extends RunwayBaseClientServerTest {
         c.addRealm("test");
         b.addRealm("prod");
         runway.save(a, b, c, d);
-        Set<Player> records = runway.load(Player.class, Realms.anyOf("test", "prod"));
+        Set<Player> records = runway.load(Player.class,
+                Realms.anyOf("test", "prod"));
         Assert.assertEquals(ImmutableSet.of(a, b, c), records);
     }
-    
+
     @Test
     public void testLoadRecordsFromEmptyRealm() {
         Player a = new Player("a", 1);
@@ -81,7 +81,7 @@ public class RunwayRealmsTest extends RunwayBaseClientServerTest {
         Set<Player> records = runway.load(Player.class, Realms.only("prod"));
         Assert.assertEquals(ImmutableSet.of(), records);
     }
-    
+
     @Test
     public void testLoadRecordFromWrongRealm() {
         Player a = new Player("a", 1);
@@ -90,7 +90,7 @@ public class RunwayRealmsTest extends RunwayBaseClientServerTest {
         a = runway.load(Player.class, a.id(), Realms.only("prod"));
         Assert.assertNull(a);
     }
-    
+
     @Test
     public void testLoadRecordFromCorrectRealm() {
         Player a = new Player("a", 1);
@@ -100,5 +100,32 @@ public class RunwayRealmsTest extends RunwayBaseClientServerTest {
         Assert.assertNotNull(a);
     }
 
+    @Test
+    public void testFindUniqueFromRealm() {
+
+    }
+
+    @Test
+    public void testFindUniqueFromRealmDuplicateInDifferentRealm() {
+
+    }
+
+    @Test
+    public void testFindAnyUniqueFromRealm() {
+
+    }
+
+    @Test
+    public void testFindAnyUniqueFromRealmDuplicateInDifferentRealm() {
+
+    }
+
+    // findAny* tests
+
+    // find* tests
+    
+    // count tests
+    
+    // TODO: need to test legacy paths...
 
 }

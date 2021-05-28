@@ -72,7 +72,19 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int count(Class<T> clazz) {
-        return load(clazz).size();
+        return count(clazz, Realms.any());
+    }
+
+    /**
+     * Return the number of {@link Records} in the {@code clazz} among the
+     * provided {@code realms}.
+     * 
+     * @param clazz
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz}.
+     */
+    public default <T extends Record> int count(Class<T> clazz, Realms realms) {
+        return load(clazz, realms).size();
     }
 
     /**
@@ -80,12 +92,28 @@ public interface DatabaseInterface {
      * {@code criteria}.
      * 
      * @param clazz
+     * @param criteria
      * @return the number of {@link Records} in {@code clazz} that match the
      *         {@code criteria}.
      */
     public default <T extends Record> int count(Class<T> clazz,
             Criteria criteria) {
-        return find(clazz, criteria).size();
+        return count(clazz, criteria, Realms.any());
+    }
+
+    /**
+     * Return the number of {@link Records} in the {@code clazz} that match the
+     * {@code criteria} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz} that match the
+     *         {@code criteria}.
+     */
+    public default <T extends Record> int count(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        return find(clazz, criteria, realms).size();
     }
 
     /**
@@ -99,7 +127,23 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        return find(clazz, criteria, filter).size();
+        return count(clazz, criteria, filter, Realms.any());
+    }
+
+    /**
+     * Return the number of {@link Records} in the {@code clazz} that match the
+     * {@code criteria} and pass the {@code filter} among the provided
+     * {@code realms}.
+     * 
+     * @param clazz
+     * @param filter
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz} that match the
+     *         {@code criteria}.
+     */
+    public default <T extends Record> int count(Class<T> clazz,
+            Criteria criteria, Predicate<T> filter, Realms realms) {
+        return find(clazz, criteria, filter, realms).size();
     }
 
     /**
@@ -112,7 +156,21 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Predicate<T> filter) {
-        return load(clazz, filter).size();
+        return count(clazz, filter, Realms.any());
+    }
+    
+    /**
+     * Return the number of {@link Records} in the {@code clazz} that pass the
+     * {@code filter} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param filter
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz}.
+     */
+    public default <T extends Record> int count(Class<T> clazz,
+            Predicate<T> filter, Realms realms) {
+        return load(clazz, filter, realms).size();
     }
 
     /**
@@ -123,7 +181,20 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int countAny(Class<T> clazz) {
-        return loadAny(clazz).size();
+        return countAny(clazz, Realms.any());
+    }
+
+    /**
+     * Return the number of {@link Records} across the hierarchy of
+     * {@code clazz} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz}.
+     */
+    public default <T extends Record> int countAny(Class<T> clazz,
+            Realms realms) {
+        return loadAny(clazz, realms).size();
     }
 
     /**
@@ -137,7 +208,23 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Criteria criteria) {
-        return findAny(clazz, criteria).size();
+        return countAny(clazz, criteria, Realms.any());
+    }
+
+    /**
+     * Return the number of {@link Records} across the hierarchy of
+     * {@code clazz} that match the {@code criteria} among the provided
+     * {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz} that match the
+     *         {@code criteria}.
+     */
+    public default <T extends Record> int countAny(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        return findAny(clazz, criteria, realms).size();
     }
 
     /**
@@ -152,7 +239,24 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        return findAny(clazz, criteria, filter).size();
+        return countAny(clazz, criteria, filter, Realms.any());
+    }
+
+    /**
+     * Return the number of {@link Records} across the hierarchy of
+     * {@code clazz} that match the {@code criteria} among the provided
+     * {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param filter
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz} that match the
+     *         {@code criteria}.
+     */
+    public default <T extends Record> int countAny(Class<T> clazz,
+            Criteria criteria, Predicate<T> filter, Realms realms) {
+        return findAny(clazz, criteria, filter, realms).size();
     }
 
     /**
@@ -160,11 +264,27 @@ public interface DatabaseInterface {
      * {@code clazz} that pass the {@code filter}
      * 
      * @param clazz
+     * @param filter
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Predicate<T> filter) {
-        return loadAny(clazz, filter).size();
+        return countAny(clazz, filter, Realms.any());
+    }
+
+    /**
+     * Return the number of {@link Records} across the hierarchy of
+     * {@code clazz} that pass the {@code filter} among the provided
+     * {@code realms}.
+     * 
+     * @param clazz
+     * @param filter
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz}.
+     */
+    public default <T extends Record> int countAny(Class<T> clazz,
+            Predicate<T> filter, Realms realms) {
+        return loadAny(clazz, filter, realms).size();
     }
 
     /**
@@ -175,7 +295,22 @@ public interface DatabaseInterface {
      * @param criteria
      * @return the matching records
      */
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria);
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria) {
+        return find(clazz, criteria, Realms.any());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param realms
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Realms realms);
 
     /**
      * Find and return all the records of type {@code clazz} that match the
@@ -203,8 +338,24 @@ public interface DatabaseInterface {
      * @param order
      * @return the matching records
      */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Order order) {
+        return find(clazz, criteria, order, Realms.any());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order} among the provided
+     * {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param realms
+     * @return the matching records
+     */
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order);
+            Order order, Realms realms);
 
     /**
      * Find and return all the records of type {@code clazz} that match the
@@ -217,8 +368,25 @@ public interface DatabaseInterface {
      * @param page
      * @return the matching records
      */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Order order, Page page) {
+        return find(clazz, criteria, order, page, Realms.any());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order} and limited to the
+     * specified {@code page} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @param realms
+     * @return the matching records
+     */
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order, Page page);
+            Order order, Page page, Realms realms);
 
     /**
      * Find and return all the records of type {@code clazz} that match the
@@ -235,7 +403,27 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter) {
-        Set<T> unfiltered = find(clazz, criteria, order);
+        return find(clazz, criteria, order, page, filter, Realms.any());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} and pass the {@code filter}, sorted by the specified
+     * {@code order} and limited to the
+     * specified {@code page} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @param filter
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Order order, Page page, Predicate<T> filter,
+            Realms realms) {
+        Set<T> unfiltered = find(clazz, criteria, order, realms);
         Set<T> filtered = Sets.filter(unfiltered, filter::test);
         return Paging.paginate(filtered, page);
     }
@@ -253,7 +441,25 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter) {
-        Set<T> unfiltered = find(clazz, criteria, order);
+        return find(clazz, criteria, order, filter, Realms.any());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} and pass the {@code filter}, sorted by the specified
+     * {@code order} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param filter
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Order order, Predicate<T> filter,
+            Realms realms) {
+        Set<T> unfiltered = find(clazz, criteria, order, realms);
         return Sets.filter(unfiltered, filter::test);
     }
 
@@ -266,8 +472,24 @@ public interface DatabaseInterface {
      * @param page
      * @return the matching records
      */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Page page) {
+        return find(clazz, criteria, page, Realms.any());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} limited to the specified {@code page} among the provided
+     * {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @param realms
+     * @return the matching records
+     */
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Page page);
+            Page page, Realms realms);
 
     /**
      * Find and return all the records of type {@code clazz} that match the
@@ -282,7 +504,24 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Order order) {
-        return find(clazz, criteria, order, page);
+        return find(clazz, criteria, page, order, Realms.any());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order} and limited to the
+     * specified {@code page} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Page page, Order order, Realms realms) {
+        return find(clazz, criteria, order, page, realms);
     }
 
     /**
@@ -299,7 +538,27 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Order order, Predicate<T> filter) {
-        return find(clazz, criteria, order, page, filter);
+        return find(clazz, criteria, page, order, filter, Realms.any());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} and pass the {@code filter}, sorted by the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @param filter
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Page page, Order order, Predicate<T> filter,
+            Realms realms) {
+        return find(clazz, criteria, order, page, filter, realms);
     }
 
     /**
@@ -315,7 +574,24 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter) {
-        Set<T> unfiltered = find(clazz, criteria);
+        return find(clazz, criteria, page, filter, Realms.any());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} and pass the {@code filter} limited to the specified
+     * {@code page} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @param filter
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = find(clazz, criteria, realms);
         Set<T> filtered = Sets.filter(unfiltered, filter::test);
         return Paging.paginate(filtered, page);
     }
@@ -331,7 +607,23 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        Set<T> unfiltered = find(clazz, criteria);
+        return find(clazz, criteria, filter, Realms.any());
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} and pass the {@code filter} among the provided
+     * {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param filter
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = find(clazz, criteria, realms);
         return Sets.filter(unfiltered, filter::test);
     }
 
@@ -360,7 +652,22 @@ public interface DatabaseInterface {
      * @param criteria
      * @return the matching records
      */
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria);
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria) {
+        return findAny(clazz, criteria, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param realms
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Realms realms);
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
@@ -388,8 +695,24 @@ public interface DatabaseInterface {
      * @param order
      * @return the matching records
      */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Order order) {
+        return findAny(clazz, criteria, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order} among
+     * the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param realms
+     * @return the matching records
+     */
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Order order);
+            Order order, Realms realms);
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
@@ -402,8 +725,25 @@ public interface DatabaseInterface {
      * @param page
      * @return the matching records
      */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Order order, Page page) {
+        return findAny(clazz, criteria, order, page, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order} and
+     * limited to the specified {@code page} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @param realms
+     * @return the matching records
+     */
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Order order, Page page);
+            Order order, Page page, Realms realms);
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
@@ -419,7 +759,27 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter) {
-        Set<T> unfiltered = findAny(clazz, criteria, order);
+        return findAny(clazz, criteria, order, page, filter, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants that pass the {@code filter}, sorted by the
+     * specified {@code order} and limited to the specified {@code page} among
+     * the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @param filter
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Order order, Page page, Predicate<T> filter,
+            Realms realms) {
+        Set<T> unfiltered = findAny(clazz, criteria, order, realms);
         Set<T> filtered = Sets.filter(unfiltered, filter::test);
         return Paging.paginate(filtered, page);
     }
@@ -437,7 +797,25 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter) {
-        Set<T> unfiltered = findAny(clazz, criteria, order);
+        return findAny(clazz, criteria, order, filter, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants that pass the {@code filter}, sorted by the
+     * specified {@code order} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param filter
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Order order, Predicate<T> filter,
+            Realms realms) {
+        Set<T> unfiltered = findAny(clazz, criteria, order, realms);
         return Sets.filter(unfiltered, filter::test);
     }
 
@@ -450,8 +828,24 @@ public interface DatabaseInterface {
      * @param page
      * @return the matching records
      */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Page page) {
+        return findAny(clazz, criteria, page, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants limited to the specified {@code page} among
+     * the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @param realms
+     * @return the matching records
+     */
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Page page);
+            Page page, Realms realms);
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
@@ -466,7 +860,24 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Order order) {
-        return findAny(clazz, criteria, order, page);
+        return findAny(clazz, criteria, page, order, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order} and
+     * limited to the specified {@code page} among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @param order
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Page page, Order order, Realms realms) {
+        return findAny(clazz, criteria, order, page, realms);
     }
 
     /**
@@ -483,7 +894,27 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Order order, Predicate<T> filter) {
-        return findAny(clazz, criteria, order, page, filter);
+        return findAny(clazz, criteria, page, order, filter, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants that pass the {@code filter}, sorted by the
+     * specified {@code order} and limited to the specified {@code page} among
+     * the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @param order
+     * @param filter
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Page page, Order order, Predicate<T> filter,
+            Realms realms) {
+        return findAny(clazz, criteria, order, page, filter, realms);
     }
 
     /**
@@ -499,7 +930,24 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter) {
-        Set<T> unfiltered = findAny(clazz, criteria);
+        return findAny(clazz, criteria, page, filter, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants that pass the {@code filter}, limited to the
+     * specified {@code page} among the provided {@code realms}
+     * 
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @param filter
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = findAny(clazz, criteria, realms);
         Set<T> filtered = Sets.filter(unfiltered, filter::test);
         return Paging.paginate(filtered, page);
     }
@@ -515,7 +963,23 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        Set<T> unfiltered = findAny(clazz, criteria);
+        return findAny(clazz, criteria, filter, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants and return those that pass the {@code filter}
+     * among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param filter
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Predicate<T> filter, Realms realms) {
+        Set<T> unfiltered = findAny(clazz, criteria, realms);
         return Sets.filter(unfiltered, filter::test);
     }
 
@@ -544,8 +1008,22 @@ public interface DatabaseInterface {
      * @param criteria
      * @return the one matching record
      */
-    public <T extends Record> T findAnyUnique(Class<T> clazz,
-            Criteria criteria);
+    public default <T extends Record> T findAnyUnique(Class<T> clazz,
+            Criteria criteria) {
+        return findAnyUnique(clazz, criteria, Realms.any());
+    }
+
+    /**
+     * Execute the {@link #findUnique(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants among the provided {@code realms}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param realms
+     * @return the one matching record
+     */
+    public <T extends Record> T findAnyUnique(Class<T> clazz, Criteria criteria,
+            Realms realms);
 
     /**
      * Find the one record of type {@code clazz} that matches the
@@ -557,7 +1035,24 @@ public interface DatabaseInterface {
      * @return the one matching record
      * @throws DuplicateEntryException
      */
-    public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria);
+    public default <T extends Record> T findUnique(Class<T> clazz,
+            Criteria criteria) {
+        return findUnique(clazz, criteria, Realms.any());
+    }
+
+    /**
+     * Find the one record of type {@code clazz} that matches the
+     * {@code criteria} among the provided {@code realms}. If more than one
+     * record matches, throw a {@link DuplicateEntryException}.
+     * 
+     * @param clazz
+     * @param criteria
+     * @param realms
+     * @return the one matching record
+     * @throws DuplicateEntryException
+     */
+    public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria,
+            Realms realms);
 
     /**
      * Load all the Records that are contained within the specified

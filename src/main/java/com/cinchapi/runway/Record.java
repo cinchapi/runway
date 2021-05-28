@@ -2064,9 +2064,58 @@ public abstract class Record implements Comparable<Record> {
 
         @Override
         public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Order order, Page page, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, order, page,
+                        realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Order order, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, order, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
                 Page page) {
             if(tracked.runway != null) {
                 return tracked.runway.find(clazz, criteria, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Page page, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, page, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, realms);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -2112,9 +2161,58 @@ public abstract class Record implements Comparable<Record> {
 
         @Override
         public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Order order, Page page, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, order, page,
+                        realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Order order, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, order, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
                 Criteria criteria, Page page) {
             if(tracked.runway != null) {
                 return tracked.runway.findAny(clazz, criteria, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Page page, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, page, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, realms);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -2135,10 +2233,34 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
+        public <T extends Record> T findAnyUnique(Class<T> clazz,
+                Criteria criteria, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAnyUnique(clazz, criteria, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
         public <T extends Record> T findUnique(Class<T> clazz,
                 Criteria criteria) {
             if(tracked.runway != null) {
                 return tracked.runway.findUnique(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T findUnique(Class<T> clazz,
+                Criteria criteria, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findUnique(clazz, criteria, realms);
             }
             else {
                 throw new UnsupportedOperationException(

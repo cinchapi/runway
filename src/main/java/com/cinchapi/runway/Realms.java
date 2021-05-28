@@ -59,6 +59,15 @@ public final class Realms {
     }
 
     /**
+     * Semantic alias for {@link #any()}.
+     * 
+     * @return a matcher
+     */
+    public static Realms all() {
+        return any();
+    }
+
+    /**
      * Match any of the specified {@code realms} such that a {@link Record}
      * would be valid if any of its realms overlaps with any of the provided
      * {@code realms}.
