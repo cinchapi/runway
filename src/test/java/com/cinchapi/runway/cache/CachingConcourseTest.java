@@ -30,6 +30,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
+import com.cinchapi.runway.Testing;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableMap;
@@ -47,7 +48,7 @@ public class CachingConcourseTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return ClientServerTest.LATEST_SNAPSHOT_VERSION;
+        return Testing.CONCOURSE_VERSION;
     }
 
     @Override
