@@ -592,6 +592,13 @@ public abstract class Record implements Comparable<Record> {
         }
     }
 
+    /**
+     * Add this {@link Record} to {@code realm}.
+     * 
+     * @param realm
+     * @return {@code true} if this {@link Record} was added to {@link realm};
+     *         otherwise {@code false}
+     */
     public boolean addRealm(String realm) {
         if(_realms.isEmpty()) {
             _realms = Sets.newLinkedHashSet();
@@ -796,6 +803,13 @@ public abstract class Record implements Comparable<Record> {
         return id;
     }
 
+    /**
+     * Return {@code true} if this {@link Record} and the other {@code record}
+     * exist in at least one overlapping realm.
+     * 
+     * @param record
+     * @return {@code true} if this and {@code record} share any realms
+     */
     public boolean inSameRealm(Record record) {
         return _realms.isEmpty() && record._realms.isEmpty()
                 || !Sets.intersection(_realms, record._realms).isEmpty();
@@ -1080,10 +1094,22 @@ public abstract class Record implements Comparable<Record> {
         return map(SerializationOptions.defaults(), keys);
     }
 
+    /**
+     * Return the names of all the {@link Realms} where this {@link Record} exists.
+     * @return this {@link Record Record's} realms
+     */
     public Set<String> realms() {
         return Collections.unmodifiableSet(_realms);
     }
 
+    /**
+     * Remove this {@link Record} from {@code realm}.
+     * 
+     * @param realm
+     * @return {@code true} if this {@link Record} was removed from
+     *         {@code realm}; otherwise {@code false} (e.g. this {@link Record}
+     *         never existed in {@code realm})
+     */
     public boolean removeRealm(String realm) {
         try {
             return _realms.remove(realm) && (_hasModifiedRealms = true);
