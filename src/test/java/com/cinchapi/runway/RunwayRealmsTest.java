@@ -20,6 +20,9 @@ import java.util.Set;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.DuplicateEntryException;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Operator;
 import com.google.common.collect.ImmutableSet;
 
 /**
@@ -102,30 +105,118 @@ public class RunwayRealmsTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testFindUniqueFromRealm() {
+        Player a = new Player("a", 1);
+        a.addRealm("test");
+        a.save();
+        a = runway.findUnique(
+                Player.class, Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("a"),
+                Realms.only("test"));
+        Assert.assertNotNull(a);
+    }
 
+    @Test
+    public void testFindUniqueFromRealmImplicit() {
+        Player a = new Player("a", 1);
+        a.addRealm("test");
+        a.save();
+        a = runway.findUnique(Player.class, Criteria.where().key("name")
+                .operator(Operator.EQUALS).value("a"));
+        Assert.assertNotNull(a);
+    }
+
+    @Test(expected = DuplicateEntryException.class)
+    public void testFindUniqueFromRealmImplicitConflict() {
+        Player a1 = new Player("a", 1);
+        Player a2 = new Player("a", 1);
+        a1.addRealm("test");
+        a2.addRealm("fest");
+        a1.save();
+        a2.save();
+        runway.findUnique(Player.class, Criteria.where().key("name")
+                .operator(Operator.EQUALS).value("a"));
+    }
+
+    @Test
+    public void testFindUniqueFromRealmNotExists() {
+        Player a = new Player("a", 1);
+        Player b = new Player("b", 1);
+        a.addRealm("test");
+        b.addRealm("fest");
+        runway.save(a, a);
+        a = runway.findUnique(
+                Player.class, Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("a"),
+                Realms.only("fest"));
+        Assert.assertNull(a);
     }
 
     @Test
     public void testFindUniqueFromRealmDuplicateInDifferentRealm() {
+        Player a1 = new Player("a", 1);
+        Player a2 = new Player("a", 1);
+        a1.addRealm("test");
+        a2.addRealm("fest");
+        runway.save(a1, a2);
+        a1 = runway.findUnique(
+                Player.class, Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("a"),
+                Realms.only("test"));
+        Assert.assertNotNull(a1);
+    }
 
+    @Test(expected = DuplicateEntryException.class)
+    public void testFindUniqueFromRealmDuplicateInDifferentRealmConflict() {
+        Player a1 = new Player("a", 1);
+        Player a2 = new Player("a", 1);
+        a1.addRealm("test");
+        a2.addRealm("fest");
+        runway.save(a1, a2);
+        a1 = runway.findUnique(Player.class, Criteria.where().key("name")
+                .operator(Operator.EQUALS).value("a"), Realms.all());
+        Assert.assertNotNull(a1);
     }
 
     @Test
     public void testFindAnyUniqueFromRealm() {
-
+        PointGuard pg = new PointGuard("a", 1, 1);
+        pg.addRealm("test");
+        Player a = new Player("a", 1);
+        a.addRealm("fest");
+        pg.save();
+        a.save();
+        a = runway.findAnyUnique(
+                Player.class, Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("a"),
+                Realms.anyOf("test"));
+        Assert.assertNotNull(a);
+        a = runway.findAnyUnique(
+                Player.class, Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("a"),
+                Realms.anyOf("fest"));
+        Assert.assertNotNull(a);
     }
-
-    @Test
-    public void testFindAnyUniqueFromRealmDuplicateInDifferentRealm() {
-
+    
+    @Test(expected = DuplicateEntryException.class)
+    public void testFindAnyUniqueFromRealmConflict() {
+        PointGuard pg = new PointGuard("a", 1, 1);
+        pg.addRealm("test");
+        Player a = new Player("a", 1);
+        a.addRealm("fest");
+        pg.save();
+        a.save();
+        a = runway.findAnyUnique(
+                Player.class, Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("a"),
+                Realms.all());
     }
 
     // findAny* tests
 
     // find* tests
-    
+
     // count tests
-    
+
     // TODO: need to test legacy paths...
 
 }

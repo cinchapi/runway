@@ -82,5 +82,21 @@ abstract class RunwayBaseClientServerTest extends ClientServerTest {
         }
 
     }
+    
+    class PointGuard extends Player {
+        
+        int assists;
+
+        /**
+         * Construct a new instance.
+         * @param name
+         * @param score
+         */
+        public PointGuard(String name, int score, int assists) {
+            super(name, score);
+            this.assists = assists;
+        }
+        
+    }
 
 }
