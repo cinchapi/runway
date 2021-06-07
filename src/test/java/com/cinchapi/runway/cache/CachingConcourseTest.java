@@ -30,6 +30,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
+import com.cinchapi.runway.Testing;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableMap;
@@ -47,7 +48,7 @@ public class CachingConcourseTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return ClientServerTest.LATEST_SNAPSHOT_VERSION;
+        return Testing.CONCOURSE_VERSION;
     }
 
     @Override
@@ -80,12 +81,14 @@ public class CachingConcourseTest extends ClientServerTest {
     }
 
     @Test
-    public void testCachevsNonCachePerformanceQuery() throws InterruptedException {
+    public void testCachevsNonCachePerformanceQuery()
+            throws InterruptedException {
         List<Long> records = Lists.newArrayList();
         for (int i = 0; i < 10000; ++i) {
-            records.add(client.insert(ImmutableMap.of("name",
-                    Random.getString(), "count", i, "foo", Random.getString(),
-                    "bar", Random.getBoolean(), "baz", Random.getNumber())));
+            records.add(client
+                    .insert(ImmutableMap.of("name", Random.getSimpleString(),
+                            "count", i, "foo", Random.getSimpleString(), "bar",
+                            Random.getBoolean(), "baz", Random.getNumber())));
         }
         client.select("count >= 0");
         Concourse client2 = Concourse.connect("localhost",
@@ -132,19 +135,21 @@ public class CachingConcourseTest extends ClientServerTest {
             client2.close();
         }
     }
-    
+
     @Test
-    public void testCachevsNonCachePerformanceBulkSelect() throws InterruptedException {
+    public void testCachevsNonCachePerformanceBulkSelect()
+            throws InterruptedException {
         List<Long> records = Lists.newArrayList();
         for (int i = 0; i < 10000; ++i) {
-            records.add(client.insert(ImmutableMap.of("name",
-                    Random.getString(), "count", i, "foo", Random.getString(),
-                    "bar", Random.getBoolean(), "baz", Random.getNumber())));
+            records.add(client
+                    .insert(ImmutableMap.of("name", Random.getSimpleString(),
+                            "count", i, "foo", Random.getSimpleString(), "bar",
+                            Random.getBoolean(), "baz", Random.getNumber())));
         }
         client.select("count >= 0");
         Concourse client2 = Concourse.connect("localhost",
                 server.getClientPort(), "admin", "admin");
-        for(long record : records) { // Warm up the cache...
+        for (long record : records) { // Warm up the cache...
             db.select(record);
         }
         try {
@@ -185,7 +190,7 @@ public class CachingConcourseTest extends ClientServerTest {
             client2.close();
         }
     }
-    
+
     @Test
     public void testCacheNotPopulatedWhileStaged() {
         long record = db.insert(ImmutableMap.of("foo", "bar"));
@@ -194,7 +199,7 @@ public class CachingConcourseTest extends ClientServerTest {
         Assert.assertNull(cache.getIfPresent(record));
         db.abort();
     }
-    
+
     @Test
     public void testCacheDoesNotInvalidateWhileStaged() {
         long record = db.insert(ImmutableMap.of("foo", "bar"));
@@ -205,7 +210,7 @@ public class CachingConcourseTest extends ClientServerTest {
         Assert.assertNotNull(cache.getIfPresent(record));
         db.abort();
     }
-    
+
     @Test
     public void testCacheInvalidatedAfterStageIsCommitted() {
         long record = db.insert(ImmutableMap.of("foo", "bar"));

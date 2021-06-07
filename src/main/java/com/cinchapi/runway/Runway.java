@@ -18,6 +18,7 @@ package com.cinchapi.runway;
 import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import org.reflections.Reflections;
@@ -51,6 +54,7 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.ValueState;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Direction;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -67,6 +71,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.cache.Cache;
 import com.google.common.collect.HashMultimap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -346,47 +351,54 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     @Override
-    public <T extends Record> int count(Class<T> clazz) {
-        return count($Criteria.forClass(clazz));
+    public <T extends Record> int count(Class<T> clazz, Realms realms) {
+        return count($Criteria.amongRealms(realms, $Criteria.forClass(clazz)));
     }
 
     @Override
-    public <T extends Record> int count(Class<T> clazz, Criteria criteria) {
+    public <T extends Record> int count(Class<T> clazz, Criteria criteria,
+            Realms realms) {
         if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            return count($Criteria.withinClass(clazz, criteria));
+            return count($Criteria.amongRealms(realms,
+                    $Criteria.withinClass(clazz, criteria)));
         }
         else {
-            return filter(clazz, criteria, NO_ORDER, NO_PAGINATION).size();
+            return filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
+                    .size();
         }
-
     }
 
     @Override
-    public <T extends Record> int countAny(Class<T> clazz) {
-        return count($Criteria.forClassHierarchy(clazz));
+    public <T extends Record> int countAny(Class<T> clazz, Realms realms) {
+        return count($Criteria.amongRealms(realms,
+                $Criteria.forClassHierarchy(clazz)));
     }
 
     @Override
-    public <T extends Record> int countAny(Class<T> clazz, Criteria criteria) {
+    public <T extends Record> int countAny(Class<T> clazz, Criteria criteria,
+            Realms realms) {
         if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            return count($Criteria.withinClass(clazz, criteria));
+            return count($Criteria.amongRealms(realms,
+                    $Criteria.withinClass(clazz, criteria)));
         }
         else {
-            return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION).size();
+            return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
+                    .size();
         }
     }
 
     @Override
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria) {
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Realms realms) {
         Concourse concourse = connections.request();
         try {
             if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                 Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION);
+                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
                 return instantiateAll(clazz, data);
             }
             else {
-                return filter(clazz, criteria, NO_ORDER, NO_PAGINATION);
+                return filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
             }
         }
         finally {
@@ -397,17 +409,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order) {
+            Order order, Realms realms) {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                     Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                            clazz, criteria, order, NO_PAGINATION);
+                            clazz, criteria, order, NO_PAGINATION, realms);
                     return instantiateAll(clazz, data);
                 }
                 else {
-                    return filter(clazz, criteria, order, NO_PAGINATION);
+                    return filter(clazz, criteria, order, NO_PAGINATION,
+                            realms);
                 }
             }
             finally {
@@ -415,24 +428,28 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
-            return findAny(clazz, criteria, backwardsCompatible(order));
+            return find(clazz, criteria, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
     @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order, Page page) {
+            Order order, Page page, Realms realms) {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                     Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                            clazz, criteria, order, page);
+                            clazz, criteria, order, page, realms);
                     return instantiateAll(clazz, data);
                 }
                 else {
-                    return filter(clazz, criteria, order, page);
+                    return filter(clazz, criteria, order, page, realms);
                 }
             }
             finally {
@@ -440,25 +457,27 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
-            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
-                    .skip(page.skip()).limit(page.limit())
+            return find(clazz, criteria, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
                     .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Page page) {
+            Page page, Realms realms) {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                     Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                            clazz, criteria, NO_ORDER, page);
+                            clazz, criteria, NO_ORDER, page, realms);
                     return instantiateAll(clazz, data);
                 }
                 else {
-                    return filter(clazz, criteria, NO_ORDER, page);
+                    return filter(clazz, criteria, NO_ORDER, page, realms);
                 }
             }
             finally {
@@ -466,24 +485,28 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
-            return findAny(clazz, criteria).stream().skip(page.skip())
+            return find(clazz, criteria).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
                     .limit(page.limit())
                     .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
     @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria) {
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Realms realms) {
         Concourse concourse = connections.request();
         try {
             if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                 Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION);
+                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
                 return instantiateAll(data);
             }
             else {
-                return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION);
+                return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION,
+                        realms);
             }
         }
         finally {
@@ -494,42 +517,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Order order) {
+            Order order, Realms realms) {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                     Map<Long, Map<String, Set<Object>>> data = $findAny(
-                            concourse, clazz, criteria, order, NO_PAGINATION);
+                            concourse, clazz, criteria, order, NO_PAGINATION,
+                            realms);
                     return instantiateAll(data);
                 }
                 else {
-                    return filterAny(clazz, criteria, order, NO_PAGINATION);
-                }
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return findAny(clazz, criteria, backwardsCompatible(order));
-        }
-    }
-
-    @SuppressWarnings("deprecation")
-    @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Order order, Page page) {
-        if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    Map<Long, Map<String, Set<Object>>> data = $findAny(
-                            concourse, clazz, criteria, order, page);
-                    return instantiateAll(data);
-                }
-                else {
-                    return filterAny(clazz, criteria, order, page);
+                    return filterAny(clazz, criteria, order, NO_PAGINATION,
+                            realms);
                 }
             }
             finally {
@@ -538,24 +538,27 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
         else {
             return findAny(clazz, criteria, backwardsCompatible(order)).stream()
-                    .skip(page.skip()).limit(page.limit())
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
                     .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Page page) {
+            Order order, Page page, Realms realms) {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                     Map<Long, Map<String, Set<Object>>> data = $findAny(
-                            concourse, clazz, criteria, NO_ORDER, page);
+                            concourse, clazz, criteria, order, page, realms);
                     return instantiateAll(data);
                 }
                 else {
-                    return filterAny(clazz, criteria, NO_ORDER, page);
+                    return filterAny(clazz, criteria, order, page, realms);
                 }
             }
             finally {
@@ -563,21 +566,53 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
-            return findAny(clazz, criteria).stream().skip(page.skip())
-                    .limit(page.limit())
+            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    @Override
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Page page, Realms realms) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                    Map<Long, Map<String, Set<Object>>> data = $findAny(
+                            concourse, clazz, criteria, NO_ORDER, page, realms);
+                    return instantiateAll(data);
+                }
+                else {
+                    return filterAny(clazz, criteria, NO_ORDER, page, realms);
+                }
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return findAny(clazz, criteria).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
                     .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
     @SuppressWarnings("unchecked")
     @Override
-    public <T extends Record> T findAnyUnique(Class<T> clazz,
-            Criteria criteria) {
+    public <T extends Record> T findAnyUnique(Class<T> clazz, Criteria criteria,
+            Realms realms) {
         Concourse concourse = connections.request();
         try {
             if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                 Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION);
+                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
                 if(data.isEmpty()) {
                     return null;
                 }
@@ -595,7 +630,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             else {
                 Set<T> records = filterAny(clazz, criteria, NO_ORDER,
-                        NO_PAGINATION);
+                        NO_PAGINATION, realms);
                 if(records.isEmpty()) {
                     return null;
                 }
@@ -649,12 +684,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     @Override
-    public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria) {
+    public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria,
+            Realms realms) {
         Concourse concourse = connections.request();
         try {
             if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                 Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION);
+                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
                 if(data.isEmpty()) {
                     return null;
                 }
@@ -673,7 +709,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             else {
                 Set<T> records = filterAny(clazz, criteria, NO_ORDER,
-                        NO_PAGINATION);
+                        NO_PAGINATION, realms);
                 if(records.isEmpty()) {
                     return null;
                 }
@@ -695,11 +731,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     @Override
-    public <T extends Record> Set<T> load(Class<T> clazz) {
+    public <T extends Record> Set<T> load(Class<T> clazz, Realms realms) {
         Concourse concourse = connections.request();
         try {
             Map<Long, Map<String, Set<Object>>> data = $load(concourse, clazz,
-                    NO_ORDER, NO_PAGINATION);
+                    NO_ORDER, NO_PAGINATION, realms);
             return instantiateAll(clazz, data);
         }
         finally {
@@ -708,7 +744,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     @Override
-    public <T extends Record> T load(Class<T> clazz, long id) {
+    public <T extends Record> T load(Class<T> clazz, long id, Realms realms) {
         if(hierarchies.get(clazz).size() > 1) {
             // The provided clazz has descendants, so it is possible that the
             // Record with the #id is actually a member of a subclass
@@ -723,17 +759,32 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 connections.release(connection);
             }
         }
+        if(!realms.names().isEmpty()) {
+            Concourse connection = connections.request();
+            try {
+                Set<String> $realms = MoreObjects.firstNonNull(
+                        connection.select(Record.REALMS_KEY, id),
+                        ImmutableSet.of());
+                if(Sets.intersection($realms, realms.names()).isEmpty()) {
+                    return null; // TODO: what to do here?
+                }
+            }
+            finally {
+                connections.release(connection);
+            }
+        }
         return instantiate(clazz, id, null);
     }
 
     @SuppressWarnings("deprecation")
     @Override
-    public <T extends Record> Set<T> load(Class<T> clazz, Order order) {
+    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Realms realms) {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $load(concourse,
-                        clazz, order, NO_PAGINATION);
+                        clazz, order, NO_PAGINATION, realms);
                 return instantiateAll(clazz, data);
             }
             finally {
@@ -748,12 +799,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page) {
+            Page page, Realms realms) {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $load(concourse,
-                        clazz, order, page);
+                        clazz, order, page, realms);
                 return instantiateAll(clazz, data);
             }
             finally {
@@ -762,18 +813,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
         else {
             return load(clazz, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
                     .skip(page.skip()).limit(page.limit())
                     .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
     @Override
-    public <T extends Record> Set<T> load(Class<T> clazz, Page page) {
+    public <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Realms realms) {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $load(concourse,
-                        clazz, NO_ORDER, page);
+                        clazz, NO_ORDER, page, realms);
                 return instantiateAll(clazz, data);
             }
             finally {
@@ -781,17 +836,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
-            return load(clazz).stream().skip(page.skip()).limit(page.limit())
+            return load(clazz).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
                     .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
     @Override
-    public <T extends Record> Set<T> loadAny(Class<T> clazz) {
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Realms realms) {
         Concourse concourse = connections.request();
         try {
             Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                    clazz, NO_ORDER, NO_PAGINATION);
+                    clazz, NO_ORDER, NO_PAGINATION, realms);
             return instantiateAll(data);
         }
         finally {
@@ -801,32 +860,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     @SuppressWarnings("deprecation")
     @Override
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order) {
-        if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                        clazz, order, NO_PAGINATION);
-                return instantiateAll(data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return load(clazz, backwardsCompatible(order));
-        }
-    }
-
-    @SuppressWarnings("deprecation")
-    @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-            Page page) {
+            Realms realms) {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                        clazz, order, page);
+                        clazz, order, NO_PAGINATION, realms);
                 return instantiateAll(data);
             }
             finally {
@@ -835,18 +875,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
         else {
             return load(clazz, backwardsCompatible(order)).stream()
-                    .skip(page.skip()).limit(page.limit())
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
                     .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Override
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page) {
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+            Page page, Realms realms) {
         if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                        clazz, NO_ORDER, page);
+                        clazz, order, page, realms);
                 return instantiateAll(data);
             }
             finally {
@@ -854,7 +898,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
-            return load(clazz).stream().skip(page.skip()).limit(page.limit())
+            return load(clazz, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    @Override
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Realms realms) {
+        if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
+                        clazz, NO_ORDER, page, realms);
+                return instantiateAll(data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return load(clazz).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
                     .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
@@ -974,8 +1046,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Map<Long, Map<String, Set<Object>>> $find(
             Concourse concourse, Class<T> clazz, Criteria criteria,
-            @Nullable Order order, @Nullable Page page) {
-        criteria = $Criteria.withinClass(clazz, criteria);
+            @Nullable Order order, @Nullable Page page,
+            @Nonnull Realms realms) {
+        criteria = $Criteria.amongRealms(realms,
+                $Criteria.withinClass(clazz, criteria));
         return read(concourse, criteria, order, page);
     }
 
@@ -987,12 +1061,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param criteria
      * @param order
      * @param page
+     * @param realms
      * @return the result set
      */
     private <T extends Record> Map<Long, Map<String, Set<Object>>> $findAny(
             Concourse concourse, Class<T> clazz, Criteria criteria,
-            @Nullable Order order, @Nullable Page page) {
-        criteria = $Criteria.accrossClassHierachy(clazz, criteria);
+            @Nullable Order order, @Nullable Page page,
+            @Nonnull Realms realms) {
+        criteria = $Criteria.amongRealms(realms,
+                $Criteria.accrossClassHierachy(clazz, criteria));
         return read(concourse, criteria, order, page);
     }
 
@@ -1002,12 +1079,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * 
      * @param concourse
      * @param clazz
+     * @param order
+     * @param page
+     * @param realms
      * @return the records in the class
      */
     private <T extends Record> Map<Long, Map<String, Set<Object>>> $load(
             Concourse concourse, Class<T> clazz, @Nullable Order order,
-            @Nullable Page page) {
-        Criteria criteria = $Criteria.forClass(clazz);
+            @Nullable Page page, @Nonnull Realms realms) {
+        Criteria criteria = $Criteria.amongRealms(realms,
+                $Criteria.forClass(clazz));
         return read(concourse, criteria, order, page);
     }
 
@@ -1017,12 +1098,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * 
      * @param concourse
      * @param clazz
+     * @param order
+     * @param page
+     * @param realms
      * @return the records in the class hierarchy
      */
     private <T extends Record> Map<Long, Map<String, Set<Object>>> $loadAny(
             Concourse concourse, Class<T> clazz, @Nullable Order order,
-            @Nullable Page page) {
-        Criteria criteria = $Criteria.forClassHierarchy(clazz);
+            @Nullable Page page, Realms realms) {
+        Criteria criteria = $Criteria.amongRealms(realms,
+                $Criteria.forClassHierarchy(clazz));
         return read(concourse, criteria, order, page);
     }
 
@@ -1100,12 +1185,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param criteria
      * @param order
      * @param page
+     * @param realms
      * @return the matching records in {@code clazz}
      */
     private <T extends Record> Set<T> filter(Class<T> clazz, Criteria criteria,
-            @Nullable Order order, @Nullable Page page) {
+            @Nullable Order order, @Nullable Page page,
+            @Nonnull Realms realms) {
         Set<T> records = order == null ? load(clazz) : load(clazz, order);
-        Parser parser = Parsers.create(criteria);
+        Parser parser = Parsers.create($Criteria.amongRealms(realms, criteria));
         String[] keys = parser.analyze().keys().toArray(Array.containing());
         records = Sets.filter(records,
                 record -> parser.evaluate(record.mmap(keys)));
@@ -1124,12 +1211,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param criteria
      * @param order
      * @param page
+     * @param realms
      * @return the matching records in the {@code clazz} hierarchy
      */
     private <T extends Record> Set<T> filterAny(Class<T> clazz,
-            Criteria criteria, @Nullable Order order, @Nullable Page page) {
+            Criteria criteria, @Nullable Order order, @Nullable Page page,
+            @Nonnull Realms realms) {
         Set<T> records = order == null ? loadAny(clazz) : loadAny(clazz, order);
-        Parser parser = Parsers.create(criteria);
+        Parser parser = Parsers.create($Criteria.amongRealms(realms, criteria));
         String[] keys = parser.analyze().keys().toArray(Array.containing());
         records = Sets.filter(records,
                 record -> parser.evaluate(record.mmap(keys)));
@@ -1690,6 +1779,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
         /**
+         * Utility method to ensure that the {@code criteria} is limited to
+         * records that exist in the {@code realms}.
+         * 
+         * @param realms
+         * @param criteria
+         * @return limiting {@link Criteria}
+         */
+        public static Criteria amongRealms(Realms realms, Criteria criteria) {
+            if(realms.names().isEmpty()) {
+                return criteria;
+            }
+            else {
+                Iterator<String> it = realms.names().iterator();
+                ValueState vs = Criteria.where().key(Record.REALMS_KEY)
+                        .operator(Operator.EQUALS).value(it.next());
+                while (it.hasNext()) {
+                    vs.or().key(Record.REALMS_KEY).operator(Operator.EQUALS)
+                            .value(it.next());
+                }
+                return Criteria.where().group(criteria).and().group(vs);
+            }
+        }
+
+        /**
          * Return a {@link Criteria} to find records within {@code clazz}.
          * 
          * @param clazz
@@ -1725,12 +1838,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
         /**
-         * Utility method do ensure that the {@code criteria} is limited to
-         * querying
-         * objects that belong to a specific {@code clazz}.
+         * Utility method to ensure that the {@code criteria} is limited to
+         * querying objects that belong to a specific {@code clazz}.
          * 
          * @param clazz
          * @param criteria
+         * @return limiting {@link Criteria}
          */
         public static <T> Criteria withinClass(Class<T> clazz,
                 Criteria criteria) {
