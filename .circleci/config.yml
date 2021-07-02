@@ -16,7 +16,7 @@ jobs:
           context: bintray-creds
           command: |
             cd ~/$CIRCLE_PROJECT_REPONAME 
-            ./gradlew clean build bintrayUpload --refresh-dependencies
+            ./gradlew clean build publish --refresh-dependencies
       - run:
           name: Save test results
           command: |
