@@ -4,7 +4,6 @@ plugins {
     id 'maven'
     id 'maven-publish'
     id 'signing'
-    id "com.jfrog.bintray" version "1.7.3"
 }
 
 task wrapper(type: Wrapper) {
@@ -22,16 +21,39 @@ if (JavaVersion.current().isJava8Compatible()) {
 repositories {
     mavenCentral()
     maven {
-      url 'https://oss.sonatype.org/content/repositories/snapshots/'
+        url "https://dl.cloudsmith.io/public/cinchapi/open-source/maven/"
     }
     maven {
-      url  'http://cinchapi.bintray.com/maven'
+        url "https://dl.cloudsmith.io/public/cinchapi/open-source-snapshots/maven/"
+    }
+    maven {
+        url "https://dl.cloudsmith.io/public/cinchapi/platform/maven/"
+    }
+    maven {
+        url "https://dl.cloudsmith.io/public/cinchapi/platform-snapshots/maven/"
+    }
+    maven {
+        url "https://dl.cloudsmith.io/public/cinchapi/enterprise/maven/"
+        credentials {
+            username = System.getenv('CLOUDSMITH_API_USER')
+            password = System.getenv('CLOUDSMITH_API_KEY')
+        }
+    }
+    maven {
+        url "https://dl.cloudsmith.io/public/cinchapi/enterprise-snapshots/maven/"
+        credentials {
+            username = System.getenv('CLOUDSMITH_API_USER')
+            password = System.getenv('CLOUDSMITH_API_KEY')
+        }
+    }
+    maven {
+      url 'https://oss.sonatype.org/content/repositories/snapshots/'
     }
 }
 
 
 // Set the version for all Concourse dependencies
-ext.concourseVersion = '0.10.4'
+ext.concourseVersion = '0.10.5'
 
 dependencies {
 	compile 'com.google.guava:guava:25.1-jre'
@@ -95,35 +117,29 @@ artifacts {
 }
 
 publishing {
-    publications {
-        BintrayPublication(MavenPublication) {
-            from components.java
-            artifact sourcesJar
-            artifact javadocJar
-            groupId group
-            artifactId project.name
-            version mavenVersion
-        }
+  repositories {
+    maven {
+      name = 'cloudsmith'
+      def releasesRepoUrl = "https://api-g.cloudsmith.io/maven/cinchapi/open-source/"
+      def snapshotsRepoUrl = "https://api-g.cloudsmith.io/maven/cinchapi/open-source-snapshots/"
+      url = mavenVersion.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
+      credentials {
+        username = System.getenv('CLOUDSMITH_API_USER')
+        password = System.getenv('CLOUDSMITH_API_KEY')
+      }
     }
-}
-
-bintray {
-    user = System.getenv('BINTRAY_USER')
-    key = System.getenv('BINTRAY_KEY')
-    publications = ['BintrayPublication']
-    pkg {
-        repo = mavenVersion.matches('^[0-9]+\\.[0-9]+\\.[0-9]+(-rc[0-9]+){0,1}$') ? 'maven' : 'maven-snapshots'
-        name = project.name
-        publish = true
-        userOrg = 'cinchapi'
-        override = true
-        version {
-            name = mavenVersion
-            released = new Date()
-        }
+  }
+  publications {
+    maven(MavenPublication) {
+      from components.java
+      artifact sourcesJar
+      artifact javadocJar
+      groupId group
+      artifactId project.name
+      version mavenVersion
     }
+  }
 }
-
 
 test {
     testLogging {
