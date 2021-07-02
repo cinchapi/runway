@@ -31,6 +31,7 @@ import org.junit.Test;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.util.Random;
+import com.cinchapi.runway.Testing;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -152,7 +153,7 @@ public class CachingConnectionPoolTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return ClientServerTest.LATEST_SNAPSHOT_VERSION;
+        return Testing.CONCOURSE_VERSION;
     }
 
 }
