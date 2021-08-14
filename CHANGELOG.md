@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 1.9.0 (TBD)
+#### Version 1.9.0 (August 14, 2021)
 * Added support for multi-field `Unique` value constraints. When applying the `Unique` constraint to a `Record` field, you can now provide a `name` parameter (e.g. `@Unique(name = "identity"))`. If multiple `Unique` annotated fields have the same `name`,  Runway will enforce uniqueness among the combination of values for all those fields across all `Records` in the same class. If a `Unique` annotated field is a `Sequence`, Runway will consider uniqueness to be violated if and only if any items in the sequence are shared and all the other fields in the same uniqueness group are also considered shared.
 * Added `Realms` to virtually segregate records within the same environment into distinct groups. A `Record` can be dynamically added to or removed from a `realm` (use `Record#addRealm` and `Record#removeRealm` to manage). Runway provides overloaded read methods that accept a `Realms` parameter to specify the realms from which data can be read. If a Record exists in at least one of the specified `Realms`, it will be read.
   * By default, all Records exist in ALL realms, so this feature is backwards compatible.
