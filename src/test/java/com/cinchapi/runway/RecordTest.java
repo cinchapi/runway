@@ -41,9 +41,6 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
-import com.cinchapi.runway.Record;
-import com.cinchapi.runway.Required;
-import com.cinchapi.runway.Unique;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -62,7 +59,7 @@ public class RecordTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return "0.10.4";
+        return Testing.CONCOURSE_VERSION;
     }
 
     @Override
@@ -810,6 +807,117 @@ public class RecordTest extends ClientServerTest {
             Assert.assertTrue(true);
         }
         Assert.assertNotEquals("10", mock.age);
+    }
+    
+    @Test(expected = IllegalStateException.class)
+    public void testRequiredConstraintEnforcedOnExplicitLoad() {
+        Mock mock = new Mock();
+        mock.name = "Jeff Nelson";
+        mock.age = 32;
+        mock.save();
+        Concourse concourse = Concourse.at().port(server.getClientPort()).connect();
+        try {
+            concourse.clear("name", mock.id());
+        }
+        finally {
+            concourse.close();
+        }
+        mock = runway.load(Mock.class, mock.id());     
+    }
+    
+    @Test(expected = IllegalStateException.class)
+    public void testRequiredConstraintEnforcedOnImplicitLoad() {
+        for(int i = 0; i < Random.getScaleCount(); ++i) {
+            Mock m = new Mock();
+            m.name = Random.getSimpleString();
+            m.age = i;
+            m.save();
+        }
+        Mock mock = new Mock();
+        mock.name = "Jeff Nelson";
+        mock.age = 32;
+        mock.save();
+        Concourse concourse = Concourse.at().port(server.getClientPort()).connect();
+        try {
+            concourse.clear("name", mock.id());
+        }
+        finally {
+            concourse.close();
+        }    
+        Set<Mock> mocks = runway.find(Mock.class, Criteria.where().key("age").operator(Operator.LESS_THAN_OR_EQUALS).value(32));
+        for(Mock m : mocks) {
+            System.out.println(m.name);
+        }
+    }
+    
+    @Test
+    public void testDefaultRealms() {
+        Mock mock = new Mock();
+        mock.name = "Jeff Nelson";
+        mock.age = 32;
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        Assert.assertEquals(ImmutableSet.of(), mock.realms());
+    }
+    
+    @Test
+    public void testAddRealm() {
+        Mock mock = new Mock();
+        mock.name = "Jeff Nelson";
+        mock.age = 32;
+        mock.addRealm("test");
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        Assert.assertEquals(ImmutableSet.of("test"), mock.realms());
+    }
+    
+    @Test
+    public void testAddMultiRealms() {
+        Mock mock = new Mock();
+        mock.name = "Jeff Nelson";
+        mock.age = 32;
+        mock.addRealm("test");
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        mock.addRealm("prod");
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        Assert.assertEquals(ImmutableSet.of("test", "prod"), mock.realms());
+    }
+    
+    @Test
+    public void testRemoveRealm() {
+        Mock mock = new Mock();
+        mock.name = "Jeff Nelson";
+        mock.age = 32;
+        mock.addRealm("test");
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        mock.addRealm("prod");
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        mock.removeRealm("test");
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        Assert.assertEquals(ImmutableSet.of("prod"), mock.realms());
+    }
+    
+    @Test
+    public void testRemoveAllRealms() {
+        Mock mock = new Mock();
+        mock.name = "Jeff Nelson";
+        mock.age = 32;
+        mock.addRealm("test");
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        mock.addRealm("prod");
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        mock.removeRealm("test");
+        mock.removeRealm("prod");
+        mock.save();
+        mock = runway.load(Mock.class, mock.id());
+        Assert.assertEquals(ImmutableSet.of(), mock.realms());
     }
 
     class Node extends Record {

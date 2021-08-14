@@ -35,7 +35,7 @@ public class RunwayFilterTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
-        return ClientServerTest.LATEST_SNAPSHOT_VERSION;
+        return Testing.CONCOURSE_VERSION;
     }
 
     Runway db;

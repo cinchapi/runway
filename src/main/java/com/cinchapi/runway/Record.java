@@ -36,6 +36,7 @@ import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -48,10 +49,12 @@ import javax.annotation.Nullable;
 import org.apache.commons.lang.StringUtils;
 
 import com.cinchapi.ccl.Parser;
+import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.base.Verify;
+import com.cinchapi.common.collect.AnyMaps;
 import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
@@ -63,6 +66,7 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
+import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -377,7 +381,57 @@ public abstract class Record implements Comparable<Record> {
         }
     }
 
+    /**
+     * Serialize {@code value} by converting it to an object that can be stored
+     * within the database. This method assumes that {@code value} is a scalar
+     * (e.g. not a {@link Sequences#isSequence(Object)}).
+     * 
+     * @param value
+     * @return the serialized value
+     */
+    @SuppressWarnings("rawtypes")
+    private static Object serialize(Object value) {
+        // NOTE: This logic mirrors storage logic in the #store method. But,
+        // since the #store method has some optimizations, it doesn't call into
+        // this method directly. So, if modifications are made to this method,
+        // please make similar and appropriate modifications to #store.
+        Preconditions.checkArgument(!Sequences.isSequence(value));
+        Preconditions.checkNotNull(value);
+        if(value instanceof Record) {
+            return Link.to(((Record) value).id());
+        }
+        else if(value instanceof DeferredReference) {
+            return serialize(((DeferredReference) value).get());
+        }
+        else if(value.getClass().isPrimitive() || value instanceof String
+                || value instanceof Tag || value instanceof Link
+                || value instanceof Integer || value instanceof Long
+                || value instanceof Float || value instanceof Double
+                || value instanceof Boolean || value instanceof Timestamp) {
+            return value;
+        }
+        else if(value instanceof Enum) {
+            return Tag.create(((Enum) value).name());
+        }
+        else if(value instanceof Serializable) {
+            ByteBuffer bytes = Serializables.getBytes((Serializable) value);
+            Tag base64 = Tag.create(BaseEncoding.base64Url()
+                    .encode(ByteBuffers.toByteArray(bytes)));
+            return base64;
+        }
+        else {
+            Gson gson = new Gson();
+            Tag json = Tag.create(gson.toJson(value));
+            return json;
+        }
+    }
+
     /* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
+
+    /**
+     * The key used to hold the {@link #__realms} metadata.
+     */
+    /* package */ static final String REALMS_KEY = "_realms";
 
     /**
      * The key used to hold the section metadata.
@@ -466,6 +520,34 @@ public abstract class Record implements Comparable<Record> {
     private transient String __ = getClass().getName();
 
     /**
+     * An internal flag that tracks whether {@link #_realms} have been
+     * {@link #addRealm(String) added} or {@link #removeRealm(String) removed}.
+     * This flag is necessary so that this Record's data cache isn't
+     * unnecessarily invalidated when reconciling the realms on
+     * {@link #saveWithinTransaction(Concourse, Set)}.
+     */
+    private transient boolean _hasModifiedRealms = false;
+
+    /**
+     * The list of realms to which this Record belongs.
+     * <p>
+     * Realms allow records to be placed in logically distinct groups while
+     * existing in the same physical database and environment.
+     * </p>
+     * <p>
+     * By default, a Record is not explicitly assigned to any realm and is
+     * therefore a member of all realms. If this field contains one or more
+     * explicit realms, then a Record is considered to only exist in those
+     * realms.
+     * </p>
+     * <p>
+     * Runway supports loading data that exists in any realm or within one or
+     * more explicit realms.
+     * </p>
+     */
+    private transient Set<String> _realms = ImmutableSet.of();
+
+    /**
      * The {@link Concourse} database in which this {@link Record} is stored.
      */
     private transient ConnectionPool connections = null;
@@ -508,6 +590,20 @@ public abstract class Record implements Comparable<Record> {
             this.connections = PINNED_RUNWAY_INSTANCE.connections;
             this.runway = PINNED_RUNWAY_INSTANCE;
         }
+    }
+
+    /**
+     * Add this {@link Record} to {@code realm}.
+     * 
+     * @param realm
+     * @return {@code true} if this {@link Record} was added to {@link realm};
+     *         otherwise {@code false}
+     */
+    public boolean addRealm(String realm) {
+        if(_realms.isEmpty()) {
+            _realms = Sets.newLinkedHashSet();
+        }
+        return _realms.add(realm) && (_hasModifiedRealms = true);
     }
 
     /**
@@ -708,6 +804,18 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if this {@link Record} and the other {@code record}
+     * exist in at least one overlapping realm.
+     * 
+     * @param record
+     * @return {@code true} if this and {@code record} share any realms
+     */
+    public boolean inSameRealm(Record record) {
+        return _realms.isEmpty() && record._realms.isEmpty()
+                || !Sets.intersection(_realms, record._realms).isEmpty();
+    }
+
+    /**
      * Return the "readable" intrinsic (e.g. not {@link #derived() or
      * {@link #computed()}) data from this {@link Record} as a {@link Map}.
      * <p>
@@ -851,7 +959,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public String json(String... keys) {
         return json(SerializationOptions.defaults(), keys);
-    };
+    }
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
@@ -965,7 +1073,7 @@ public abstract class Record implements Comparable<Record> {
         Map<String, Object> data = pool.filter(filter).collect(Association::of,
                 accumulator, MergeStrategies::upsert);
         return data;
-    }
+    };
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
@@ -984,6 +1092,33 @@ public abstract class Record implements Comparable<Record> {
      */
     public Map<String, Object> map(String... keys) {
         return map(SerializationOptions.defaults(), keys);
+    }
+
+    /**
+     * Return the names of all the {@link Realms} where this {@link Record} exists.
+     * @return this {@link Record Record's} realms
+     */
+    public Set<String> realms() {
+        return Collections.unmodifiableSet(_realms);
+    }
+
+    /**
+     * Remove this {@link Record} from {@code realm}.
+     * 
+     * @param realm
+     * @return {@code true} if this {@link Record} was removed from
+     *         {@code realm}; otherwise {@code false} (e.g. this {@link Record}
+     *         never existed in {@code realm})
+     */
+    public boolean removeRealm(String realm) {
+        try {
+            return _realms.remove(realm) && (_hasModifiedRealms = true);
+        }
+        finally {
+            if(_realms.isEmpty()) {
+                _realms = ImmutableSet.of();
+            }
+        }
     }
 
     /**
@@ -1176,6 +1311,11 @@ public abstract class Record implements Comparable<Record> {
             throw new ZombieException();
         }
         data = data == null ? concourse.select(id) : data;
+        Set<Object> realms = data.getOrDefault(REALMS_KEY, ImmutableSet.of());
+        _realms = realms.size() > 0
+                ? realms.stream().map(Object::toString)
+                        .collect(Collectors.toCollection(LinkedHashSet::new))
+                : ImmutableSet.of();
         for (Field field : fields()) {
             try {
                 if(!Modifier.isTransient(field.getModifiers())) {
@@ -1240,6 +1380,12 @@ public abstract class Record implements Comparable<Record> {
                     }
                     if(value != null) {
                         field.set(this, value);
+                    }
+                    else if(value == null
+                            && field.isAnnotationPresent(Required.class)) {
+                        throw new IllegalStateException("Record " + id
+                                + " cannot be loaded because '" + key
+                                + "' is a required field, but no value is present in the database.");
                     }
                     else {
                         // no-op; NOTE: Java doesn't allow primitive types to
@@ -1335,15 +1481,21 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Save the data in this record using the specified {@code concourse}
-     * connection. This method assumes that the caller has already started an
+     * connection. This method assumes that the caller has already started a
      * transaction, if necessary and will commit the transaction after this
      * method completes.
      * 
      * @param concourse
+     * @param seen
      */
     /* package */ void saveWithinTransaction(final Concourse concourse,
             Set<Record> seen) {
         concourse.verifyOrSet(SECTION_KEY, __, id);
+        Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
+        if(_hasModifiedRealms) {
+            concourse.reconcile(REALMS_KEY, id, _realms);
+            _hasModifiedRealms = false;
+        }
         fields().forEach(field -> {
             try {
                 if(!Modifier.isTransient(field.getModifiers())) {
@@ -1358,9 +1510,40 @@ public abstract class Record implements Comparable<Record> {
                                 validator.getErrorMessage());
                     }
                     if(field.isAnnotationPresent(Unique.class)) {
-                        Preconditions.checkState(
-                                isUnique(concourse, key, value),
-                                field.getName() + " must be unique in " + __);
+                        Unique constraint = field.getAnnotation(Unique.class);
+                        String name = constraint.name();
+                        if(name.length() == 0) {
+                            Preconditions
+                                    .checkState(isUnique(concourse, key, value),
+                                            field.getName()
+                                                    + " must be unique in "
+                                                    + __);
+                        }
+                        else if(!alreadyVerifiedUniqueConstraints
+                                .contains(name)) {
+                            // Find all the fields that have this constraint and
+                            // check for uniqueness.
+                            Map<String, Object> values = Maps.newHashMap();
+                            values.put(key, value);
+                            fields().stream().filter($field -> $field != field)
+                                    .filter($field -> $field
+                                            .isAnnotationPresent(Unique.class))
+                                    .filter($field -> $field
+                                            .getAnnotation(Unique.class).name()
+                                            .equals(name))
+                                    .forEach($field -> {
+                                        values.put($field.getName(), Reflection
+                                                .get($field.getName(), this));
+                                    });
+                            if(isUnique(concourse, values)) {
+                                alreadyVerifiedUniqueConstraints.add(name);
+                            }
+                            else {
+                                throw new IllegalStateException(AnyStrings
+                                        .format("{} must be unique in {}", name,
+                                                __));
+                            }
+                        }
                     }
                     if(field.isAnnotationPresent(Required.class)) {
                         Preconditions.checkState(!Empty.ness().describes(value),
@@ -1629,6 +1812,60 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if all the key/value pairs in {@code data} are
+     * collectively unique for this class. This means that there is no other
+     * record in the database for this class with all the mappings.
+     * <p>
+     * If any of the values in {@code data} are a
+     * {@link Sequences#isSequence(Object) sequence}, this method will return
+     * {@code true} if and only if every element in every
+     * {@link Sequences#isSequence(Object) sequence} is unique.
+     * </p>
+     * 
+     * @param concourse
+     * @param data
+     * @return
+     */
+    private boolean isUnique(Concourse concourse, Map<String, Object> data) {
+        AtomicReference<BuildableState> $criteria = new AtomicReference<>(
+                Criteria.where().key(SECTION_KEY).operator(Operator.EQUALS)
+                        .value(getClass().getName()));
+        for (Entry<String, Object> entry : data.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if(value == null) {
+                continue; // A null value does not affect uniqueness.
+            }
+            else if(Sequences.isSequence(value)) {
+                AtomicReference<BuildableState> $sub = new AtomicReference<>(
+                        null);
+                Sequences.forEach(value, item -> {
+                    item = serialize(item);
+                    if($sub.get() == null) {
+                        $sub.set(Criteria.where().key(key)
+                                .operator(Operator.EQUALS).value(item));
+                    }
+                    else {
+                        $sub.set($sub.get().or().key(key)
+                                .operator(Operator.EQUALS).value(item));
+                    }
+                });
+                $criteria.set(Criteria.where()
+                        .group($criteria.get().and().group($sub.get())));
+            }
+            else {
+                value = serialize(value);
+                $criteria.set($criteria.get().and().key(key)
+                        .operator(Operator.EQUALS).value(value));
+            }
+        }
+        Criteria criteria = $criteria.get();
+        Set<Long> records = concourse.find(criteria);
+        return records.isEmpty()
+                || (records.contains(id) && records.size() == 1);
+    }
+
+    /**
      * Return {@code true} if {@code key} as {@code value} for this class is
      * unique, meaning there is no other record in the database in this class
      * with that mapping. If {@code value} is a collection, then this method
@@ -1642,22 +1879,8 @@ public abstract class Record implements Comparable<Record> {
      *         for this class
      */
     private boolean isUnique(Concourse concourse, String key, Object value) {
-        if(value instanceof Iterable<?> || value.getClass().isArray()) {
-            for (Object obj : (Iterable<?>) value) {
-                if(!isUnique(concourse, key, obj)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        else {
-            Criteria criteria = Criteria.where().key(SECTION_KEY)
-                    .operator(Operator.EQUALS).value(getClass().getName()).and()
-                    .key(key).operator(Operator.EQUALS).value(value).build();
-            Set<Long> records = concourse.find(criteria);
-            return records.isEmpty()
-                    || (records.contains(id) && records.size() == 1);
-        }
+        return value != null ? isUnique(concourse, AnyMaps.create(key, value))
+                : true;
     }
 
     /**
@@ -1737,6 +1960,11 @@ public abstract class Record implements Comparable<Record> {
     @SuppressWarnings("rawtypes")
     private void store(String key, Object value, Concourse concourse,
             boolean append, Set<Record> seen) {
+        // NOTE: This logic mirrors serialization logic in the #serialize
+        // method. Since this method has some optimizations, it doesn't call
+        // into #serialize directly. So, if modifications are made to this
+        // method, please make similar and appropriate modifications to
+        // #serialize.
         // TODO: dirty field detection!
         if(value instanceof Record) {
             Record record = (Record) value;
@@ -1862,9 +2090,58 @@ public abstract class Record implements Comparable<Record> {
 
         @Override
         public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Order order, Page page, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, order, page,
+                        realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Order order, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, order, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
                 Page page) {
             if(tracked.runway != null) {
                 return tracked.runway.find(clazz, criteria, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Page page, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, page, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+                Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.find(clazz, criteria, realms);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1910,9 +2187,58 @@ public abstract class Record implements Comparable<Record> {
 
         @Override
         public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Order order, Page page, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, order, page,
+                        realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Order order, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, order, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
                 Criteria criteria, Page page) {
             if(tracked.runway != null) {
                 return tracked.runway.findAny(clazz, criteria, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Page page, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, page, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> findAny(Class<T> clazz,
+                Criteria criteria, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAny(clazz, criteria, realms);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1933,10 +2259,34 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
+        public <T extends Record> T findAnyUnique(Class<T> clazz,
+                Criteria criteria, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findAnyUnique(clazz, criteria, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
         public <T extends Record> T findUnique(Class<T> clazz,
                 Criteria criteria) {
             if(tracked.runway != null) {
                 return tracked.runway.findUnique(clazz, criteria);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T findUnique(Class<T> clazz,
+                Criteria criteria, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.findUnique(clazz, criteria, realms);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1959,6 +2309,18 @@ public abstract class Record implements Comparable<Record> {
         public <T extends Record> T load(Class<T> clazz, long id) {
             if(tracked.runway != null) {
                 return tracked.runway.load(clazz, id);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> T load(Class<T> clazz, long id,
+                Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, id, realms);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -1990,9 +2352,56 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+                Page page, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, order, page, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+                Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, order, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
         public <T extends Record> Set<T> load(Class<T> clazz, Page page) {
             if(tracked.runway != null) {
                 return tracked.runway.load(clazz, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Page page,
+                Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, page, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> load(Class<T> clazz, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.load(clazz, realms);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -2035,9 +2444,57 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+                Page page, Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, order, page, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+                Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, order, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
         public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page) {
             if(tracked.runway != null) {
                 return tracked.runway.loadAny(clazz, page);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+                Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, page, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public <T extends Record> Set<T> loadAny(Class<T> clazz,
+                Realms realms) {
+            if(tracked.runway != null) {
+                return tracked.runway.loadAny(clazz, realms);
             }
             else {
                 throw new UnsupportedOperationException(

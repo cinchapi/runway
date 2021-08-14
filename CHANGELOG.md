@@ -1,11 +1,19 @@
 # Changelog
 
+#### Version 1.9.0 (TBD)
+* Added support for multi-field `Unique` value constraints. When applying the `Unique` constraint to a `Record` field, you can now provide a `name` parameter (e.g. `@Unique(name = "identity"))`. If multiple `Unique` annotated fields have the same `name`,  Runway will enforce uniqueness among the combination of values for all those fields across all `Records` in the same class. If a `Unique` annotated field is a `Sequence`, Runway will consider uniqueness to be violated if and only if any items in the sequence are shared and all the other fields in the same uniqueness group are also considered shared.
+* Added `Realms` to virtually segregate records within the same environment into distinct groups. A `Record` can be dynamically added to or removed from a `realm` (use `Record#addRealm` and `Record#removeRealm` to manage). Runway provides overloaded read methods that accept a `Realms` parameter to specify the realms from which data can be read. If a Record exists in at least one of the specified `Realms`, it will be read.
+  * By default, all Records exist in ALL realms, so this feature is backwards compatible.
+  * By default, read methods consider data from ANY realm, so this feature is backwards compatible.
+* Fixed a bug where the `Required` annotation was not enforced when loading data from the database. If a record was modified outside of Runway such that a required field was nullified, Runway would previously load the record without enforcing the constraint. This caused applications to encounter some unexpected `NullPointerException`s.
+
 #### Version 1.8.1 (April 20, 2020)
 * Fixed a bug that allowed for dynamically `set`ing an intrinsic attribute of a `Record` with a value of an invalid type. In this scenario, Runway should have thrown an error, but it didn't. While the value with the invalid type was not persisted when saving the Record, it was return on intermediate reads of the Record.
 
 #### Version 1.8.0 (February 12, 2020)
 * Improved validation exception messages by including the class name of the Record that fails to validate.
 * Added a `onLoadFailure` hook to the `Runway.builder` that can be used to get insight and perform processing on errors that occur when loading records from the database. Depending on the error, load failures can be fatal (e.g. the entire load operation fails). The `onLoadFailure` hook does not change this, but it does ensure that fatal errors can be caught and inspected. By default, Runway uses a non-operational `onLoadFailure` hook. The hook can be customized by providing a `TriConsumer` accepting three inputs: the record's `Class` and `id` and the `Throwable` that represents the error.
+* Fixed an issue that occurred when setting a value to `null` and that value not being removed from the database.
 
 #### Version 1.7.0 (January 1, 2020)
 * Fixed a bug that caused `Runway` to exhibit poor performance when using the `withCache` option.

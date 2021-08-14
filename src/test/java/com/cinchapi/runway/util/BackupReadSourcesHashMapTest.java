@@ -26,7 +26,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.collect.Continuation;
-import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.google.common.collect.ImmutableMap;
 
 /**
