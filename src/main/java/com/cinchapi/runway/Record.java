@@ -1095,7 +1095,9 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the names of all the {@link Realms} where this {@link Record} exists.
+     * Return the names of all the {@link Realms} where this {@link Record}
+     * exists.
+     * 
      * @return this {@link Record Record's} realms
      */
     public Set<String> realms() {
@@ -1322,10 +1324,23 @@ public abstract class Record implements Comparable<Record> {
                     String key = field.getName();
                     Class<?> type = field.getType();
                     Object value = null;
+                    Set<Object> stored = data.get(key);
+                    if(stored == null) {
+                        // Handle corner case where it has been observed that
+                        // data.getOrDefault occasionally/randomly does not
+                        // return a value for a key even though that key is
+                        // indeed in the map.
+                        for (Entry<String, Set<Object>> entry : data
+                                .entrySet()) {
+                            if(key.equals(entry.getKey())) {
+                                stored = entry.getValue();
+                                break;
+                            }
+                        }
+                        stored = stored == null ? ImmutableSet.of() : stored;
+                    }
                     if(Collection.class.isAssignableFrom(type)
                             || type.isArray()) {
-                        Set<?> stored = data.getOrDefault(key,
-                                ImmutableSet.of());
                         Class<?> collectedType = type
                                 .isArray()
                                         ? type.getComponentType()
@@ -1370,11 +1385,9 @@ public abstract class Record implements Comparable<Record> {
                     else {
                         // Populate a non-collection variable with the most
                         // recently stored value for the #key in Concourse.
-                        Set<Object> values = data.getOrDefault(key,
-                                ImmutableSet.of());
-                        Object stored = Iterables.getFirst(values, null);
-                        if(stored != null) {
-                            value = convert(key, type, stored, concourse,
+                        Object first = Iterables.getFirst(stored, null);
+                        if(first != null) {
+                            value = convert(key, type, first, concourse,
                                     existing);
                         }
                     }
