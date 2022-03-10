@@ -593,9 +593,9 @@ public class RecordTest extends ClientServerTest {
         a.save();
         Concourse concourse = Concourse.connect("localhost",
                 server.getClientPort(), "admin", "admin");
-        int expected = concourse.audit(a.id()).size();
+        int expected = concourse.review(a.id()).size();
         a.save();
-        int actual = concourse.audit(a.id()).size();
+        int actual = concourse.review(a.id()).size();
         Assert.assertEquals(expected, actual);
     }
 
@@ -918,6 +918,17 @@ public class RecordTest extends ClientServerTest {
         mock.save();
         mock = runway.load(Mock.class, mock.id());
         Assert.assertEquals(ImmutableSet.of(), mock.realms());
+    }
+    
+    @Test
+    public void testReconcileCollectionPrimitiveValues() {
+        Shoe shoe = new Shoe(Lists.newArrayList("A", "B", "C"));
+        shoe.save();
+        shoe.shoes = Lists.newArrayList("B", "D", "A");
+        shoe.save();
+        shoe = runway.load(Shoe.class, shoe.id());
+        System.out.println(shoe.shoes.getClass());
+        Assert.assertEquals(Lists.newArrayList("B", "D", "A"), shoe.shoes);
     }
 
     class Node extends Record {
