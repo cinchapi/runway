@@ -41,7 +41,7 @@ import javax.annotation.Nullable;
 import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
 
-import com.cinchapi.ccl.Parser;
+import com.cinchapi.ccl.syntax.ConditionTree;
 import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.CheckedExceptions;
@@ -53,6 +53,7 @@ import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.BuildableState;
+import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.ValueState;
 import com.cinchapi.concourse.lang.paginate.Page;
@@ -63,7 +64,6 @@ import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
-import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.cinchapi.runway.util.Paging;
 import com.github.zafarkhaja.semver.Version;
@@ -1192,10 +1192,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
         Set<T> records = order == null ? load(clazz) : load(clazz, order);
-        Parser parser = Parsers.create($Criteria.amongRealms(realms, criteria));
-        String[] keys = parser.analyze().keys().toArray(Array.containing());
+        ConcourseCompiler compiler = ConcourseCompiler.get();
+        ConditionTree ast = (ConditionTree) compiler
+                .parse($Criteria.amongRealms(realms, criteria));
+        String[] keys = compiler.analyze(ast).keys()
+                .toArray(Array.containing());
         records = Sets.filter(records,
-                record -> parser.evaluate(record.mmap(keys)));
+                record -> compiler.evaluate(ast, record.mmap(keys)));
         if(page != null) {
             records = Paging.paginate(records, page);
         }
@@ -1218,10 +1221,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Criteria criteria, @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
         Set<T> records = order == null ? loadAny(clazz) : loadAny(clazz, order);
-        Parser parser = Parsers.create($Criteria.amongRealms(realms, criteria));
-        String[] keys = parser.analyze().keys().toArray(Array.containing());
+        ConcourseCompiler compiler = ConcourseCompiler.get();
+        ConditionTree ast = (ConditionTree) compiler
+                .parse($Criteria.amongRealms(realms, criteria));
+        String[] keys = compiler.analyze(ast).keys()
+                .toArray(Array.containing());
         records = Sets.filter(records,
-                record -> parser.evaluate(record.mmap(keys)));
+                record -> compiler.evaluate(ast, record.mmap(keys)));
         if(page != null) {
             records = Paging.paginate(records, page);
         }
