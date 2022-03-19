@@ -919,17 +919,6 @@ public class RecordTest extends ClientServerTest {
         mock = runway.load(Mock.class, mock.id());
         Assert.assertEquals(ImmutableSet.of(), mock.realms());
     }
-    
-    @Test
-    public void testReconcileCollectionPrimitiveValues() {
-        Shoe shoe = new Shoe(Lists.newArrayList("A", "B", "C"));
-        shoe.save();
-        shoe.shoes = Lists.newArrayList("B", "D", "A");
-        shoe.save();
-        shoe = runway.load(Shoe.class, shoe.id());
-        System.out.println(shoe.shoes.getClass());
-        Assert.assertEquals(Lists.newArrayList("B", "D", "A"), shoe.shoes);
-    }
 
     class Node extends Record {
 
