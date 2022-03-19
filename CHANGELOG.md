@@ -1,7 +1,7 @@
 # Changelog
 
 #### Version 1.9.2 (TBD)
-* Upgraded the underlying `Concourse` client dependency to version [`0.11.1`](https://github.com/cinchapi/concourse/releases/tag/v0.11.1), which means that Runway now supports specifying a CCL function statement as an operation key or an operation value if it is connected to a Concourse Server that is version `0.11.0+`.
+* Upgraded the underlying `Concourse` client dependency to version [`0.11.2`](https://github.com/cinchapi/concourse/releases/tag/v0.11.2), which means that Runway now supports specifying a CCL function statement as an operation key or an operation value if it is connected to a Concourse Server that is version `0.11.0+`.
 
 #### Version 1.9.1 (February 20, 2022)
 * Fixed a bug that randomly causes a spurious error to be thrown indicating that a Record attribute doesn't exist in the database when an attempt is made to access it.
