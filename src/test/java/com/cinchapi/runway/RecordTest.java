@@ -593,9 +593,9 @@ public class RecordTest extends ClientServerTest {
         a.save();
         Concourse concourse = Concourse.connect("localhost",
                 server.getClientPort(), "admin", "admin");
-        int expected = concourse.audit(a.id()).size();
+        int expected = concourse.review(a.id()).size();
         a.save();
-        int actual = concourse.audit(a.id()).size();
+        int actual = concourse.review(a.id()).size();
         Assert.assertEquals(expected, actual);
     }
 

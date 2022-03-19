@@ -1,7 +1,10 @@
 # Changelog
 
+#### Version 1.9.2 (TBD)
+* Upgraded the underlying `Concourse` client dependency to version [`0.11.1`](https://github.com/cinchapi/concourse/releases/tag/v0.11.1), which means that Runway now supports specifying a CCL function statement as an operation key or an operation value if it is connected to a Concourse Server that is version `0.11.0+`.
+
 #### Version 1.9.1 (February 20, 2022)
-* Fix a bug that randomly causes a spurious error to be thrown indicating that a Record attribute doesn't exist in the database when an attempt is made to access it.
+* Fixed a bug that randomly causes a spurious error to be thrown indicating that a Record attribute doesn't exist in the database when an attempt is made to access it.
 
 #### Version 1.9.0 (August 14, 2021)
 * Added support for multi-field `Unique` value constraints. When applying the `Unique` constraint to a `Record` field, you can now provide a `name` parameter (e.g. `@Unique(name = "identity"))`. If multiple `Unique` annotated fields have the same `name`,  Runway will enforce uniqueness among the combination of values for all those fields across all `Records` in the same class. If a `Unique` annotated field is a `Sequence`, Runway will consider uniqueness to be violated if and only if any items in the sequence are shared and all the other fields in the same uniqueness group are also considered shared.
