@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 1.9.2 (TBD)
+#### Version 1.9.2 (March 18, 2022)
 * Upgraded the underlying `Concourse` client dependency to version [`0.11.2`](https://github.com/cinchapi/concourse/releases/tag/v0.11.2), which means that Runway now supports specifying a CCL function statement as an operation key or an operation value if it is connected to a Concourse Server that is version `0.11.0+`.
 
 #### Version 1.9.1 (February 20, 2022)
