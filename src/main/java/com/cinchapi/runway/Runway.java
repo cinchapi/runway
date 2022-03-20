@@ -350,7 +350,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * This functionality is supported in Concourse 0.11.3+
      * </p>
      */
-    protected final boolean supportsPreSelectedLinkedRecord;
+    protected final boolean supportsPreSelectLinkedRecord;
 
     /**
      * Construct a new instance.
@@ -374,7 +374,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             this.hasNativeSortingAndPagination = actual
                     .greaterThanOrEqualTo(target);
             target = Version.forIntegers(0, 11, 3);
-            this.supportsPreSelectedLinkedRecord = actual.greaterThanOrEqualTo(target);
+            this.supportsPreSelectLinkedRecord = actual.greaterThanOrEqualTo(target);
         }
         finally {
             connections.release(concourse);
@@ -1073,7 +1073,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * If this instance {@link #supportsPreSelectedLinkedRecord} return the
+     * If this instance {@link #supportsPreSelectLinkedRecord} return the
      * {@link #PATHS_BY_CLASS_HIERARCHY} for {@code clazz}.
      * 
      * @param clazz
@@ -1081,13 +1081,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     final Set<String> getPathsForClassHierarchyIfSupported(
             Class<? extends Record> clazz) {
-        return supportsPreSelectedLinkedRecord
+        return supportsPreSelectLinkedRecord
                 ? PATHS_BY_CLASS_HIERARCHY.get(clazz)
                 : null;
     }
 
     /**
-     * If this instance {@link #supportsPreSelectedLinkedRecord} return the
+     * If this instance {@link #supportsPreSelectLinkedRecord} return the
      * {@link #PATHS_BY_CLASS} for {@code clazz}.
      * 
      * @param clazz
@@ -1095,7 +1095,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     final Set<String> getPathsForClassIfSupported(
             Class<? extends Record> clazz) {
-        return supportsPreSelectedLinkedRecord ? PATHS_BY_CLASS.get(clazz)
+        return supportsPreSelectLinkedRecord ? PATHS_BY_CLASS.get(clazz)
                 : null;
     }
 

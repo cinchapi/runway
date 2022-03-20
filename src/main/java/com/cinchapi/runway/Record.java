@@ -1027,7 +1027,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public String json(String... keys) {
         return json(SerializationOptions.defaults(), keys);
-    };
+    }
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
@@ -1356,11 +1356,21 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      * @param existing
      */
-    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
+    /* package */ final void load(Concourse concourse,
+            TLongObjectMap<Record> existing) {
         load(concourse, existing, null);
     }
 
-    final void load(Concourse concourse, TLongObjectMap<Record> existing,
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param concourse
+     * @param existing
+     * @param data
+     */
+    /* package */ final void load(Concourse concourse,
+            TLongObjectMap<Record> existing,
             @Nullable Map<String, Set<Object>> data) {
         load(concourse, existing, data, null);
     }
@@ -1377,7 +1387,8 @@ public abstract class Record implements Comparable<Record> {
     /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
     final void load(Concourse concourse, TLongObjectMap<Record> existing,
             @Nullable Map<String, Set<Object>> data, @Nullable String prefix) {
-        prefix = prefix == null || !runway.supportsPreSelectedLinkedRecord ? "" : prefix;
+        prefix = prefix == null || !runway.supportsPreSelectLinkedRecord ? ""
+                : prefix;
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
@@ -1387,8 +1398,10 @@ public abstract class Record implements Comparable<Record> {
             throw new ZombieException();
         }
         if(data == null) {
-            Set<String> paths = runway.getPathsForClassIfSupported(this.getClass());
-            data = paths != null ? concourse.select(paths, id) : concourse.select(id);
+            Set<String> paths = runway
+                    .getPathsForClassIfSupported(this.getClass());
+            data = paths != null ? concourse.select(paths, id)
+                    : concourse.select(id);
         }
         Set<Object> realms = data.getOrDefault(prefix + REALMS_KEY,
                 ImmutableSet.of());
