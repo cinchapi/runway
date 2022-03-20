@@ -919,6 +919,68 @@ public class RecordTest extends ClientServerTest {
         mock = runway.load(Mock.class, mock.id());
         Assert.assertEquals(ImmutableSet.of(), mock.realms());
     }
+    
+    @Test
+    public void testGetPaths() {
+        Set<String> paths = Record.getPaths(Gock.class);
+        long count = 0;
+        
+        /*
+         * Detect a path that would by cyclic and terminate it 
+         */
+        count = paths.stream().filter(path -> path.startsWith("gock")).count();
+        Assert.assertEquals(1, count);
+        count = paths.stream().filter(path -> path.startsWith("jock.testy")).count();
+        Assert.assertEquals(1, count);
+        count = paths.stream().filter(path -> path.startsWith("testy")).count();
+        Assert.assertEquals(1, count);
+        
+        /*
+         * Collection of Links is terminated (e.g. no numeric expansion paths)
+         */
+        count = paths.stream().filter(path -> path.startsWith("stock.tock.stocks")).count();
+        Assert.assertEquals(1, count);
+        count = paths.stream().filter(path -> path.startsWith("node.friends")).count();
+        Assert.assertEquals(1, count);
+        count = paths.stream().filter(path -> path.startsWith("jock.friends")).count();
+        Assert.assertEquals(1, count);
+        count = paths.stream().filter(path -> path.startsWith("friends")).count();
+        Assert.assertEquals(1, count);
+        
+        /*
+         * Expected Paths
+         */
+        Assert.assertTrue(paths.contains("stock.tock.zombie"));
+        Assert.assertTrue(paths.contains("node.label"));
+        Assert.assertTrue(paths.contains("user.name"));
+        Assert.assertTrue(paths.contains("user.email"));
+        Assert.assertTrue(paths.contains("user.company.name"));
+        Assert.assertTrue(paths.contains("sock.sock"));
+        Assert.assertTrue(paths.contains("sock.dock.dock"));
+        Assert.assertTrue(paths.contains("jock.name"));
+        Assert.assertTrue(paths.contains("name"));
+        
+        /*
+         * Deferred Reference Isn't Expanded
+         */
+        count = paths.stream().filter(path -> path.startsWith("jock.mentor")).count();
+        Assert.assertEquals(1, count);
+        count = paths.stream().filter(path -> path.startsWith("mentor")).count();
+        Assert.assertEquals(1, count);
+        
+        System.out.println(paths);       
+    }
+    
+//    @Test
+//    public void testReconcileCollectionPrimitiveValues() {
+//        Shoe shoe = new Shoe(Lists.newArrayList("A", "B", "C"));
+//        shoe.save();
+//        shoe.shoes = Lists.newArrayList("B", "D", "A");
+//        shoe.save();
+//        shoe = runway.load(Shoe.class, shoe.id());
+//        System.out.println(shoe.shoes.getClass());
+//        Assert.assertEquals(Lists.newArrayList("B", "D", "A"), shoe.shoes);
+//    }
 
     class Node extends Record {
 
@@ -1098,6 +1160,7 @@ public class RecordTest extends ClientServerTest {
 
     class Jock extends Record {
 
+        public Gock testy;
         public String name;
         public DeferredReference<Jock> mentor;
         public List<DeferredReference<Jock>> friends = Lists.newArrayList();
@@ -1106,6 +1169,21 @@ public class RecordTest extends ClientServerTest {
             this.name = name;
         }
 
+    }
+    
+    class Gock extends Jock {
+        
+        public Stock stock;
+        public Node node;
+        public User user;
+        public Sock sock;
+        public Gock gock;
+        public Jock jock;
+
+        public Gock(String name) {
+            super(name);
+        }
+        
     }
 
     class User extends Record {

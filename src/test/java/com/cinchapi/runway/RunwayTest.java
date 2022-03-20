@@ -568,6 +568,17 @@ public class RunwayTest extends ClientServerTest {
             Assert.assertTrue(passed.get());
         }
     }
+    
+    @Test
+    public void testLoadRecordWithLinks() {
+        Organization org = new Organization("Org");
+        Person person = new Person("Jeff Nelson", org);
+        Employee employee = new Employee("John Doe", org, person);
+        employee.save();
+        employee = runway.load(Employee.class, employee.id());
+        System.out.println(employee);
+        // TODO: finish by asserting some things
+    }
 
     class Player extends Record {
         String name;
@@ -671,6 +682,17 @@ public class RunwayTest extends ClientServerTest {
             this.name = name;
             this.organization = organization;
         }
+    }
+    
+    class Employee extends Person {
+        
+        public final Person boss;
+
+        public Employee(String name, Organization organization, Person boss) {
+            super(name, organization);
+            this.boss = boss;
+        }     
+        
     }
 
     class Organization extends Record {

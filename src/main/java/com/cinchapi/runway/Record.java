@@ -129,6 +129,17 @@ import com.google.gson.stream.JsonWriter;
 public abstract class Record implements Comparable<Record> {
 
     /**
+     * Return the non-cyclic paths (e.g., keys and navigation keys) for members
+     * of {@code clazz}.
+     * 
+     * @param clazz
+     * @return the paths
+     */
+    public static Set<String> getPaths(Class<? extends Record> clazz) {
+        return getPaths(clazz, "", Sets.newHashSet());
+    }
+
+    /**
      * Return {@code true} if the matching {@code condition} for data that is
      * part of the specified {@code clazz} can be resolved entirely by the
      * database, or must be done so locally because it touches {@link #derived()
@@ -299,6 +310,39 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the non-cyclic paths (e.g., keys and navigation keys) for members
+     * of {@code clazz}; all prefixed with {@code prefix} and using
+     * {@code ancestors} for cycle detection.
+     * 
+     * @param clazz
+     * @return the paths
+     */
+    @SuppressWarnings("unchecked")
+    private static Set<String> getPaths(Class<? extends Record> clazz,
+            String prefix, Set<Class<? extends Record>> ancestors) {
+        ancestors.add(clazz);
+        Set<String> paths = new LinkedHashSet<>();
+        paths.add(prefix + SECTION_KEY);
+        paths.add(prefix + IDENTIFIER_KEY);
+        paths.add(prefix + REALMS_KEY);
+        for (Field field : getFields(clazz)) {
+            Class<?> type = field.getType();
+            if(Record.class.isAssignableFrom(type)
+                    && !ancestors.contains(type)) {
+                Class<? extends Record> $type = (Class<? extends Record>) type;
+                ancestors.add($type);
+                Set<String> nested = getPaths($type,
+                        prefix + field.getName() + ".", ancestors);
+                paths.addAll(nested);
+            }
+            else {
+                paths.add(prefix + field.getName());
+            }
+        }
+        return paths;
+    }
+
+    /**
      * Return {@code true} if the record identified by {@code id} is in a
      * "zombie" state meaning it exists in the database without any actual data.
      * 
@@ -336,15 +380,34 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      * @return the loaded Record
      */
-    @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
             TLongObjectMap<Record> existing, ConnectionPool connections,
             Concourse concourse, Runway runway,
             @Nullable Map<String, Set<Object>> data) {
+        return load(clazz, id, existing, connections, concourse, runway, data,
+                null);
+    }
+
+    /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id}.
+     * 
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @param concourse
+     * @return the loaded Record
+     */
+    @SuppressWarnings("unchecked")
+    private static <T extends Record> T load(Class<?> clazz, long id,
+            TLongObjectMap<Record> existing, ConnectionPool connections,
+            Concourse concourse, Runway runway,
+            @Nullable Map<String, Set<Object>> data, String prefix) {
         T record = (T) newDefaultInstance(clazz, connections);
         Reflection.set("id", id, record); /* (authorized) */
         record.assign(runway);
-        record.load(concourse, existing, data);
+        record.load(concourse, existing, data, prefix);
         record.onLoad();
         return record;
     }
@@ -440,6 +503,11 @@ public abstract class Record implements Comparable<Record> {
                                                          // simple/short key
                                                          // name that is likely
                                                          // to avoid collisions
+
+    /**
+     * The key that references a records id in Concourse.
+     */
+    private static final String IDENTIFIER_KEY = "$id$";
 
     /**
      * The prefix applied to a key provided to the
@@ -959,7 +1027,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public String json(String... keys) {
         return json(SerializationOptions.defaults(), keys);
-    }
+    };
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
@@ -1073,7 +1141,7 @@ public abstract class Record implements Comparable<Record> {
         Map<String, Object> data = pool.filter(filter).collect(Association::of,
                 accumulator, MergeStrategies::upsert);
         return data;
-    };
+    }
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
@@ -1292,6 +1360,11 @@ public abstract class Record implements Comparable<Record> {
         load(concourse, existing, null);
     }
 
+    final void load(Concourse concourse, TLongObjectMap<Record> existing,
+            @Nullable Map<String, Set<Object>> data) {
+        load(concourse, existing, data, null);
+    }
+
     /**
      * Load an existing record from the database and add all of it to this
      * instance in memory.
@@ -1303,17 +1376,22 @@ public abstract class Record implements Comparable<Record> {
      */
     /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
     final void load(Concourse concourse, TLongObjectMap<Record> existing,
-            @Nullable Map<String, Set<Object>> data) {
+            @Nullable Map<String, Set<Object>> data, @Nullable String prefix) {
+        prefix = prefix == null || !runway.supportsPreSelectedLinkedRecord ? "" : prefix;
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
-        checkConstraints(concourse, data);
+        checkConstraints(concourse, data, prefix);
         if(inZombieState(id, concourse, data)) {
             concourse.clear(id);
             throw new ZombieException();
         }
-        data = data == null ? concourse.select(id) : data;
-        Set<Object> realms = data.getOrDefault(REALMS_KEY, ImmutableSet.of());
+        if(data == null) {
+            Set<String> paths = runway.getPathsForClassIfSupported(this.getClass());
+            data = paths != null ? concourse.select(paths, id) : concourse.select(id);
+        }
+        Set<Object> realms = data.getOrDefault(prefix + REALMS_KEY,
+                ImmutableSet.of());
         _realms = realms.size() > 0
                 ? realms.stream().map(Object::toString)
                         .collect(Collectors.toCollection(LinkedHashSet::new))
@@ -1321,7 +1399,7 @@ public abstract class Record implements Comparable<Record> {
         for (Field field : fields()) {
             try {
                 if(!Modifier.isTransient(field.getModifiers())) {
-                    String key = field.getName();
+                    String key = prefix + field.getName();
                     Class<?> type = field.getType();
                     Object value = null;
                     Set<Object> stored = data.get(key);
@@ -1386,7 +1464,34 @@ public abstract class Record implements Comparable<Record> {
                         // Populate a non-collection variable with the most
                         // recently stored value for the #key in Concourse.
                         Object first = Iterables.getFirst(stored, null);
-                        if(first != null) {
+                        if(first == null
+                                && Record.class.isAssignableFrom(type)) {
+                            // Check to see if data for a nested Record was
+                            // pre-selected and load it without making another
+                            // database roundtrip.
+                            String prepend = key + ".";
+                            Long id = (Long) Iterables.getFirst(
+                                    data.get(prepend + IDENTIFIER_KEY), null);
+                            if(id != null) {
+                                String $type = (String) Iterables.getFirst(
+                                        data.get(prepend + SECTION_KEY), null);
+                                if($type != null) {
+                                    type = Reflection.getClassCasted($type);
+                                }
+                                value = existing.get(id);
+                                value = value == null
+                                        ? load(type, id, existing, connections,
+                                                concourse, runway, data,
+                                                prepend)
+                                        : value;
+                            }
+                            else {
+                                // TODO: need fallback to manually get the
+                                // link
+                            }
+
+                        }
+                        else if(first != null) {
                             value = convert(key, type, first, concourse,
                                     existing);
                         }
@@ -1585,7 +1690,7 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalStateException
      */
     private void checkConstraints(Concourse concourse,
-            @Nullable Map<String, Set<Object>> data) {
+            @Nullable Map<String, Set<Object>> data, String prefix) {
         try {
             String section = null;
             if(data == null) {
@@ -1593,15 +1698,15 @@ public abstract class Record implements Comparable<Record> {
             }
             else {
                 section = (String) Iterables
-                        .getLast(data.computeIfAbsent(SECTION_KEY,
+                        .getLast(data.computeIfAbsent(prefix + SECTION_KEY,
                                 ignore -> concourse.select(SECTION_KEY, id)));
             }
             Verify.that(section != null);
             Verify.that(
                     section.equals(__) || Class.forName(__)
                             .isAssignableFrom(Class.forName(section)),
-                    "Cannot load a record from section %s "
-                            + "into a Record of type %s",
+                    "Cannot load a record from section {} "
+                            + "into a Record of type {}",
                     section, __);
         }
         catch (ReflectiveOperationException | IllegalStateException e) {
