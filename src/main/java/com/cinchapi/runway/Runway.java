@@ -374,7 +374,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             this.hasNativeSortingAndPagination = actual
                     .greaterThanOrEqualTo(target);
             target = Version.forIntegers(0, 11, 3);
-            this.supportsPreSelectLinkedRecord = actual.greaterThanOrEqualTo(target);
+            this.supportsPreSelectLinkedRecord = actual
+                    .greaterThanOrEqualTo(target)
+                    || actual.equals(
+                            Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
         }
         finally {
             connections.release(concourse);
@@ -1095,8 +1098,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     final Set<String> getPathsForClassIfSupported(
             Class<? extends Record> clazz) {
-        return supportsPreSelectLinkedRecord ? PATHS_BY_CLASS.get(clazz)
-                : null;
+        return supportsPreSelectLinkedRecord ? PATHS_BY_CLASS.get(clazz) : null;
     }
 
     /**
