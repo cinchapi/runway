@@ -26,6 +26,7 @@ import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -328,12 +329,13 @@ public abstract class Record implements Comparable<Record> {
         paths.add(prefix + REALMS_KEY);
         for (Field field : getFields(clazz)) {
             Class<?> type = field.getType();
+            Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
             if(Record.class.isAssignableFrom(type)
                     && !ancestors.contains(type)) {
-                Class<? extends Record> $type = (Class<? extends Record>) type;
-                ancestors.add($type);
-                Set<String> nested = getPaths($type,
-                        prefix + field.getName() + ".", ancestors);
+                Class<? extends Record> _type = (Class<? extends Record>) type;
+                lineage.add(_type);
+                Set<String> nested = getPaths(_type,
+                        prefix + field.getName() + ".", lineage);
                 paths.addAll(nested);
             }
             else {
