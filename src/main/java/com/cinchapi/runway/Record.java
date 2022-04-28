@@ -83,7 +83,6 @@ import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
-import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableMap;
@@ -309,6 +308,34 @@ public abstract class Record implements Comparable<Record> {
         return Arrays.asList(Reflection.getAllDeclaredFields(clazz)).stream()
                 .filter(field -> !INTERNAL_FIELDS.contains(field))
                 .collect(Collectors.toSet());
+    }
+
+    /**
+     * Execute the equivalent logic of {@link Map#getOrDefault(Object, Object)}
+     * on {@code map}, but ensure that a false negative bug does not occur.
+     * 
+     * @param map
+     * @param key
+     * @param defaultValue
+     * @return the value associated with {@code key} in {@code map} or
+     *         {@code defaultValue} if no such value exists
+     */
+    private static <K, V> V getOrDefaultSafely(Map<K, V> map, K key,
+            V defaultValue) {
+        // Handle corner case where it has been observed that Map#getOrDefault
+        // occasionally/randomly does not return a value for a key even though
+        // that key is indeed in the map.
+        V value = map.get(key);
+        if(value == null) {
+            for (Entry<K, V> entry : map.entrySet()) {
+                if(key.equals(entry.getKey())) {
+                    value = entry.getValue();
+                    break;
+                }
+            }
+        }
+        return value != null ? value : defaultValue;
+
     }
 
     /**
@@ -1419,21 +1446,8 @@ public abstract class Record implements Comparable<Record> {
                     String path = prefix + key;
                     Class<?> type = field.getType();
                     Object value = null;
-                    Set<Object> stored = data.get(path);
-                    if(stored == null) {
-                        // Handle corner case where it has been observed that
-                        // data.getOrDefault occasionally/randomly does not
-                        // return a value for a key even though that key is
-                        // indeed in the map.
-                        for (Entry<String, Set<Object>> entry : data
-                                .entrySet()) {
-                            if(path.equals(entry.getKey())) {
-                                stored = entry.getValue();
-                                break;
-                            }
-                        }
-                        stored = stored == null ? ImmutableSet.of() : stored;
-                    }
+                    Set<Object> stored = getOrDefaultSafely(data, path,
+                            ImmutableSet.of());
                     if(Collection.class.isAssignableFrom(type)
                             || type.isArray()) {
                         Class<?> collectedType = type
@@ -1487,18 +1501,15 @@ public abstract class Record implements Comparable<Record> {
                             // pre-selected and load it without making another
                             // database roundtrip.
                             String prepend = path + ".";
-                            Long id = (Long) Iterables
-                                    .getFirst(MoreObjects.firstNonNull(
-                                            data.get(prepend + IDENTIFIER_KEY),
-                                            ImmutableSet.of()), null);
+                            Long id = (Long) Iterables.getFirst(
+                                    data.getOrDefault(prepend + IDENTIFIER_KEY,
+                                            ImmutableSet.of()),
+                                    null);
                             if(id != null) {
-                                String $type = (String) Iterables
-                                        .getFirst(
-                                                MoreObjects.firstNonNull(
-                                                        data.get(prepend
-                                                                + SECTION_KEY),
-                                                        ImmutableSet.of()),
-                                                null);
+                                String $type = (String) Iterables.getFirst(
+                                        data.getOrDefault(prepend + SECTION_KEY,
+                                                ImmutableSet.of()),
+                                        null);
                                 if($type != null) {
                                     type = Reflection.getClassCasted($type);
                                 }
@@ -1510,10 +1521,10 @@ public abstract class Record implements Comparable<Record> {
                                         : value;
                             }
                             else {
+                                throw new IllegalStateException();
                                 // TODO: need fallback to manually get the
                                 // link
                             }
-
                         }
                         else if(first != null) {
                             value = convert(path, type, first, concourse,
