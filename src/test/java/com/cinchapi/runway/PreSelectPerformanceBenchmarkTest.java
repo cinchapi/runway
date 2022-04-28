@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import com.cinchapi.common.profile.Benchmark;
@@ -32,6 +33,7 @@ import com.cinchapi.runway.Runway.ReadStrategy;
  * @author Jeff Nelson
  */
 @Versions({ "0.11.2", "latest" })
+@Ignore
 public class PreSelectPerformanceBenchmarkTest extends CrossVersionTest {
 
     @Override
