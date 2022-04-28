@@ -82,6 +82,7 @@ import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableMap;
@@ -1412,10 +1413,11 @@ public abstract class Record implements Comparable<Record> {
         for (Field field : fields()) {
             try {
                 if(!Modifier.isTransient(field.getModifiers())) {
-                    String key = prefix + field.getName();
+                    String key = field.getName();
+                    String path = prefix + key;
                     Class<?> type = field.getType();
                     Object value = null;
-                    Set<Object> stored = data.get(key);
+                    Set<Object> stored = data.get(path);
                     if(stored == null) {
                         // Handle corner case where it has been observed that
                         // data.getOrDefault occasionally/randomly does not
@@ -1423,7 +1425,7 @@ public abstract class Record implements Comparable<Record> {
                         // indeed in the map.
                         for (Entry<String, Set<Object>> entry : data
                                 .entrySet()) {
-                            if(key.equals(entry.getKey())) {
+                            if(path.equals(entry.getKey())) {
                                 stored = entry.getValue();
                                 break;
                             }
@@ -1441,8 +1443,8 @@ public abstract class Record implements Comparable<Record> {
                                                 Object.class);
                         ArrayBuilder collector = ArrayBuilder.builder();
                         stored.forEach(item -> {
-                            Object converted = convert(key, collectedType, item,
-                                    concourse, existing);
+                            Object converted = convert(path, collectedType,
+                                    item, concourse, existing);
                             if(converted != null) {
                                 collector.add(converted);
                             }
@@ -1482,12 +1484,19 @@ public abstract class Record implements Comparable<Record> {
                             // Check to see if data for a nested Record was
                             // pre-selected and load it without making another
                             // database roundtrip.
-                            String prepend = key + ".";
-                            Long id = (Long) Iterables.getFirst(
-                                    data.get(prepend + IDENTIFIER_KEY), null);
+                            String prepend = path + ".";
+                            Long id = (Long) Iterables
+                                    .getFirst(MoreObjects.firstNonNull(
+                                            data.get(prepend + IDENTIFIER_KEY),
+                                            ImmutableSet.of()), null);
                             if(id != null) {
-                                String $type = (String) Iterables.getFirst(
-                                        data.get(prepend + SECTION_KEY), null);
+                                String $type = (String) Iterables
+                                        .getFirst(
+                                                MoreObjects.firstNonNull(
+                                                        data.get(prepend
+                                                                + SECTION_KEY),
+                                                        ImmutableSet.of()),
+                                                null);
                                 if($type != null) {
                                     type = Reflection.getClassCasted($type);
                                 }
@@ -1505,7 +1514,7 @@ public abstract class Record implements Comparable<Record> {
 
                         }
                         else if(first != null) {
-                            value = convert(key, type, first, concourse,
+                            value = convert(path, type, first, concourse,
                                     existing);
                         }
                     }
@@ -1515,7 +1524,7 @@ public abstract class Record implements Comparable<Record> {
                     else if(value == null
                             && field.isAnnotationPresent(Required.class)) {
                         throw new IllegalStateException("Record " + id
-                                + " cannot be loaded because '" + key
+                                + " cannot be loaded because '" + path
                                 + "' is a required field, but no value is present in the database.");
                     }
                     else {
