@@ -1387,7 +1387,7 @@ public abstract class Record implements Comparable<Record> {
     /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
     final void load(Concourse concourse, TLongObjectMap<Record> existing,
             @Nullable Map<String, Set<Object>> data, @Nullable String prefix) {
-        prefix = prefix == null || !runway.supportsPreSelectLinkedRecord ? ""
+        prefix = (prefix == null || !runway.supportsPreSelectLinkedRecord) ? ""
                 : prefix;
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
