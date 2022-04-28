@@ -354,7 +354,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Concourse version, using {@link Builder#disablePreSelectLinkedRecords()}.
      * </p>
      */
-    protected final boolean supportsPreSelectLinkedRecords;
+    private final boolean supportsPreSelectLinkedRecords;
 
     /**
      * Construct a new instance.
