@@ -1521,11 +1521,6 @@ public abstract class Record implements Comparable<Record> {
                                                 prepend)
                                         : value;
                             }
-                            else {
-                                throw new IllegalStateException();
-                                // TODO: need fallback to manually get the
-                                // link
-                            }
                         }
                         else if(first != null) {
                             value = convert(path, type, first, concourse,
