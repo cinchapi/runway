@@ -349,8 +349,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * <p>
      * This functionality is supported in Concourse 0.11.3+
      * </p>
+     * <p>
+     * For diagnostic purposes, this value can be disabled, regardless of
+     * Concourse version, using {@link Builder#disablePreSelectLinkedRecords()}.
+     * </p>
      */
-    protected final boolean supportsPreSelectLinkedRecord;
+    protected final boolean supportsPreSelectLinkedRecords;
 
     /**
      * Construct a new instance.
@@ -374,7 +378,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             this.hasNativeSortingAndPagination = actual
                     .greaterThanOrEqualTo(target);
             target = Version.forIntegers(0, 11, 3);
-            this.supportsPreSelectLinkedRecord = actual
+            this.supportsPreSelectLinkedRecords = actual
                     .greaterThanOrEqualTo(target)
                     || actual.equals(
                             Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
@@ -981,6 +985,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Return the interface that exposes the properties of this {@link Runway}
+     * instance.
+     * 
+     * @return the {@link Properties}
+     */
+    public Properties properties() {
+        return new Properties();
+    }
+
+    /**
      * Save all the changes in all of the {@code records} using a single ACID
      * transaction, which means that all the changes must be save or none of
      * them will.
@@ -1076,7 +1090,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * If this instance {@link #supportsPreSelectLinkedRecord} return the
+     * If this instance {@link #supportsPreSelectLinkedRecords} return the
      * {@link #PATHS_BY_CLASS_HIERARCHY} for {@code clazz}.
      * 
      * @param clazz
@@ -1084,13 +1098,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     final Set<String> getPathsForClassHierarchyIfSupported(
             Class<? extends Record> clazz) {
-        return supportsPreSelectLinkedRecord
+        return supportsPreSelectLinkedRecords
                 ? PATHS_BY_CLASS_HIERARCHY.get(clazz)
                 : null;
     }
 
     /**
-     * If this instance {@link #supportsPreSelectLinkedRecord} return the
+     * If this instance {@link #supportsPreSelectLinkedRecords} return the
      * {@link #PATHS_BY_CLASS} for {@code clazz}.
      * 
      * @param clazz
@@ -1098,7 +1112,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     final Set<String> getPathsForClassIfSupported(
             Class<? extends Record> clazz) {
-        return supportsPreSelectLinkedRecord ? PATHS_BY_CLASS.get(clazz) : null;
+        return supportsPreSelectLinkedRecords ? PATHS_BY_CLASS.get(clazz)
+                : null;
     }
 
     /**
@@ -1655,6 +1670,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private ReadStrategy readStrategy = null;
         private int streamingReadBufferSize = 100;
         private String username = "admin";
+        private boolean disablePreSelectLinkedRecords = false;
 
         /**
          * Build the configured {@link Runway} and return the instance.
@@ -1674,6 +1690,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
             }
+            if(disablePreSelectLinkedRecords) {
+                Reflection.set("supportsPreSelectLinkedRecords", false, db); // (authorized)
+            }
             return db;
         }
 
@@ -1688,6 +1707,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         @Deprecated
         public Builder cache(Cache<Long, Record> cache) {
+            return this;
+        }
+
+        /**
+         * Disable the "pre-select" feature that improves performance by
+         * selecting data for linked records instead of making multiple database
+         * roundtrips. Generally speaking, it is never advised to disable
+         * pre-select, but this option exists for debugging the behaviour of
+         * reading using the new functionality vs the legacy method.
+         * 
+         * @return this builder
+         */
+        public Builder disablePreSelectLinkedRecords() {
+            this.disablePreSelectLinkedRecords = true;
             return this;
         }
 
@@ -1816,6 +1849,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder withCache(Cache<Long, Map<String, Set<Object>>> cache) {
             this.cache = cache;
             return this;
+        }
+    }
+
+    /**
+     * Properties about this {@link Runway} instance.
+     *
+     * @author Jeff Nelson
+     */
+    public class Properties {
+
+        /**
+         * Return {@code true} if this {@link Runway} client and the underlying
+         * {@link Concourse} deployment allow linked records to be pre-selected.
+         * 
+         * @return a boolean that indicates if pre-selection is supported
+         */
+        public boolean supportsPreSelectLinkedRecords() {
+            return supportsPreSelectLinkedRecords;
         }
     }
 

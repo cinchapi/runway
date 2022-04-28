@@ -958,6 +958,7 @@ public class RecordTest extends ClientServerTest {
         Assert.assertTrue(paths.contains("sock.sock"));
         Assert.assertTrue(paths.contains("sock.dock.dock"));
         Assert.assertTrue(paths.contains("jock.name"));
+        Assert.assertTrue(paths.contains("jock2.name"));
         Assert.assertTrue(paths.contains("name"));
         
         /*
@@ -1179,6 +1180,7 @@ public class RecordTest extends ClientServerTest {
         public Sock sock;
         public Gock gock;
         public Jock jock;
+        public Jock jock2;
 
         public Gock(String name) {
             super(name);
