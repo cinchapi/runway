@@ -34,7 +34,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
@@ -1191,18 +1190,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> filter(Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
-        Set<T> records = order == null ? load(clazz) : load(clazz, order);
         ConcourseCompiler compiler = ConcourseCompiler.get();
         ConditionTree ast = (ConditionTree) compiler
                 .parse($Criteria.amongRealms(realms, criteria));
         String[] keys = compiler.analyze(ast).keys()
                 .toArray(Array.containing());
-        records = Sets.filter(records,
-                record -> compiler.evaluate(ast, record.mmap(keys)));
+        Predicate<T> filter = record -> compiler.evaluate(ast,
+                record.mmap(keys));
         if(page != null) {
-            records = Paging.paginate(records, page);
+            return Paging.filterAndPaginate(
+                    $page -> order == null ? load(clazz, $page)
+                            : load(clazz, order, $page),
+                    filter, page);
         }
-        return records;
+        else {
+            Set<T> records = order == null ? load(clazz) : load(clazz, order);
+            return records.stream().filter(filter)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
     }
 
     /**
@@ -1220,18 +1225,26 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> filterAny(Class<T> clazz,
             Criteria criteria, @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
-        Set<T> records = order == null ? loadAny(clazz) : loadAny(clazz, order);
         ConcourseCompiler compiler = ConcourseCompiler.get();
         ConditionTree ast = (ConditionTree) compiler
                 .parse($Criteria.amongRealms(realms, criteria));
         String[] keys = compiler.analyze(ast).keys()
                 .toArray(Array.containing());
-        records = Sets.filter(records,
-                record -> compiler.evaluate(ast, record.mmap(keys)));
+        Predicate<T> filter = record -> compiler.evaluate(ast,
+                record.mmap(keys));
         if(page != null) {
-            records = Paging.paginate(records, page);
+            return Paging
+                    .filterAndPaginate(
+                            $page -> order == null ? loadAny(clazz, $page)
+                                    : loadAny(clazz, order, $page),
+                            filter, page);
         }
-        return records;
+        else {
+            Set<T> records = order == null ? loadAny(clazz)
+                    : loadAny(clazz, order);
+            return records.stream().filter(filter)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
     }
 
     /**
