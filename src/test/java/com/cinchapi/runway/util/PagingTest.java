@@ -15,9 +15,13 @@
  */
 package com.cinchapi.runway.util;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -30,26 +34,35 @@ import com.cinchapi.concourse.lang.paginate.Page;
  * @author Jeff Nelson
  */
 public class PagingTest {
-    
+
     @Test
     public void testFilterAndPaginate() {
+        List<Long> source = new ArrayList<>();
+        for (long i = 1; i <= 100; ++i) {
+            source.add(i);
+        }
         Function<Page, Set<Long>> function = $page -> {
             Set<Long> items = new LinkedHashSet<>();
             int count = $page.skip() + 1;
-            for(long i = count;  i <= $page.skip() + $page.limit(); ++i) {
-                items.add(i);
+            for (long i = count; (i <= $page.skip() + $page.limit())
+                    && i < source.size(); ++i) {
+                items.add(source.get((int) i));
             }
             return items;
         };
+        Predicate<Long> filter = item -> item % 2 == 0;
         Page page = Page.of(6, 20);
-        Set<Long> items = Paging.filterAndPaginate(function, item -> item % 2 == 0, page);
-        Set<Long> expected = new LinkedHashSet<>();
-        long count = 8;
-        while(expected.size() < 20) {
-            expected.add(count);
-            count += 2;
+        Set<Long> actual;
+        do {
+            actual = Paging.filterAndPaginate(function, filter, page);
+            Set<Long> expected = source.stream().filter(filter).skip(page.skip())
+                    .limit(page.limit()).collect(Collectors.toCollection(LinkedHashSet::new));
+            System.out.println("actual = " + actual);
+            System.out.println("expected = " + expected);
+            Assert.assertEquals(expected, actual);
+            page = page.next();
         }
-        Assert.assertEquals(expected, items);
+        while(!actual.isEmpty());
     }
 
 }

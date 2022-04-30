@@ -52,6 +52,9 @@ public final class Paging {
     public static <T> Set<T> filterAndPaginate(Function<Page, Set<T>> function,
             Predicate<T> filter, Page page) {
         Set<T> records = new LinkedHashSet<>();
+        int skipped = 0;
+        int skip = page.skip();
+        page = Page.of(0, page.limit());
         outer: for (;;) {
             Set<T> unfiltered = function.apply(page);
             if(unfiltered.isEmpty()) {
@@ -63,7 +66,12 @@ public final class Paging {
                         break outer;
                     }
                     else if(filter.test(record)) {
-                        records.add(record);
+                        if(skipped < skip) {
+                            ++skipped;
+                        }
+                        else {
+                            records.add(record);
+                        }
                     }
                 }
                 page = page.next();
