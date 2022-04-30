@@ -29,7 +29,7 @@ import org.junit.Test;
 import com.cinchapi.concourse.lang.paginate.Page;
 
 /**
- * Unit tests for {@link Paging}.
+ * Unit tests for {@link Pagination}.
  *
  * @author Jeff Nelson
  */
@@ -54,7 +54,7 @@ public class PagingTest {
         Page page = Page.of(6, 20);
         Set<Long> actual;
         do {
-            actual = Paging.filterAndPaginate(function, filter, page);
+            actual = Pagination.filterAndPaginate(function, filter, page);
             Set<Long> expected = source.stream().filter(filter).skip(page.skip())
                     .limit(page.limit()).collect(Collectors.toCollection(LinkedHashSet::new));
             System.out.println("actual = " + actual);

@@ -64,7 +64,7 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Logging;
 import com.cinchapi.runway.cache.CachingConnectionPool;
-import com.cinchapi.runway.util.Paging;
+import com.cinchapi.runway.util.Pagination;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
@@ -1198,7 +1198,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Predicate<T> filter = record -> compiler.evaluate(ast,
                 record.mmap(keys));
         if(page != null) {
-            return Paging.filterAndPaginate(
+            return Pagination.filterAndPaginate(
                     $page -> order == null ? load(clazz, $page)
                             : load(clazz, order, $page),
                     filter, page);
@@ -1233,7 +1233,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Predicate<T> filter = record -> compiler.evaluate(ast,
                 record.mmap(keys));
         if(page != null) {
-            return Paging
+            return Pagination
                     .filterAndPaginate(
                             $page -> order == null ? loadAny(clazz, $page)
                                     : loadAny(clazz, order, $page),

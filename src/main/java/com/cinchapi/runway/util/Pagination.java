@@ -26,7 +26,7 @@ import com.cinchapi.concourse.lang.paginate.Page;
  *
  * @author Jeff Nelson
  */
-public final class Paging {
+public final class Pagination {
 
     /**
      * Apply the {@code filter} to the items returned from {@code function} and
