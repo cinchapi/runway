@@ -52,7 +52,7 @@ public final class Paging {
     public static <T> Set<T> filterAndPaginate(Function<Page, Set<T>> function,
             Predicate<T> filter, Page page) {
         Set<T> records = new LinkedHashSet<>();
-        for (;;) {
+        outer: for (;;) {
             Set<T> unfiltered = function.apply(page);
             if(unfiltered.isEmpty()) {
                 break;
@@ -60,7 +60,7 @@ public final class Paging {
             else {
                 for (T record : unfiltered) {
                     if(records.size() >= page.limit()) {
-                        break;
+                        break outer;
                     }
                     else if(filter.test(record)) {
                         records.add(record);
