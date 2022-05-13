@@ -33,7 +33,7 @@ import com.cinchapi.concourse.lang.paginate.Page;
  *
  * @author Jeff Nelson
  */
-public class PagingTest {
+public class PaginationTest {
 
     @Test
     public void testFilterAndPaginate() {
