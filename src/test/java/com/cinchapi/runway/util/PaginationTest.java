@@ -54,7 +54,7 @@ public class PaginationTest {
         Page page = Page.of(6, 20);
         Set<Long> actual;
         do {
-            actual = Pagination.filterAndPaginate(function, filter, page);
+            actual = Pagination.filterAndPage(function, filter, page);
             Set<Long> expected = source.stream().filter(filter).skip(page.skip())
                     .limit(page.limit()).collect(Collectors.toCollection(LinkedHashSet::new));
             System.out.println("actual = " + actual);

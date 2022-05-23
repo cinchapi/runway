@@ -49,7 +49,7 @@ public final class Pagination {
      *         the {@code filter} to the items as they are returned from the
      *         {@code function}
      */
-    public static <T> Set<T> filterAndPaginate(Function<Page, Set<T>> function,
+    public static <T> Set<T> filterAndPage(Function<Page, Set<T>> function,
             Predicate<T> filter, Page page) {
         Set<T> records = new LinkedHashSet<>();
         int skipped = 0;
