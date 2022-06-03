@@ -52,25 +52,28 @@ public final class Pagination {
     public static <T> Set<T> filterAndPage(Function<Page, Set<T>> function,
             Predicate<T> filter, Page page) {
         Set<T> records = new LinkedHashSet<>();
+        int offset = page.offset();
+        int limit = page.limit();
+        int count = 0;
         int skipped = 0;
-        int skip = page.skip();
-        page = Page.of(0, page.limit());
-        outer: for (;;) {
+        page = Page.of(0, limit);
+        outer: while (count < limit) {
             Set<T> unfiltered = function.apply(page);
             if(unfiltered.isEmpty()) {
                 break;
             }
             else {
                 for (T record : unfiltered) {
-                    if(records.size() >= page.limit()) {
-                        break outer;
-                    }
-                    else if(filter.test(record)) {
-                        if(skipped < skip) {
+                    if(filter.test(record)) {
+                        if(skipped < offset) {
                             ++skipped;
                         }
                         else {
                             records.add(record);
+                            ++count;
+                            if(count == limit) {
+                                break outer;
+                            }
                         }
                     }
                 }
