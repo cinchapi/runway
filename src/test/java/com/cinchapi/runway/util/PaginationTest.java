@@ -36,7 +36,7 @@ import com.cinchapi.concourse.lang.paginate.Page;
 public class PaginationTest {
 
     @Test
-    public void testFilterAndPaginate() {
+    public void testApplyFilterAndPage() {
         List<Long> source = new ArrayList<>();
         for (long i = 1; i <= 100; ++i) {
             source.add(i);
@@ -54,7 +54,7 @@ public class PaginationTest {
         Page page = Page.of(6, 20);
         Set<Long> actual;
         do {
-            actual = Pagination.filterAndPage(function, filter, page);
+            actual = Pagination.applyFilterAndPage(function, filter, page);
             Set<Long> expected = source.stream().filter(filter).skip(page.skip())
                     .limit(page.limit()).collect(Collectors.toCollection(LinkedHashSet::new));
             System.out.println("actual = " + actual);

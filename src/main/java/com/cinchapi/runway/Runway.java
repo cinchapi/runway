@@ -1198,7 +1198,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Predicate<T> filter = record -> compiler.evaluate(ast,
                 record.mmap(keys));
         if(page != null) {
-            return Pagination.filterAndPage(
+            return Pagination.applyFilterAndPage(
                     $page -> order == null ? load(clazz, $page)
                             : load(clazz, order, $page),
                     filter, page);
@@ -1234,7 +1234,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 record.mmap(keys));
         if(page != null) {
             return Pagination
-                    .filterAndPage(
+                    .applyFilterAndPage(
                             $page -> order == null ? loadAny(clazz, $page)
                                     : loadAny(clazz, order, $page),
                             filter, page);

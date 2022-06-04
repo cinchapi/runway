@@ -423,7 +423,7 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter,
             Realms realms) {
-        return Pagination.filterAndPage(
+        return Pagination.applyFilterAndPage(
                 $page -> find(clazz, criteria, order, $page, realms), filter,
                 page);
     }
@@ -591,7 +591,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
-        return Pagination.filterAndPage(
+        return Pagination.applyFilterAndPage(
                 $page -> find(clazz, criteria, $page, realms), filter, page);
     }
 
@@ -778,7 +778,7 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter,
             Realms realms) {
-        return Pagination.filterAndPage(
+        return Pagination.applyFilterAndPage(
                 $page -> findAny(clazz, criteria, order, $page, realms), filter,
                 page);
     }
@@ -946,7 +946,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
-        return Pagination.filterAndPage(
+        return Pagination.applyFilterAndPage(
                 $page -> findAny(clazz, criteria, $page, realms), filter, page);
 
     }
@@ -1271,7 +1271,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Page page, Predicate<T> filter, Realms realms) {
-        return Pagination.filterAndPage(
+        return Pagination.applyFilterAndPage(
                 $page -> load(clazz, order, $page, realms), filter, page);
     }
 
@@ -1472,8 +1472,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Predicate<T> filter, Realms realms) {
-        return Pagination.filterAndPage($page -> load(clazz, $page, realms),
-                filter, page);
+        return Pagination.applyFilterAndPage(
+                $page -> load(clazz, $page, realms), filter, page);
     }
 
     /**
@@ -1727,7 +1727,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order, Page page, Predicate<T> filter, Realms realms) {
-        return Pagination.filterAndPage(
+        return Pagination.applyFilterAndPage(
                 $page -> loadAny(clazz, order, $page, realms), filter, page);
     }
 
@@ -1954,8 +1954,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Predicate<T> filter, Realms realms) {
-        return Pagination.filterAndPage($page -> loadAny(clazz, $page, realms),
-                filter, page);
+        return Pagination.applyFilterAndPage(
+                $page -> loadAny(clazz, $page, realms), filter, page);
     }
 
     /**
