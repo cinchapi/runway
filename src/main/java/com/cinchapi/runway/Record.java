@@ -327,15 +327,16 @@ public abstract class Record implements Comparable<Record> {
         // that key is indeed in the map.
         V value = map.get(key);
         if(value == null) {
-            for (Entry<K, V> entry : map.entrySet()) {
-                if(key.equals(entry.getKey())) {
-                    value = entry.getValue();
-                    break;
+            if(!map.containsKey(key.toString() + "." + IDENTIFIER_KEY)) {
+                for (Entry<K, V> entry : map.entrySet()) {
+                    if(key.equals(entry.getKey())) {
+                        value = entry.getValue();
+                        break;
+                    }
                 }
             }
         }
         return value != null ? value : defaultValue;
-
     }
 
     /**
@@ -1417,22 +1418,26 @@ public abstract class Record implements Comparable<Record> {
     /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
     final void load(Concourse concourse, TLongObjectMap<Record> existing,
             @Nullable Map<String, Set<Object>> data, @Nullable String prefix) {
-        prefix = (prefix == null
-                || !runway.properties().supportsPreSelectLinkedRecords()) ? ""
-                        : prefix;
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
+        if(data == null) {
+            Set<String> paths = runway
+                    .getPathsForClassIfSupported(this.getClass());
+            // @formatter:off
+            data = paths != null 
+                    ? concourse.select(paths, id)
+                    : concourse.select(id);
+            // @formatter:on
+        }
+        if(prefix == null
+                || !runway.properties().supportsPreSelectLinkedRecords()) {
+            prefix = "";
+        }
         checkConstraints(concourse, data, prefix);
         if(inZombieState(id, concourse, data)) {
             concourse.clear(id);
             throw new ZombieException();
-        }
-        if(data == null) {
-            Set<String> paths = runway
-                    .getPathsForClassIfSupported(this.getClass());
-            data = paths != null ? concourse.select(paths, id)
-                    : concourse.select(id);
         }
         Set<Object> realms = data.getOrDefault(prefix + REALMS_KEY,
                 ImmutableSet.of());
