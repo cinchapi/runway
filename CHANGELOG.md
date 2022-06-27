@@ -3,7 +3,7 @@
 #### Version 1.9.3 (TBD)
 * Improved the performance of `Runway` commands that perform pagination when a `filter` or a `condition` that must be resolved locally (e.g., because it references derived or computed keys not in the database) is provided. Previously, in these cases, `Runway` would load all possible records before applying the `filter` or `condition` and lastly performing pagination. Now, `Runway` incrementally loads possible matching records and applies the `filter` or `condition` on the fly until the requested `Page` has been filled.
 * Removed the `com.cinchapi.runway.util.Paging` class that was copied from the `concourse-server` project since it is no longer used for internal pagination logic.
-* Optimized load performance by using more intelligent logic to scaffold a `Record` instance and caching access to internal `Field` objects that are set during the process. 
+* Optimized load performance by 1) using more intelligent logic to scaffold a `Record` instance and 2) caching access to internal `Field` objects that are set during the process. 
 
 #### Version 1.9.2 (March 18, 2022)
 * Upgraded the underlying `Concourse` client dependency to version [`0.11.2`](https://github.com/cinchapi/concourse/releases/tag/v0.11.2), which means that Runway now supports specifying a CCL function statement as an operation key or an operation value if it is connected to a Concourse Server that is version `0.11.0+`.
