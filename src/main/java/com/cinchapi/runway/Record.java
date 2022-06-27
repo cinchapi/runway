@@ -27,6 +27,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -306,7 +307,8 @@ public abstract class Record implements Comparable<Record> {
      */
     private static Set<Field> getFields(Class<? extends Record> clazz) {
         return Arrays.asList(Reflection.getAllDeclaredFields(clazz)).stream()
-                .filter(field -> !INTERNAL_FIELDS.contains(field))
+                .filter(field -> !INTERNAL_FIELDS.keySet()
+                        .contains(field.getName()))
                 .collect(Collectors.toSet());
     }
 
@@ -436,7 +438,7 @@ public abstract class Record implements Comparable<Record> {
             Concourse concourse, Runway runway,
             @Nullable Map<String, Set<Object>> data, String prefix) {
         T record = (T) newDefaultInstance(clazz, connections);
-        Reflection.set("id", id, record); /* (authorized) */
+        setInternalFieldValue("id", id, record);
         record.assign(runway);
         record.load(concourse, existing, data, prefix);
         record.onLoad();
@@ -449,6 +451,7 @@ public abstract class Record implements Comparable<Record> {
      * constructors for nested inner classes.
      * 
      * @param clazz
+     * @param connections
      * @return the instance of the {@code clazz}.
      */
     @SuppressWarnings("unchecked")
@@ -459,14 +462,14 @@ public abstract class Record implements Comparable<Record> {
             // default fields defined herewithin so there's no requirement for
             // implementing classes to contain a no-arg constructor.
             T instance = (T) unsafe.allocateInstance(clazz);
-            Reflection.set("__", clazz.getName(), instance);
-            Reflection.set("deleted", false, instance);
-            Reflection.set("dynamicData", Maps.newHashMap(), instance);
-            Reflection.set("errors", Lists.newArrayList(), instance);
-            Reflection.set("id", NULL_ID, instance);
-            Reflection.set("inViolation", false, instance);
-            Reflection.set("connections", connections, instance);
-            Reflection.set("db",
+            setInternalFieldValue("__", clazz.getName(), instance);
+            setInternalFieldValue("deleted", false, instance);
+            setInternalFieldValue("dynamicData", new HashMap<>(), instance);
+            setInternalFieldValue("errors", new ArrayList<>(), instance);
+            setInternalFieldValue("id", NULL_ID, instance);
+            setInternalFieldValue("inViolation", false, instance);
+            setInternalFieldValue("connections", connections, instance);
+            setInternalFieldValue("db",
                     new ReactiveDatabaseInterface((Record) instance), instance);
             return instance;
         }
@@ -520,6 +523,33 @@ public abstract class Record implements Comparable<Record> {
         }
     }
 
+    /**
+     * Set the {@code value} of an {@link #INTERNAL_FIELDS internal field} on
+     * the provided {@code instance}.
+     * <p>
+     * Use this method instead of {@link Reflection#set(String, Object, Object)}
+     * to take advantage of performance optimizations.
+     * </p>
+     * 
+     * @param name
+     * @param value
+     * @param instance
+     */
+    private static <T> void setInternalFieldValue(String name, Object value,
+            T instance) {
+        try {
+            Field field = INTERNAL_FIELDS.get(name);
+            Preconditions.checkArgument(field != null,
+                    "%s is not an internal field", name);
+            field.setAccessible(true);
+            field.set(instance, value);
+
+        }
+        catch (ReflectiveOperationException e) {
+            throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+    }
+
     /* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
 
     /**
@@ -559,8 +589,10 @@ public abstract class Record implements Comparable<Record> {
     /**
      * The {@link Field fields} that are defined in the base class.
      */
-    private static Set<Field> INTERNAL_FIELDS = Sets.newHashSet(
-            Arrays.asList(Reflection.getAllDeclaredFields(Record.class)));
+    private static Map<String, Field> INTERNAL_FIELDS = Stream
+            .of(Reflection.getAllDeclaredFields(Record.class))
+            .collect(Collectors.toMap(field -> field.getName(), field -> field,
+                    (a, b) -> b, HashMap::new));
 
     /**
      * A cache of the {@link #intrinsic() properties} for each {@link Class}.

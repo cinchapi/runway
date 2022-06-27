@@ -1423,8 +1423,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Map<Long, Map<String, Set<Object>>> data) {
-        Set<T> records = LazyTransformSet.of(data.keySet(), id -> {
-            return instantiate(clazz, id, data.get(id));
+        Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
+            return instantiate(clazz, entry.getKey(), entry.getValue());
         });
         return records;
     }
@@ -1458,8 +1458,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> instantiateAll(
             Map<Long, Map<String, Set<Object>>> data) {
-        Set<T> records = LazyTransformSet.of(data.keySet(), id -> {
-            return instantiate(id, data.get(id));
+        Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
+            return instantiate(entry.getKey(), entry.getValue());
         });
         return records;
     }
