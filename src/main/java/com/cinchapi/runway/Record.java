@@ -384,33 +384,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Set the {@code value} of an {@link #INTERNAL_FIELDS internal field} on
-     * the provided {@code instance}.
-     * <p>
-     * Use this method instead of {@link Reflection#set(String, Object, Object)}
-     * to take advantage of performance optimizations.
-     * </p>
-     * 
-     * @param name
-     * @param value
-     * @param instance
-     */
-    private static <T> void setInternalFieldValue(String name, Object value,
-            T instance) {
-        try {
-            Field field = INTERNAL_FIELDS.get(name);
-            Preconditions.checkArgument(field != null,
-                    "%s is not an internal field", name);
-            field.setAccessible(true);
-            field.set(instance, value);
-
-        }
-        catch (ReflectiveOperationException e) {
-            throw CheckedExceptions.throwAsRuntimeException(e);
-        }
-    }
-
-    /**
      * Serialize {@code value} by converting it to an object that can be stored
      * within the database. This method assumes that {@code value} is a scalar
      * (e.g. not a {@link Sequences#isSequence(Object)}).
@@ -452,6 +425,33 @@ public abstract class Record implements Comparable<Record> {
             Gson gson = new Gson();
             Tag json = Tag.create(gson.toJson(value));
             return json;
+        }
+    }
+
+    /**
+     * Set the {@code value} of an {@link #INTERNAL_FIELDS internal field} on
+     * the provided {@code instance}.
+     * <p>
+     * Use this method instead of {@link Reflection#set(String, Object, Object)}
+     * to take advantage of performance optimizations.
+     * </p>
+     * 
+     * @param name
+     * @param value
+     * @param instance
+     */
+    private static <T> void setInternalFieldValue(String name, Object value,
+            T instance) {
+        try {
+            Field field = INTERNAL_FIELDS.get(name);
+            Preconditions.checkArgument(field != null,
+                    "%s is not an internal field", name);
+            field.setAccessible(true);
+            field.set(instance, value);
+
+        }
+        catch (ReflectiveOperationException e) {
+            throw CheckedExceptions.throwAsRuntimeException(e);
         }
     }
 
