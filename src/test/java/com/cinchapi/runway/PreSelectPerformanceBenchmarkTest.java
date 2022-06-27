@@ -32,8 +32,7 @@ import com.cinchapi.runway.Runway.ReadStrategy;
  *
  * @author Jeff Nelson
  */
-@Versions({ "0.11.2", "latest" })
-@Ignore
+@Versions({ "0.11.2", "latest"})
 public class PreSelectPerformanceBenchmarkTest extends CrossVersionTest {
 
     @Override
@@ -86,6 +85,7 @@ public class PreSelectPerformanceBenchmarkTest extends CrossVersionTest {
         };
         long time = benchmark.run();
         record("Performance", time);
+        record("Pre-Select", db.properties().supportsPreSelectLinkedRecords());
 
     }
 
