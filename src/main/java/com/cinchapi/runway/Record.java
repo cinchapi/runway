@@ -295,7 +295,8 @@ public abstract class Record implements Comparable<Record> {
      */
     private static Set<Field> getFields(Class<? extends Record> clazz) {
         return Arrays.asList(Reflection.getAllDeclaredFields(clazz)).stream()
-                .filter(field -> !INTERNAL_FIELDS.values().contains(field))
+                .filter(field -> !INTERNAL_FIELDS.keySet()
+                        .contains(field.getName()))
                 .collect(Collectors.toSet());
     }
 
