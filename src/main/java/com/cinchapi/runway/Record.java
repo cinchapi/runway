@@ -488,6 +488,13 @@ public abstract class Record implements Comparable<Record> {
     static final String SORT_DIRECTION_DESCENDING_PREFIX = "<";
 
     /**
+     * Object types that are boxed versions of primitive types.
+     */
+    private static Set<Class<?>> BOXED_PRIMITIVE_TYPES = ImmutableSet.of(
+            String.class, Integer.class, Long.class, Float.class, Double.class,
+            Boolean.class, Timestamp.class);
+
+    /**
      * The {@link Field fields} that are defined in the base class.
      */
     private static Map<String, Field> INTERNAL_FIELDS = Stream
@@ -1749,10 +1756,7 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
         }
-        else if(type.isPrimitive() || ImmutableSet
-                .of(String.class, Integer.class, Long.class, Float.class,
-                        Double.class, Boolean.class, Timestamp.class)
-                .contains(type)) {
+        else if(type.isPrimitive() || BOXED_PRIMITIVE_TYPES.contains(type)) {
             converted = stored;
         }
         else if(type == Tag.class) {
