@@ -18,7 +18,6 @@ package com.cinchapi.runway;
 import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -37,9 +36,6 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-
-import org.reflections.Reflections;
-import org.reflections.scanners.SubTypesScanner;
 
 import com.cinchapi.ccl.syntax.ConditionTree;
 import com.cinchapi.common.base.AnyStrings;
@@ -63,19 +59,17 @@ import com.cinchapi.concourse.lang.sort.OrderComponent;
 import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
-import com.cinchapi.concourse.util.Logging;
+import com.cinchapi.runway.bootstrap.StaticAnalysis;
 import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.cinchapi.runway.util.Pagination;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.cache.Cache;
-import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.google.common.collect.Multimap;
 import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
 
@@ -183,24 +177,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Perform {@link Record#getPaths(Class)} for each {@link Class} in the
-     * hierarchy of {@code clazz}.
-     * 
-     * @param clazz
-     * @return all the paths in the class hierarchy
-     */
-    @SuppressWarnings("unchecked")
-    private static <T extends Record> Set<String> getPathsAcrossClassHierarchy(
-            Class<T> clazz) {
-        Set<String> paths = new LinkedHashSet<>();
-        Collection<Class<?>> hiearchy = hierarchies.get(clazz);
-        for (Class<?> type : hiearchy) {
-            paths.addAll(Record.getPaths((Class<? extends Record>) type));
-        }
-        return paths;
-    }
-
-    /**
      * Call
      * {@link Record#load(Class, long, TLongObjectMap, ConnectionPool, Runway, Map)}
      * and handle any errors with the {@link #onLoadFailureHandler}.
@@ -233,23 +209,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             clazz, record, error) -> record.toString();
 
     /**
-     * A mapping from each {@link Record} class to all of its descendants. This
-     * facilitates querying across hierarchies.
-     */
-    private static final Multimap<Class<?>, Class<?>> hierarchies;
-
-    /**
-     * A mapping from each {@link Record} class to its traversable paths.
-     */
-    private static Map<Class<?>, Set<String>> PATHS_BY_CLASS;
-
-    /**
-     * A mapping from each {@link Record} class to the traversable paths in its
-     * hierarchy.
-     */
-    private static Map<Class<?>, Set<String>> PATHS_BY_CLASS_HIERARCHY;
-
-    /**
      * A collection of all the active {@link Runway} instances.
      */
     private static Set<Runway> instances = Sets.newHashSet();
@@ -272,23 +231,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private static Page NO_PAGINATION = null;
 
     static {
-        // NOTE: Scanning the classpath adds startup costs proportional to the
-        // number of classes defined. We do this once at startup to minimize the
-        // effect of the cost.
-        hierarchies = HashMultimap.create();
-        PATHS_BY_CLASS = new HashMap<>();
-        PATHS_BY_CLASS_HIERARCHY = new HashMap<>();
-        Logging.disable(Reflections.class);
-        Reflections.log = null; // turn off reflection logging
-        Reflections reflection = new Reflections(new SubTypesScanner());
-        reflection.getSubTypesOf(Record.class).forEach(type -> {
-            hierarchies.put(type, type);
-            reflection.getSubTypesOf(type)
-                    .forEach(subType -> hierarchies.put(type, subType));
-            PATHS_BY_CLASS.put(type, Record.getPaths(type));
-            PATHS_BY_CLASS_HIERARCHY.put(type,
-                    getPathsAcrossClassHierarchy(type));
-        });
+        // Perform static analysis on initialization.
+        StaticAnalysis.instance();
     }
 
     /**
@@ -784,7 +728,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     @Override
     public <T extends Record> T load(Class<T> clazz, long id, Realms realms) {
-        if(hierarchies.get(clazz).size() > 1) {
+        if(StaticAnalysis.instance().getClassHierarchy(clazz).size() > 1) {
             // The provided clazz has descendants, so it is possible that the
             // Record with the #id is actually a member of a subclass
             Concourse connection = connections.request();
@@ -1098,7 +1042,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     final Set<String> getPathsForClassHierarchyIfSupported(
             Class<? extends Record> clazz) {
         return supportsPreSelectLinkedRecords
-                ? PATHS_BY_CLASS_HIERARCHY.get(clazz)
+                ? StaticAnalysis.instance().getPathsForClassHierarchy(clazz)
                 : null;
     }
 
@@ -1111,7 +1055,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     final Set<String> getPathsForClassIfSupported(
             Class<? extends Record> clazz) {
-        return supportsPreSelectLinkedRecords ? PATHS_BY_CLASS.get(clazz)
+        return supportsPreSelectLinkedRecords
+                ? StaticAnalysis.instance().getPathsForClass(clazz)
                 : null;
     }
 
@@ -1236,7 +1181,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @SuppressWarnings("rawtypes")
     private <T extends Record> Set<Long> $searchAny(Concourse concourse,
             Class<T> clazz, String query, String... keys) {
-        Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+        Collection<Class<?>> hierarchy = StaticAnalysis.instance()
+                .getClassHierarchy(clazz);
         Predicate<Long> filter = null;
         for (Class cls : hierarchy) {
             Predicate<Long> $filter = record -> concourse
@@ -1931,8 +1877,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * 
          * @return the updated {@code criteria}
          */
-        public static <T> Criteria accrossClassHierachy(Class<T> clazz,
-                Criteria criteria) {
+        public static <T extends Record> Criteria accrossClassHierachy(
+                Class<T> clazz, Criteria criteria) {
             return Criteria.where().group(forClassHierarchy(clazz)).and()
                     .group(criteria).build();
         }
@@ -1980,8 +1926,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * @return the {@link Criteria}
          */
         @SuppressWarnings("rawtypes")
-        public static <T> Criteria forClassHierarchy(Class<T> clazz) {
-            Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+        public static <T extends Record> Criteria forClassHierarchy(
+                Class<T> clazz) {
+            Collection<Class<?>> hierarchy = StaticAnalysis.instance()
+                    .getClassHierarchy(clazz);
             BuildableState criteria = null;
             for (Class cls : hierarchy) {
                 if(criteria == null) {

@@ -80,6 +80,7 @@ import com.cinchapi.concourse.util.Numbers;
 import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.concourse.validate.Keys;
+import com.cinchapi.runway.bootstrap.StaticAnalysis;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
@@ -129,6 +130,19 @@ import com.google.gson.stream.JsonWriter;
  */
 @SuppressWarnings({ "restriction", "deprecation" })
 public abstract class Record implements Comparable<Record> {
+
+    /**
+     * Return all the non-internal {@link Field fields} in this {@code clazz}.
+     * 
+     * @param clazz
+     * @return the non-internal {@link Field fields}
+     */
+    public static Set<Field> getFields(Class<? extends Record> clazz) {
+        return Arrays.asList(Reflection.getAllDeclaredFields(clazz)).stream()
+                .filter(field -> !INTERNAL_FIELDS.keySet()
+                        .contains(field.getName()))
+                .collect(Collectors.toSet());
+    }
 
     /**
      * Return the non-cyclic paths (e.g., keys and navigation keys) for members
@@ -187,36 +201,6 @@ public abstract class Record implements Comparable<Record> {
         finally {
             connections.release(concourse);
         }
-    }
-
-    /**
-     * Dereference the {@code value} stored for {@code field} if it is a
-     * {@link DeferredReference} or a {@link Sequence} of them.
-     * 
-     * @param field
-     * @param value
-     * @return the dereferenced value if it can be dereferenced or the original
-     *         input
-     */
-    private static Object dereference(Field field, Object value) {
-        if(value == null) {
-            return value;
-        }
-        else if(value instanceof DeferredReference) {
-            value = ((DeferredReference<?>) value).get();
-        }
-        else if(Sequences.isSequence(value)) {
-            Collection<Class<?>> typeArgs = Reflection.getTypeArguments(field);
-            if(typeArgs.contains(DeferredReference.class)
-                    || typeArgs.contains(Object.class)) {
-                value = Sequences.stream(value)
-                        .map(item -> dereference(field, item))
-                        .collect(Collectors.toCollection(
-                                value instanceof Set ? LinkedHashSet::new
-                                        : ArrayList::new));
-            }
-        }
-        return value;
     }
 
     /**
@@ -297,19 +281,6 @@ public abstract class Record implements Comparable<Record> {
             }
 
         };
-    }
-
-    /**
-     * Return all the non-internal {@link Field fields} in this {@code clazz}.
-     * 
-     * @param clazz
-     * @return the non-internal {@link Field fields}
-     */
-    private static Set<Field> getFields(Class<? extends Record> clazz) {
-        return Arrays.asList(Reflection.getAllDeclaredFields(clazz)).stream()
-                .filter(field -> !INTERNAL_FIELDS.keySet()
-                        .contains(field.getName()))
-                .collect(Collectors.toSet());
     }
 
     /**
@@ -863,10 +834,11 @@ public abstract class Record implements Comparable<Record> {
                 Object value = dynamicData.get(key);
                 if(value == null) {
                     try {
-                        Field field = Reflection.getDeclaredField(key, this);
+                        Field field = StaticAnalysis.instance().getField(this,
+                                key);
                         if(isReadableField(field)) {
                             value = field.get(this);
-                            value = dereference(field, value);
+                            value = dereference(key, value);
                         }
                     }
                     catch (Exception e) {/* ignore */}
@@ -1495,13 +1467,12 @@ public abstract class Record implements Comparable<Record> {
                             ImmutableSet.of());
                     if(Collection.class.isAssignableFrom(type)
                             || type.isArray()) {
-                        Class<?> collectedType = type
-                                .isArray()
-                                        ? type.getComponentType()
-                                        : Iterables.getFirst(
-                                                Reflection.getTypeArguments(key,
-                                                        this.getClass()),
-                                                Object.class);
+                        Class<?> collectedType = type.isArray()
+                                ? type.getComponentType()
+                                : Iterables.getFirst(
+                                        StaticAnalysis.instance()
+                                                .getTypeArguments(this, key),
+                                        Object.class);
                         ArrayBuilder collector = ArrayBuilder.builder();
                         stored.forEach(item -> {
                             Object converted = convert(path, collectedType,
@@ -1959,8 +1930,9 @@ public abstract class Record implements Comparable<Record> {
                 Object value;
                 if(isReadableField(field)) {
                     value = field.get(this);
-                    value = dereference(field, value);
-                    data.put(field.getName(), value);
+                    String key = field.getName();
+                    value = dereference(key, value);
+                    data.put(key, value);
                 }
             }
             catch (ReflectiveOperationException e) {
@@ -1982,12 +1954,43 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Dereference the {@code value} stored for {@code key} if it is a
+     * {@link DeferredReference} or a {@link Sequence} of them.
+     * 
+     * @param key
+     * @param value
+     * @return the dereferenced value if it can be dereferenced or the original
+     *         input
+     */
+    private Object dereference(String key, Object value) {
+        if(value == null) {
+            return value;
+        }
+        else if(value instanceof DeferredReference) {
+            value = ((DeferredReference<?>) value).get();
+        }
+        else if(Sequences.isSequence(value)) {
+            Collection<Class<?>> typeArgs = StaticAnalysis.instance()
+                    .getTypeArguments(this, key);
+            if(typeArgs.contains(DeferredReference.class)
+                    || typeArgs.contains(Object.class)) {
+                value = Sequences.stream(value)
+                        .map(item -> dereference(key, item))
+                        .collect(Collectors.toCollection(
+                                value instanceof Set ? LinkedHashSet::new
+                                        : ArrayList::new));
+            }
+        }
+        return value;
+    }
+
+    /**
      * Return all the non-internal {@link Field fields} in this class.
      * 
      * @return the non-internal {@link Field fields}
      */
-    private Set<Field> fields() {
-        return getFields(this.getClass());
+    private Collection<Field> fields() {
+        return StaticAnalysis.instance().getFields(this);
     }
 
     /**
