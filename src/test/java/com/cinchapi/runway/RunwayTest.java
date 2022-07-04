@@ -38,6 +38,7 @@ import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Random;
+import com.cinchapi.runway.bootstrap.StaticAnalysis;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -568,6 +569,36 @@ public class RunwayTest extends ClientServerTest {
             Assert.assertTrue(passed.get());
         }
     }
+    
+    @Test
+    public void testLoadRecordWithLinks() {
+        Organization org = new Organization("Org");
+        Person person = new Person("Jeff Nelson", org);
+        Employee employee = new Employee("John Doe", org, person);
+        employee.save();
+        employee = runway.load(Employee.class, employee.id());
+        System.out.println(employee);
+        // TODO: finish by asserting some things
+    }
+    
+    @Test
+    public void testStaticAnalysisHasFieldOfTypeRecordInClass() {
+        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Player.class));
+        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Jock.class));
+        Assert.assertTrue(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Person.class));
+    }
+    
+    @Test
+    public void testStaticAnalysisHasFieldOfTypeRecordInClassHierarchy() {
+        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Entity.class));
+        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Human.class));
+        Assert.assertTrue(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Parent.class));
+        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(NonParent.class));
+        Assert.assertTrue(StaticAnalysis.instance().hasFieldOfTypeRecordInClassHierarchy(Entity.class));
+        Assert.assertTrue(StaticAnalysis.instance().hasFieldOfTypeRecordInClassHierarchy(Human.class));
+        Assert.assertTrue(StaticAnalysis.instance().hasFieldOfTypeRecordInClassHierarchy(Parent.class));
+        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClassHierarchy(NonParent.class));
+    }
 
     class Player extends Record {
         String name;
@@ -672,6 +703,17 @@ public class RunwayTest extends ClientServerTest {
             this.organization = organization;
         }
     }
+    
+    class Employee extends Person {
+        
+        public final Person boss;
+
+        public Employee(String name, Organization organization, Person boss) {
+            super(name, organization);
+            this.boss = boss;
+        }     
+        
+    }
 
     class Organization extends Record {
 
@@ -753,6 +795,19 @@ public class RunwayTest extends ClientServerTest {
             }
         }
 
+    }
+    
+    class Parent extends Human {
+        
+        Human child;
+    }
+    
+    class NonParent extends Human {
+        
+    }
+    
+    class NonNonParent extends NonParent {
+        
     }
 
 }
