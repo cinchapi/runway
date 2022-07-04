@@ -26,6 +26,7 @@ import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -79,6 +80,7 @@ import com.cinchapi.concourse.util.Numbers;
 import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.concourse.validate.Keys;
+import com.cinchapi.runway.bootstrap.StaticAnalysis;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
@@ -130,6 +132,30 @@ import com.google.gson.stream.JsonWriter;
 public abstract class Record implements Comparable<Record> {
 
     /**
+     * Return all the non-internal {@link Field fields} in this {@code clazz}.
+     * 
+     * @param clazz
+     * @return the non-internal {@link Field fields}
+     */
+    public static Set<Field> getFields(Class<? extends Record> clazz) {
+        return Arrays.asList(Reflection.getAllDeclaredFields(clazz)).stream()
+                .filter(field -> !INTERNAL_FIELDS.keySet()
+                        .contains(field.getName()))
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * Return the non-cyclic paths (e.g., keys and navigation keys) for members
+     * of {@code clazz}.
+     * 
+     * @param clazz
+     * @return the paths
+     */
+    public static Set<String> getPaths(Class<? extends Record> clazz) {
+        return getPaths(clazz, "", Sets.newHashSet());
+    }
+
+    /**
      * Return {@code true} if the matching {@code condition} for data that is
      * part of the specified {@code clazz} can be resolved entirely by the
      * database, or must be done so locally because it touches {@link #derived()
@@ -175,36 +201,6 @@ public abstract class Record implements Comparable<Record> {
         finally {
             connections.release(concourse);
         }
-    }
-
-    /**
-     * Dereference the {@code value} stored for {@code field} if it is a
-     * {@link DeferredReference} or a {@link Sequence} of them.
-     * 
-     * @param field
-     * @param value
-     * @return the dereferenced value if it can be dereferenced or the original
-     *         input
-     */
-    private static Object dereference(Field field, Object value) {
-        if(value == null) {
-            return value;
-        }
-        else if(value instanceof DeferredReference) {
-            value = ((DeferredReference<?>) value).get();
-        }
-        else if(Sequences.isSequence(value)) {
-            Collection<Class<?>> typeArgs = Reflection.getTypeArguments(field);
-            if(typeArgs.contains(DeferredReference.class)
-                    || typeArgs.contains(Object.class)) {
-                value = Sequences.stream(value)
-                        .map(item -> dereference(field, item))
-                        .collect(Collectors.toCollection(
-                                value instanceof Set ? LinkedHashSet::new
-                                        : ArrayList::new));
-            }
-        }
-        return value;
     }
 
     /**
@@ -288,16 +284,66 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return all the non-internal {@link Field fields} in this {@code clazz}.
+     * Execute the equivalent logic of {@link Map#getOrDefault(Object, Object)}
+     * on {@code map}, but ensure that a false negative bug does not occur.
+     * 
+     * @param map
+     * @param key
+     * @param defaultValue
+     * @return the value associated with {@code key} in {@code map} or
+     *         {@code defaultValue} if no such value exists
+     */
+    private static <K, V> V getOrDefaultSafely(Map<K, V> map, K key,
+            V defaultValue) {
+        // Handle corner case where it has been observed that Map#getOrDefault
+        // occasionally/randomly does not return a value for a key even though
+        // that key is indeed in the map.
+        V value = map.get(key);
+        if(value == null) {
+            if(!map.containsKey(key.toString() + "." + IDENTIFIER_KEY)) {
+                for (Entry<K, V> entry : map.entrySet()) {
+                    if(key.equals(entry.getKey())) {
+                        value = entry.getValue();
+                        break;
+                    }
+                }
+            }
+        }
+        return value != null ? value : defaultValue;
+    }
+
+    /**
+     * Return the non-cyclic paths (e.g., keys and navigation keys) for members
+     * of {@code clazz}; all prefixed with {@code prefix} and using
+     * {@code ancestors} for cycle detection.
      * 
      * @param clazz
-     * @return the non-internal {@link Field fields}
+     * @return the paths
      */
-    private static Set<Field> getFields(Class<? extends Record> clazz) {
-        return Arrays.asList(Reflection.getAllDeclaredFields(clazz)).stream()
-                .filter(field -> !INTERNAL_FIELDS.keySet()
-                        .contains(field.getName()))
-                .collect(Collectors.toSet());
+    @SuppressWarnings("unchecked")
+    private static Set<String> getPaths(Class<? extends Record> clazz,
+            String prefix, Set<Class<? extends Record>> ancestors) {
+        ancestors.add(clazz);
+        Set<String> paths = new LinkedHashSet<>();
+        paths.add(prefix + SECTION_KEY);
+        paths.add(prefix + IDENTIFIER_KEY);
+        paths.add(prefix + REALMS_KEY);
+        for (Field field : getFields(clazz)) {
+            Class<?> type = field.getType();
+            Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
+            if(Record.class.isAssignableFrom(type)
+                    && !ancestors.contains(type)) {
+                Class<? extends Record> _type = (Class<? extends Record>) type;
+                lineage.add(_type);
+                Set<String> nested = getPaths(_type,
+                        prefix + field.getName() + ".", lineage);
+                paths.addAll(nested);
+            }
+            else {
+                paths.add(prefix + field.getName());
+            }
+        }
+        return paths;
     }
 
     /**
@@ -338,15 +384,34 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      * @return the loaded Record
      */
-    @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
             TLongObjectMap<Record> existing, ConnectionPool connections,
             Concourse concourse, Runway runway,
             @Nullable Map<String, Set<Object>> data) {
+        return load(clazz, id, existing, connections, concourse, runway, data,
+                null);
+    }
+
+    /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id}.
+     * 
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @param concourse
+     * @return the loaded Record
+     */
+    @SuppressWarnings("unchecked")
+    private static <T extends Record> T load(Class<?> clazz, long id,
+            TLongObjectMap<Record> existing, ConnectionPool connections,
+            Concourse concourse, Runway runway,
+            @Nullable Map<String, Set<Object>> data, String prefix) {
         T record = (T) newDefaultInstance(clazz, connections);
         setInternalFieldValue("id", id, record);
         record.assign(runway);
-        record.load(concourse, existing, data);
+        record.load(concourse, existing, data, prefix);
         record.onLoad();
         return record;
     }
@@ -470,6 +535,11 @@ public abstract class Record implements Comparable<Record> {
                                                          // simple/short key
                                                          // name that is likely
                                                          // to avoid collisions
+
+    /**
+     * The key that references a records id in Concourse.
+     */
+    private static final String IDENTIFIER_KEY = "$id$";
 
     /**
      * The prefix applied to a key provided to the
@@ -764,10 +834,11 @@ public abstract class Record implements Comparable<Record> {
                 Object value = dynamicData.get(key);
                 if(value == null) {
                     try {
-                        Field field = Reflection.getDeclaredField(key, this);
+                        Field field = StaticAnalysis.instance().getField(this,
+                                key);
                         if(isReadableField(field)) {
                             value = field.get(this);
-                            value = dereference(field, value);
+                            value = dereference(key, value);
                         }
                     }
                     catch (Exception e) {/* ignore */}
@@ -1112,7 +1183,7 @@ public abstract class Record implements Comparable<Record> {
         Map<String, Object> data = pool.filter(filter).collect(Association::of,
                 accumulator, MergeStrategies::upsert);
         return data;
-    };
+    }
 
     /**
      * Return a map that contains "readable" data from this {@link Record}.
@@ -1327,8 +1398,23 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      * @param existing
      */
-    final void load(Concourse concourse, TLongObjectMap<Record> existing) {
+    /* package */ final void load(Concourse concourse,
+            TLongObjectMap<Record> existing) {
         load(concourse, existing, null);
+    }
+
+    /**
+     * Load an existing record from the database and add all of it to this
+     * instance in memory.
+     * 
+     * @param concourse
+     * @param existing
+     * @param data
+     */
+    /* package */ final void load(Concourse concourse,
+            TLongObjectMap<Record> existing,
+            @Nullable Map<String, Set<Object>> data) {
+        load(concourse, existing, data, null);
     }
 
     /**
@@ -1342,17 +1428,30 @@ public abstract class Record implements Comparable<Record> {
      */
     /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
     final void load(Concourse concourse, TLongObjectMap<Record> existing,
-            @Nullable Map<String, Set<Object>> data) {
+            @Nullable Map<String, Set<Object>> data, @Nullable String prefix) {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
-        checkConstraints(concourse, data);
+        if(data == null) {
+            Set<String> paths = runway
+                    .getPathsForClassIfSupported(this.getClass());
+            // @formatter:off
+            data = paths != null 
+                    ? concourse.select(paths, id)
+                    : concourse.select(id);
+            // @formatter:on
+        }
+        if(prefix == null
+                || !runway.properties().supportsPreSelectLinkedRecords()) {
+            prefix = "";
+        }
+        checkConstraints(concourse, data, prefix);
         if(inZombieState(id, concourse, data)) {
             concourse.clear(id);
             throw new ZombieException();
         }
-        data = data == null ? concourse.select(id) : data;
-        Set<Object> realms = data.getOrDefault(REALMS_KEY, ImmutableSet.of());
+        Set<Object> realms = data.getOrDefault(prefix + REALMS_KEY,
+                ImmutableSet.of());
         _realms = realms.size() > 0
                 ? realms.stream().map(Object::toString)
                         .collect(Collectors.toCollection(LinkedHashSet::new))
@@ -1361,36 +1460,23 @@ public abstract class Record implements Comparable<Record> {
             try {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     String key = field.getName();
+                    String path = prefix + key;
                     Class<?> type = field.getType();
                     Object value = null;
-                    Set<Object> stored = data.get(key);
-                    if(stored == null) {
-                        // Handle corner case where it has been observed that
-                        // data.getOrDefault occasionally/randomly does not
-                        // return a value for a key even though that key is
-                        // indeed in the map.
-                        for (Entry<String, Set<Object>> entry : data
-                                .entrySet()) {
-                            if(key.equals(entry.getKey())) {
-                                stored = entry.getValue();
-                                break;
-                            }
-                        }
-                        stored = stored == null ? ImmutableSet.of() : stored;
-                    }
+                    Set<Object> stored = getOrDefaultSafely(data, path,
+                            ImmutableSet.of());
                     if(Collection.class.isAssignableFrom(type)
                             || type.isArray()) {
-                        Class<?> collectedType = type
-                                .isArray()
-                                        ? type.getComponentType()
-                                        : Iterables.getFirst(
-                                                Reflection.getTypeArguments(key,
-                                                        this.getClass()),
-                                                Object.class);
+                        Class<?> collectedType = type.isArray()
+                                ? type.getComponentType()
+                                : Iterables.getFirst(
+                                        StaticAnalysis.instance()
+                                                .getTypeArguments(this, key),
+                                        Object.class);
                         ArrayBuilder collector = ArrayBuilder.builder();
                         stored.forEach(item -> {
-                            Object converted = convert(key, collectedType, item,
-                                    concourse, existing);
+                            Object converted = convert(path, collectedType,
+                                    item, concourse, existing);
                             if(converted != null) {
                                 collector.add(converted);
                             }
@@ -1425,8 +1511,34 @@ public abstract class Record implements Comparable<Record> {
                         // Populate a non-collection variable with the most
                         // recently stored value for the #key in Concourse.
                         Object first = Iterables.getFirst(stored, null);
-                        if(first != null) {
-                            value = convert(key, type, first, concourse,
+                        if(first == null
+                                && Record.class.isAssignableFrom(type)) {
+                            // Check to see if data for a nested Record was
+                            // pre-selected and load it without making another
+                            // database roundtrip.
+                            String prepend = path + ".";
+                            Long id = (Long) Iterables.getFirst(
+                                    data.getOrDefault(prepend + IDENTIFIER_KEY,
+                                            ImmutableSet.of()),
+                                    null);
+                            if(id != null) {
+                                String $type = (String) Iterables.getFirst(
+                                        data.getOrDefault(prepend + SECTION_KEY,
+                                                ImmutableSet.of()),
+                                        null);
+                                if($type != null) {
+                                    type = Reflection.getClassCasted($type);
+                                }
+                                value = existing.get(id);
+                                value = value == null
+                                        ? load(type, id, existing, connections,
+                                                concourse, runway, data,
+                                                prepend)
+                                        : value;
+                            }
+                        }
+                        else if(first != null) {
+                            value = convert(path, type, first, concourse,
                                     existing);
                         }
                     }
@@ -1436,7 +1548,7 @@ public abstract class Record implements Comparable<Record> {
                     else if(value == null
                             && field.isAnnotationPresent(Required.class)) {
                         throw new IllegalStateException("Record " + id
-                                + " cannot be loaded because '" + key
+                                + " cannot be loaded because '" + path
                                 + "' is a required field, but no value is present in the database.");
                     }
                     else {
@@ -1624,7 +1736,7 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalStateException
      */
     private void checkConstraints(Concourse concourse,
-            @Nullable Map<String, Set<Object>> data) {
+            @Nullable Map<String, Set<Object>> data, String prefix) {
         try {
             String section = null;
             if(data == null) {
@@ -1632,15 +1744,15 @@ public abstract class Record implements Comparable<Record> {
             }
             else {
                 section = (String) Iterables
-                        .getLast(data.computeIfAbsent(SECTION_KEY,
+                        .getLast(data.computeIfAbsent(prefix + SECTION_KEY,
                                 ignore -> concourse.select(SECTION_KEY, id)));
             }
             Verify.that(section != null);
             Verify.that(
                     section.equals(__) || Class.forName(__)
                             .isAssignableFrom(Class.forName(section)),
-                    "Cannot load a record from section %s "
-                            + "into a Record of type %s",
+                    "Cannot load a record from section {} "
+                            + "into a Record of type {}",
                     section, __);
         }
         catch (ReflectiveOperationException | IllegalStateException e) {
@@ -1818,8 +1930,9 @@ public abstract class Record implements Comparable<Record> {
                 Object value;
                 if(isReadableField(field)) {
                     value = field.get(this);
-                    value = dereference(field, value);
-                    data.put(field.getName(), value);
+                    String key = field.getName();
+                    value = dereference(key, value);
+                    data.put(key, value);
                 }
             }
             catch (ReflectiveOperationException e) {
@@ -1841,12 +1954,43 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Dereference the {@code value} stored for {@code key} if it is a
+     * {@link DeferredReference} or a {@link Sequence} of them.
+     * 
+     * @param key
+     * @param value
+     * @return the dereferenced value if it can be dereferenced or the original
+     *         input
+     */
+    private Object dereference(String key, Object value) {
+        if(value == null) {
+            return value;
+        }
+        else if(value instanceof DeferredReference) {
+            value = ((DeferredReference<?>) value).get();
+        }
+        else if(Sequences.isSequence(value)) {
+            Collection<Class<?>> typeArgs = StaticAnalysis.instance()
+                    .getTypeArguments(this, key);
+            if(typeArgs.contains(DeferredReference.class)
+                    || typeArgs.contains(Object.class)) {
+                value = Sequences.stream(value)
+                        .map(item -> dereference(key, item))
+                        .collect(Collectors.toCollection(
+                                value instanceof Set ? LinkedHashSet::new
+                                        : ArrayList::new));
+            }
+        }
+        return value;
+    }
+
+    /**
      * Return all the non-internal {@link Field fields} in this class.
      * 
      * @return the non-internal {@link Field fields}
      */
-    private Set<Field> fields() {
-        return getFields(this.getClass());
+    private Collection<Field> fields() {
+        return StaticAnalysis.instance().getFields(this);
     }
 
     /**
