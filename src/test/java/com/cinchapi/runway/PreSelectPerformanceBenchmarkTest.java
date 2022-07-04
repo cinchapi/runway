@@ -33,7 +33,6 @@ import com.cinchapi.runway.Runway.ReadStrategy;
  * @author Jeff Nelson
  */
 @Versions({ "0.11.2", "latest"})
-@Ignore
 public class PreSelectPerformanceBenchmarkTest extends CrossVersionTest {
 
     @Override
@@ -67,7 +66,7 @@ public class PreSelectPerformanceBenchmarkTest extends CrossVersionTest {
     public void testPerformance() {
         Runway db = Runway.builder().readStrategy(ReadStrategy.BULK)
                 .port(server.getClientPort()).build();
-        Benchmark benchmark = new Benchmark(TimeUnit.SECONDS) {
+        Benchmark benchmark = new Benchmark(TimeUnit.MILLISECONDS) {
 
             @Override
             public void action() {

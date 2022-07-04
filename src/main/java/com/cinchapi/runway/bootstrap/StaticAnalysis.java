@@ -29,6 +29,7 @@ package com.cinchapi.runway.bootstrap;
 import java.lang.reflect.Field;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -78,7 +79,7 @@ public final class StaticAnalysis {
 
     /**
      * A mapping from each {@link Record} class to the traversable paths in its
-     * hierarchy.
+     * {@link #hierarchies hierarchy}.
      */
     private final Map<Class<? extends Record>, Set<String>> pathsByClassHierarchy;
 
@@ -102,6 +103,19 @@ public final class StaticAnalysis {
     private final Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass;
 
     /**
+     * A collection containing each {@link Record} class that has at least one
+     * field whose type is a subclass of {@link Record}.
+     */
+    private final Set<Class<? extends Record>> hasRecordFieldTypeByClass;
+
+    /**
+     * A collection containing each {@link Record} class that itself or is the
+     * ancestors of a {@link Record} class that has at least one field whose
+     * type is a subclass of {@link Record}.
+     */
+    private final Set<Class<? extends Record>> hasRecordFieldTypeByClassHierarchy;
+
+    /**
      * Construct a new instance.
      */
     private StaticAnalysis() {
@@ -110,6 +124,8 @@ public final class StaticAnalysis {
         this.pathsByClassHierarchy = new HashMap<>();
         this.fieldsByClass = new HashMap<>();
         this.fieldTypeArgumentsByClass = new HashMap<>();
+        this.hasRecordFieldTypeByClass = new HashSet<>();
+        this.hasRecordFieldTypeByClassHierarchy = new HashSet<>();
         Reflections reflection = new Reflections(new SubTypesScanner());
         reflection.getSubTypesOf(Record.class).forEach(type -> {
             // Build class hierarchy
@@ -130,12 +146,20 @@ public final class StaticAnalysis {
                 String key = field.getName();
                 fields.put(key, field);
                 fieldTypeArguments.put(key, Reflection.getTypeArguments(field));
+                if(Record.class.isAssignableFrom(field.getType())) {
+                    hasRecordFieldTypeByClass.add(type);
+                }
             });
+        });
+        this.hierarchies.forEach((type, relative) -> {
+            if(hasRecordFieldTypeByClass.contains(relative)) {
+                hasRecordFieldTypeByClassHierarchy.add(type);
+            }
         });
     }
 
     /**
-     * Return the hierarchy of {@code clazz}.
+     * Return the descendants of {@code clazz}.
      * 
      * @param clazz
      * @return the hierarchy
@@ -212,7 +236,7 @@ public final class StaticAnalysis {
 
     /**
      * Return all the paths (e.g., navigable keys based on fields with linked
-     * {@link Record} types) for the entire hierarchy of {@code clazz}.
+     * {@link Record} types) for {@code clazz} and all of its descendents.
      * 
      * @param clazz
      * @return the paths
@@ -251,6 +275,30 @@ public final class StaticAnalysis {
     public <T extends Record> Collection<Class<?>> getTypeArguments(T record,
             String key) {
         return getTypeArguments(record.getClass(), key);
+    }
+
+    /**
+     * Return {@code true} if {@code clazz} has any fields whose type is a
+     * subclass of {@link Record}.
+     * 
+     * @param clazz
+     * @return {@code true} if {@code clazz} has any {@link Record} type fields
+     */
+    public boolean hasFieldOfTypeRecordInClass(Class<? extends Record> clazz) {
+        return hasRecordFieldTypeByClass.contains(clazz);
+    }
+
+    /**
+     * Return {@code true} if {@code clazz}, or any of its descendants, have any
+     * fields whose type is a subclass of {@link Record}.
+     * 
+     * @param clazz
+     * @return {@code true} if {@code clazz}, or any of its children, have any
+     *         {@link Record} type fields
+     */
+    public boolean hasFieldOfTypeRecordInClassHierarchy(
+            Class<? extends Record> clazz) {
+        return hasRecordFieldTypeByClassHierarchy.contains(clazz);
     }
 
     /**

@@ -1041,9 +1041,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     final Set<String> getPathsForClassHierarchyIfSupported(
             Class<? extends Record> clazz) {
-        return supportsPreSelectLinkedRecords
-                ? StaticAnalysis.instance().getPathsForClassHierarchy(clazz)
-                : null;
+        return supportsPreSelectLinkedRecords && StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClassHierarchy(clazz)
+                        ? StaticAnalysis.instance()
+                                .getPathsForClassHierarchy(clazz)
+                        : null;
     }
 
     /**
@@ -1056,8 +1058,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     final Set<String> getPathsForClassIfSupported(
             Class<? extends Record> clazz) {
         return supportsPreSelectLinkedRecords
-                ? StaticAnalysis.instance().getPathsForClass(clazz)
-                : null;
+                && StaticAnalysis.instance().hasFieldOfTypeRecordInClass(clazz)
+                        ? StaticAnalysis.instance().getPathsForClass(clazz)
+                        : null;
     }
 
     /**
