@@ -49,6 +49,8 @@ import java.util.stream.Stream;
 import javax.annotation.Nullable;
 
 import org.apache.commons.lang.StringUtils;
+import org.reflections.Reflections;
+import org.reflections.scanners.SubTypesScanner;
 
 import com.cinchapi.ccl.Parser;
 import com.cinchapi.common.base.AnyStrings;
@@ -76,11 +78,11 @@ import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
+import com.cinchapi.concourse.util.Logging;
 import com.cinchapi.concourse.util.Numbers;
 import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.concourse.validate.Keys;
-import com.cinchapi.runway.bootstrap.StaticAnalysis;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
@@ -169,8 +171,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public static <T extends Record> boolean isDatabaseResolvableCondition(
             Class<T> clazz, Criteria condition) {
-        Set<String> intrinsic = INTRINSIC_PROPERTY_CACHE.computeIfAbsent(clazz,
-                c -> LazyTransformSet.of(getFields(c), Field::getName));
+        Set<String> intrinsic = StaticAnalysis.instance().getKeys(clazz);
         Parser parser = Parsers.create(condition);
         for (String key : parser.analyze().keys()) {
             if(!Keys.isNavigationKey(key) && !intrinsic.contains(key)) {
@@ -1548,7 +1549,7 @@ public abstract class Record implements Comparable<Record> {
                     else if(value == null
                             && field.isAnnotationPresent(Required.class)) {
                         throw new IllegalStateException("Record " + id
-                                + " cannot be loaded because '" + path
+                                + " cannot be loaded because '" + key
                                 + "' is a required field, but no value is present in the database.");
                     }
                     else {
@@ -2218,6 +2219,388 @@ public abstract class Record implements Comparable<Record> {
             Tag json = Tag.create(gson.toJson(value));
             store(key, json, concourse, append, seen);
         }
+    }
+
+    public static class StaticAnalysis {
+
+        /**
+         * Return the {@link StaticAnalysis}.
+         * <p>
+         * NOTE: Scanning the classpath to perform static analysis adds startup
+         * costs proportional to the number of classes defined, so it is only
+         * done once to minimize the effect of the cost.
+         * </p>
+         * 
+         * @return the {@link StaticAnalysis}
+         */
+        public static StaticAnalysis instance() {
+            return INSTANCE;
+        }
+
+        /**
+         * Return the non-cyclic paths (e.g., keys and navigation keys) for
+         * the fields in {@code clazz}; all prefixed with {@code prefix} and
+         * using {@code ancestors} for cycle detection.
+         * 
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @return the paths
+         */
+        private static Set<String> computePaths(Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass) {
+            return computePaths(clazz, hierarchies, fieldsByClass, "",
+                    Sets.newHashSet());
+        }
+
+        /**
+         * Return the non-cyclic paths (e.g., keys and navigation keys) for
+         * the fields in {@code clazz}; all prefixed with {@code prefix} and
+         * using {@code ancestors} for cycle detection.
+         * 
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @param prefix
+         * @param ancestors
+         * @return the paths
+         */
+        @SuppressWarnings("unchecked")
+        private static Set<String> computePaths(Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
+                String prefix, Set<Class<? extends Record>> ancestors) {
+            ancestors.add(clazz);
+            Set<String> paths = new LinkedHashSet<>();
+            paths.add(prefix + SECTION_KEY);
+            paths.add(prefix + IDENTIFIER_KEY);
+            paths.add(prefix + REALMS_KEY);
+            Collection<Field> fields = fieldsByClass
+                    .getOrDefault(clazz, ImmutableMap.of()).values();
+            for (Field field : fields) {
+                Class<?> type = field.getType();
+                Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
+                if(Record.class.isAssignableFrom(type)
+                        && !ancestors.contains(type)
+                        && hierarchies.get((Class<? extends Record>) type)
+                                .isEmpty()) {
+                    Class<? extends Record> _type = (Class<? extends Record>) type;
+                    lineage.add(_type);
+                    Set<String> nested = computePaths(
+                            (Class<? extends Record>) type, hierarchies,
+                            fieldsByClass, prefix + field.getName() + ".",
+                            lineage);
+                    paths.addAll(nested);
+                }
+                else {
+                    paths.add(prefix + field.getName());
+                }
+            }
+            return paths;
+        }
+
+        /**
+         * Perform {@link #computePaths(Class, Multimap, Map)} for each
+         * {@link Class} in the {@link #hierarchies hierarchy} of {@code clazz}.
+         * 
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @return all the paths in the hierarchy
+         */
+        @SuppressWarnings("unchecked")
+        private static Set<String> computePathsHierarchy(
+                Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass) {
+            Set<String> paths = new LinkedHashSet<>();
+            Collection<Class<?>> hiearchy = hierarchies.get(clazz);
+            for (Class<?> type : hiearchy) {
+                paths.addAll(computePaths((Class<? extends Record>) type,
+                        hierarchies, fieldsByClass));
+            }
+            return paths;
+        }
+
+        static {
+            Logging.disable(Reflections.class);
+            Reflections.log = null; // turn off reflection logging
+        }
+
+        private static final StaticAnalysis INSTANCE = new StaticAnalysis();
+
+        /**
+         * A mapping from each {@link Record} class to its traversable paths.
+         */
+        private final Map<Class<? extends Record>, Set<String>> pathsByClass;
+
+        /**
+         * A mapping from each {@link Record} class to the traversable paths in
+         * its {@link #hierarchies hierarchy}.
+         */
+        private final Map<Class<? extends Record>, Set<String>> pathsByClassHierarchy;
+
+        /**
+         * A mapping from each {@link Record} class to all of its descendants.
+         * This facilitates querying across hierarchies.
+         */
+        private final Multimap<Class<? extends Record>, Class<?>> hierarchies;
+
+        /**
+         * A mapping from each {@link Record} class to each its non-internal
+         * keys,
+         * each of which is mapped to the associated {@link Field} object.
+         */
+        private final Map<Class<? extends Record>, Map<String, Field>> fieldsByClass;
+
+        /**
+         * A mapping from each {@link Record} class to each of its non-internal
+         * keys, each of which is mapped to a collection of type arguments
+         * associated with that corresponding {@link Field} object.
+         */
+        private final Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass;
+
+        /**
+         * A collection containing each {@link Record} class that has at least
+         * one
+         * field whose type is a subclass of {@link Record}.
+         */
+        private final Set<Class<? extends Record>> hasRecordFieldTypeByClass;
+
+        /**
+         * A collection containing each {@link Record} class that itself or is
+         * the
+         * ancestors of a {@link Record} class that has at least one field whose
+         * type is a subclass of {@link Record}.
+         */
+        private final Set<Class<? extends Record>> hasRecordFieldTypeByClassHierarchy;
+
+        /**
+         * Construct a new instance.
+         */
+        private StaticAnalysis() {
+            this.hierarchies = HashMultimap.create();
+            this.pathsByClass = new HashMap<>();
+            this.pathsByClassHierarchy = new HashMap<>();
+            this.fieldsByClass = new HashMap<>();
+            this.fieldTypeArgumentsByClass = new HashMap<>();
+            this.hasRecordFieldTypeByClass = new HashSet<>();
+            this.hasRecordFieldTypeByClassHierarchy = new HashSet<>();
+            Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
+            Reflections reflection = new Reflections(new SubTypesScanner());
+            reflection.getSubTypesOf(Record.class).forEach(type -> {
+                // Build class hierarchy
+                hierarchies.put(type, type);
+                reflection.getSubTypesOf(type)
+                        .forEach(subType -> hierarchies.put(type, subType));
+
+                // Get non-internal fields and associated metadata
+                Stream<Field> nonInternalFields = Arrays
+                        .asList(Reflection.getAllDeclaredFields(type)).stream()
+                        .filter(field -> !internalFieldNames
+                                .contains(field.getName()));
+                nonInternalFields.forEach(field -> {
+                    Map<String, Field> fields = fieldsByClass
+                            .computeIfAbsent(type, $ -> new HashMap<>());
+                    Map<String, Collection<Class<?>>> fieldTypeArguments = fieldTypeArgumentsByClass
+                            .computeIfAbsent(type, $ -> new HashMap<>());
+                    String key = field.getName();
+                    fields.put(key, field);
+                    fieldTypeArguments.put(key,
+                            Reflection.getTypeArguments(field));
+                    if(Record.class.isAssignableFrom(field.getType())) {
+                        hasRecordFieldTypeByClass.add(type);
+                    }
+                });
+            });
+
+            hierarchies.forEach((type, relative) -> {
+                if(hasRecordFieldTypeByClass.contains(relative)) {
+                    hasRecordFieldTypeByClassHierarchy.add(type);
+                }
+            });
+
+            // Now that the hierarchies and fields for each Record type have
+            // been documented, go through again and compute the paths for each
+            // one
+            reflection.getSubTypesOf(Record.class).forEach(type -> {
+                pathsByClass.put(type,
+                        computePaths(type, hierarchies, fieldsByClass));
+                pathsByClassHierarchy.put(type, computePathsHierarchy(type,
+                        hierarchies, fieldsByClass));
+            });
+
+        }
+
+        /**
+         * Return the descendants of {@code clazz}.
+         * 
+         * @param clazz
+         * @return the hierarchy
+         */
+        public <T extends Record> Collection<Class<?>> getClassHierarchy(
+                Class<T> clazz) {
+            return hierarchies.get(clazz);
+        }
+
+        /**
+         * Return the {@link Field} object for {@code key} in {@code clazz}.
+         * 
+         * @param clazz
+         * @param key
+         * @return the {@link Field} object
+         */
+        public <T extends Record> Field getField(Class<T> clazz, String key) {
+            try {
+                return fieldsByClass.get(clazz).get(key);
+            }
+            catch (NullPointerException e) {
+                throw new IllegalArgumentException(
+                        "Unknown Record type: " + clazz);
+            }
+        }
+
+        /**
+         * Return the {@link Field} object for {@code key} in the {@link Class}
+         * of {@code record}.
+         * 
+         * @param record
+         * @param key
+         * @return the {@link Field} object
+         */
+        public <T extends Record> Field getField(T record, String key) {
+            return getField(record.getClass(), key);
+        }
+
+        /**
+         * Return the non-internal {@link Field} objects for {@code clazz}.
+         * 
+         * @param clazz
+         * @return the {@link Fields}
+         */
+        public <T extends Record> Collection<Field> getFields(Class<T> clazz) {
+            try {
+                return fieldsByClass.get(clazz).values();
+            }
+            catch (NullPointerException e) {
+                throw new IllegalArgumentException(
+                        "Unknown Record type: " + clazz);
+            }
+        }
+
+        /**
+         * Return the non-internal {@link Field} objects for {@link Class} of
+         * {@code record}.
+         * 
+         * @param record
+         * @return the {@link Fields}
+         */
+        public <T extends Record> Collection<Field> getFields(T record) {
+            return getFields(record.getClass());
+        }
+
+        /**
+         * Return the names of the non-internal fields in {@code clazz}.
+         * 
+         * @param clazz
+         * @return the keys
+         */
+        public <T extends Record> Set<String> getKeys(Class<T> clazz) {
+            try {
+                return fieldsByClass.get(clazz).keySet();
+            }
+            catch (NullPointerException e) {
+                throw new IllegalArgumentException(
+                        "Unknown Record type: " + clazz);
+            }
+        }
+
+        /**
+         * Return all the paths (e.g., navigable keys based on fields with
+         * linked
+         * {@link Record} types) for {@code clazz}.
+         * 
+         * @param clazz
+         * @return the paths
+         */
+        public <T extends Record> Set<String> getPaths(Class<T> clazz) {
+            return pathsByClass.get(clazz);
+        }
+
+        /**
+         * Return all the paths (e.g., navigable keys based on fields with
+         * linked
+         * {@link Record} types) for {@code clazz} and all of its descendents.
+         * 
+         * @param clazz
+         * @return the paths
+         */
+        public Set<String> getPathsHierarchy(Class<? extends Record> clazz) {
+            return pathsByClassHierarchy.get(clazz);
+        }
+
+        /**
+         * Return any defined type arguments for the field named {@code key} in
+         * {@code clazz}.
+         * 
+         * @param clazz
+         * @param key
+         * @return the type arguments
+         */
+        public <T extends Record> Collection<Class<?>> getTypeArguments(
+                Class<T> clazz, String key) {
+            try {
+                return fieldTypeArgumentsByClass.get(clazz).get(key);
+            }
+            catch (NullPointerException e) {
+                throw new IllegalArgumentException(
+                        "Unknown Record type: " + clazz);
+            }
+        }
+
+        /**
+         * Return any defined type arguments for the field named {@code key} in
+         * the
+         * {@link Class} of {@code record}.
+         * 
+         * @param clazz
+         * @param key
+         * @return the type arguments
+         */
+        public <T extends Record> Collection<Class<?>> getTypeArguments(
+                T record, String key) {
+            return getTypeArguments(record.getClass(), key);
+        }
+
+        /**
+         * Return {@code true} if {@code clazz} has any fields whose type is a
+         * subclass of {@link Record}.
+         * 
+         * @param clazz
+         * @return {@code true} if {@code clazz} has any {@link Record} type
+         *         fields
+         */
+        public boolean hasFieldOfTypeRecordInClass(
+                Class<? extends Record> clazz) {
+            return hasRecordFieldTypeByClass.contains(clazz);
+        }
+
+        /**
+         * Return {@code true} if {@code clazz}, or any of its descendants, have
+         * any
+         * fields whose type is a subclass of {@link Record}.
+         * 
+         * @param clazz
+         * @return {@code true} if {@code clazz}, or any of its children, have
+         *         any
+         *         {@link Record} type fields
+         */
+        public boolean hasFieldOfTypeRecordInClassHierarchy(
+                Class<? extends Record> clazz) {
+            return hasRecordFieldTypeByClassHierarchy.contains(clazz);
+        }
+
     }
 
     /**

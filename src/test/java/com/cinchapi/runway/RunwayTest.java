@@ -38,7 +38,7 @@ import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Random;
-import com.cinchapi.runway.bootstrap.StaticAnalysis;
+import com.cinchapi.runway.Record.StaticAnalysis;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -569,7 +569,7 @@ public class RunwayTest extends ClientServerTest {
             Assert.assertTrue(passed.get());
         }
     }
-    
+
     @Test
     public void testLoadRecordWithLinks() {
         Organization org = new Organization("Org");
@@ -580,24 +580,52 @@ public class RunwayTest extends ClientServerTest {
         System.out.println(employee);
         // TODO: finish by asserting some things
     }
-    
+
     @Test
     public void testStaticAnalysisHasFieldOfTypeRecordInClass() {
-        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Player.class));
-        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Jock.class));
-        Assert.assertTrue(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Person.class));
+        Assert.assertFalse(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClass(Player.class));
+        Assert.assertFalse(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClass(Jock.class));
+        Assert.assertTrue(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClass(Person.class));
     }
-    
+
     @Test
     public void testStaticAnalysisHasFieldOfTypeRecordInClassHierarchy() {
-        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Entity.class));
-        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Human.class));
-        Assert.assertTrue(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(Parent.class));
-        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClass(NonParent.class));
-        Assert.assertTrue(StaticAnalysis.instance().hasFieldOfTypeRecordInClassHierarchy(Entity.class));
-        Assert.assertTrue(StaticAnalysis.instance().hasFieldOfTypeRecordInClassHierarchy(Human.class));
-        Assert.assertTrue(StaticAnalysis.instance().hasFieldOfTypeRecordInClassHierarchy(Parent.class));
-        Assert.assertFalse(StaticAnalysis.instance().hasFieldOfTypeRecordInClassHierarchy(NonParent.class));
+        Assert.assertFalse(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClass(Entity.class));
+        Assert.assertFalse(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClass(Human.class));
+        Assert.assertTrue(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClass(Parent.class));
+        Assert.assertFalse(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClass(NonParent.class));
+        Assert.assertTrue(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClassHierarchy(Entity.class));
+        Assert.assertTrue(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClassHierarchy(Human.class));
+        Assert.assertTrue(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClassHierarchy(Parent.class));
+        Assert.assertFalse(StaticAnalysis.instance()
+                .hasFieldOfTypeRecordInClassHierarchy(NonParent.class));
+    }
+
+    @Test
+    public void testCannotFindAnyUniquePreSelectRepro() {
+        Toddler child = new Toddler();
+        child.name = "A. Nelson";
+        child.age = 2;
+        Parent parent = new Parent();
+        parent.name = "Jeff Nelson";
+        parent.child = child;
+        child.save();
+        parent.save();
+        System.out.println(child.id());
+        parent = runway.findAnyUnique(Parent.class, Criteria.where()
+                .key("name").operator(Operator.EQUALS).value("Jeff Nelson"));
+        System.out.println(parent);
+        Assert.assertEquals(parent.child.name, "A. Nelson");
     }
 
     class Player extends Record {
@@ -703,16 +731,16 @@ public class RunwayTest extends ClientServerTest {
             this.organization = organization;
         }
     }
-    
+
     class Employee extends Person {
-        
+
         public final Person boss;
 
         public Employee(String name, Organization organization, Person boss) {
             super(name, organization);
             this.boss = boss;
-        }     
-        
+        }
+
     }
 
     class Organization extends Record {
@@ -796,18 +824,24 @@ public class RunwayTest extends ClientServerTest {
         }
 
     }
-    
+
     class Parent extends Human {
-        
+
         Human child;
     }
-    
+
     class NonParent extends Human {
-        
+
+    }
+
+    class NonNonParent extends NonParent {
+
     }
     
-    class NonNonParent extends NonParent {
+    class Toddler extends Human {
         
+        @Required
+        int age;
     }
 
 }
