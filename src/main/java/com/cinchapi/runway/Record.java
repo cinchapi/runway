@@ -2155,6 +2155,12 @@ public abstract class Record implements Comparable<Record> {
         }
     }
 
+    /**
+     * A collection of static data about available {@link Record} types and
+     * their fields to make {@link Runway} operations more efficient.
+     *
+     * @author Jeff Nelson
+     */
     public static class StaticAnalysis {
 
         /**
