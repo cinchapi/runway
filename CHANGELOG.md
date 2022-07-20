@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.9.4 (TBD)
+* Fixed a bug that occurred when using *pre-select* to load a Record containing a reference field whose **declared** type is the parent class of a descendant class with additionally defined fields and the stored value for that field is an instance of that descendant class. In this case, the pre-select logic did not load data for the descendant defined fields, which resulted in unexpected `NullPointerException` regressions or an overall inability to load those Records if the descendant defined field was annotated as `Required`.
+
 #### Version 1.9.3 (July 4, 2022)
 * For instances of Concourse Server at version [`0.11.3`](https://github.com/cinchapi/concourse/releases/tag/v0.11.3)) or greater, we improved overall read performance by pre-selecting data for linked Records, whenever possible. Previously, if a `Record` contained an attribute whose type was another `Record`, Runway would eagerly load the data for that reference in a separate database call. So, if Runway needed to process a read of many Records with references to other Records, performance was poor because there were too many database round trips required. Now, Runway will detect when a `Record` has references to other Records and will  pre-select the data for those references while selecting the data for the parent `Record` if it is possible to do so. This greatly reduces the number of database round trips which drastically improves performance by up to `89.7%`.
   * This improvement is automatically enabled whenever `Runway` is connected to a Concourse deployment at version [`0.11.3+`]. If necessary, it is possible to disable the functionality when building a `Runway` instance by invoking the `disablePreSelectLinkedRecords()` method.

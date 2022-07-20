@@ -59,7 +59,7 @@ import com.cinchapi.concourse.lang.sort.OrderComponent;
 import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
-import com.cinchapi.runway.bootstrap.StaticAnalysis;
+import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.cinchapi.runway.util.Pagination;
 import com.github.zafarkhaja.semver.Version;
@@ -1043,8 +1043,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Class<? extends Record> clazz) {
         return supportsPreSelectLinkedRecords && StaticAnalysis.instance()
                 .hasFieldOfTypeRecordInClassHierarchy(clazz)
-                        ? StaticAnalysis.instance()
-                                .getPathsForClassHierarchy(clazz)
+                        ? StaticAnalysis.instance().getPathsHierarchy(clazz)
                         : null;
     }
 
@@ -1059,7 +1058,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Class<? extends Record> clazz) {
         return supportsPreSelectLinkedRecords
                 && StaticAnalysis.instance().hasFieldOfTypeRecordInClass(clazz)
-                        ? StaticAnalysis.instance().getPathsForClass(clazz)
+                        ? StaticAnalysis.instance().getPaths(clazz)
                         : null;
     }
 
