@@ -612,7 +612,7 @@ public class RunwayTest extends ClientServerTest {
     }
 
     @Test
-    public void testCannotFindAnyUniquePreSelectRepro() {
+    public void testPreSelectWithDescendantDefinedFields() {
         Toddler child = new Toddler();
         child.name = "A. Nelson";
         child.age = 2;

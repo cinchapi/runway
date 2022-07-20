@@ -808,26 +808,27 @@ public class RecordTest extends ClientServerTest {
         }
         Assert.assertNotEquals("10", mock.age);
     }
-    
+
     @Test(expected = IllegalStateException.class)
     public void testRequiredConstraintEnforcedOnExplicitLoad() {
         Mock mock = new Mock();
         mock.name = "Jeff Nelson";
         mock.age = 32;
         mock.save();
-        Concourse concourse = Concourse.at().port(server.getClientPort()).connect();
+        Concourse concourse = Concourse.at().port(server.getClientPort())
+                .connect();
         try {
             concourse.clear("name", mock.id());
         }
         finally {
             concourse.close();
         }
-        mock = runway.load(Mock.class, mock.id());     
+        mock = runway.load(Mock.class, mock.id());
     }
-    
+
     @Test(expected = IllegalStateException.class)
     public void testRequiredConstraintEnforcedOnImplicitLoad() {
-        for(int i = 0; i < Random.getScaleCount(); ++i) {
+        for (int i = 0; i < Random.getScaleCount(); ++i) {
             Mock m = new Mock();
             m.name = Random.getSimpleString();
             m.age = i;
@@ -837,19 +838,21 @@ public class RecordTest extends ClientServerTest {
         mock.name = "Jeff Nelson";
         mock.age = 32;
         mock.save();
-        Concourse concourse = Concourse.at().port(server.getClientPort()).connect();
+        Concourse concourse = Concourse.at().port(server.getClientPort())
+                .connect();
         try {
             concourse.clear("name", mock.id());
         }
         finally {
             concourse.close();
-        }    
-        Set<Mock> mocks = runway.find(Mock.class, Criteria.where().key("age").operator(Operator.LESS_THAN_OR_EQUALS).value(32));
-        for(Mock m : mocks) {
+        }
+        Set<Mock> mocks = runway.find(Mock.class, Criteria.where().key("age")
+                .operator(Operator.LESS_THAN_OR_EQUALS).value(32));
+        for (Mock m : mocks) {
             System.out.println(m.name);
         }
     }
-    
+
     @Test
     public void testDefaultRealms() {
         Mock mock = new Mock();
@@ -859,7 +862,7 @@ public class RecordTest extends ClientServerTest {
         mock = runway.load(Mock.class, mock.id());
         Assert.assertEquals(ImmutableSet.of(), mock.realms());
     }
-    
+
     @Test
     public void testAddRealm() {
         Mock mock = new Mock();
@@ -870,7 +873,7 @@ public class RecordTest extends ClientServerTest {
         mock = runway.load(Mock.class, mock.id());
         Assert.assertEquals(ImmutableSet.of("test"), mock.realms());
     }
-    
+
     @Test
     public void testAddMultiRealms() {
         Mock mock = new Mock();
@@ -884,7 +887,7 @@ public class RecordTest extends ClientServerTest {
         mock = runway.load(Mock.class, mock.id());
         Assert.assertEquals(ImmutableSet.of("test", "prod"), mock.realms());
     }
-    
+
     @Test
     public void testRemoveRealm() {
         Mock mock = new Mock();
@@ -901,7 +904,7 @@ public class RecordTest extends ClientServerTest {
         mock = runway.load(Mock.class, mock.id());
         Assert.assertEquals(ImmutableSet.of("prod"), mock.realms());
     }
-    
+
     @Test
     public void testRemoveAllRealms() {
         Mock mock = new Mock();
@@ -919,69 +922,122 @@ public class RecordTest extends ClientServerTest {
         mock = runway.load(Mock.class, mock.id());
         Assert.assertEquals(ImmutableSet.of(), mock.realms());
     }
-    
+
     @Test
-    public void testGetPaths() {
-        Set<String> paths = Record.getPaths(Gock.class);
-        long count = 0;
-        
-        /*
-         * Detect a path that would by cyclic and terminate it 
-         */
-        count = paths.stream().filter(path -> path.startsWith("gock")).count();
-        Assert.assertEquals(1, count);
-        count = paths.stream().filter(path -> path.startsWith("jock.testy")).count();
-        Assert.assertEquals(1, count);
-        count = paths.stream().filter(path -> path.startsWith("testy")).count();
-        Assert.assertEquals(1, count);
-        
-        /*
-         * Collection of Links is terminated (e.g. no numeric expansion paths)
-         */
-        count = paths.stream().filter(path -> path.startsWith("stock.tock.stocks")).count();
-        Assert.assertEquals(1, count);
-        count = paths.stream().filter(path -> path.startsWith("node.friends")).count();
-        Assert.assertEquals(1, count);
-        count = paths.stream().filter(path -> path.startsWith("jock.friends")).count();
-        Assert.assertEquals(1, count);
-        count = paths.stream().filter(path -> path.startsWith("friends")).count();
-        Assert.assertEquals(1, count);
-        
-        /*
-         * Expected Paths
-         */
-        Assert.assertTrue(paths.contains("stock.tock.zombie"));
-        Assert.assertTrue(paths.contains("node.label"));
-        Assert.assertTrue(paths.contains("user.name"));
-        Assert.assertTrue(paths.contains("user.email"));
-        Assert.assertTrue(paths.contains("user.company.name"));
-        Assert.assertTrue(paths.contains("sock.sock"));
-        Assert.assertTrue(paths.contains("sock.dock.dock"));
-        Assert.assertTrue(paths.contains("jock.name"));
-        Assert.assertTrue(paths.contains("jock2.name"));
-        Assert.assertTrue(paths.contains("name"));
-        
-        /*
-         * Deferred Reference Isn't Expanded
-         */
-        count = paths.stream().filter(path -> path.startsWith("jock.mentor")).count();
-        Assert.assertEquals(1, count);
-        count = paths.stream().filter(path -> path.startsWith("mentor")).count();
-        Assert.assertEquals(1, count);
-        
-        System.out.println(paths);       
+    public void testGetPathsWithDescendantDefinedFields() {
+        boolean computePathsForDescendantDefinedFields = Record.StaticAnalysis.COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS;
+        Record.StaticAnalysis.COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS = true;
+        Record.StaticAnalysis.instance().computeAllPossiblePaths();
+        try {
+            Set<String> paths = Record.StaticAnalysis.instance()
+                    .getPaths(Gock.class);
+            long count = 0;
+
+            /*
+             * Detect a path that would by cyclic and terminate it
+             */
+            count = paths.stream().filter(path -> path.startsWith("gock"))
+                    .count();
+            Assert.assertEquals(1, count);
+            count = paths.stream().filter(path -> path.startsWith("jock.testy"))
+                    .count();
+            Assert.assertEquals(1, count);
+            count = paths.stream().filter(path -> path.startsWith("testy"))
+                    .count();
+            Assert.assertEquals(1, count);
+
+            /*
+             * Collection of Links is terminated (e.g. no numeric expansion
+             * paths)
+             */
+            count = paths.stream()
+                    .filter(path -> path.startsWith("stock.tock.stocks"))
+                    .count();
+            Assert.assertEquals(1, count);
+            count = paths.stream()
+                    .filter(path -> path.startsWith("node.friends")).count();
+            Assert.assertEquals(1, count);
+            count = paths.stream()
+                    .filter(path -> path.startsWith("jock.friends")).count();
+            Assert.assertEquals(1, count);
+            count = paths.stream().filter(path -> path.startsWith("friends"))
+                    .count();
+            Assert.assertEquals(1, count);
+
+            /*
+             * Expected Paths
+             */
+            Assert.assertTrue(paths.contains("stock.tock.zombie"));
+            Assert.assertTrue(paths.contains("node.label"));
+            Assert.assertTrue(paths.contains("user.name"));
+            Assert.assertTrue(paths.contains("user.email"));
+            Assert.assertTrue(paths.contains("user.company.name"));
+            Assert.assertTrue(paths.contains("sock.sock"));
+            Assert.assertTrue(paths.contains("sock.dock.dock"));
+            Assert.assertTrue(paths.contains("jock.name"));
+            Assert.assertTrue(paths.contains("jock2.name"));
+            Assert.assertTrue(paths.contains("name"));
+            Assert.assertTrue(paths.contains("hock.a"));
+            Assert.assertTrue(paths.contains("qock.a"));
+            Assert.assertTrue(paths.contains("qock.b")); // descendant defined
+                                                         // field
+
+            /*
+             * Deferred Reference Isn't Expanded
+             */
+            count = paths.stream()
+                    .filter(path -> path.startsWith("jock.mentor")).count();
+            Assert.assertEquals(1, count);
+            count = paths.stream().filter(path -> path.startsWith("mentor"))
+                    .count();
+            Assert.assertEquals(1, count);
+        }
+        finally {
+            Record.StaticAnalysis.COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS = computePathsForDescendantDefinedFields;
+            Record.StaticAnalysis.instance().computeAllPossiblePaths();
+        }
     }
-    
-//    @Test
-//    public void testReconcileCollectionPrimitiveValues() {
-//        Shoe shoe = new Shoe(Lists.newArrayList("A", "B", "C"));
-//        shoe.save();
-//        shoe.shoes = Lists.newArrayList("B", "D", "A");
-//        shoe.save();
-//        shoe = runway.load(Shoe.class, shoe.id());
-//        System.out.println(shoe.shoes.getClass());
-//        Assert.assertEquals(Lists.newArrayList("B", "D", "A"), shoe.shoes);
-//    }
+
+    @Test
+    public void testGetPathsWitouthDescendantDefinedFields() {
+        boolean computePathsForDescendantDefinedFields = Record.StaticAnalysis.COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS;
+        Record.StaticAnalysis.COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS = false;
+        Record.StaticAnalysis.instance().computeAllPossiblePaths();
+        try {
+            Set<String> paths = Record.StaticAnalysis.instance()
+                    .getPaths(Gock.class);
+            Assert.assertTrue(paths.contains("stock.tock.zombie"));
+            Assert.assertTrue(paths.contains("node.label"));
+            Assert.assertTrue(paths.contains("user.name"));
+            Assert.assertTrue(paths.contains("user.email"));
+            Assert.assertTrue(paths.contains("user.company.name"));
+            Assert.assertTrue(paths.contains("sock.sock"));
+            Assert.assertTrue(paths.contains("sock.dock.dock"));
+            Assert.assertTrue(paths.contains("jock"));
+            Assert.assertTrue(paths.contains("jock2"));
+            Assert.assertTrue(paths.contains("name"));
+            Assert.assertTrue(paths.contains("hock.a"));
+            Assert.assertTrue(paths.contains("qock")); // not expanded due to
+                                                       // descendant defined
+                                                       // fields
+            System.out.println(paths);
+        }
+        finally {
+            Record.StaticAnalysis.COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS = computePathsForDescendantDefinedFields;
+            Record.StaticAnalysis.instance().computeAllPossiblePaths();
+        }
+    }
+
+    // @Test
+    // public void testReconcileCollectionPrimitiveValues() {
+    // Shoe shoe = new Shoe(Lists.newArrayList("A", "B", "C"));
+    // shoe.save();
+    // shoe.shoes = Lists.newArrayList("B", "D", "A");
+    // shoe.save();
+    // shoe = runway.load(Shoe.class, shoe.id());
+    // System.out.println(shoe.shoes.getClass());
+    // Assert.assertEquals(Lists.newArrayList("B", "D", "A"), shoe.shoes);
+    // }
 
     class Node extends Record {
 
@@ -1171,9 +1227,9 @@ public class RecordTest extends ClientServerTest {
         }
 
     }
-    
+
     class Gock extends Jock {
-        
+
         public Stock stock;
         public Node node;
         public User user;
@@ -1181,11 +1237,35 @@ public class RecordTest extends ClientServerTest {
         public Gock gock;
         public Jock jock;
         public Jock jock2;
+        public Hock hock;
+        public Qock qock;
 
         public Gock(String name) {
             super(name);
         }
-        
+
+    }
+
+    class Hock extends Record {
+
+        public String a;
+
+    }
+
+    class Oock extends Hock {
+
+    }
+
+    class Qock extends Record {
+
+        public String a;
+
+    }
+
+    class Vock extends Qock {
+
+        public String b;
+
     }
 
     class User extends Record {

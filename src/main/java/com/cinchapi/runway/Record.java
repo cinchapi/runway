@@ -62,7 +62,6 @@ import com.cinchapi.common.collect.AnyMaps;
 import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
-import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.describe.Empty;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -132,30 +131,6 @@ import com.google.gson.stream.JsonWriter;
  */
 @SuppressWarnings({ "restriction", "deprecation" })
 public abstract class Record implements Comparable<Record> {
-
-    /**
-     * Return all the non-internal {@link Field fields} in this {@code clazz}.
-     * 
-     * @param clazz
-     * @return the non-internal {@link Field fields}
-     */
-    public static Set<Field> getFields(Class<? extends Record> clazz) {
-        return Arrays.asList(Reflection.getAllDeclaredFields(clazz)).stream()
-                .filter(field -> !INTERNAL_FIELDS.keySet()
-                        .contains(field.getName()))
-                .collect(Collectors.toSet());
-    }
-
-    /**
-     * Return the non-cyclic paths (e.g., keys and navigation keys) for members
-     * of {@code clazz}.
-     * 
-     * @param clazz
-     * @return the paths
-     */
-    public static Set<String> getPaths(Class<? extends Record> clazz) {
-        return getPaths(clazz, "", Sets.newHashSet());
-    }
 
     /**
      * Return {@code true} if the matching {@code condition} for data that is
@@ -311,40 +286,6 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return value != null ? value : defaultValue;
-    }
-
-    /**
-     * Return the non-cyclic paths (e.g., keys and navigation keys) for members
-     * of {@code clazz}; all prefixed with {@code prefix} and using
-     * {@code ancestors} for cycle detection.
-     * 
-     * @param clazz
-     * @return the paths
-     */
-    @SuppressWarnings("unchecked")
-    private static Set<String> getPaths(Class<? extends Record> clazz,
-            String prefix, Set<Class<? extends Record>> ancestors) {
-        ancestors.add(clazz);
-        Set<String> paths = new LinkedHashSet<>();
-        paths.add(prefix + SECTION_KEY);
-        paths.add(prefix + IDENTIFIER_KEY);
-        paths.add(prefix + REALMS_KEY);
-        for (Field field : getFields(clazz)) {
-            Class<?> type = field.getType();
-            Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
-            if(Record.class.isAssignableFrom(type)
-                    && !ancestors.contains(type)) {
-                Class<? extends Record> _type = (Class<? extends Record>) type;
-                lineage.add(_type);
-                Set<String> nested = getPaths(_type,
-                        prefix + field.getName() + ".", lineage);
-                paths.addAll(nested);
-            }
-            else {
-                paths.add(prefix + field.getName());
-            }
-        }
-        return paths;
     }
 
     /**
@@ -572,12 +513,6 @@ public abstract class Record implements Comparable<Record> {
             .of(Reflection.getAllDeclaredFields(Record.class))
             .collect(Collectors.toMap(field -> field.getName(), field -> field,
                     (a, b) -> b, HashMap::new));
-
-    /**
-     * A cache of the {@link #intrinsic() properties} for each {@link Class}.
-     */
-    private static Map<Class<? extends Record>, Set<String>> INTRINSIC_PROPERTY_CACHE = Maps
-            .newHashMap();
 
     /**
      * A placeholder id used to indicate that a record has been deleted or
@@ -1268,9 +1203,8 @@ public abstract class Record implements Comparable<Record> {
                 Reflection.set(key, value, this);
             }
             catch (Exception e) {
-                Set<String> intrinsic = INTRINSIC_PROPERTY_CACHE
-                        .computeIfAbsent(this.getClass(), c -> LazyTransformSet
-                                .of(getFields(c), Field::getName));
+                Set<String> intrinsic = StaticAnalysis.instance()
+                        .getKeys(this.getClass());
                 if(intrinsic.contains(key)) {
                     throw e;
                 }
@@ -2283,14 +2217,22 @@ public abstract class Record implements Comparable<Record> {
                 Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
                 if(Record.class.isAssignableFrom(type)
                         && !ancestors.contains(type)
-                        && hierarchies.get((Class<? extends Record>) type)
-                                .isEmpty()) {
+                        && (COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS
+                                || !hasDescendantDefinedFields(type,
+                                        hierarchies, fieldsByClass))) {
                     Class<? extends Record> _type = (Class<? extends Record>) type;
                     lineage.add(_type);
-                    Set<String> nested = computePaths(
-                            (Class<? extends Record>) type, hierarchies,
-                            fieldsByClass, prefix + field.getName() + ".",
-                            lineage);
+                    Collection<Class<?>> hierarchy = hierarchies.get(_type);
+                    Set<String> nested = new HashSet<>();
+                    for (Class<?> descendant : hierarchy) {
+                        // Account for declared types having descendant defined
+                        // fields in child classes by computing the paths for
+                        // each descendant type at this junction, in the path
+                        nested.addAll(computePaths(
+                                (Class<? extends Record>) descendant,
+                                hierarchies, fieldsByClass,
+                                prefix + field.getName() + ".", lineage));
+                    }
                     paths.addAll(nested);
                 }
                 else {
@@ -2323,6 +2265,53 @@ public abstract class Record implements Comparable<Record> {
             return paths;
         }
 
+        /**
+         * Return {@code true} if {@code clazz} has any descendants in its
+         * hierarchy that have additional fields that are not defined in
+         * {@code clazz}.
+         * 
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @return {@code true} if {@code clazz} is the parent to any
+         *         descendants with descendant defined fields
+         */
+        @SuppressWarnings("unchecked")
+        private static boolean hasDescendantDefinedFields(Class<?> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass) {
+            Collection<Class<?>> descendants = hierarchies
+                    .get((Class<? extends Record>) clazz);
+            if(descendants.size() == 1) {
+                return false;
+            }
+            else {
+                Map<String, Field> fields = fieldsByClass.get(clazz);
+                for (Class<?> descendant : descendants) {
+                    if(!fields.equals(fieldsByClass.get(descendant))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+
+        /**
+         * Internal toggle to control the aggressiveness of the logic for
+         * {@link #computePaths(Class, Multimap, Map) computing paths} when a
+         * declared field type is a the parent to a descendant class with
+         * {@link #hasDescendantDefinedFields(Class, Multimap, Map) descendant
+         * defined fields}.
+         * <p>
+         * When this field is set to {@code true}, the computed paths should
+         * include those for every possible descendant defined field. Otherwise,
+         * fields whose declared type is a parent to a descendant with
+         * descendant defined fields should not be expanded.
+         * </p>
+         */
+        // Visible for Testing
+        static boolean COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS = false;
+
         static {
             Logging.disable(Reflections.class);
             Reflections.log = null; // turn off reflection logging
@@ -2333,17 +2322,17 @@ public abstract class Record implements Comparable<Record> {
         /**
          * A mapping from each {@link Record} class to its traversable paths.
          */
-        private final Map<Class<? extends Record>, Set<String>> pathsByClass;
+        private Map<Class<? extends Record>, Set<String>> pathsByClass;
 
         /**
          * A mapping from each {@link Record} class to the traversable paths in
          * its {@link #hierarchies hierarchy}.
          */
-        private final Map<Class<? extends Record>, Set<String>> pathsByClassHierarchy;
+        private Map<Class<? extends Record>, Set<String>> pathsByClassHierarchy;
 
         /**
-         * A mapping from each {@link Record} class to all of its descendants.
-         * This facilitates querying across hierarchies.
+         * A mapping from each {@link Record} class to itself and all of its
+         * descendants. This facilitates querying across hierarchies.
          */
         private final Multimap<Class<? extends Record>, Class<?>> hierarchies;
 
@@ -2377,6 +2366,12 @@ public abstract class Record implements Comparable<Record> {
         private final Set<Class<? extends Record>> hasRecordFieldTypeByClassHierarchy;
 
         /**
+         * Reflection handler
+         */
+        private final Reflections reflection = new Reflections(
+                new SubTypesScanner());
+
+        /**
          * Construct a new instance.
          */
         private StaticAnalysis() {
@@ -2388,7 +2383,6 @@ public abstract class Record implements Comparable<Record> {
             this.hasRecordFieldTypeByClass = new HashSet<>();
             this.hasRecordFieldTypeByClassHierarchy = new HashSet<>();
             Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
-            Reflections reflection = new Reflections(new SubTypesScanner());
             reflection.getSubTypesOf(Record.class).forEach(type -> {
                 // Build class hierarchy
                 hierarchies.put(type, type);
@@ -2424,13 +2418,7 @@ public abstract class Record implements Comparable<Record> {
             // Now that the hierarchies and fields for each Record type have
             // been documented, go through again and compute the paths for each
             // one
-            reflection.getSubTypesOf(Record.class).forEach(type -> {
-                pathsByClass.put(type,
-                        computePaths(type, hierarchies, fieldsByClass));
-                pathsByClassHierarchy.put(type, computePathsHierarchy(type,
-                        hierarchies, fieldsByClass));
-            });
-
+            computeAllPossiblePaths();
         }
 
         /**
@@ -2599,6 +2587,20 @@ public abstract class Record implements Comparable<Record> {
         public boolean hasFieldOfTypeRecordInClassHierarchy(
                 Class<? extends Record> clazz) {
             return hasRecordFieldTypeByClassHierarchy.contains(clazz);
+        }
+
+        /**
+         * Do {@link #computePaths(Class, Multimap, Map)} for every
+         * {@link Record} type and store.
+         */
+        // Visible for Testing
+        void computeAllPossiblePaths() {
+            reflection.getSubTypesOf(Record.class).forEach(type -> {
+                pathsByClass.put(type,
+                        computePaths(type, hierarchies, fieldsByClass));
+                pathsByClassHierarchy.put(type, computePathsHierarchy(type,
+                        hierarchies, fieldsByClass));
+            });
         }
 
     }
