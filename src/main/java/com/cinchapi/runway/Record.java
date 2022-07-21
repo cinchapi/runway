@@ -88,13 +88,15 @@ import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.HashMultimap;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.LinkedHashMultimap;
+import com.google.common.collect.LinkedHashMultiset;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Multiset;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
@@ -1517,18 +1519,9 @@ public abstract class Record implements Comparable<Record> {
     /* package */ Multimap<String, Object> mmap(SerializationOptions options,
             String... keys) {
         Map<String, Object> data = map(options, keys);
-        Multimap<String, Object> mmap = LinkedHashMultimap.create();
-        for (Entry<String, Object> entry : data.entrySet()) {
-            String key = entry.getKey();
-            Object value = entry.getValue();
-            if(Sequences.isSequence(value)) {
-                Sequences.forEach(value, v -> mmap.put(key, v));
-            }
-            else {
-                mmap.put(key, value);
-            }
-        }
-        return mmap;
+        Map<String, Collection<Object>> wrapper = new CollectionValueWrapperMap<>(
+                data);
+        return new SyntheticMultimap<>(wrapper);
     }
 
     /**
@@ -2612,6 +2605,88 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * A read-only {@link Map} that ensures that the values of another
+     * {@link Map} are wrapped in a {@link Collection}.
+     * <p>
+     * If the input {@link Map} associates a key to a scalar value, that value
+     * is added to a {@link Collection}. Otherwise, if the associated value is a
+     * {@link Sequence}, the items within it are represented using a
+     * {@link Collection}.
+     * </p>
+     *
+     * @author Jeff Nelson
+     */
+    private static class CollectionValueWrapperMap<K>
+            extends AbstractMap<K, Collection<Object>> {
+
+        private final Map<K, Object> data;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param data
+         */
+        public CollectionValueWrapperMap(Map<K, Object> data) {
+            this.data = data;
+        }
+
+        @Override
+        public boolean containsKey(Object key) {
+            return data.containsKey(key);
+        }
+
+        @Override
+        public Set<Entry<K, Collection<Object>>> entrySet() {
+            return keySet().stream()
+                    .map(key -> new AbstractMap.SimpleImmutableEntry<>(key,
+                            get(key)))
+                    .collect(Collectors.toCollection(
+                            () -> new LinkedHashSet<>(data.size())));
+        }
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public Collection<Object> get(Object key) {
+            Object value = data.get(key);
+            if(value instanceof Collection) {
+                return (Collection<Object>) value;
+            }
+            else if(Sequences.isSequence(value)) {
+                return Sequences.stream(value).collect(Collectors.toList());
+            }
+            else {
+                return ImmutableList.of(value);
+            }
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return data.isEmpty();
+        }
+
+        @Override
+        public Set<K> keySet() {
+            return data.keySet();
+        }
+
+        @Override
+        public Collection<Object> put(K key, Collection<Object> value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Collection<Object> remove(Object key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int size() {
+            return data.size();
+        }
+
+    }
+
+    /**
      * A {@link DatabaseInterface} that reacts to the state of the
      * {@link #runway} variable and delegates to it or throws an
      * {@link UnsupportedOperationException} if it is {@code null}.
@@ -3084,6 +3159,168 @@ public abstract class Record implements Comparable<Record> {
                 throw new UnsupportedOperationException(
                         "No database interface has been assigned to this Record");
             }
+        }
+
+    };
+
+    /**
+     * A read-only {@link Multimap} interface for a {@link Map} where each key
+     * is associated with a {@link Collection} of values.
+     * <p>
+     * A {@link SyntheticMultimap} allows for treating a {@link Map} with
+     * {@link Collection} values as a {@link Multimap} without explicitly
+     * copying the data over.
+     * </p>
+     *
+     * @author Jeff Nelson
+     */
+    private static class SyntheticMultimap<K, V> implements Multimap<K, V> {
+
+        /**
+         * The map that this interface treats like a {@link Multimap}.
+         */
+        private final Map<K, Collection<V>> data;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param data
+         */
+        public SyntheticMultimap(Map<K, Collection<V>> data) {
+            this.data = data;
+        }
+
+        @Override
+        public Map<K, Collection<V>> asMap() {
+            return data;
+        }
+
+        @Override
+        public void clear() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean containsEntry(Object key, Object value) {
+            Collection<V> values = data.getOrDefault(key, ImmutableSet.of());
+            return values.contains(value);
+        }
+
+        @Override
+        public boolean containsKey(Object key) {
+            return data.containsKey(key);
+        }
+
+        @Override
+        public boolean containsValue(Object value) {
+            for (Entry<K, Collection<V>> entry : data.entrySet()) {
+                for (V v : entry.getValue()) {
+                    if(v.equals(value)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public Collection<Entry<K, V>> entries() {
+            List<Entry<K, V>> entries = new ArrayList<>();
+            for (Entry<K, Collection<V>> entry : data.entrySet()) {
+                K key = entry.getKey();
+                for (V value : entry.getValue()) {
+                    entries.add(
+                            new AbstractMap.SimpleImmutableEntry<>(key, value));
+                }
+            }
+            return entries;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if(obj instanceof Multimap) {
+                Multimap<?, ?> mmap = (Multimap<?, ?>) obj;
+                return mmap.asMap().equals(asMap());
+            }
+            else {
+                return false;
+            }
+        }
+
+        @Override
+        public Collection<V> get(K key) {
+            return data.get(key);
+        }
+
+        @Override
+        public int hashCode() {
+            return data.hashCode();
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return data.isEmpty();
+        }
+
+        @Override
+        public Multiset<K> keys() {
+            Multiset<K> keys = LinkedHashMultiset.create();
+            for (Entry<K, Collection<V>> entry : data.entrySet()) {
+                keys.add(entry.getKey(), entry.getValue().size());
+            }
+            return keys;
+        }
+
+        @Override
+        public Set<K> keySet() {
+            return data.keySet();
+        }
+
+        @Override
+        public boolean put(K key, V value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean putAll(K key, Iterable<? extends V> values) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean putAll(Multimap<? extends K, ? extends V> multimap) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean remove(Object key, Object value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Collection<V> removeAll(Object key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Collection<V> replaceValues(K key,
+                Iterable<? extends V> values) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int size() {
+            return data.size();
+        }
+
+        @Override
+        public String toString() {
+            return data.toString();
+        }
+
+        @Override
+        public Collection<V> values() {
+            return data.values().stream().flatMap(values -> values.stream())
+                    .collect(Collectors.toList());
         }
 
     }
