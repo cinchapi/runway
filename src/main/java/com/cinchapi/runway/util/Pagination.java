@@ -57,7 +57,9 @@ public final class Pagination {
         int count = 0;
         int skipped = 0;
         page = Page.of(0, limit);
+        int surplusFactor = 1;
         outer: while (count < limit) {
+            int prevCount = count;
             Set<T> unfiltered = function.apply(page);
             if(unfiltered.isEmpty()) {
                 break;
@@ -78,6 +80,16 @@ public final class Pagination {
                     }
                 }
                 page = page.next();
+                if(prevCount == count) {
+                    // The last page from the database did not contain any
+                    // filter matches, so try to increase the page size in hopes
+                    // of casting a wider net
+                    ++surplusFactor;
+                }
+                else {
+                    surplusFactor = Math.max(1, --surplusFactor);
+                }
+                page = page.size(limit * surplusFactor);
             }
         }
         return records;
