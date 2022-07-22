@@ -49,6 +49,8 @@ import java.util.stream.Stream;
 import javax.annotation.Nullable;
 
 import org.apache.commons.lang.StringUtils;
+import org.reflections.Reflections;
+import org.reflections.scanners.SubTypesScanner;
 
 import com.cinchapi.ccl.Parser;
 import com.cinchapi.common.base.AnyStrings;
@@ -60,7 +62,6 @@ import com.cinchapi.common.collect.AnyMaps;
 import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
-import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.describe.Empty;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -76,24 +77,26 @@ import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
+import com.cinchapi.concourse.util.Logging;
 import com.cinchapi.concourse.util.Numbers;
 import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.concourse.validate.Keys;
-import com.cinchapi.runway.bootstrap.StaticAnalysis;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.HashMultimap;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.LinkedHashMultimap;
+import com.google.common.collect.LinkedHashMultiset;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Multiset;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
@@ -132,30 +135,6 @@ import com.google.gson.stream.JsonWriter;
 public abstract class Record implements Comparable<Record> {
 
     /**
-     * Return all the non-internal {@link Field fields} in this {@code clazz}.
-     * 
-     * @param clazz
-     * @return the non-internal {@link Field fields}
-     */
-    public static Set<Field> getFields(Class<? extends Record> clazz) {
-        return Arrays.asList(Reflection.getAllDeclaredFields(clazz)).stream()
-                .filter(field -> !INTERNAL_FIELDS.keySet()
-                        .contains(field.getName()))
-                .collect(Collectors.toSet());
-    }
-
-    /**
-     * Return the non-cyclic paths (e.g., keys and navigation keys) for members
-     * of {@code clazz}.
-     * 
-     * @param clazz
-     * @return the paths
-     */
-    public static Set<String> getPaths(Class<? extends Record> clazz) {
-        return getPaths(clazz, "", Sets.newHashSet());
-    }
-
-    /**
      * Return {@code true} if the matching {@code condition} for data that is
      * part of the specified {@code clazz} can be resolved entirely by the
      * database, or must be done so locally because it touches {@link #derived()
@@ -169,8 +148,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public static <T extends Record> boolean isDatabaseResolvableCondition(
             Class<T> clazz, Criteria condition) {
-        Set<String> intrinsic = INTRINSIC_PROPERTY_CACHE.computeIfAbsent(clazz,
-                c -> LazyTransformSet.of(getFields(c), Field::getName));
+        Set<String> intrinsic = StaticAnalysis.instance().getKeys(clazz);
         Parser parser = Parsers.create(condition);
         for (String key : parser.analyze().keys()) {
             if(!Keys.isNavigationKey(key) && !intrinsic.contains(key)) {
@@ -310,40 +288,6 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return value != null ? value : defaultValue;
-    }
-
-    /**
-     * Return the non-cyclic paths (e.g., keys and navigation keys) for members
-     * of {@code clazz}; all prefixed with {@code prefix} and using
-     * {@code ancestors} for cycle detection.
-     * 
-     * @param clazz
-     * @return the paths
-     */
-    @SuppressWarnings("unchecked")
-    private static Set<String> getPaths(Class<? extends Record> clazz,
-            String prefix, Set<Class<? extends Record>> ancestors) {
-        ancestors.add(clazz);
-        Set<String> paths = new LinkedHashSet<>();
-        paths.add(prefix + SECTION_KEY);
-        paths.add(prefix + IDENTIFIER_KEY);
-        paths.add(prefix + REALMS_KEY);
-        for (Field field : getFields(clazz)) {
-            Class<?> type = field.getType();
-            Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
-            if(Record.class.isAssignableFrom(type)
-                    && !ancestors.contains(type)) {
-                Class<? extends Record> _type = (Class<? extends Record>) type;
-                lineage.add(_type);
-                Set<String> nested = getPaths(_type,
-                        prefix + field.getName() + ".", lineage);
-                paths.addAll(nested);
-            }
-            else {
-                paths.add(prefix + field.getName());
-            }
-        }
-        return paths;
     }
 
     /**
@@ -571,12 +515,6 @@ public abstract class Record implements Comparable<Record> {
             .of(Reflection.getAllDeclaredFields(Record.class))
             .collect(Collectors.toMap(field -> field.getName(), field -> field,
                     (a, b) -> b, HashMap::new));
-
-    /**
-     * A cache of the {@link #intrinsic() properties} for each {@link Class}.
-     */
-    private static Map<Class<? extends Record>, Set<String>> INTRINSIC_PROPERTY_CACHE = Maps
-            .newHashMap();
 
     /**
      * A placeholder id used to indicate that a record has been deleted or
@@ -1267,9 +1205,8 @@ public abstract class Record implements Comparable<Record> {
                 Reflection.set(key, value, this);
             }
             catch (Exception e) {
-                Set<String> intrinsic = INTRINSIC_PROPERTY_CACHE
-                        .computeIfAbsent(this.getClass(), c -> LazyTransformSet
-                                .of(getFields(c), Field::getName));
+                Set<String> intrinsic = StaticAnalysis.instance()
+                        .getKeys(this.getClass());
                 if(intrinsic.contains(key)) {
                     throw e;
                 }
@@ -1548,7 +1485,7 @@ public abstract class Record implements Comparable<Record> {
                     else if(value == null
                             && field.isAnnotationPresent(Required.class)) {
                         throw new IllegalStateException("Record " + id
-                                + " cannot be loaded because '" + path
+                                + " cannot be loaded because '" + key
                                 + "' is a required field, but no value is present in the database.");
                     }
                     else {
@@ -1582,18 +1519,9 @@ public abstract class Record implements Comparable<Record> {
     /* package */ Multimap<String, Object> mmap(SerializationOptions options,
             String... keys) {
         Map<String, Object> data = map(options, keys);
-        Multimap<String, Object> mmap = LinkedHashMultimap.create();
-        for (Entry<String, Object> entry : data.entrySet()) {
-            String key = entry.getKey();
-            Object value = entry.getValue();
-            if(Sequences.isSequence(value)) {
-                Sequences.forEach(value, v -> mmap.put(key, v));
-            }
-            else {
-                mmap.put(key, value);
-            }
-        }
-        return mmap;
+        Map<String, Collection<Object>> wrapper = new CollectionValueWrapperMap<>(
+                data);
+        return new SyntheticMultimap<>(wrapper);
     }
 
     /**
@@ -2221,6 +2149,544 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * A collection of static data about available {@link Record} types and
+     * their fields to make {@link Runway} operations more efficient.
+     *
+     * @author Jeff Nelson
+     */
+    public static class StaticAnalysis {
+
+        /**
+         * Return the {@link StaticAnalysis}.
+         * <p>
+         * NOTE: Scanning the classpath to perform static analysis adds startup
+         * costs proportional to the number of classes defined, so it is only
+         * done once to minimize the effect of the cost.
+         * </p>
+         * 
+         * @return the {@link StaticAnalysis}
+         */
+        public static StaticAnalysis instance() {
+            return INSTANCE;
+        }
+
+        /**
+         * Return the non-cyclic paths (e.g., keys and navigation keys) for
+         * the fields in {@code clazz}; all prefixed with {@code prefix} and
+         * using {@code ancestors} for cycle detection.
+         * 
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @return the paths
+         */
+        private static Set<String> computePaths(Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass) {
+            return computePaths(clazz, hierarchies, fieldsByClass, "",
+                    Sets.newHashSet());
+        }
+
+        /**
+         * Return the non-cyclic paths (e.g., keys and navigation keys) for
+         * the fields in {@code clazz}; all prefixed with {@code prefix} and
+         * using {@code ancestors} for cycle detection.
+         * 
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @param prefix
+         * @param ancestors
+         * @return the paths
+         */
+        @SuppressWarnings("unchecked")
+        private static Set<String> computePaths(Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
+                String prefix, Set<Class<? extends Record>> ancestors) {
+            ancestors.add(clazz);
+            Set<String> paths = new LinkedHashSet<>();
+            paths.add(prefix + SECTION_KEY);
+            paths.add(prefix + IDENTIFIER_KEY);
+            paths.add(prefix + REALMS_KEY);
+            Collection<Field> fields = fieldsByClass
+                    .getOrDefault(clazz, ImmutableMap.of()).values();
+            for (Field field : fields) {
+                Class<?> type = field.getType();
+                Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
+                if(Record.class.isAssignableFrom(type)
+                        && !ancestors.contains(type)
+                        && (COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS
+                                || !hasDescendantDefinedFields(type,
+                                        hierarchies, fieldsByClass))) {
+                    Class<? extends Record> _type = (Class<? extends Record>) type;
+                    lineage.add(_type);
+                    Collection<Class<?>> hierarchy = hierarchies.get(_type);
+                    Set<String> nested = new HashSet<>();
+                    for (Class<?> descendant : hierarchy) {
+                        // Account for declared types having descendant defined
+                        // fields in child classes by computing the paths for
+                        // each descendant type at this junction, in the path
+                        nested.addAll(computePaths(
+                                (Class<? extends Record>) descendant,
+                                hierarchies, fieldsByClass,
+                                prefix + field.getName() + ".", lineage));
+                    }
+                    paths.addAll(nested);
+                }
+                else {
+                    paths.add(prefix + field.getName());
+                }
+            }
+            return paths;
+        }
+
+        /**
+         * Perform {@link #computePaths(Class, Multimap, Map)} for each
+         * {@link Class} in the {@link #hierarchies hierarchy} of {@code clazz}.
+         * 
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @return all the paths in the hierarchy
+         */
+        @SuppressWarnings("unchecked")
+        private static Set<String> computePathsHierarchy(
+                Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass) {
+            Set<String> paths = new LinkedHashSet<>();
+            Collection<Class<?>> hiearchy = hierarchies.get(clazz);
+            for (Class<?> type : hiearchy) {
+                paths.addAll(computePaths((Class<? extends Record>) type,
+                        hierarchies, fieldsByClass));
+            }
+            return paths;
+        }
+
+        /**
+         * Return {@code true} if {@code clazz} has any descendants in its
+         * hierarchy that have additional fields that are not defined in
+         * {@code clazz}.
+         * 
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @return {@code true} if {@code clazz} is the parent to any
+         *         descendants with descendant defined fields
+         */
+        @SuppressWarnings("unchecked")
+        private static boolean hasDescendantDefinedFields(Class<?> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass) {
+            Collection<Class<?>> descendants = hierarchies
+                    .get((Class<? extends Record>) clazz);
+            if(descendants.size() == 1) {
+                return false;
+            }
+            else {
+                Map<String, Field> fields = fieldsByClass.get(clazz);
+                for (Class<?> descendant : descendants) {
+                    if(!fields.equals(fieldsByClass.get(descendant))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+
+        /**
+         * Internal toggle to control the aggressiveness of the logic for
+         * {@link #computePaths(Class, Multimap, Map) computing paths} when a
+         * declared field type is a the parent to a descendant class with
+         * {@link #hasDescendantDefinedFields(Class, Multimap, Map) descendant
+         * defined fields}.
+         * <p>
+         * When this field is set to {@code true}, the computed paths should
+         * include those for every possible descendant defined field. Otherwise,
+         * fields whose declared type is a parent to a descendant with
+         * descendant defined fields should not be expanded.
+         * </p>
+         */
+        // Visible for Testing
+        static boolean COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS = false;
+
+        static {
+            Logging.disable(Reflections.class);
+            Reflections.log = null; // turn off reflection logging
+        }
+
+        private static final StaticAnalysis INSTANCE = new StaticAnalysis();
+
+        /**
+         * A mapping from each {@link Record} class to its traversable paths.
+         */
+        private Map<Class<? extends Record>, Set<String>> pathsByClass;
+
+        /**
+         * A mapping from each {@link Record} class to the traversable paths in
+         * its {@link #hierarchies hierarchy}.
+         */
+        private Map<Class<? extends Record>, Set<String>> pathsByClassHierarchy;
+
+        /**
+         * A mapping from each {@link Record} class to itself and all of its
+         * descendants. This facilitates querying across hierarchies.
+         */
+        private final Multimap<Class<? extends Record>, Class<?>> hierarchies;
+
+        /**
+         * A mapping from each {@link Record} class to each its non-internal
+         * keys,
+         * each of which is mapped to the associated {@link Field} object.
+         */
+        private final Map<Class<? extends Record>, Map<String, Field>> fieldsByClass;
+
+        /**
+         * A mapping from each {@link Record} class to each of its non-internal
+         * keys, each of which is mapped to a collection of type arguments
+         * associated with that corresponding {@link Field} object.
+         */
+        private final Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass;
+
+        /**
+         * A collection containing each {@link Record} class that has at least
+         * one
+         * field whose type is a subclass of {@link Record}.
+         */
+        private final Set<Class<? extends Record>> hasRecordFieldTypeByClass;
+
+        /**
+         * A collection containing each {@link Record} class that itself or is
+         * the
+         * ancestors of a {@link Record} class that has at least one field whose
+         * type is a subclass of {@link Record}.
+         */
+        private final Set<Class<? extends Record>> hasRecordFieldTypeByClassHierarchy;
+
+        /**
+         * Reflection handler
+         */
+        private final Reflections reflection = new Reflections(
+                new SubTypesScanner());
+
+        /**
+         * Construct a new instance.
+         */
+        private StaticAnalysis() {
+            this.hierarchies = HashMultimap.create();
+            this.pathsByClass = new HashMap<>();
+            this.pathsByClassHierarchy = new HashMap<>();
+            this.fieldsByClass = new HashMap<>();
+            this.fieldTypeArgumentsByClass = new HashMap<>();
+            this.hasRecordFieldTypeByClass = new HashSet<>();
+            this.hasRecordFieldTypeByClassHierarchy = new HashSet<>();
+            Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
+            reflection.getSubTypesOf(Record.class).forEach(type -> {
+                // Build class hierarchy
+                hierarchies.put(type, type);
+                reflection.getSubTypesOf(type)
+                        .forEach(subType -> hierarchies.put(type, subType));
+
+                // Get non-internal fields and associated metadata
+                Stream<Field> nonInternalFields = Arrays
+                        .asList(Reflection.getAllDeclaredFields(type)).stream()
+                        .filter(field -> !internalFieldNames
+                                .contains(field.getName()));
+                nonInternalFields.forEach(field -> {
+                    Map<String, Field> fields = fieldsByClass
+                            .computeIfAbsent(type, $ -> new HashMap<>());
+                    Map<String, Collection<Class<?>>> fieldTypeArguments = fieldTypeArgumentsByClass
+                            .computeIfAbsent(type, $ -> new HashMap<>());
+                    String key = field.getName();
+                    fields.put(key, field);
+                    fieldTypeArguments.put(key,
+                            Reflection.getTypeArguments(field));
+                    if(Record.class.isAssignableFrom(field.getType())) {
+                        hasRecordFieldTypeByClass.add(type);
+                    }
+                });
+            });
+
+            hierarchies.forEach((type, relative) -> {
+                if(hasRecordFieldTypeByClass.contains(relative)) {
+                    hasRecordFieldTypeByClassHierarchy.add(type);
+                }
+            });
+
+            // Now that the hierarchies and fields for each Record type have
+            // been documented, go through again and compute the paths for each
+            // one
+            computeAllPossiblePaths();
+        }
+
+        /**
+         * Return the descendants of {@code clazz}.
+         * 
+         * @param clazz
+         * @return the hierarchy
+         */
+        public <T extends Record> Collection<Class<?>> getClassHierarchy(
+                Class<T> clazz) {
+            return hierarchies.get(clazz);
+        }
+
+        /**
+         * Return the {@link Field} object for {@code key} in {@code clazz}.
+         * 
+         * @param clazz
+         * @param key
+         * @return the {@link Field} object
+         */
+        public <T extends Record> Field getField(Class<T> clazz, String key) {
+            try {
+                return fieldsByClass.get(clazz).get(key);
+            }
+            catch (NullPointerException e) {
+                throw new IllegalArgumentException(
+                        "Unknown Record type: " + clazz);
+            }
+        }
+
+        /**
+         * Return the {@link Field} object for {@code key} in the {@link Class}
+         * of {@code record}.
+         * 
+         * @param record
+         * @param key
+         * @return the {@link Field} object
+         */
+        public <T extends Record> Field getField(T record, String key) {
+            return getField(record.getClass(), key);
+        }
+
+        /**
+         * Return the non-internal {@link Field} objects for {@code clazz}.
+         * 
+         * @param clazz
+         * @return the {@link Fields}
+         */
+        public <T extends Record> Collection<Field> getFields(Class<T> clazz) {
+            try {
+                return fieldsByClass.get(clazz).values();
+            }
+            catch (NullPointerException e) {
+                throw new IllegalArgumentException(
+                        "Unknown Record type: " + clazz);
+            }
+        }
+
+        /**
+         * Return the non-internal {@link Field} objects for {@link Class} of
+         * {@code record}.
+         * 
+         * @param record
+         * @return the {@link Fields}
+         */
+        public <T extends Record> Collection<Field> getFields(T record) {
+            return getFields(record.getClass());
+        }
+
+        /**
+         * Return the names of the non-internal fields in {@code clazz}.
+         * 
+         * @param clazz
+         * @return the keys
+         */
+        public <T extends Record> Set<String> getKeys(Class<T> clazz) {
+            try {
+                return fieldsByClass.get(clazz).keySet();
+            }
+            catch (NullPointerException e) {
+                throw new IllegalArgumentException(
+                        "Unknown Record type: " + clazz);
+            }
+        }
+
+        /**
+         * Return all the paths (e.g., navigable keys based on fields with
+         * linked
+         * {@link Record} types) for {@code clazz}.
+         * 
+         * @param clazz
+         * @return the paths
+         */
+        public <T extends Record> Set<String> getPaths(Class<T> clazz) {
+            return pathsByClass.get(clazz);
+        }
+
+        /**
+         * Return all the paths (e.g., navigable keys based on fields with
+         * linked
+         * {@link Record} types) for {@code clazz} and all of its descendents.
+         * 
+         * @param clazz
+         * @return the paths
+         */
+        public Set<String> getPathsHierarchy(Class<? extends Record> clazz) {
+            return pathsByClassHierarchy.get(clazz);
+        }
+
+        /**
+         * Return any defined type arguments for the field named {@code key} in
+         * {@code clazz}.
+         * 
+         * @param clazz
+         * @param key
+         * @return the type arguments
+         */
+        public <T extends Record> Collection<Class<?>> getTypeArguments(
+                Class<T> clazz, String key) {
+            try {
+                return fieldTypeArgumentsByClass.get(clazz).get(key);
+            }
+            catch (NullPointerException e) {
+                throw new IllegalArgumentException(
+                        "Unknown Record type: " + clazz);
+            }
+        }
+
+        /**
+         * Return any defined type arguments for the field named {@code key} in
+         * the
+         * {@link Class} of {@code record}.
+         * 
+         * @param clazz
+         * @param key
+         * @return the type arguments
+         */
+        public <T extends Record> Collection<Class<?>> getTypeArguments(
+                T record, String key) {
+            return getTypeArguments(record.getClass(), key);
+        }
+
+        /**
+         * Return {@code true} if {@code clazz} has any fields whose type is a
+         * subclass of {@link Record}.
+         * 
+         * @param clazz
+         * @return {@code true} if {@code clazz} has any {@link Record} type
+         *         fields
+         */
+        public boolean hasFieldOfTypeRecordInClass(
+                Class<? extends Record> clazz) {
+            return hasRecordFieldTypeByClass.contains(clazz);
+        }
+
+        /**
+         * Return {@code true} if {@code clazz}, or any of its descendants, have
+         * any
+         * fields whose type is a subclass of {@link Record}.
+         * 
+         * @param clazz
+         * @return {@code true} if {@code clazz}, or any of its children, have
+         *         any
+         *         {@link Record} type fields
+         */
+        public boolean hasFieldOfTypeRecordInClassHierarchy(
+                Class<? extends Record> clazz) {
+            return hasRecordFieldTypeByClassHierarchy.contains(clazz);
+        }
+
+        /**
+         * Do {@link #computePaths(Class, Multimap, Map)} for every
+         * {@link Record} type and store.
+         */
+        // Visible for Testing
+        void computeAllPossiblePaths() {
+            reflection.getSubTypesOf(Record.class).forEach(type -> {
+                pathsByClass.put(type,
+                        computePaths(type, hierarchies, fieldsByClass));
+                pathsByClassHierarchy.put(type, computePathsHierarchy(type,
+                        hierarchies, fieldsByClass));
+            });
+        }
+
+    }
+
+    /**
+     * A read-only {@link Map} that ensures that the values of another
+     * {@link Map} are wrapped in a {@link Collection}.
+     * <p>
+     * If the input {@link Map} associates a key to a scalar value, that value
+     * is added to a {@link Collection}. Otherwise, if the associated value is a
+     * {@link Sequence}, the items within it are represented using a
+     * {@link Collection}.
+     * </p>
+     *
+     * @author Jeff Nelson
+     */
+    private static class CollectionValueWrapperMap<K>
+            extends AbstractMap<K, Collection<Object>> {
+
+        private final Map<K, Object> data;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param data
+         */
+        public CollectionValueWrapperMap(Map<K, Object> data) {
+            this.data = data;
+        }
+
+        @Override
+        public boolean containsKey(Object key) {
+            return data.containsKey(key);
+        }
+
+        @Override
+        public Set<Entry<K, Collection<Object>>> entrySet() {
+            return keySet().stream()
+                    .map(key -> new AbstractMap.SimpleImmutableEntry<>(key,
+                            get(key)))
+                    .collect(Collectors.toCollection(
+                            () -> new LinkedHashSet<>(data.size())));
+        }
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public Collection<Object> get(Object key) {
+            Object value = data.get(key);
+            if(value instanceof Collection) {
+                return (Collection<Object>) value;
+            }
+            else if(Sequences.isSequence(value)) {
+                return Sequences.stream(value).collect(Collectors.toList());
+            }
+            else {
+                return ImmutableList.of(value);
+            }
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return data.isEmpty();
+        }
+
+        @Override
+        public Set<K> keySet() {
+            return data.keySet();
+        }
+
+        @Override
+        public Collection<Object> put(K key, Collection<Object> value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Collection<Object> remove(Object key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int size() {
+            return data.size();
+        }
+
+    }
+
+    /**
      * A {@link DatabaseInterface} that reacts to the state of the
      * {@link #runway} variable and delegates to it or throws an
      * {@link UnsupportedOperationException} if it is {@code null}.
@@ -2693,6 +3159,168 @@ public abstract class Record implements Comparable<Record> {
                 throw new UnsupportedOperationException(
                         "No database interface has been assigned to this Record");
             }
+        }
+
+    };
+
+    /**
+     * A read-only {@link Multimap} interface for a {@link Map} where each key
+     * is associated with a {@link Collection} of values.
+     * <p>
+     * A {@link SyntheticMultimap} allows for treating a {@link Map} with
+     * {@link Collection} values as a {@link Multimap} without explicitly
+     * copying the data over.
+     * </p>
+     *
+     * @author Jeff Nelson
+     */
+    private static class SyntheticMultimap<K, V> implements Multimap<K, V> {
+
+        /**
+         * The map that this interface treats like a {@link Multimap}.
+         */
+        private final Map<K, Collection<V>> data;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param data
+         */
+        public SyntheticMultimap(Map<K, Collection<V>> data) {
+            this.data = data;
+        }
+
+        @Override
+        public Map<K, Collection<V>> asMap() {
+            return data;
+        }
+
+        @Override
+        public void clear() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean containsEntry(Object key, Object value) {
+            Collection<V> values = data.getOrDefault(key, ImmutableSet.of());
+            return values.contains(value);
+        }
+
+        @Override
+        public boolean containsKey(Object key) {
+            return data.containsKey(key);
+        }
+
+        @Override
+        public boolean containsValue(Object value) {
+            for (Entry<K, Collection<V>> entry : data.entrySet()) {
+                for (V v : entry.getValue()) {
+                    if(v.equals(value)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public Collection<Entry<K, V>> entries() {
+            List<Entry<K, V>> entries = new ArrayList<>();
+            for (Entry<K, Collection<V>> entry : data.entrySet()) {
+                K key = entry.getKey();
+                for (V value : entry.getValue()) {
+                    entries.add(
+                            new AbstractMap.SimpleImmutableEntry<>(key, value));
+                }
+            }
+            return entries;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if(obj instanceof Multimap) {
+                Multimap<?, ?> mmap = (Multimap<?, ?>) obj;
+                return mmap.asMap().equals(asMap());
+            }
+            else {
+                return false;
+            }
+        }
+
+        @Override
+        public Collection<V> get(K key) {
+            return data.get(key);
+        }
+
+        @Override
+        public int hashCode() {
+            return data.hashCode();
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return data.isEmpty();
+        }
+
+        @Override
+        public Multiset<K> keys() {
+            Multiset<K> keys = LinkedHashMultiset.create();
+            for (Entry<K, Collection<V>> entry : data.entrySet()) {
+                keys.add(entry.getKey(), entry.getValue().size());
+            }
+            return keys;
+        }
+
+        @Override
+        public Set<K> keySet() {
+            return data.keySet();
+        }
+
+        @Override
+        public boolean put(K key, V value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean putAll(K key, Iterable<? extends V> values) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean putAll(Multimap<? extends K, ? extends V> multimap) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean remove(Object key, Object value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Collection<V> removeAll(Object key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Collection<V> replaceValues(K key,
+                Iterable<? extends V> values) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int size() {
+            return data.size();
+        }
+
+        @Override
+        public String toString() {
+            return data.toString();
+        }
+
+        @Override
+        public Collection<V> values() {
+            return data.values().stream().flatMap(values -> values.stream())
+                    .collect(Collectors.toList());
         }
 
     }
