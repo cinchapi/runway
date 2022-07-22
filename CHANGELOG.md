@@ -2,6 +2,7 @@
 
 #### Version 1.9.4 (TBD)
 * Fixed a bug that occurred when using *pre-select* to load a Record containing a reference field whose **declared** type is the parent class of a descendant class with additionally defined fields and the stored value for that field is an instance of that descendant class. In this case, the pre-select logic did not load data for the descendant defined fields, which resulted in unexpected `NullPointerException` regressions or an overall inability to load those Records if the descendant defined field was annotated as `Required`.
+* Improved the efficiency of local `condition` evaluation by removing unnecessary data copying.
 * Addressed performance regressions that have been observed when performing pagination alongside a locally resolvable `filter` or `condition` whose matches are sparsely distributed among the unfiltered results. The pagination logic still incrementally loads possible matches (instead of all-at-once), but uses additional logic to dynamically adjust the number of possible matches loaded based on whether the previous batch contained any matches.  
 
 #### Version 1.9.3 (July 4, 2022)
