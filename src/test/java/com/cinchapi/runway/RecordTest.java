@@ -45,6 +45,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
@@ -1026,6 +1027,26 @@ public class RecordTest extends ClientServerTest {
             Record.StaticAnalysis.COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS = computePathsForDescendantDefinedFields;
             Record.StaticAnalysis.instance().computeAllPossiblePaths();
         }
+    }
+    
+    @Test
+    public void testMmap() {
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        Node d = new Node("d");
+        a.friends.add(b);
+        a.friends.add(c);
+        a.friends.add(d);
+        b.friends.add(a);
+        b.friends.add(c);
+        Multimap<String, Object> mmap = a.mmap();
+        Assert.assertEquals(mmap.get("label"), ImmutableList.of("a"));
+        Assert.assertEquals(mmap.get("friends"), ImmutableList.of(b,c,d));
+        Assert.assertTrue(mmap.containsValue(b));
+        Assert.assertTrue(mmap.containsValue("a"));
+        mmap = a.mmap("label");
+        Assert.assertFalse(mmap.containsKey("friends"));
     }
 
     // @Test
