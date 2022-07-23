@@ -2654,6 +2654,9 @@ public abstract class Record implements Comparable<Record> {
             else if(Sequences.isSequence(value)) {
                 return Sequences.stream(value).collect(Collectors.toList());
             }
+            else if(value == null) {
+                return ImmutableList.of();
+            }
             else {
                 return ImmutableList.of(value);
             }

@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -622,10 +623,20 @@ public class RunwayTest extends ClientServerTest {
         child.save();
         parent.save();
         System.out.println(child.id());
-        parent = runway.findAnyUnique(Parent.class, Criteria.where()
-                .key("name").operator(Operator.EQUALS).value("Jeff Nelson"));
+        parent = runway.findAnyUnique(Parent.class, Criteria.where().key("name")
+                .operator(Operator.EQUALS).value("Jeff Nelson"));
         System.out.println(parent);
         Assert.assertEquals(parent.child.name, "A. Nelson");
+    }
+
+    @Test
+    public void testLocalConditionEvaluationWithNullValue() {
+        Slayer slayer = new Slayer();
+        slayer.name = "Jeff Nelson";
+        slayer.save();
+        Set<Slayer> slayers = runway.find(Slayer.class, Criteria.where()
+                .key("isAllStar").operator(Operator.EQUALS).value(true));
+        Assert.assertTrue(slayers.isEmpty());
     }
 
     class Player extends Record {
@@ -655,6 +666,19 @@ public class RunwayTest extends ClientServerTest {
                         .getAverage();
                 return score < average;
             });
+        }
+
+    }
+
+    class Slayer extends Record {
+
+        String name;
+
+        @Override
+        protected Map<String, Object> derived() {
+            Map<String, Object> derived = new HashMap<>();
+            derived.put("isAllStar", null);
+            return derived;
         }
 
     }
@@ -837,9 +861,9 @@ public class RunwayTest extends ClientServerTest {
     class NonNonParent extends NonParent {
 
     }
-    
+
     class Toddler extends Human {
-        
+
         @Required
         int age;
     }
