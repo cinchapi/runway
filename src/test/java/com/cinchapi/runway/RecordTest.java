@@ -340,7 +340,6 @@ public class RecordTest extends ClientServerTest {
     public void testComputedValueNotComputedIfNotNecessary() {
         Bock bock = new Bock();
         Map<String, Object> data = bock.map("-state");
-        System.out.println(data);
         Assert.assertFalse(data.containsKey("state"));
     }
     
@@ -348,7 +347,6 @@ public class RecordTest extends ClientServerTest {
     public void testAnnotatedComputedValueNotComputedIfNotNecessary() {
         Bock bock = new Bock();
         Map<String, Object> data = bock.map("-county");
-        System.out.println(data);
         Assert.assertFalse(data.containsKey("county"));
     }
 
