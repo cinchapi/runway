@@ -20,6 +20,7 @@ import gnu.trove.map.TLongObjectMap;
 import java.io.IOException;
 import java.io.Serializable;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
 import java.util.AbstractMap;
@@ -629,6 +630,16 @@ public abstract class Record implements Comparable<Record> {
     private transient Runway runway = null;
 
     /**
+     * A cache of the {@link #$computed() properties}.
+     */
+    private transient Map<String, Supplier<Object>> computed = null;
+
+    /**
+     * A cache of the {@link #$derived() properties}.
+     */
+    private transient Map<String, Object> derived = null;
+
+    /**
      * Construct a new instance.
      */
     public Record() {
@@ -782,10 +793,10 @@ public abstract class Record implements Comparable<Record> {
                     catch (Exception e) {/* ignore */}
                 }
                 if(value == null) {
-                    value = derived().get(key);
+                    value = $derived().get(key);
                 }
                 if(value == null) {
-                    Supplier<?> computer = computed().get(key);
+                    Supplier<?> computer = $computed().get(key);
                     if(computer != null) {
                         value = computer.get();
                     }
@@ -1261,7 +1272,9 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      * 
      * @return the computed data
+     * @deprecated Use the {@link Computed} annotation instead
      */
+    @Deprecated
     protected Map<String, Supplier<Object>> computed() {
         return Collections.emptyMap();
     }
@@ -1272,7 +1285,9 @@ public abstract class Record implements Comparable<Record> {
      * specific information that isn't persisted to the database.
      * 
      * @return the additional data
+     * @deprecated Use the {@link Derived} annotation instead
      */
+    @Deprecated
     protected Map<String, Object> derived() {
         return Maps.newHashMap();
     }
@@ -1657,6 +1672,85 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Gather all of the computed properties.
+     * 
+     * @return the computer properties
+     */
+    private Map<String, Supplier<Object>> $computed() {
+        if(computed == null) {
+            computed = new HashMap<>();
+            computed.putAll(computed());
+            for (Method method : Reflection.getAllDeclaredMethods(this)) {
+                Computed annotation = method.getAnnotation(Computed.class);
+                if(annotation != null) {
+                    if(method.getParameterCount() == 0) {
+                        String key = annotation.value();
+                        if(key.isEmpty()) {
+                            key = method.getName();
+                        }
+                        computed.put(key, () -> {
+                            try {
+                                return method.invoke(this);
+                            }
+                            catch (ReflectiveOperationException e) {
+                                throw CheckedExceptions
+                                        .wrapAsRuntimeException(e);
+                            }
+                        });
+                    }
+                    else {
+                        throw new IllegalArgumentException(
+                                "A method annotated with "
+                                        + annotation.getClass().getSimpleName()
+                                        + " cannot require parameters");
+                    }
+
+                }
+
+            }
+        }
+        return computed;
+    }
+
+    /**
+     * Gather all of the derived properties.
+     * 
+     * @return the computer properties
+     */
+    private Map<String, Object> $derived() {
+        if(derived == null) {
+            derived = new HashMap<>();
+            derived.putAll(derived());
+            for (Method method : Reflection.getAllDeclaredMethods(this)) {
+                Derived annotation = method.getAnnotation(Derived.class);
+                if(annotation != null) {
+                    if(method.getParameterCount() == 0) {
+                        String key = annotation.value();
+                        if(key.isEmpty()) {
+                            key = method.getName();
+                        }
+                        try {
+                            derived.put(key, method.invoke(this));
+                        }
+                        catch (ReflectiveOperationException e) {
+                            throw CheckedExceptions.wrapAsRuntimeException(e);
+                        }
+                    }
+                    else {
+                        throw new IllegalArgumentException(
+                                "A method annotated with "
+                                        + annotation.getClass().getSimpleName()
+                                        + " cannot require parameters");
+                    }
+
+                }
+
+            }
+        }
+        return derived;
+    }
+
+    /**
      * Check to ensure that this Record does not violate any constraints. If so,
      * throw an {@link IllegalStateException}.
      * 
@@ -1830,13 +1924,13 @@ public abstract class Record implements Comparable<Record> {
 
             @Override
             public Set<Entry<String, Object>> entrySet() {
-                return computed().entrySet().stream().map(ComputedEntry::new)
+                return $computed().entrySet().stream().map(ComputedEntry::new)
                         .collect(Collectors.toSet());
             }
 
             @Override
             public Object get(Object key) {
-                Supplier<?> computer = computed().get(key);
+                Supplier<?> computer = $computed().get(key);
                 if(computer != null) {
                     return computer.get();
                 }
@@ -1847,11 +1941,11 @@ public abstract class Record implements Comparable<Record> {
 
             @Override
             public Set<String> keySet() {
-                return computed().keySet();
+                return $computed().keySet();
             }
 
         };
-        Map<String, Object> data = BackupReadSourcesHashMap.create(derived(),
+        Map<String, Object> data = BackupReadSourcesHashMap.create($derived(),
                 computed);
         fields().forEach(field -> {
             try {
