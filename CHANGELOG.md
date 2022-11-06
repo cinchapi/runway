@@ -1,7 +1,8 @@
 # Changelog
 
-#### Version 1.9.5 (TBD)
-* Fixed a regression that casued a `NullPointerException` to be thrown when a `null` intrinsic, `derived()` or `computed()` value was encountered while performing local `condition` evaluation. 
+#### Version 1.10.0 (TBD)
+* Added `@Computed` and `@Derived` annotations that can be applied to methods to mark them as returning `computed` and `derived` properties, respectively. These annotations are meant to be used in lieu of the `#computed()` and `#derived()` methods, which are now deprecated
+* Fixed a regression that casued a `NullPointerException` to be thrown when a `null` intrinsic, `derived` or `computed` value was encountered while performing local `condition` evaluation. 
 
 #### Version 1.9.4 (July 22, 2022)
 * Fixed a bug that occurred when using *pre-select* to load a Record containing a reference field whose **declared** type is the parent class of a descendant class with additionally defined fields and the stored value for that field is an instance of that descendant class. In this case, the pre-select logic did not load data for the descendant defined fields, which resulted in unexpected `NullPointerException` regressions or an overall inability to load those Records if the descendant defined field was annotated as `Required`.

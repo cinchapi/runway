@@ -317,12 +317,23 @@ public class RecordTest extends ClientServerTest {
         Assert.assertEquals("Georgia", state);
         Assert.assertTrue(end - start >= 1000);
     }
+    
+    @Test
+    public void testGetAnnotatedComputedValue() {
+        Rock rock = new Rock();
+        long start = System.currentTimeMillis();
+        String county = rock.get("county");
+        long end = System.currentTimeMillis();
+        Assert.assertEquals("Fulton", county);
+        Assert.assertTrue(end - start >= 1000);
+    }
 
     @Test
-    public void testComputedValueIncludedInGetAll() {
+    public void testAnnotatedComputedValueIncludedInGetAll() {
         Rock rock = new Rock();
         Map<String, Object> data = rock.map();
         Assert.assertTrue(data.containsKey("state"));
+        Assert.assertTrue(data.containsKey("county"));
     }
 
     @Test
@@ -331,6 +342,14 @@ public class RecordTest extends ClientServerTest {
         Map<String, Object> data = bock.map("-state");
         System.out.println(data);
         Assert.assertFalse(data.containsKey("state"));
+    }
+    
+    @Test
+    public void testAnnotatedComputedValueNotComputedIfNotNecessary() {
+        Bock bock = new Bock();
+        Map<String, Object> data = bock.map("-county");
+        System.out.println(data);
+        Assert.assertFalse(data.containsKey("county"));
     }
 
     @Test
@@ -1048,6 +1067,13 @@ public class RecordTest extends ClientServerTest {
         mmap = a.mmap("label");
         Assert.assertFalse(mmap.containsKey("friends"));
     }
+    
+    @Test
+    public void testGetAnnotatedDerivedProperty() {
+        Nock nock = new Nock();
+        Assert.assertEquals("Atlanta", nock.get("area"));
+        Assert.assertEquals("30327", nock.get("zipcode"));
+    }
 
     // @Test
     // public void testReconcileCollectionPrimitiveValues() {
@@ -1206,6 +1232,16 @@ public class RecordTest extends ClientServerTest {
     }
 
     class Nock extends Mock {
+        
+        @Derived
+        public String zipcode() {
+            return "30327";
+        }
+        
+        @Derived("area")
+        public String city() {
+            return "Atlanta";
+        }
 
         @Override
         public Map<String, Object> derived() {
@@ -1215,6 +1251,15 @@ public class RecordTest extends ClientServerTest {
     }
 
     class Rock extends Nock {
+        
+        @Computed("county")
+        public String county() {
+            long stop = System.currentTimeMillis() + 1000;
+            while (System.currentTimeMillis() < stop) {
+                continue;
+            }
+            return "Fulton";
+        }
 
         @Override
         public Map<String, Supplier<Object>> computed() {
