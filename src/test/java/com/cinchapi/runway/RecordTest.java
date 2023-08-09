@@ -317,7 +317,7 @@ public class RecordTest extends ClientServerTest {
         Assert.assertEquals("Georgia", state);
         Assert.assertTrue(end - start >= 1000);
     }
-    
+
     @Test
     public void testGetAnnotatedComputedValue() {
         Rock rock = new Rock();
@@ -342,7 +342,7 @@ public class RecordTest extends ClientServerTest {
         Map<String, Object> data = bock.map("-state");
         Assert.assertFalse(data.containsKey("state"));
     }
-    
+
     @Test
     public void testAnnotatedComputedValueNotComputedIfNotNecessary() {
         Bock bock = new Bock();
@@ -1045,7 +1045,7 @@ public class RecordTest extends ClientServerTest {
             Record.StaticAnalysis.instance().computeAllPossiblePaths();
         }
     }
-    
+
     @Test
     public void testMmap() {
         Node a = new Node("a");
@@ -1059,18 +1059,57 @@ public class RecordTest extends ClientServerTest {
         b.friends.add(c);
         Multimap<String, Object> mmap = a.mmap();
         Assert.assertEquals(mmap.get("label"), ImmutableList.of("a"));
-        Assert.assertEquals(mmap.get("friends"), ImmutableList.of(b,c,d));
+        Assert.assertEquals(mmap.get("friends"), ImmutableList.of(b, c, d));
         Assert.assertTrue(mmap.containsValue(b));
         Assert.assertTrue(mmap.containsValue("a"));
         mmap = a.mmap("label");
         Assert.assertFalse(mmap.containsKey("friends"));
     }
-    
+
     @Test
     public void testGetAnnotatedDerivedProperty() {
         Nock nock = new Nock();
         Assert.assertEquals("Atlanta", nock.get("area"));
         Assert.assertEquals("30327", nock.get("zipcode"));
+    }
+
+    @Test
+    public void testMultiSetSingleKeyValuePair() {
+        Mock person = new Mock();
+        person.set(ImmutableMap.of("name", "Test Name"));
+        Assert.assertEquals("Test Name", person.name);
+    }
+
+    @Test
+    public void testMultiSetMultipleKeyValuePairs() {
+        Mock person = new Mock();
+        person.set(ImmutableMap.of("name", "Test Name", "age", 25));
+        Assert.assertEquals("Test Name", person.name);
+        Assert.assertEquals(Integer.valueOf(25), person.age);
+    }
+
+    @Test
+    public void testMultiSetExistingAndDynamicAttributes() {
+        Mock person = new Mock();
+        person.set(ImmutableMap.of("name", "Test Name", "dynamicAttr",
+                "Dynamic Value"));
+        Assert.assertEquals("Test Name", person.name);
+        Assert.assertEquals("Dynamic Value", person.get("dynamicAttr"));
+    }
+
+    @Test
+    public void testMutliSetOverwriteExistingAttributes() {
+        Mock person = new Mock();
+        person.name = "Original Name";
+        person.set(ImmutableMap.of("name", "New Name"));
+        Assert.assertEquals("New Name", person.name);
+    }
+
+    @Test
+    public void testMultuSetInvalidAttributes() {
+        Mock person = new Mock();
+        person.set(ImmutableMap.of("invalidAttr", "Invalid Value"));
+        Assert.assertEquals("Invalid Value", person.get("invalidAttr"));
     }
 
     // @Test
@@ -1230,12 +1269,12 @@ public class RecordTest extends ClientServerTest {
     }
 
     class Nock extends Mock {
-        
+
         @Derived
         public String zipcode() {
             return "30327";
         }
-        
+
         @Derived("area")
         public String city() {
             return "Atlanta";
@@ -1249,7 +1288,7 @@ public class RecordTest extends ClientServerTest {
     }
 
     class Rock extends Nock {
-        
+
         @Computed("county")
         public String county() {
             long stop = System.currentTimeMillis() + 1000;

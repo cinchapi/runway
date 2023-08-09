@@ -1229,6 +1229,18 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * {@link #set(String, Object) Set} each key/value pair within {@code data}
+     * as a dynamic attribute in this {@link Record}.
+     * 
+     * @param data
+     */
+    public void set(Map<String, Object> data) {
+        data.forEach((key, value) -> {
+            set(key, value);
+        });
+    }
+
+    /**
      * Thrown an exception that describes any exceptions that were previously
      * suppressed. If none occurred, then this method does nothing. This is a
      * good way to understand why a save operation fails.

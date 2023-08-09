@@ -639,6 +639,34 @@ public class RunwayTest extends ClientServerTest {
         Assert.assertTrue(slayers.isEmpty());
     }
 
+    @Test
+    public void testMultiSetSaveAndLoadById() {
+        Player record = new Player("Jeff Nelson", 36);
+        record.set(ImmutableMap.of("name", "John Doe"));
+        record.save();
+        Player loaded = runway.load(Player.class, record.id());
+        Assert.assertEquals("John Doe", loaded.get("name"));
+    }
+
+    @Test
+    public void testMultiSetSaveAndFindByCriteria() {
+        Player record1 = new Player("Jeff Nelson", 36);
+        record1.set(ImmutableMap.of("name", "John Doe", "age", 25));
+        Player record2 = new Player("Jeff Nelson", 36);
+        record2.set(ImmutableMap.of("name", "Jane Smith", "age", 30));
+        record1.save();
+        record2.save();
+        Criteria criteria = Criteria.where().key("name")
+                .operator(Operator.EQUALS).value("John Doe");
+        Set<Player> records = runway.find(Player.class, criteria);
+        Assert.assertEquals(1, records.size());
+        Assert.assertEquals("John Doe", records.iterator().next().get("name"));
+        Assert.assertTrue(runway
+                .find(Player.class, Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("Jeff Nelson"))
+                .isEmpty());
+    }
+
     class Player extends Record {
         String name;
         int score;
