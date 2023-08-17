@@ -19,6 +19,7 @@ import gnu.trove.map.TLongObjectMap;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -748,12 +749,31 @@ public abstract class Record implements Comparable<Record> {
         return compareTo(record, $order);
     }
 
+    private Set<Record> waitingToBeDeleted = new LinkedHashSet<>();
+
     /**
      * Delete this {@link Record} from Concourse when the {@link #save()} method
      * is called.
      */
     public void deleteOnSave() {
         deleted = true;
+        Set<Field> dependents = StaticAnalysis.instance()
+                .getAnnotatedFields(getClass(), CascadeDelete.class);
+        for (Field dependent : dependents) {
+            try {
+                Object value = dependent.get(this);
+                if(value instanceof Record) {
+                    Record record = (Record) value;
+                    if(!record.deleted) {
+                        record.deleteOnSave();
+                        waitingToBeDeleted.add(record);
+                    }
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
+            }
+        }
     }
 
     @Override
@@ -1202,6 +1222,18 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * {@link #set(String, Object) Set} each key/value pair within {@code data}
+     * as a dynamic attribute in this {@link Record}.
+     * 
+     * @param data
+     */
+    public void set(Map<String, Object> data) {
+        data.forEach((key, value) -> {
+            set(key, value);
+        });
+    }
+
+    /**
      * Set a dynamic attribute in this Record.
      * 
      * @param key the key name
@@ -1226,18 +1258,6 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
         }
-    }
-
-    /**
-     * {@link #set(String, Object) Set} each key/value pair within {@code data}
-     * as a dynamic attribute in this {@link Record}.
-     * 
-     * @param data
-     */
-    public void set(Map<String, Object> data) {
-        data.forEach((key, value) -> {
-            set(key, value);
-        });
     }
 
     /**
@@ -1985,6 +2005,9 @@ public abstract class Record implements Comparable<Record> {
      */
     private void delete(Concourse concourse) {
         concourse.clear(id);
+        for (Record record : waitingToBeDeleted) {
+            record.delete(concourse);
+        }
     }
 
     /**
@@ -2443,8 +2466,7 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * A mapping from each {@link Record} class to each its non-internal
-         * keys,
-         * each of which is mapped to the associated {@link Field} object.
+         * keys, each of which is mapped to the associated {@link Field} object.
          */
         private final Map<Class<? extends Record>, Map<String, Field>> fieldsByClass;
 
@@ -2476,6 +2498,8 @@ public abstract class Record implements Comparable<Record> {
         private final Reflections reflection = new Reflections(
                 new SubTypesScanner());
 
+        private final Map<Class<?>, Map<Class<? extends Annotation>, Set<Field>>> fieldAnnotationsByClass;
+
         /**
          * Construct a new instance.
          */
@@ -2487,6 +2511,7 @@ public abstract class Record implements Comparable<Record> {
             this.fieldTypeArgumentsByClass = new HashMap<>();
             this.hasRecordFieldTypeByClass = new HashSet<>();
             this.hasRecordFieldTypeByClassHierarchy = new HashSet<>();
+            this.fieldAnnotationsByClass = new HashMap<>();
             Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
             reflection.getSubTypesOf(Record.class).forEach(type -> {
                 // Build class hierarchy
@@ -2511,6 +2536,15 @@ public abstract class Record implements Comparable<Record> {
                     if(Record.class.isAssignableFrom(field.getType())) {
                         hasRecordFieldTypeByClass.add(type);
                     }
+
+                    // Get annotations associated with each field
+                    for (Annotation annotation : field.getAnnotations()) {
+                        fieldAnnotationsByClass
+                                .computeIfAbsent(type, $ -> new HashMap<>())
+                                .computeIfAbsent(annotation.annotationType(),
+                                        $ -> new HashSet<>())
+                                .add(field);
+                    }
                 });
             });
 
@@ -2524,6 +2558,49 @@ public abstract class Record implements Comparable<Record> {
             // been documented, go through again and compute the paths for each
             // one
             computeAllPossiblePaths();
+        }
+
+        /**
+         * Return a set of fields from a {@link Record} class that are annotated
+         * with
+         * a specific annotation.
+         * 
+         * @param <T> the type of record
+         * @param clazz the class of the record
+         * @param annotation the class of the annotation to look for
+         * @return a set of fields annotated with the specified annotation, or
+         *         an
+         *         empty set if none are found
+         * @throws IllegalArgumentException if the provided class is unknown
+         */
+        public <T extends Record> Set<Field> getAnnotatedFields(Class<T> clazz,
+                Class<? extends Annotation> annotation) {
+            try {
+                return fieldAnnotationsByClass.get(clazz)
+                        .getOrDefault(annotation, ImmutableSet.of());
+            }
+            catch (NullPointerException e) {
+                throw new IllegalArgumentException(
+                        "Unknown Record type: " + clazz);
+            }
+        }
+
+        /**
+         * Return a set of fields from an instance of a {@link Record} that are
+         * annotated with a specific annotation.
+         * 
+         * @param <T> the type of record
+         * @param record the record instance
+         * @param annotation the class of the annotation to look for
+         * @return a set of fields annotated with the specified annotation, or
+         *         an
+         *         empty set if none are found
+         * @throws IllegalArgumentException if the provided record type is
+         *             unknown
+         */
+        public <T extends Record> Set<Field> getAnnotatedFields(T record,
+                Class<? extends Annotation> annotation) {
+            return getAnnotatedFields(record.getClass(), annotation);
         }
 
         /**
