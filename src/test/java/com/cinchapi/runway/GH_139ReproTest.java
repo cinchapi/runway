@@ -29,7 +29,7 @@ import com.cinchapi.runway.validation.EmailValidator;
  * @author Jeff Nelson
  */
 public class GH_139ReproTest extends RunwayBaseClientServerTest {
-    
+
     @Test
     public void reproNoValidationCheckForNoValues() {
         Player player = new Player();
@@ -39,7 +39,7 @@ public class GH_139ReproTest extends RunwayBaseClientServerTest {
         }
         Assert.assertTrue(true);
     }
-    
+
     @Test
     public void reproValidationCheckForEmptyValue() {
         Player player = new Player();
@@ -51,14 +51,22 @@ public class GH_139ReproTest extends RunwayBaseClientServerTest {
             try {
                 player.throwSupressedExceptions();
             }
-            catch(Exception e) {
+            catch (Exception e) {
                 Assert.assertTrue(true);
             }
         }
     }
-    
+
+    @Test
+    public void reproValidationCheckOnEachCollectionValue() {
+        Player player = new Player();
+        player.emails.add("jeff@cinchapi.com");
+        player.emails.add("jeff.nelson@cinchapi.com");
+        Assert.assertTrue(player.save());
+    }
+
     class Player extends Record {
-        
+
         @ValidatedBy(EmailValidator.class)
         public Set<String> emails = new HashSet<>();
     }
