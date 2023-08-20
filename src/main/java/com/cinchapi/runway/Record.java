@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import gnu.trove.map.TLongObjectMap;
+import groovy.lang.Sequence;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -47,6 +48,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import org.apache.commons.lang.StringUtils;
@@ -88,6 +90,7 @@ import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Predicates;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -403,18 +406,16 @@ public abstract class Record implements Comparable<Record> {
      * @return the serialized value
      */
     @SuppressWarnings("rawtypes")
-    private static Object serialize(Object value) {
-        // NOTE: This logic mirrors storage logic in the #store method. But,
-        // since the #store method has some optimizations, it doesn't call into
-        // this method directly. So, if modifications are made to this method,
-        // please make similar and appropriate modifications to #store.
+    private static Object serializeScalarValue(@Nonnull Object value) {
         Preconditions.checkArgument(!Sequences.isSequence(value));
         Preconditions.checkNotNull(value);
         if(value instanceof Record) {
-            return Link.to(((Record) value).id());
+            Record record = (Record) value;
+            return Link.to(record.id);
         }
         else if(value instanceof DeferredReference) {
-            return serialize(((DeferredReference) value).get());
+            DeferredReference deferred = (DeferredReference) value;
+            return Link.to(deferred.$id());
         }
         else if(value.getClass().isPrimitive() || value instanceof String
                 || value instanceof Tag || value instanceof Link
@@ -433,9 +434,7 @@ public abstract class Record implements Comparable<Record> {
             return base64;
         }
         else {
-            Gson gson = new Gson();
-            Tag json = Tag.create(gson.toJson(value));
-            return json;
+            return Tag.create(new Gson().toJson(value));
         }
     }
 
@@ -1202,6 +1201,18 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * {@link #set(String, Object) Set} each key/value pair within {@code data}
+     * as a dynamic attribute in this {@link Record}.
+     * 
+     * @param data
+     */
+    public void set(Map<String, Object> data) {
+        data.forEach((key, value) -> {
+            set(key, value);
+        });
+    }
+
+    /**
      * Set a dynamic attribute in this Record.
      * 
      * @param key the key name
@@ -1226,18 +1237,6 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
         }
-    }
-
-    /**
-     * {@link #set(String, Object) Set} each key/value pair within {@code data}
-     * as a dynamic attribute in this {@link Record}.
-     * 
-     * @param data
-     */
-    public void set(Map<String, Object> data) {
-        data.forEach((key, value) -> {
-            set(key, value);
-        });
     }
 
     /**
@@ -1599,13 +1598,38 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Save the data in this record using the specified {@code concourse}
-     * connection. This method assumes that the caller has already started a
-     * transaction, if necessary and will commit the transaction after this
-     * method completes.
-     * 
-     * @param concourse
-     * @param seen
+     * Save the data within this record using the specified {@code concourse}
+     * connection, adhering to constraints specified by the record's field
+     * annotations.
+     * This method assumes that the caller has already started a transaction and
+     * will execute within the same transaction context.
+     * <p>
+     * It iterates over the fields of the record and performs different
+     * operations based on field annotations:
+     * </p>
+     * <ul>
+     * <li>{@link Required @Required} enforces that a value is non-empty or
+     * contains at least one non-empty item if a sequence.</li>
+     * <li>{@link ValidatedBy @ValidatedBy} applies a custom validation defined
+     * by the validator class specified in the annotation to each element.</li>
+     * <li>{@link Unique @Unique} ensures that each element in a field must be
+     * unique across all records in the class, failing to save if duplicate
+     * values are found.</li>
+     * </ul>
+     * <p>
+     * If the record has modified realms, it reconciles them with the existing
+     * ones. Values are transformed into storable form using the
+     * {@link #transform(Object, Concourse, Set)} method before saving. In case
+     * of violations of constraints, an {@code IllegalStateException} is thrown.
+     * </p>
+     *
+     * @param concourse The Concourse instance to execute the operation.
+     * @param seen Set of records already saved, to prevent infinite recursion.
+     * @throws IllegalStateException If required fields are missing, values are
+     *             not unique across
+     *             all records in the class, or validation fails.
+     * @throws ReflectiveOperationException If reflection-related errors occur
+     *             during processing.
      */
     /* package */ void saveWithinTransaction(final Concourse concourse,
             Set<Record> seen) {
@@ -1618,58 +1642,57 @@ public abstract class Record implements Comparable<Record> {
         fields().forEach(field -> {
             try {
                 if(!Modifier.isTransient(field.getModifiers())) {
-                    final String key = field.getName();
-                    final Object value = field.get(this);
-                    if(field.isAnnotationPresent(ValidatedBy.class)) {
-                        Class<? extends Validator> validatorClass = field
-                                .getAnnotation(ValidatedBy.class).value();
-                        Validator validator = Reflection
-                                .newInstance(validatorClass);
-                        Preconditions.checkState(validator.validate(value),
-                                validator.getErrorMessage());
-                    }
-                    if(field.isAnnotationPresent(Unique.class)) {
-                        Unique constraint = field.getAnnotation(Unique.class);
-                        String name = constraint.name();
-                        if(name.length() == 0) {
-                            Preconditions
-                                    .checkState(isUnique(concourse, key, value),
-                                            field.getName()
-                                                    + " must be unique in "
-                                                    + __);
-                        }
-                        else if(!alreadyVerifiedUniqueConstraints
-                                .contains(name)) {
-                            // Find all the fields that have this constraint and
-                            // check for uniqueness.
-                            Map<String, Object> values = Maps.newHashMap();
-                            values.put(key, value);
-                            fields().stream().filter($field -> $field != field)
-                                    .filter($field -> $field
-                                            .isAnnotationPresent(Unique.class))
-                                    .filter($field -> $field
-                                            .getAnnotation(Unique.class).name()
-                                            .equals(name))
-                                    .forEach($field -> {
-                                        values.put($field.getName(), Reflection
-                                                .get($field.getName(), this));
-                                    });
-                            if(isUnique(concourse, values)) {
-                                alreadyVerifiedUniqueConstraints.add(name);
-                            }
-                            else {
-                                throw new IllegalStateException(AnyStrings
-                                        .format("{} must be unique in {}", name,
-                                                __));
-                            }
-                        }
-                    }
-                    if(field.isAnnotationPresent(Required.class)) {
-                        Preconditions.checkState(!Empty.ness().describes(value),
-                                field.getName() + " is required in " + __);
+                    String key = field.getName();
+                    Object value = field.get(this);
+                    boolean isSequence = Sequences.isSequence(value);
+                    // Enforce that Required fields have a non-empty value
+                    if(field.isAnnotationPresent(Required.class) && (isSequence
+                            ? Sequences.stream(value)
+                                    .allMatch(Empty.ness()::describes)
+                            : Empty.ness().describes(value))) {
+                        throw new IllegalStateException(AnyStrings
+                                .format("{}  is required in {}", key, __));
                     }
                     if(value != null) {
-                        store(key, value, concourse, false, seen);
+                        // Enforce that Unique fields have non-duplicated values
+                        // across the class
+                        if(field.isAnnotationPresent(Unique.class)
+                                && (isSequence ? Sequences.stream(value)
+                                        .anyMatch(Predicates.not(
+                                                item -> checkIsUnique(concourse,
+                                                        field, key, item,
+                                                        alreadyVerifiedUniqueConstraints)))
+                                        : !checkIsUnique(concourse, field, key,
+                                                value,
+                                                alreadyVerifiedUniqueConstraints))) {
+                            String name = field.getAnnotation(Unique.class)
+                                    .name();
+                            name = name.length() == 0 ? key : name;
+                            throw new IllegalStateException(AnyStrings.format(
+                                    "{} must be unique in {}", name, __));
+                        }
+                        // Apply custom validation
+                        if(field.isAnnotationPresent(ValidatedBy.class)) {
+                            Class<? extends Validator> validatorClass = field
+                                    .getAnnotation(ValidatedBy.class).value();
+                            Validator validator = Reflection
+                                    .newInstance(validatorClass);
+                            if(isSequence
+                                    ? Sequences.stream(value).anyMatch(
+                                            Predicates.not(validator::validate))
+                                    : !validator.validate(value)) {
+                                throw new IllegalStateException(
+                                        validator.getErrorMessage());
+
+                            }
+                        }
+                        value = transform(value, concourse, seen);
+                        if(value.getClass().isArray()) {
+                            concourse.reconcile(key, id, (Object[]) value);
+                        }
+                        else {
+                            concourse.verifyOrSet(key, value, id);
+                        }
                     }
                     else {
                         concourse.clear(key, id);
@@ -1680,7 +1703,6 @@ public abstract class Record implements Comparable<Record> {
                 throw CheckedExceptions.throwAsRuntimeException(e);
             }
         });
-
     }
 
     /**
@@ -1793,6 +1815,52 @@ public abstract class Record implements Comparable<Record> {
             inViolation = true;
             throw CheckedExceptions.wrapAsRuntimeException(e);
         }
+    }
+
+    /**
+     * Checks whether a given value for a field is unique across all records in
+     * the class. If the {@link Unique} constraint has a name, this method
+     * verifies the uniqueness for all fields with that same constraint name
+     * within the class. If the constraint has been already verified, it is
+     * skipped.
+     * 
+     * @param concourse The Concourse instance managing the transaction.
+     * @param field The field that is being checked for uniqueness.
+     * @param key The key or name of the field.
+     * @param value The value that needs to be checked for uniqueness.
+     * @param alreadyVerifiedUniqueConstraints A set containing names of
+     *            constraints that have already been verified.
+     * @return {@code true} if the value is unique according to the specified
+     *         constraints; {@code false} otherwise.
+     */
+    private boolean checkIsUnique(Concourse concourse, Field field, String key,
+            Object value, Set<String> alreadyVerifiedUniqueConstraints) {
+        Unique constraint = field.getAnnotation(Unique.class);
+        String name = constraint.name();
+        if(name.length() == 0 && !isUnique(concourse, key, value)) {
+            return false;
+        }
+        else if(!alreadyVerifiedUniqueConstraints.contains(name)) {
+            // Find all the fields that have this constraint and
+            // check for uniqueness.
+            Map<String, Object> values = Maps.newHashMap();
+            values.put(key, value);
+            fields().stream().filter($field -> $field != field)
+                    .filter($field -> $field.isAnnotationPresent(Unique.class))
+                    .filter($field -> $field.getAnnotation(Unique.class).name()
+                            .equals(name))
+                    .forEach($field -> {
+                        values.put($field.getName(),
+                                Reflection.get($field.getName(), this));
+                    });
+            if(isUnique(concourse, values)) {
+                alreadyVerifiedUniqueConstraints.add(name);
+            }
+            else {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -2067,7 +2135,7 @@ public abstract class Record implements Comparable<Record> {
                 AtomicReference<BuildableState> $sub = new AtomicReference<>(
                         null);
                 Sequences.forEach(value, item -> {
-                    item = serialize(item);
+                    item = serializeScalarValue(item);
                     if($sub.get() == null) {
                         $sub.set(Criteria.where().key(key)
                                 .operator(Operator.EQUALS).value(item));
@@ -2081,7 +2149,7 @@ public abstract class Record implements Comparable<Record> {
                         .group($criteria.get().and().group($sub.get())));
             }
             else {
-                value = serialize(value);
+                value = serializeScalarValue(value);
                 $criteria.set($criteria.get().and().key(key)
                         .operator(Operator.EQUALS).value(value));
             }
@@ -2173,84 +2241,66 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Store {@code key} as {@code value} using the specified {@code concourse}
-     * connection. The {@code append} flag is used to indicate if the value
-     * should be appended using the {@link Concourse#add(String, Object, long)}
-     * method or inserted using the {@link Concourse#set(String, Object, long)}
-     * method.
-     * 
-     * @param key
-     * @param value
-     * @param concourse
-     * @param append
+     * Transforms the provided {@code value} into a primitive form that can be
+     * stored within {@link Concourse concourse}. The transformation is
+     * recursive, handling nested {@link Record records} and
+     * {@link Sequences#isSequence(Object) sequences}.
+     * <p>
+     * The result will either be a {@link Concourse} primitive or an array of
+     * {@link Concourse} primitives; include Java primitive types, {@link Tag
+     * tags}, {@link Link links}, and serialized representations of complex
+     * objects.
+     * </p>
+     * <p>
+     * If the value is an instance of {@link Record}, it's saved within the
+     * current {@link Concourse concourse} transaction and linked. If the value
+     * is a {@link DeferredReference}, it is similarly saved if the reference
+     * was {@link DeferredReference#get() loaded}.
+     * </p>
+     * <p>
+     * For simplicity, all {@link Sequences#isSequence(Object) Sequences} are
+     * transformed into arrays.
+     * </p>
+     *
+     * @param value The value to be transformed.
+     * @param concourse The Concourse instance managing the transaction.
+     * @param seen the records that have already been {@link #save() saved} (to
+     *            prevent infinite recursion)
+     * @return a {@link Concourse} primitive or an array of {@link Concourse}
+     *         primitives.
      */
     @SuppressWarnings("rawtypes")
-    private void store(String key, Object value, Concourse concourse,
-            boolean append, Set<Record> seen) {
-        // NOTE: This logic mirrors serialization logic in the #serialize
-        // method. Since this method has some optimizations, it doesn't call
-        // into #serialize directly. So, if modifications are made to this
-        // method, please make similar and appropriate modifications to
-        // #serialize.
-        // TODO: dirty field detection!
-        if(value instanceof Record) {
-            Record record = (Record) value;
-            if(!seen.contains(record)) {
+    private Object transform(@Nonnull Object value, Concourse concourse,
+            Set<Record> seen) {
+        if(Sequences.isSequence(value)) {
+            ArrayBuilder<Object> array = ArrayBuilder.builder();
+            Sequences.forEach(value, item -> {
+                array.add(transform(item, concourse, seen));
+            });
+            return array.length() > 0 ? array.build() : Array.containing();
+        }
+        else {
+            Object primitive = serializeScalarValue(value);
+            Record record;
+            if(value instanceof Record) {
+                record = (Record) value;
+            }
+            else if(value instanceof DeferredReference) {
+                DeferredReference deferred = (DeferredReference) value;
+                record = deferred.$ref();
+            }
+            else {
+                record = null;
+            }
+
+            // Ensure that Record references are saved within the current
+            // transaction
+            if(record != null && !seen.contains(record)) {
                 seen.add(record);
                 record.saveWithinTransaction(concourse, seen);
             }
-            if(append) {
-                concourse.link(key, record.id, id);
-            }
-            else {
-                concourse.verifyOrSet(key, Link.to(record.id), id);
-            }
-        }
-        else if(value instanceof DeferredReference) {
-            DeferredReference deferred = (DeferredReference) value;
-            Record ref = deferred.$ref();
-            if(ref != null) {
-                store(key, ref, concourse, append, seen);
-            }
-            else {
-                // no-op because the reference was not loaded and therefore has
-                // no changes to save...
-            }
-        }
-        else if(value instanceof Collection || value.getClass().isArray()) {
-            // TODO use reconcile() function once 0.5.0 comes out...
-            concourse.clear(key, id); // TODO this is extreme...move to a diff
-                                      // based approach to delete only values
-                                      // that should be deleted
-            for (Object item : (Iterable<?>) value) {
-                store(key, item, concourse, true, seen);
-            }
-        }
-        else if(value.getClass().isPrimitive() || value instanceof String
-                || value instanceof Tag || value instanceof Link
-                || value instanceof Integer || value instanceof Long
-                || value instanceof Float || value instanceof Double
-                || value instanceof Boolean || value instanceof Timestamp) {
-            if(append) {
-                concourse.add(key, value, id);
-            }
-            else {
-                concourse.verifyOrSet(key, value, id);
-            }
-        }
-        else if(value instanceof Enum) {
-            concourse.set(key, Tag.create(((Enum) value).name()), id);
-        }
-        else if(value instanceof Serializable) {
-            ByteBuffer bytes = Serializables.getBytes((Serializable) value);
-            Tag base64 = Tag.create(BaseEncoding.base64Url()
-                    .encode(ByteBuffers.toByteArray(bytes)));
-            store(key, base64, concourse, append, seen);
-        }
-        else {
-            Gson gson = new Gson();
-            Tag json = Tag.create(gson.toJson(value));
-            store(key, json, concourse, append, seen);
+
+            return primitive;
         }
     }
 
