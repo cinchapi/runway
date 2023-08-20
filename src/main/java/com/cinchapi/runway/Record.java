@@ -1684,14 +1684,12 @@ public abstract class Record implements Comparable<Record> {
                             }
                         }
                         value = transform(value, concourse, seen);
-                    }
-                    Object[] values;
-                    if(value != null && (isSequence
-                            && (values = (Object[]) value).length > 0)) {
-                        concourse.reconcile(key, id, values);
-                    }
-                    else if(value != null) {
-                        concourse.verifyOrSet(key, value, id);
+                        if(value.getClass().isArray()) {
+                            concourse.reconcile(key, id, (Object[]) value);
+                        }
+                        else {
+                            concourse.verifyOrSet(key, value, id);
+                        }
                     }
                     else {
                         concourse.clear(key, id);
