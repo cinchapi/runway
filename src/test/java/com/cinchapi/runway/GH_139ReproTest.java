@@ -62,13 +62,62 @@ public class GH_139ReproTest extends RunwayBaseClientServerTest {
         Player player = new Player();
         player.emails.add("jeff@cinchapi.com");
         player.emails.add("jeff.nelson@cinchapi.com");
-        Assert.assertTrue(player.save());
+        player.save();
+        player.throwSupressedExceptions();
+    }
+    
+    @Test
+    public void reproDeferredReferenceCollectionWithNonDirtyValueDoesntVanish() {
+        Athlete a = new Athlete();
+        a.name = "a";
+        Athlete b = new Athlete();
+        b.name = "b";
+        Athlete c = new Athlete();
+        c.name = "c";
+        runway.save(a,b,c);
+        Team team = new Team();
+        team.players.add(new DeferredReference<>(a));
+        team.players.add(new DeferredReference<>(b));
+        team.players.add(new DeferredReference<>(c));
+        Assert.assertTrue(team.save());
+        team = runway.load(Team.class, team.id());
+        team.players.iterator().next().get().name = "test";
+        team.save();
+        Assert.assertEquals(3, team.players.size());
+        boolean passed = false;
+        for(DeferredReference<Athlete> player : team.players) {
+            if(player.get().name.equals("test")) {
+                passed = true;
+                break;
+            }
+        }
+        Assert.assertTrue(passed);
+        team = runway.load(Team.class, team.id());
+        Assert.assertEquals(3, team.players.size());
+        passed = false;
+        for(DeferredReference<Athlete> player : team.players) {
+            if(player.get().name.equals("test")) {
+                passed = true;
+                break;
+            }
+        }
+        Assert.assertTrue(passed);
+        
     }
 
     class Player extends Record {
 
         @ValidatedBy(EmailValidator.class)
         public Set<String> emails = new HashSet<>();
+    }
+    
+    class Athlete extends Record {
+        public String name;
+    }
+    
+    class Team extends Record {
+        
+        public Set<DeferredReference<Athlete>> players = new HashSet<>();
     }
 
 }
