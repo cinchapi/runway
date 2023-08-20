@@ -1665,8 +1665,11 @@ public abstract class Record implements Comparable<Record> {
                                         : !checkIsUnique(concourse, field, key,
                                                 value,
                                                 alreadyVerifiedUniqueConstraints))) {
+                            String name = field.getAnnotation(Unique.class)
+                                    .name();
+                            name = name.length() == 0 ? key : name;
                             throw new IllegalStateException(AnyStrings.format(
-                                    "{} must be unique in {}", key, __));
+                                    "{} must be unique in {}", name, __));
                         }
                         // Apply custom validation
                         if(field.isAnnotationPresent(ValidatedBy.class)) {
