@@ -1037,6 +1037,160 @@ public abstract class Record implements Comparable<Record> {
         return map(Array.containing());
     }
 
+    public final Map<String, Object> frame(Lens lens,
+            SerializationOptions options, String... keys) {
+        /*
+         * Depending on what is requested (#keys) and what is readable through
+         * the #lens, these are the visibility rules
+         * 
+         * @formatter:off
+         * |-----------|----------|-----------------------------------------------------------|
+         * | Requested | Readable | Reflected                                                    |
+         * |-----------|----------|-----------------------------------------------------------|
+         * | All       | All      | data = Record.map()                                       |
+         * | All       | None     | data = an empty map                                       |
+         * | All       | Some     | data = Record.map(keys) with the keys that are readable   |
+         * | Some      | All      | data = Record.map(keys) with the keys that are requested  |
+         * | Some      | None     | data = an empty Map                                       |
+         * | Some      | Some     | data = Record.map(keys) with the intersection of the keys | 
+         * |                      | that are readable and requested                           |
+         * |-----------|----------|-----------------------------------------------------------|
+         * @formatter:on
+         */
+        List<String> include = Lists.newArrayList();
+        List<String> exclude = Lists.newArrayList();
+        Map<String, Set<String>> roots = new HashMap<>();
+        for (String key : keys) {
+            if(key.startsWith("-")) {
+                key = key.substring(1);
+                exclude.add(key);
+            }
+            else {
+                include.add(key);
+            }
+            // Extract the root component from each navigation key that must
+            // be resolved in this Record and map it to the subsequent stops
+            // that must be resolved in the linked Records along the path
+            // TODO: distribute negatives?
+            String[] toks = key.split("\\.");
+            String root = toks[0];
+            Set<String> nexts = roots.computeIfAbsent(root,
+                    $ -> new HashSet<>());
+            if(toks.length > 1) {
+                String next = Stream.of(toks).skip(1)
+                        .collect(Collectors.joining("."));
+            }
+        }
+
+        Set<String> readable = lens == null ? null : lens.$reads(this); // TODO:
+                                                                        // how
+                                                                        // to
+                                                                        // handle
+                                                                        // anonymous?
+        Set<String> requested = roots.keySet();
+        if(readable == Lens.NO_KEYS) {
+            return ImmutableMap.of();
+        }
+        else if(requested.equals(Lens.ALL_KEYS)
+                && readable.equals(Lens.ALL_KEYS)) {
+            include = ImmutableList.of();
+            exclude = ImmutableList.of();
+        }
+        else {
+            String[] reflected;
+            if(requested.equals(Lens.ALL_KEYS) && !readable.equals(Lens.ALL_KEYS)) {
+                reflected = readable.toArray(Array.containing());
+            }
+            else if(!requested.equals(Lens.ALL_KEYS)
+                    && readable.equals(Lens.ALL_KEYS)) {
+                reflected = requested.toArray(Array.containing());
+            }
+            else {
+                Set<String> allowed = new HashSet<>();
+                Set<String> denied = new HashSet<>();
+                for (String key : readable) {
+                    if(key.startsWith("-")) {
+                        denied.add(key.substring(1));
+                    }
+                    else {
+                        allowed.add(key);
+                    }
+                }
+                reflected = requested.stream()
+                        .filter(key -> allowed.contains(key))
+                        .filter(key -> !denied.contains(key))
+                        .toArray(String[]::new);
+            }
+        }
+
+        Predicate<Entry<String, Object>> filter = entry -> !exclude
+                .contains(entry.getKey());
+        if(!options.serializeNullValues()) {
+            filter = filter.and(entry -> entry.getValue() != null);
+        }
+        BiConsumer<Map<String, Object>, Entry<String, Object>> accumulator = (
+                map, entry) -> {
+            Object value = entry.getValue();
+            Collection<?> collection;
+            if(options.flattenSingleElementCollections()
+                    && value instanceof Collection
+                    && (collection = (Collection<?>) value).size() == 1) {
+                value = Iterables.getOnlyElement(collection);
+            }
+            if(value != null) {
+                map.merge(entry.getKey(), value, MergeStrategies::upsert);
+            }
+            else {
+                map.put(entry.getKey(), value);
+            }
+        };
+        Stream<Entry<String, Object>> pool;
+        if(include.isEmpty()) {
+            pool = data().entrySet().stream();
+        }
+        else {
+            // NOTE: later on the #filter will attempt to remove keys that are
+            // explicitly excluded, which will have no affect here since
+            // #include and #exclude will never both have values at the same
+            // time.
+            pool = include.stream().map(key -> {
+                Object value;
+                String[] stops = key.split("\\.");
+                if(stops.length > 1) {
+                    // For mapping navigation keys, we must manually perform the
+                    // navigation and collect a series of nested maps/sequences
+                    // so that merging multiple navigation keys can be done
+                    // sensibly.
+                    key = stops[0];
+                    String path = StringUtils.join(stops, '.', 1, stops.length);
+                    Object destination = get(key);
+                    if(destination instanceof Record) {
+                        value = ((Record) destination).map(options, path);
+                    }
+                    else if(Sequences.isSequence(destination)) {
+                        List<Object> $value = Lists.newArrayList();
+                        Sequences.forEach(destination, item -> {
+                            if(item instanceof Record) {
+                                $value.add(((Record) item).map(options, path));
+                            }
+                        });
+                        value = $value;
+                    }
+                    else {
+                        value = null;
+                    }
+                }
+                else {
+                    value = get(key);
+                }
+                return new SimpleEntry<>(key, value);
+            });
+        }
+        Map<String, Object> data = pool.filter(filter).collect(Association::of,
+                accumulator, MergeStrategies::upsert);
+        return data;
+    }
+
     /**
      * Return a map that contains "readable" data from this {@link Record}.
      * <p>
@@ -3320,6 +3474,25 @@ public abstract class Record implements Comparable<Record> {
             }
         }
 
+    };
+
+    private static Lens DEFAULT_LENS = new Lens() {
+
+        public Set<String> $reads(Record record) {
+            return ALL_KEYS;
+        }
+
+        public Set<String> $writes(Record record) {
+            return ALL_KEYS;
+        }
+
+        public boolean $captures(Record record) {
+            return true;
+        }
+
+        public boolean $deletes(Record record) {
+            return true;
+        }
     };
 
     /**
