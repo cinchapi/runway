@@ -2088,7 +2088,7 @@ public abstract class Record implements Comparable<Record> {
     private void deleteWithinTransaction(Concourse concourse) {
         concourse.clear(id);
         for (Record record : waitingToBeDeleted) {
-            record.delete(concourse);
+            record.deleteWithinTransaction(concourse);
         }
     }
 
@@ -2131,6 +2131,7 @@ public abstract class Record implements Comparable<Record> {
     private void ensureDeletion(Record record) {
         if(!record.deleted) {
             waitingToBeDeleted.add(record);
+            record.deleted = true;
         }
     }
 

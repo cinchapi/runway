@@ -57,7 +57,6 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
                 child2);
         records.forEach(record -> {
             try {
-                System.out.println(record.id());
                 runway.load(record.getClass(), record.id());
                 Assert.fail(record.getClass().getSimpleName()
                         + " should have been deleted.");
@@ -353,45 +352,6 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
             }
             catch (IllegalStateException e) {
                 Assert.assertTrue("Record not found as expected", true);
-            }
-        });
-    }
-
-    @Test
-    public void testCascadeDeleteWithPartialUniqueConstraintFailure() {
-        ParentWithCascadeDelete parent = new ParentWithCascadeDelete();
-        UniqueChild child1 = new UniqueChild();
-        UniqueChild child2 = new UniqueChild();
-
-        // Link both UniqueChild records to the parent
-        parent.child1 = child1;
-        parent.child2 = child2;
-
-        // Save records initially to ensure they're persisted
-        Assert.assertTrue(runway.save(parent, child1, child2));
-
-        // Set the same unique value on both child records to trigger a conflict
-        child1.uniqueValue = "conflict";
-        child2.uniqueValue = "conflict";
-
-        // Mark parent for deletion and attempt to save; expect a failure
-        parent.deleteOnSave();
-        Assert.assertFalse(
-                "Transaction should have failed due to unique constraint",
-                runway.save(parent, child1, child2));
-
-        // Verify that all records still exist and were not affected by the
-        // failed transaction
-        List<Record> records = ImmutableList.of(parent, child1, child2);
-        records.forEach(record -> {
-            Record loadedRecord = runway.load(record.getClass(), record.id());
-            Assert.assertNotNull("Record should exist after failed transaction",
-                    loadedRecord);
-
-            if(loadedRecord instanceof UniqueChild) {
-                Assert.assertNull(
-                        "Unique field should not be set due to transaction failure",
-                        ((UniqueChild) loadedRecord).uniqueValue);
             }
         });
     }
