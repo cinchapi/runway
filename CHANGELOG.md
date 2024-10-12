@@ -10,6 +10,7 @@
   * For a field containing a Sequence value, `@Required` was not properly enforced in cases when the Sequence was empty.
 * Fixed a bug that made it possible for a field containing a Sequence of `DeferredReference` objects, to have items in that sequence erroneously removed if those items were not loaded using `DeferredReference.get()` before the housing Record was saved.
 * Fixed a bug that caused a `NoSuchElementException` to be thrown instead of an `IllegalStateException` when attempting to `load` an non-existing `Record`.
+* Fixed a bug that caused record deletion via `deleteOnSave` to not persist if the deleted Record was saved using `Runway.save(Record...)` bulk save functionality.
 
 #### Version 1.9.4 (July 22, 2022)
 * Fixed a bug that occurred when using *pre-select* to load a Record containing a reference field whose **declared** type is the parent class of a descendant class with additionally defined fields and the stored value for that field is an instance of that descendant class. In this case, the pre-select logic did not load data for the descendant defined fields, which resulted in unexpected `NullPointerException` regressions or an overall inability to load those Records if the descendant defined field was annotated as `Required`.
