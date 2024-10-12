@@ -1606,12 +1606,7 @@ public abstract class Record implements Comparable<Record> {
             Preconditions.checkState(!inViolation);
             errors.clear();
             concourse.stage();
-            if(deleted) {
-                delete(concourse);
-            }
-            else {
-                saveWithinTransaction(concourse, seen);
-            }
+            saveWithinTransaction(concourse, seen);
             return concourse.commit();
         }
         catch (Throwable t) {
@@ -1660,76 +1655,86 @@ public abstract class Record implements Comparable<Record> {
      */
     /* package */ void saveWithinTransaction(final Concourse concourse,
             Set<Record> seen) {
-        concourse.verifyOrSet(SECTION_KEY, __, id);
-        Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
-        if(_hasModifiedRealms) {
-            concourse.reconcile(REALMS_KEY, id, _realms);
-            _hasModifiedRealms = false;
+        if(deleted) {
+            deleteWithinTransaction(concourse);
         }
-        fields().forEach(field -> {
-            try {
-                if(!Modifier.isTransient(field.getModifiers())) {
-                    String key = field.getName();
-                    Object value = field.get(this);
-                    boolean isSequence = Sequences.isSequence(value);
-                    // Enforce that Required fields have a non-empty value
-                    if(field.isAnnotationPresent(Required.class) && (isSequence
-                            ? Sequences.stream(value)
-                                    .allMatch(Empty.ness()::describes)
-                            : Empty.ness().describes(value))) {
-                        throw new IllegalStateException(AnyStrings
-                                .format("{}  is required in {}", key, __));
-                    }
-                    if(value != null) {
-                        // Enforce that Unique fields have non-duplicated values
-                        // across the class
-                        if(field.isAnnotationPresent(Unique.class)
-                                && (isSequence ? Sequences.stream(value)
-                                        .anyMatch(Predicates.not(
-                                                item -> checkIsUnique(concourse,
-                                                        field, key, item,
-                                                        alreadyVerifiedUniqueConstraints)))
-                                        : !checkIsUnique(concourse, field, key,
-                                                value,
-                                                alreadyVerifiedUniqueConstraints))) {
-                            String name = field.getAnnotation(Unique.class)
-                                    .name();
-                            name = name.length() == 0 ? key : name;
-                            throw new IllegalStateException(AnyStrings.format(
-                                    "{} must be unique in {}", name, __));
+        else {
+            concourse.verifyOrSet(SECTION_KEY, __, id);
+            Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
+            if(_hasModifiedRealms) {
+                concourse.reconcile(REALMS_KEY, id, _realms);
+                _hasModifiedRealms = false;
+            }
+            fields().forEach(field -> {
+                try {
+                    if(!Modifier.isTransient(field.getModifiers())) {
+                        String key = field.getName();
+                        Object value = field.get(this);
+                        boolean isSequence = Sequences.isSequence(value);
+                        // Enforce that Required fields have a non-empty value
+                        if(field.isAnnotationPresent(Required.class)
+                                && (isSequence
+                                        ? Sequences.stream(value).allMatch(
+                                                Empty.ness()::describes)
+                                        : Empty.ness().describes(value))) {
+                            throw new IllegalStateException(AnyStrings
+                                    .format("{}  is required in {}", key, __));
                         }
-                        // Apply custom validation
-                        if(field.isAnnotationPresent(ValidatedBy.class)) {
-                            Class<? extends Validator> validatorClass = field
-                                    .getAnnotation(ValidatedBy.class).value();
-                            Validator validator = Reflection
-                                    .newInstance(validatorClass);
-                            if(isSequence
-                                    ? Sequences.stream(value).anyMatch(
-                                            Predicates.not(validator::validate))
-                                    : !validator.validate(value)) {
-                                throw new IllegalStateException(
-                                        validator.getErrorMessage());
+                        if(value != null) {
+                            // Enforce that Unique fields have non-duplicated
+                            // values across the class
+                            if(field.isAnnotationPresent(Unique.class)
+                                    && (isSequence ? Sequences.stream(value)
+                                            .anyMatch(Predicates
+                                                    .not(item -> checkIsUnique(
+                                                            concourse, field,
+                                                            key, item,
+                                                            alreadyVerifiedUniqueConstraints)))
+                                            : !checkIsUnique(concourse, field,
+                                                    key, value,
+                                                    alreadyVerifiedUniqueConstraints))) {
+                                String name = field.getAnnotation(Unique.class)
+                                        .name();
+                                name = name.length() == 0 ? key : name;
+                                throw new IllegalStateException(AnyStrings
+                                        .format("{} must be unique in {}", name,
+                                                __));
+                            }
+                            // Apply custom validation
+                            if(field.isAnnotationPresent(ValidatedBy.class)) {
+                                Class<? extends Validator> validatorClass = field
+                                        .getAnnotation(ValidatedBy.class)
+                                        .value();
+                                Validator validator = Reflection
+                                        .newInstance(validatorClass);
+                                if(isSequence
+                                        ? Sequences.stream(value)
+                                                .anyMatch(Predicates.not(
+                                                        validator::validate))
+                                        : !validator.validate(value)) {
+                                    throw new IllegalStateException(
+                                            validator.getErrorMessage());
 
+                                }
+                            }
+                            value = transform(value, concourse, seen);
+                            if(value.getClass().isArray()) {
+                                concourse.reconcile(key, id, (Object[]) value);
+                            }
+                            else {
+                                concourse.verifyOrSet(key, value, id);
                             }
                         }
-                        value = transform(value, concourse, seen);
-                        if(value.getClass().isArray()) {
-                            concourse.reconcile(key, id, (Object[]) value);
-                        }
                         else {
-                            concourse.verifyOrSet(key, value, id);
+                            concourse.clear(key, id);
                         }
-                    }
-                    else {
-                        concourse.clear(key, id);
                     }
                 }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        });
+                catch (ReflectiveOperationException e) {
+                    throw CheckedExceptions.throwAsRuntimeException(e);
+                }
+            });
+        }
     }
 
     /**
@@ -2080,7 +2085,7 @@ public abstract class Record implements Comparable<Record> {
      * 
      * @param concourse
      */
-    private void delete(Concourse concourse) {
+    private void deleteWithinTransaction(Concourse concourse) {
         concourse.clear(id);
         for (Record record : waitingToBeDeleted) {
             record.delete(concourse);

@@ -15,6 +15,9 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Set;
+
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -27,6 +30,22 @@ public class RunwayInvariantsTest extends RunwayBaseClientServerTest {
     @Test(expected = IllegalStateException.class)
     public void testLoadNonExistingRecord() {
         runway.load(Player.class, 1);
+    }
+    
+    @Test
+    public void testDeleteMultipleRecordsAtOnce() {
+        Player p1 = new Player("LeBron James", 32);
+        Player p2 = new Player("Derrick Rose", 26);
+        Player p3 = new Player("Michael Jordan", 45);
+        Assert.assertTrue(runway.save(p1, p2, p3));
+        p1.score = 29;
+        p3.score = 63;
+        p2.deleteOnSave();
+        Assert.assertTrue(runway.save(p1, p2, p3));
+        Set<Player> players = runway.load(Player.class);
+        Assert.assertTrue(players.contains(p1));
+        Assert.assertFalse(players.contains(p2));
+        Assert.assertTrue(players.contains(p3));
     }
 
 }
