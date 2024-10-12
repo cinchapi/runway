@@ -4,6 +4,12 @@
 * Added `@Computed` and `@Derived` annotations that can be applied to methods to mark them as returning `computed` and `derived` properties, respectively. These annotations are meant to be used in lieu of the `#computed()` and `#derived()` methods, which are now deprecated
 * Fixed a regression that casued a `NullPointerException` to be thrown when a `null` intrinsic, `derived` or `computed` value was encountered while performing local `condition` evaluation. 
 * Introduced a new `Record.set(Map<String, Object> data)` method that allows for bulk updating of fields within a record.
+* Fixed a few bugs that caused `@Required`, `@Unique` and `@ValidatedBy` constraints to behave unexpectedly in certain scenarios:
+  * For a field containing a Sequence value, `@ValidatedBy` was applied to the entire Sequence as a whole, instead of to each item in the Sequence indivudally.
+  * For a field containing a Sequence value, `@Unique` was checked for the entire Sequence as a whole, instead of for each item in the Sequence indivudally. 
+  * For a field containing a Sequence value, `@Required` was not properly enforced in cases when the Sequence was empty.
+* Fixed a bug that made it possible for a field containing a Sequence of `DeferredReference` objects, to have items in that sequence erroneously removed if those items were not loaded using `DeferredReference.get()` before the housing Record was saved.
+* Fixed a bug that caused a `NoSuchElementException` to be thrown instead of an `IllegalStateException` when attempting to `load` an non-existing `Record`.
 
 #### Version 1.9.4 (July 22, 2022)
 * Fixed a bug that occurred when using *pre-select* to load a Record containing a reference field whose **declared** type is the parent class of a descendant class with additionally defined fields and the stored value for that field is an instance of that descendant class. In this case, the pre-select logic did not load data for the descendant defined fields, which resulted in unexpected `NullPointerException` regressions or an overall inability to load those Records if the descendant defined field was annotated as `Required`.
