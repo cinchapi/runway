@@ -33,8 +33,6 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         parent.child = new ChildRecord();
         parent.deleteOnSave();
         parent.save();
-        System.out.println(runway.load(ParentRecord.class, 1));
-
         Assert.assertNull(runway.load(ParentRecord.class, parent.id()));
         Assert.assertNull(runway.load(ChildRecord.class, parent.child.id()));
     }
