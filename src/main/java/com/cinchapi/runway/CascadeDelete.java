@@ -35,7 +35,9 @@ import java.lang.annotation.Target;
 /**
  * Annotation to mark a field for cascading deletion. Fields marked with this
  * annotation will have their linked records deleted when the containing record
- * is deleted.
+ * is deleted. This is commonly used to maintain referential integrity by
+ * ensuring that dependent records do not persist after the source object is
+ * removed.
  *
  * @author Jeff Nelson
  */
