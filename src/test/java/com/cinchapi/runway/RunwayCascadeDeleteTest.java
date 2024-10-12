@@ -135,6 +135,43 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         });
     }
 
+    @Test
+    public void testCascadeDeleteOnPrivateField() {
+        ParentWithPrivateCascade parent = new ParentWithPrivateCascade();
+
+        // Create an AdditionalRecord instance and assign it to the private
+        // field
+        AdditionalRecord additional = new AdditionalRecord();
+        parent.setAdditionalRecord(additional);
+
+        // Save both records
+        parent.save();
+        additional.save();
+
+        // Verify that the AdditionalRecord was saved
+        Assert.assertNotNull(additional.id());
+
+        // Delete the parent and verify cascading delete behavior
+        parent.deleteOnSave();
+        parent.save();
+
+        // Check that both the ParentWithPrivateCascade and AdditionalRecord
+        // were deleted
+        Map<Class<? extends Record>, Long> records = ImmutableMap.of(
+                ParentWithPrivateCascade.class, parent.id(),
+                AdditionalRecord.class, additional.id());
+
+        records.forEach((clazz, id) -> {
+            try {
+                runway.load(clazz, id);
+                Assert.fail("Record should have been deleted");
+            }
+            catch (IllegalStateException e) {
+                Assert.assertTrue("Record not found as expected", true);
+            }
+        });
+    }
+
     /**
      * Represents a parent record that can contain a single child record,
      * a collection of child records, and an inner record. Supports cascade
@@ -192,6 +229,136 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
 
         @CascadeDelete
         public List<ChildRecord> children;
+    }
+
+    /**
+     * A test class to simulate a parent record with a private field that should
+     * be cascade-deleted.
+     */
+    class ParentWithPrivateCascade extends Record {
+        @CascadeDelete
+        private AdditionalRecord additionalRecord;
+
+        public void setAdditionalRecord(AdditionalRecord additionalRecord) {
+            this.additionalRecord = additionalRecord;
+        }
+    }
+
+    @Test
+    public void testCascadeDeleteAtomicityOnTransactionFailure() {
+        // Create four parent records, each with a unique child
+        ParentWithUniqueField parent1 = new ParentWithUniqueField();
+        ParentWithUniqueField parent2 = new ParentWithUniqueField();
+        ParentWithUniqueField parent3 = new ParentWithUniqueField();
+        ParentWithUniqueField parent4 = new ParentWithUniqueField();
+
+        ChildWithUniqueParent child1 = new ChildWithUniqueParent();
+        ChildWithUniqueParent child2 = new ChildWithUniqueParent();
+        ChildWithUniqueParent child3 = new ChildWithUniqueParent();
+        ChildWithUniqueParent child4 = new ChildWithUniqueParent();
+
+        // Link each child to a unique parent
+        parent1.child = child1;
+        parent2.child = child2;
+        parent3.child = child3;
+        parent4.child = child4;
+
+        // Save all records initially and verify they were saved
+        Assert.assertTrue(runway.save(parent1, parent2, parent3, parent4,
+                child1, child2, child3, child4));
+
+        // Verify that all records are saved and loadable
+        Assert.assertNotNull(
+                runway.load(ParentWithUniqueField.class, parent1.id()));
+        Assert.assertNotNull(
+                runway.load(ParentWithUniqueField.class, parent2.id()));
+        Assert.assertNotNull(
+                runway.load(ParentWithUniqueField.class, parent3.id()));
+        Assert.assertNotNull(
+                runway.load(ParentWithUniqueField.class, parent4.id()));
+        Assert.assertNotNull(
+                runway.load(ChildWithUniqueParent.class, child1.id()));
+        Assert.assertNotNull(
+                runway.load(ChildWithUniqueParent.class, child2.id()));
+        Assert.assertNotNull(
+                runway.load(ChildWithUniqueParent.class, child3.id()));
+        Assert.assertNotNull(
+                runway.load(ChildWithUniqueParent.class, child4.id()));
+
+        // Set a conflicting unique value on all records
+        parent1.uniqueField = "conflict";
+        parent2.uniqueField = "conflict";
+        parent3.uniqueField = "conflict";
+        parent4.uniqueField = "conflict";
+        child1.uniqueField = "conflict";
+        child2.uniqueField = "conflict";
+        child3.uniqueField = "conflict";
+        child4.uniqueField = "conflict";
+
+        // Mark two records for deletion
+        parent1.deleteOnSave();
+
+        // Attempt to save all records, expecting a failure due to unique
+        // constraint
+        Assert.assertFalse(
+                "Transaction should have failed due to unique constraint",
+                runway.save(parent1, parent2, parent3, parent4, child1, child2,
+                        child3, child4));
+
+        // Verify that all records still exist and were unaffected by the failed
+        // transaction
+        Multimap<Class<? extends Record>, Long> records = ArrayListMultimap
+                .create();
+        records.put(ParentWithUniqueField.class, parent1.id());
+        records.put(ParentWithUniqueField.class, parent2.id());
+        records.put(ParentWithUniqueField.class, parent3.id());
+        records.put(ParentWithUniqueField.class, parent4.id());
+        records.put(ChildWithUniqueParent.class, child1.id());
+        records.put(ChildWithUniqueParent.class, child2.id());
+        records.put(ChildWithUniqueParent.class, child3.id());
+        records.put(ChildWithUniqueParent.class, child4.id());
+
+        records.entries().forEach(entry -> {
+            Record loadedRecord = runway.load(entry.getKey(), entry.getValue());
+            Assert.assertNotNull(
+                    "Record should exist after transaction failure",
+                    loadedRecord);
+
+            if(loadedRecord instanceof ParentWithUniqueField) {
+                Assert.assertNull(
+                        "Unique field should not be set due to transaction failure",
+                        ((ParentWithUniqueField) loadedRecord).uniqueField);
+            }
+            else if(loadedRecord instanceof ChildWithUniqueParent) {
+                Assert.assertNull(
+                        "Unique field should not be set due to transaction failure",
+                        ((ChildWithUniqueParent) loadedRecord).uniqueField);
+            }
+        });
+    }
+
+    /**
+     * A parent record with a unique field to cause transaction failures for
+     * atomicity testing with cascade deletion.
+     */
+    class ParentWithUniqueField extends Record {
+        @CascadeDelete
+        public ChildWithUniqueParent child;
+
+        @Unique
+        public String uniqueField;
+    }
+
+    /**
+     * A child record associated with {@link ParentWithUniqueField} to verify
+     * cascade delete atomicity.
+     */
+    class ChildWithUniqueParent extends Record {
+        @CascadeDelete
+        private ParentWithUniqueField parent;
+
+        @Unique
+        public String uniqueField;
     }
 
 }
