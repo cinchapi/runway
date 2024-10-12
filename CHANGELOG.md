@@ -1,9 +1,19 @@
 # Changelog
 
 #### Version 1.10.0 (TBD)
+
+##### Deletion Hooks
+* Added the `@CascadeDelete` annotation to simplify deletion of dependent Records within the framework. Fields annotated with `@CascadeDelete` will now automatically delete their linked records when the containing record is deleted, ensuring referential integrity and simplifying data management.
+  * When a record is deleted, all linked records annotated with `@CascadeDelete` are also deleted in a single, atomic transaction. This behavior maintains consistency by ensuring that related records do not persist after their parent records are removed.
+* Added the `@ReceiveDelete` annotation to simplify and automate the deletion of containing records when a linked record is removed. Fields annotated with `@ReceiveDelete` will now trigger deletion of the containing record if the linked record is deleted, maintaining referential integrity and easing management of dependent records.
+  * This annotation works as the reverse of `@CascadeDelete`. When a linked record is deleted, all containing records with fields annotated as `@ReceiveDelete` will also be deleted in a single, atomic transaction. This ensures that records that depend on the existence of linked records do not persist if those links are removed.
+
+##### New Functionality and Enhancements
 * Added `@Computed` and `@Derived` annotations that can be applied to methods to mark them as returning `computed` and `derived` properties, respectively. These annotations are meant to be used in lieu of the `#computed()` and `#derived()` methods, which are now deprecated
-* Fixed a regression that casued a `NullPointerException` to be thrown when a `null` intrinsic, `derived` or `computed` value was encountered while performing local `condition` evaluation. 
 * Introduced a new `Record.set(Map<String, Object> data)` method that allows for bulk updating of fields within a record.
+
+##### Bug Fixes
+* Fixed a regression that casued a `NullPointerException` to be thrown when a `null` intrinsic, `derived` or `computed` value was encountered while performing local `condition` evaluation. 
 * Fixed a few bugs that caused `@Required`, `@Unique` and `@ValidatedBy` constraints to behave unexpectedly in certain scenarios:
   * For a field containing a Sequence value, `@ValidatedBy` was applied to the entire Sequence as a whole, instead of to each item in the Sequence indivudally.
   * For a field containing a Sequence value, `@Unique` was checked for the entire Sequence as a whole, instead of for each item in the Sequence indivudally. 
