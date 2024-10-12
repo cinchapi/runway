@@ -1799,9 +1799,11 @@ public abstract class Record implements Comparable<Record> {
                 section = concourse.get(SECTION_KEY, id);
             }
             else {
-                section = (String) Iterables
-                        .getLast(data.computeIfAbsent(prefix + SECTION_KEY,
-                                ignore -> concourse.select(SECTION_KEY, id)));
+                Set<Object> $$ = data.computeIfAbsent(prefix + SECTION_KEY,
+                        $ -> concourse.select(SECTION_KEY, id));
+                if(!$$.isEmpty()) {
+                    section = (String) Iterables.getLast($$);
+                }
             }
             Verify.that(section != null);
             Verify.that(
