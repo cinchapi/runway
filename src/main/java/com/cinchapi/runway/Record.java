@@ -640,6 +640,12 @@ public abstract class Record implements Comparable<Record> {
     private transient Map<String, Object> derived = null;
 
     /**
+     * Tracks dependent {@link Records} that are pending
+     * {@link #delete(Concourse) deletion} from {@link Concourse}.
+     */
+    private Set<Record> waitingToBeDeleted = new LinkedHashSet<>();
+
+    /**
      * Construct a new instance.
      */
     public Record() {
@@ -748,8 +754,6 @@ public abstract class Record implements Comparable<Record> {
         return compareTo(record, $order);
     }
 
-    private Set<Record> waitingToBeDeleted = new LinkedHashSet<>();
-
     /**
      * Delete this {@link Record} from Concourse when the {@link #save()} method
      * is called.
@@ -762,11 +766,14 @@ public abstract class Record implements Comparable<Record> {
             try {
                 Object value = dependent.get(this);
                 if(value instanceof Record) {
-                    Record record = (Record) value;
-                    if(!record.deleted) {
-                        record.deleteOnSave();
-                        waitingToBeDeleted.add(record);
-                    }
+                    ensureDeletion((Record) value);
+                }
+                else if(Sequences.isSequence(value)) {
+                    Sequences.forEach(value, item -> {
+                        if(item instanceof Record) {
+                            ensureDeletion((Record) item);
+                        }
+                    });
                 }
             }
             catch (ReflectiveOperationException e) {
@@ -2109,6 +2116,17 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return value;
+    }
+
+    /**
+     * Ensure that {@code record} is {@link #deleteOnSave() deleted}.
+     * 
+     * @param record
+     */
+    private void ensureDeletion(Record record) {
+        if(!record.deleted) {
+            waitingToBeDeleted.add(record);
+        }
     }
 
     /**
