@@ -359,6 +359,8 @@ public abstract class Record implements Comparable<Record> {
             @Nullable Map<String, Set<Object>> data, String prefix) {
         T record = (T) newDefaultInstance(clazz, connections);
         setInternalFieldValue("id", id, record);
+        setInternalFieldValue("waitingToBeDeleted", new LinkedHashSet<>(),
+                record);
         record.assign(runway);
         record.load(concourse, existing, data, prefix);
         record.onLoad();
@@ -755,31 +757,11 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Delete this {@link Record} from Concourse when the {@link #save()} method
-     * is called.
+     * Set this {@link Record} to be deleted from Concourse when the
+     * {@link #save()} method is called.
      */
     public void deleteOnSave() {
         deleted = true;
-        Set<Field> dependents = StaticAnalysis.instance()
-                .getAnnotatedFields(getClass(), CascadeDelete.class);
-        for (Field dependent : dependents) {
-            try {
-                Object value = dependent.get(this);
-                if(value instanceof Record) {
-                    ensureDeletion((Record) value);
-                }
-                else if(Sequences.isSequence(value)) {
-                    Sequences.forEach(value, item -> {
-                        if(item instanceof Record) {
-                            ensureDeletion((Record) item);
-                        }
-                    });
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.wrapAsRuntimeException(e);
-            }
-        }
     }
 
     @Override
@@ -2086,6 +2068,48 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      */
     private void deleteWithinTransaction(Concourse concourse) {
+        // Ensure any fields to which this Record must @CascadeDelete are
+        // deleted within this transaction
+        Set<Field> dependents = StaticAnalysis.instance()
+                .getAnnotatedFields(getClass(), CascadeDelete.class);
+        for (Field dependent : dependents) {
+            try {
+                Object value = dependent.get(this);
+                if(value instanceof Record) {
+                    ensureDeletion((Record) value);
+                }
+                else if(Sequences.isSequence(value)) {
+                    Sequences.forEach(value, item -> {
+                        if(item instanceof Record) {
+                            ensureDeletion((Record) item);
+                        }
+                    });
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
+            }
+        }
+
+        // Check if there are any incoming links that used the @JoinDelete
+        // annotation to join in the deletion of this Record
+        Criteria potentialJoinDeletes = StaticAnalysis.instance()
+                .getJoinDeleteLookupCondition(this);
+        if(potentialJoinDeletes != null) {
+            for (Entry<Long, Set<Object>> entry : concourse
+                    .select(SECTION_KEY, potentialJoinDeletes).entrySet()) {
+                // It's necessary to load each of the Records (instead of
+                // directly clearing it in the database) in case any of them
+                // also have deletion hook annotations.
+                long id = entry.getKey();
+                String __ = (String) Iterables.getLast(entry.getValue());
+                Class<? extends Record> clazz = Reflection.getClassCasted(__);
+                Record record = db.load(clazz, id);
+                ensureDeletion(record);
+            }
+        }
+
+        // Perform the deletion(s)
         concourse.clear(id);
         for (Record record : waitingToBeDeleted) {
             record.deleteWithinTransaction(concourse);
@@ -2124,7 +2148,9 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Ensure that {@code record} is {@link #deleteOnSave() deleted}.
+     * Ensure that {@code record} is scheduled for
+     * {@link #deleteWithinTransaction(Concourse) deletion} alongside this
+     * {@link Record}.
      * 
      * @param record
      */
@@ -2555,16 +2581,14 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * A collection containing each {@link Record} class that has at least
-         * one
-         * field whose type is a subclass of {@link Record}.
+         * one field whose type is a subclass of {@link Record}.
          */
         private final Set<Class<? extends Record>> hasRecordFieldTypeByClass;
 
         /**
          * A collection containing each {@link Record} class that itself or is
-         * the
-         * ancestors of a {@link Record} class that has at least one field whose
-         * type is a subclass of {@link Record}.
+         * the ancestors of a {@link Record} class that has at least one field
+         * whose type is a subclass of {@link Record}.
          */
         private final Set<Class<? extends Record>> hasRecordFieldTypeByClassHierarchy;
 
@@ -2574,7 +2598,24 @@ public abstract class Record implements Comparable<Record> {
         private final Reflections reflection = new Reflections(
                 new SubTypesScanner());
 
-        private final Map<Class<?>, Map<Class<? extends Annotation>, Set<Field>>> fieldAnnotationsByClass;
+        /**
+         * A collection containing each {@link Record} class that has fields
+         * with annotations.
+         */
+        private final Map<Class<? extends Record>, Map<Class<? extends Annotation>, Set<Field>>> fieldAnnotationsByClass;
+
+        /**
+         * A mapping from each {@link Record} class to each of its related
+         * {@link Record} classes, each mapped to a set of field names that
+         * trigger deletion of records linked to it.
+         * <p>
+         * This structure enables efficient lookup of fields marked with the
+         * {@link JoinDelete} annotation, helping identify fields in linked
+         * records that should be deleted when the primary {@link Record} is
+         * deleted.
+         * </p>
+         */
+        private final Map<Class<? extends Record>, Map<Class<? extends Record>, Set<String>>> joinDeleteFieldsByClass;
 
         /**
          * Construct a new instance.
@@ -2588,6 +2629,7 @@ public abstract class Record implements Comparable<Record> {
             this.hasRecordFieldTypeByClass = new HashSet<>();
             this.hasRecordFieldTypeByClassHierarchy = new HashSet<>();
             this.fieldAnnotationsByClass = new HashMap<>();
+            this.joinDeleteFieldsByClass = new HashMap<>();
             Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
             reflection.getSubTypesOf(Record.class).forEach(type -> {
                 // Build class hierarchy
@@ -2630,6 +2672,24 @@ public abstract class Record implements Comparable<Record> {
                 }
             });
 
+            // For each type, determine the types that have Link fields with the
+            // deletion hook annotations.
+            hierarchies.keySet().forEach(type -> {
+                for (Class<? extends Record> incoming : hierarchies.keySet()) {
+                    Set<Field> fields = getAnnotatedFields(incoming,
+                            JoinDelete.class);
+                    for (Field field : fields) {
+                        if(field.getType().isAssignableFrom(type)) {
+                            joinDeleteFieldsByClass
+                                    .computeIfAbsent(type, $ -> new HashMap<>())
+                                    .computeIfAbsent(incoming,
+                                            $$ -> new HashSet<>())
+                                    .add(field.getName());
+                        }
+                    }
+                }
+            });
+
             // Now that the hierarchies and fields for each Record type have
             // been documented, go through again and compute the paths for each
             // one
@@ -2638,8 +2698,7 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Return a set of fields from a {@link Record} class that are annotated
-         * with
-         * a specific annotation.
+         * with a specific annotation.
          * 
          * @param <T> the type of record
          * @param clazz the class of the record
@@ -2652,13 +2711,68 @@ public abstract class Record implements Comparable<Record> {
         public <T extends Record> Set<Field> getAnnotatedFields(Class<T> clazz,
                 Class<? extends Annotation> annotation) {
             try {
-                return fieldAnnotationsByClass.get(clazz)
+                return fieldAnnotationsByClass
+                        .getOrDefault(clazz, ImmutableMap.of())
                         .getOrDefault(annotation, ImmutableSet.of());
             }
             catch (NullPointerException e) {
                 throw new IllegalArgumentException(
                         "Unknown Record type: " + clazz);
             }
+        }
+
+        /**
+         * Return a {@link Criteria} instance that defines the condition to
+         * locate records linked to the specified {@link Record} for deletion.
+         * <p>
+         * This condition is constructed by identifying fields in other
+         * {@link Record} classes that are annotated with {@link JoinDelete} and
+         * linked to the specified {@code record}. These fields are grouped by
+         * related classes, and then a combined criteria is formed to match
+         * against the links found.
+         * </p>
+         *
+         * @param record the {@link Record} instance for which the delete
+         *            condition is being determined
+         * @return a {@link Criteria} object representing the delete lookup
+         *         condition for records linked to the provided {@code record};
+         *         or {@code null} if no such links are found
+         */
+        @Nullable
+        public <T extends Record> Criteria getJoinDeleteLookupCondition(
+                Record record) {
+            Criteria condition = null;
+            Map<Class<? extends Record>, Set<String>> components = joinDeleteFieldsByClass
+                    .getOrDefault(record.getClass(), ImmutableMap.of());
+            for (Entry<Class<? extends Record>, Set<String>> entry : components
+                    .entrySet()) {
+                Class<? extends Record> type = entry.getKey();
+                Set<String> keys = entry.getValue();
+                Criteria typePart = Criteria.where().key(SECTION_KEY)
+                        .operator(Operator.EQUALS).value(type.getName());
+                Criteria linkPart = null;
+                for (String key : keys) {
+                    Criteria $ = Criteria.where().key(key)
+                            .operator(Operator.LINKS_TO).value(record.id);
+                    if(linkPart == null) {
+                        linkPart = $;
+                    }
+                    else {
+                        linkPart = Criteria.where().group(linkPart).or()
+                                .group($);
+                    }
+                }
+                Criteria part = Criteria.where().group(typePart).and()
+                        .group(linkPart);
+                if(condition == null) {
+                    condition = part;
+                }
+                else {
+                    condition = Criteria.where().group(condition).or()
+                            .group(part);
+                }
+            }
+            return condition;
         }
 
         /**
