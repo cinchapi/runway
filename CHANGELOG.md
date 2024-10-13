@@ -1,9 +1,22 @@
 # Changelog
 
 #### Version 1.10.0 (TBD)
+
+##### Deletion Hooks
+New deletion hooks are available to ensure automatic referential integrity when records are deleted. These annotations streamline data management by automatically handling dependencies between records.
+
+* **`@CascadeDelete`**: Simplifies deletion of dependent records within the framework. Fields annotated with `@CascadeDelete` automatically delete their linked records when the containing record is removed. This functionality ensures that related records do not persist after their parent records are deleted, preserving consistency. Deletions occur in a single, atomic transaction, allowing for more efficient data cleanup.
+  
+* **`@JoinDelete`**: Automates the deletion of containing records when a linked record is removed. Fields annotated with `@JoinDelete` trigger the deletion of the containing record if the linked record is deleted. This is the reverse of `@CascadeDelete`, as it removes all parent or container records that depend on the existence of linked records, thereby ensuring referential integrity. The operation is performed atomically.
+
+* **`@CaptureDelete`**: Facilitates automatic reference removal for cases where a linked record is deleted but the containing record should remain intact. When a record is deleted, fields annotated with `@CaptureDelete` are automatically set to `null` or removed from the containing record's collection. This allows for more flexible data management, maintaining integrity without deleting the containing record.
+
+##### New Functionality and Enhancements
 * Added `@Computed` and `@Derived` annotations that can be applied to methods to mark them as returning `computed` and `derived` properties, respectively. These annotations are meant to be used in lieu of the `#computed()` and `#derived()` methods, which are now deprecated
-* Fixed a regression that casued a `NullPointerException` to be thrown when a `null` intrinsic, `derived` or `computed` value was encountered while performing local `condition` evaluation. 
 * Introduced a new `Record.set(Map<String, Object> data)` method that allows for bulk updating of fields within a record.
+
+##### Bug Fixes
+* Fixed a regression that casued a `NullPointerException` to be thrown when a `null` intrinsic, `derived` or `computed` value was encountered while performing local `condition` evaluation. 
 * Fixed a few bugs that caused `@Required`, `@Unique` and `@ValidatedBy` constraints to behave unexpectedly in certain scenarios:
   * For a field containing a Sequence value, `@ValidatedBy` was applied to the entire Sequence as a whole, instead of to each item in the Sequence indivudally.
   * For a field containing a Sequence value, `@Unique` was checked for the entire Sequence as a whole, instead of for each item in the Sequence indivudally. 
