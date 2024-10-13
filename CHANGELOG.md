@@ -3,10 +3,13 @@
 #### Version 1.10.0 (TBD)
 
 ##### Deletion Hooks
-* Added the `@CascadeDelete` annotation to simplify deletion of dependent Records within the framework. Fields annotated with `@CascadeDelete` will now automatically delete their linked records when the containing record is deleted, ensuring referential integrity and simplifying data management.
-  * When a record is deleted, all linked records annotated with `@CascadeDelete` are also deleted in a single, atomic transaction. This behavior maintains consistency by ensuring that related records do not persist after their parent records are removed.
-* Added the `@JoinDelete` annotation to simplify and automate the deletion of containing records when a linked record is removed. Fields annotated with `@JoinDelete` will now trigger deletion of the containing record if the linked record is deleted, maintaining referential integrity and easing management of dependent records.
-  * This annotation works as the reverse of `@CascadeDelete`. When a linked record is deleted, all containing records with fields annotated as `@JoinDelete` will also be deleted in a single, atomic transaction. This ensures that records that depend on the existence of linked records do not persist if those links are removed.
+New deletion hooks are available to ensure automatic referential integrity when records are deleted. These annotations streamline data management by automatically handling dependencies between records.
+
+* **`@CascadeDelete`**: Simplifies deletion of dependent records within the framework. Fields annotated with `@CascadeDelete` automatically delete their linked records when the containing record is removed. This functionality ensures that related records do not persist after their parent records are deleted, preserving consistency. Deletions occur in a single, atomic transaction, allowing for more efficient data cleanup.
+  
+* **`@JoinDelete`**: Automates the deletion of containing records when a linked record is removed. Fields annotated with `@JoinDelete` trigger the deletion of the containing record if the linked record is deleted. This is the reverse of `@CascadeDelete`, as it removes all parent or container records that depend on the existence of linked records, thereby ensuring referential integrity. The operation is performed atomically.
+
+* **`@CaptureDelete`**: Facilitates automatic reference removal for cases where a linked record is deleted but the containing record should remain intact. When a record is deleted, fields annotated with `@CaptureDelete` are automatically set to `null` or removed from the containing record's collection. This allows for more flexible data management, maintaining integrity without deleting the containing record.
 
 ##### New Functionality and Enhancements
 * Added `@Computed` and `@Derived` annotations that can be applied to methods to mark them as returning `computed` and `derived` properties, respectively. These annotations are meant to be used in lieu of the `#computed()` and `#derived()` methods, which are now deprecated
