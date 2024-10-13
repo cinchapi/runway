@@ -43,13 +43,17 @@ import java.lang.annotation.Target;
  * Example Usage:
  * </p>
  * 
+ * @formatter:off
  * <pre>
  * {@code
- * public class ParentRecord extends Record { @ReceiveDelete
+ * public class ParentRecord extends Record { 
+ * 
+ *     @ReceiveDelete
  *     private ChildRecord child;
  * }
  * }
  * </pre>
+ * @formatter:on
  *
  * <p>
  * In this example, deleting the {@code child} will also delete the
