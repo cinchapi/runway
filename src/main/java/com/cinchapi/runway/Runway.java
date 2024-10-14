@@ -319,7 +319,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Version actual = Versions
                     .parseSemanticVersion(concourse.getServerVersion());
             this.hasNativeSortingAndPagination = actual
-                    .greaterThanOrEqualTo(target);
+                    .greaterThanOrEqualTo(target)
+                    || actual.equals(
+                            Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
             target = Version.forIntegers(0, 11, 3);
             this.supportsPreSelectLinkedRecords = actual
                     .greaterThanOrEqualTo(target)
