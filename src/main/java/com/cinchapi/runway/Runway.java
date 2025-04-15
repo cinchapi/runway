@@ -25,6 +25,8 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -184,17 +186,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param <T>
      * @param clazz
      * @param id
+     * @param loaded a {@link ConcurrentMap} used to track loaded {@link Record}
+     *            references
      * @param connections
      * @param runway
      * @param data
      * @return the loaded {@link Record} instance
      */
     private static <T extends Record> T loadWithErrorHandling(Class<T> clazz,
-            long id, ConnectionPool connections, Runway runway,
+            long id, ConcurrentMap<Long, Record> loaded,
+            ConnectionPool connections, Runway runway,
             @Nullable Map<String, Set<Object>> data) {
         try {
-            return Record.load(clazz, id, new TLongObjectHashMap<>(),
-                    connections, runway, data);
+            return Record.load(clazz, id, loaded, connections, runway, data);
         }
         catch (Exception e) {
             runway.onLoadFailureHandler.accept(clazz, id, e);
@@ -1309,13 +1313,90 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * 
      * @param clazz
      * @param id
+     * @param loaded
+     * @param existing
+     * @param data
+     * @return the loaded {@link Record} instance
+     */
+    private <T extends Record> T instantiate(Class<T> clazz, long id,
+            ConcurrentMap<Long, Record> loaded,
+            @Nullable Map<String, Set<Object>> data) {
+        return loadWithErrorHandling(clazz, id, loaded, connections, this,
+                data);
+    }
+
+    /**
+     * Internal method to help recursively load records by keeping tracking of
+     * which ones currently exist. Ultimately this method will load the Record
+     * that is contained within the specified {@code clazz} and
+     * has the specified {@code id}.
+     * <p>
+     * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
+     * used), multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation. If a cache is provided, the rules (e.g.
+     * expiration policy, etc) of said cache govern when multiple calls to this
+     * method return the same instance for the provided parameters or not.
+     * </p>
+     * 
+     * @param clazz
+     * @param id
      * @param existing
      * @param data
      * @return the loaded {@link Record} instance
      */
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             @Nullable Map<String, Set<Object>> data) {
-        return loadWithErrorHandling(clazz, id, connections, this, data);
+        return instantiate(clazz, id, new ConcurrentHashMap<>(), data);
+    }
+
+    /**
+     * Internal method to help recursively load records by keeping tracking of
+     * which ones currently exist. Ultimately this method will load the Record
+     * that is contained within the specified {@code clazz} and
+     * has the specified {@code id}.
+     * <p>
+     * Unlike {@link #instantiate(Class, long, TLongObjectHashMap, Map)} this
+     * method
+     * does not need to know the desired {@link Class} of the loaded
+     * {@link Record}.
+     * </p>
+     * <p>
+     * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
+     * used), multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation. If a cache is provided, the rules (e.g.
+     * expiration policy, etc) of said cache govern when multiple calls to this
+     * method return the same instance for the provided parameters or not.
+     * </p>
+     * 
+     * @param id
+     * @param loaded
+     * @param existing
+     * @param data
+     * @return the loaded {@link Record} instance
+     */
+    private <T extends Record> T instantiate(long id,
+            ConcurrentMap<Long, Record> loaded,
+            @Nullable Map<String, Set<Object>> data) {
+        if(data == null) {
+            // Since the desired class isn't specified, we must
+            // prematurely select the record's data to determine it.
+            Concourse connection = connections.request();
+            try {
+                data = connection.select(id);
+            }
+            finally {
+                connections.release(connection);
+            }
+        }
+        String section = (String) Iterables
+                .getLast(data.get(Record.SECTION_KEY));
+        Class<T> clazz = Reflection.getClassCasted(section);
+        return loadWithErrorHandling(clazz, id, loaded, connections, this,
+                data);
     }
 
     /**
@@ -1346,21 +1427,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> T instantiate(long id,
             @Nullable Map<String, Set<Object>> data) {
-        if(data == null) {
-            // Since the desired class isn't specified, we must
-            // prematurely select the record's data to determine it.
-            Concourse connection = connections.request();
-            try {
-                data = connection.select(id);
-            }
-            finally {
-                connections.release(connection);
-            }
-        }
-        String section = (String) Iterables
-                .getLast(data.get(Record.SECTION_KEY));
-        Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, connections, this, data);
+        return instantiate(id, new ConcurrentHashMap<>(), data);
     }
 
     /**
@@ -1373,8 +1440,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Map<Long, Map<String, Set<Object>>> data) {
+        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
-            return instantiate(clazz, entry.getKey(), entry.getValue());
+            return instantiate(clazz, entry.getKey(), loaded, entry.getValue());
         });
         return records;
     }
@@ -1390,12 +1458,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Set<Long> ids) {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
                 Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
                 data.set(stream(paths, ids));
             }
-            return instantiate(clazz, id, data.get().get(id));
+            return instantiate(clazz, id, loaded, data.get().get(id));
         });
         return records;
     }
@@ -1408,8 +1477,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> instantiateAll(
             Map<Long, Map<String, Set<Object>>> data) {
+        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
-            return instantiate(entry.getKey(), entry.getValue());
+            return instantiate(entry.getKey(), loaded, entry.getValue());
         });
         return records;
     }
@@ -1426,11 +1496,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> instantiateAll(Set<Long> ids) {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
                 data.set(stream(null, ids));
             }
-            return instantiate(id, data.get().get(id));
+            return instantiate(id, loaded, data.get().get(id));
         });
         return records;
     }

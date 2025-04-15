@@ -15,8 +15,6 @@
  */
 package com.cinchapi.runway;
 
-import gnu.trove.map.TLongObjectMap;
-import groovy.lang.Sequence;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -41,6 +39,7 @@ import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
@@ -174,7 +173,7 @@ public abstract class Record implements Comparable<Record> {
      * @return the loaded Record
      */
     protected static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections,
+            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
             Runway runway, @Nullable Map<String, Set<Object>> data) {
         Concourse concourse = connections.request();
         try {
@@ -334,7 +333,7 @@ public abstract class Record implements Comparable<Record> {
      * @return the loaded Record
      */
     private static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections,
+            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
             Concourse concourse, Runway runway,
             @Nullable Map<String, Set<Object>> data) {
         return load(clazz, id, existing, connections, concourse, runway, data,
@@ -354,7 +353,7 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections,
+            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
             Concourse concourse, Runway runway,
             @Nullable Map<String, Set<Object>> data, String prefix) {
         T record = (T) newDefaultInstance(clazz, connections);
@@ -1371,7 +1370,7 @@ public abstract class Record implements Comparable<Record> {
      * @param existing
      */
     /* package */ final void load(Concourse concourse,
-            TLongObjectMap<Record> existing) {
+            ConcurrentMap<Long, Record> existing) {
         load(concourse, existing, null);
     }
 
@@ -1384,7 +1383,7 @@ public abstract class Record implements Comparable<Record> {
      * @param data
      */
     /* package */ final void load(Concourse concourse,
-            TLongObjectMap<Record> existing,
+            ConcurrentMap<Long, Record> existing,
             @Nullable Map<String, Set<Object>> data) {
         load(concourse, existing, data, null);
     }
@@ -1399,7 +1398,7 @@ public abstract class Record implements Comparable<Record> {
      *            only be provided from a trusted source
      */
     /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
-    final void load(Concourse concourse, TLongObjectMap<Record> existing,
+    final void load(Concourse concourse, ConcurrentMap<Long, Record> existing,
             @Nullable Map<String, Set<Object>> data, @Nullable String prefix) {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
@@ -1958,7 +1957,7 @@ public abstract class Record implements Comparable<Record> {
     @Nullable
     @SuppressWarnings({ "unchecked", "rawtypes" })
     private Object convert(String key, Class<?> type, Object stored,
-            Concourse concourse, TLongObjectMap<Record> alreadyLoaded) {
+            Concourse concourse, ConcurrentMap<Long, Record> alreadyLoaded) {
         Object converted = null;
         if(Record.class.isAssignableFrom(type)
                 || type == DeferredReference.class) {

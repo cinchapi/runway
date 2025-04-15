@@ -15,6 +15,9 @@ New deletion hooks are available to ensure automatic referential integrity when 
 * Added `@Computed` and `@Derived` annotations that can be applied to methods to mark them as returning `computed` and `derived` properties, respectively. These annotations are meant to be used in lieu of the `#computed()` and `#derived()` methods, which are now deprecated
 * Introduced a new `Record.set(Map<String, Object> data)` method that allows for bulk updating of fields within a record.
 
+##### Improvements
+* Improved Runway's bulk loading functionality to ensure that the same object reference is used for a linked Record that exists as a value in multiple records. Previously, in a single bulk load operation, Runway would create a new Java object for EVERY loaded reference, regardless of whether that referenced object was already encountered earlier in the load, which created unnecessary heap bloat. This optimization reduces memory usage and ensures object identity is maintained across references to the same record within a single load operation.
+
 ##### Bug Fixes
 * Fixed a regression that casued a `NullPointerException` to be thrown when a `null` intrinsic, `derived` or `computed` value was encountered while performing local `condition` evaluation. 
 * Fixed a few bugs that caused `@Required`, `@Unique` and `@ValidatedBy` constraints to behave unexpectedly in certain scenarios:
