@@ -1636,8 +1636,9 @@ public abstract class Record implements Comparable<Record> {
      */
     /* package */ void saveWithinTransaction(final Concourse concourse,
             Set<Record> seen) {
+        seen.add(this);
         if(deleted) {
-            deleteWithinTransaction(concourse);
+            deleteWithinTransaction(concourse, seen);
         }
         else {
             concourse.verifyOrSet(SECTION_KEY, __, id);
@@ -2065,8 +2066,9 @@ public abstract class Record implements Comparable<Record> {
      * Perform an actual "deletion" of this record from the database.
      * 
      * @param concourse
+     * @param seen
      */
-    private void deleteWithinTransaction(Concourse concourse) {
+    private void deleteWithinTransaction(Concourse concourse, Set<Record> seen) {
         // Ensure any fields to which this Record must @CascadeDelete are
         // deleted within this transaction
         Set<Field> dependents = StaticAnalysis.instance()
@@ -2148,14 +2150,14 @@ public abstract class Record implements Comparable<Record> {
                         throw CheckedExceptions.wrapAsRuntimeException(e);
                     }
                 }
-                record.saveWithinTransaction(concourse, new HashSet<>());
+                record.saveWithinTransaction(concourse, seen);
             }
         }
 
         // Perform the deletion(s)
         concourse.clear(id);
         for (Record record : waitingToBeDeleted) {
-            record.deleteWithinTransaction(concourse);
+            record.deleteWithinTransaction(concourse, seen);
         }
     }
 
@@ -2414,7 +2416,6 @@ public abstract class Record implements Comparable<Record> {
             // Ensure that Record references are saved within the current
             // transaction
             if(record != null && !seen.contains(record)) {
-                seen.add(record);
                 record.saveWithinTransaction(concourse, seen);
             }
 
