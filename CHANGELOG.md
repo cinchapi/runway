@@ -11,6 +11,23 @@ New deletion hooks are available to ensure automatic referential integrity when 
 
 * **`@CaptureDelete`**: Facilitates automatic reference removal for cases where a linked record is deleted but the containing record should remain intact. When a record is deleted, fields annotated with `@CaptureDelete` are automatically set to `null` or removed from the containing record's collection. This allows for more flexible data management, maintaining integrity without deleting the containing record.
 
+##### Save Lifecycle Hooks
+Runway now provides comprehensive options for injecting logic into the save routine and responding to save events, enabling more flexible and reactive data management patterns.
+
+* **Breaking Change**: The `Record#save` method has been made `final` to ensure consistent behavior across all save operations, including bulk saves. Previously, overridden `save` methods were not called during Runway's bulk save operations, leading to inconsistent behavior. Applications should migrate any custom save logic to either the `beforeSave` hook or save listeners.
+
+* **`beforeSave` Hook**: Added a protected `beforeSave` method to the `Record` class that is automatically called before a record is saved to the database. This hook allows records to update their state or perform validation immediately before persistence:
+  * Executes within the same transaction as the save operation, ensuring atomicity
+  * Can modify record fields, with changes included in the save operation
+  * Allows for custom validation beyond what annotations provide
+  * Exceptions thrown from `beforeSave` abort the save operation and roll back the transaction
+  * Works consistently with both individual and bulk save operations
+
+* **Save Listeners**: Added support for registering save listeners that allow applications to be notified when records are successfully saved. This feature enables reactive workflows and improved integration with external systems:
+  * **Save Notification**: Using the `onSave` method of the `Runway.builder()`, applications can register a listener that will be called whenever a record is successfully saved. The listener is called asynchronously after the save transaction is committed, ensuring that notifications only occur for successful operations.
+  * **Efficient Processing**: Save notifications are processed in a dedicated background thread, allowing the main application to continue without waiting for notification processing to complete.
+  * **Error Tolerance**: Exceptions thrown by save listeners are silently swallowed, ensuring that listener errors don't affect the application's core functionality.
+
 ##### New Functionality and Enhancements
 * Added `@Computed` and `@Derived` annotations that can be applied to methods to mark them as returning `computed` and `derived` properties, respectively. These annotations are meant to be used in lieu of the `#computed()` and `#derived()` methods, which are now deprecated
 * Introduced a new `Record.set(Map<String, Object> data)` method that allows for bulk updating of fields within a record.
