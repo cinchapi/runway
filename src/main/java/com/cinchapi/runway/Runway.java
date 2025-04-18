@@ -78,6 +78,11 @@ import com.google.common.collect.Sets;
 import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
 
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.function.Consumer;
+import java.util.concurrent.ThreadFactory;
+
 /**
  * {@link Runway} is the ORM controller for Concourse.
  * <p>
@@ -304,6 +309,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean supportsPreSelectLinkedRecords;
 
     /**
+     * A queue of records that have been successfully saved and are waiting
+     * for save notification processing.
+     */
+    private BlockingQueue<Record> saveNotificationQueue;
+
+    /**
+     * An executor service dedicated to processing save notifications.
+     */
+    private ExecutorService saveNotificationExecutor;
+
+    /**
+     * The consumer that processes save notifications for records.
+     */
+    @Nullable
+    private Consumer<Record> saveListener;
+
+    /**
      * Construct a new instance.
      * 
      * @param connections a Concourse {@link ConnectionPool}
@@ -350,6 +372,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Record.PINNED_RUNWAY_INSTANCE = null;
         }
         executor.shutdownNow();
+        if (saveNotificationExecutor != null) {
+            saveNotificationExecutor.shutdownNow();
+        }
     }
 
     @Override
@@ -959,7 +984,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(records.length == 1) {
             Concourse concourse = connections.request();
             try {
-                return records[0].save(concourse, Sets.newHashSet(), this);
+                boolean success = records[0].save(concourse, Sets.newHashSet(), this);
+                if (success) {
+                    queueSaveNotification(records[0]);
+                }
+                return success;
             }
             finally {
                 connections.release(concourse);
@@ -980,7 +1009,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     record.saveWithinTransaction(concourse, seen);
                 }
                 concourse.clear("transaction_id", METADATA_RECORD);
-                return concourse.commit();
+                boolean success = concourse.commit();
+                if (success) {
+                    // Queue save notifications for all records
+                    for (Record record : records) {
+                        queueSaveNotification(record);
+                    }
+                }
+                return success;
             }
             catch (Throwable t) {
                 concourse.abort();
@@ -1076,6 +1112,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     <T extends Record> T load(long id) {
         return instantiate(id, null);
+    }
+
+    /**
+     * Queue a record for save notification processing.
+     * 
+     * @param record the record that was saved
+     */
+    /* package */ void queueSaveNotification(Record record) {
+        if (saveListener != null) {
+            saveNotificationQueue.offer(record);
+        }
     }
 
     /**
@@ -1686,7 +1733,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         };
 
     }
-
+    
     /**
      * Builder for {@link Runway} connections. This is returned from
      * {@link #builder()}.
@@ -1705,6 +1752,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private int streamingReadBufferSize = 100;
         private String username = "admin";
         private boolean disablePreSelectLinkedRecords = false;
+        private Consumer<Record> saveListener = null;
 
         /**
          * Build the configured {@link Runway} and return the instance.
@@ -1727,6 +1775,36 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             if(disablePreSelectLinkedRecords) {
                 Reflection.set("supportsPreSelectLinkedRecords", false, db); // (authorized)
             }
+            
+            // Initialize save notification components if a listener is provided
+            if (saveListener != null) {
+                db.saveListener = saveListener;
+                db.saveNotificationQueue = new LinkedBlockingQueue<>();
+                ThreadFactory threadFactory = r -> {
+                    Thread thread = new Thread(r, "runway-save-notification-worker");
+                    thread.setDaemon(true);
+                    return thread;
+                };
+                db.saveNotificationExecutor = Executors.newSingleThreadExecutor(threadFactory);
+                db.saveNotificationExecutor.submit(() -> {
+                    while (!Thread.currentThread().isInterrupted()) {
+                        try {
+                            Record record = db.saveNotificationQueue.take();
+                            try {
+                                db.saveListener.accept(record);
+                            }
+                            catch (Exception e) {
+                                // Silently swallow exceptions from the listener
+                            }
+                        }
+                        catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+                });
+            }
+            
             return db;
         }
 
@@ -1743,7 +1821,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder cache(Cache<Long, Record> cache) {
             return this;
         }
-
+        
         /**
          * Disable the "pre-select" feature that improves performance by
          * selecting data for linked records instead of making multiple database
@@ -1794,6 +1872,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder onLoadFailure(
                 TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler) {
             this.onLoadFailureHandler = onLoadFailureHandler;
+            return this;
+        }
+
+        /**
+         * Set a listener that will be called whenever a record is successfully saved.
+         * 
+         * @param listener a consumer that processes saved records
+         * @return this builder
+         */
+        public Builder onSave(Consumer<Record> listener) {
+            this.saveListener = listener;
             return this;
         }
 

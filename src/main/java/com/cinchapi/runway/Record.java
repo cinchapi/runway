@@ -1588,7 +1588,11 @@ public abstract class Record implements Comparable<Record> {
             errors.clear();
             concourse.stage();
             saveWithinTransaction(concourse, seen);
-            return concourse.commit();
+            boolean success = concourse.commit();
+            if(success && runway != null) {
+                runway.queueSaveNotification(this);
+            }
+            return success;
         }
         catch (Throwable t) {
             concourse.abort();
