@@ -987,7 +987,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 boolean success = records[0].save(concourse, Sets.newHashSet(),
                         this);
                 if(success) {
-                    queueSaveNotification(records[0]);
+                    enqueueSaveNotification(records[0]);
                 }
                 return success;
             }
@@ -1014,7 +1014,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 if(success) {
                     // Queue save notifications for all records
                     for (Record record : records) {
-                        queueSaveNotification(record);
+                        enqueueSaveNotification(record);
                     }
                 }
                 return success;
@@ -1116,11 +1116,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Queue a record for save notification processing.
+     * Queue up a record for save notification processing.
      * 
      * @param record the record that was saved
      */
-    /* package */ void queueSaveNotification(Record record) {
+    /* package */ final void enqueueSaveNotification(Record record) {
         if(saveListener != null) {
             saveNotificationQueue.offer(record);
         }

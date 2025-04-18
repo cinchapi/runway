@@ -1616,7 +1616,7 @@ public abstract class Record implements Comparable<Record> {
             saveWithinTransaction(concourse, seen);
             boolean success = concourse.commit();
             if(success && runway != null) {
-                runway.queueSaveNotification(this);
+                runway.enqueueSaveNotification(this);
             }
             return success;
         }

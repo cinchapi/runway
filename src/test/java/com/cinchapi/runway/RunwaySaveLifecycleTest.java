@@ -227,7 +227,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         // Call queueSaveNotification directly to ensure it doesn't throw an
         // exception
         Player player = new Player("Test Player", 30);
-        runway.queueSaveNotification(player);
+        runway.enqueueSaveNotification(player);
 
         // If we got here without an exception, the test passes
         Assert.assertTrue(true);
