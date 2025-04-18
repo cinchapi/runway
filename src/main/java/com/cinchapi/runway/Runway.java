@@ -372,7 +372,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Record.PINNED_RUNWAY_INSTANCE = null;
         }
         executor.shutdownNow();
-        if (saveNotificationExecutor != null) {
+        if(saveNotificationExecutor != null) {
             saveNotificationExecutor.shutdownNow();
         }
     }
@@ -984,8 +984,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(records.length == 1) {
             Concourse concourse = connections.request();
             try {
-                boolean success = records[0].save(concourse, Sets.newHashSet(), this);
-                if (success) {
+                boolean success = records[0].save(concourse, Sets.newHashSet(),
+                        this);
+                if(success) {
                     queueSaveNotification(records[0]);
                 }
                 return success;
@@ -1010,7 +1011,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 concourse.clear("transaction_id", METADATA_RECORD);
                 boolean success = concourse.commit();
-                if (success) {
+                if(success) {
                     // Queue save notifications for all records
                     for (Record record : records) {
                         queueSaveNotification(record);
@@ -1120,7 +1121,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param record the record that was saved
      */
     /* package */ void queueSaveNotification(Record record) {
-        if (saveListener != null) {
+        if(saveListener != null) {
             saveNotificationQueue.offer(record);
         }
     }
@@ -1733,7 +1734,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         };
 
     }
-    
+
     /**
      * Builder for {@link Runway} connections. This is returned from
      * {@link #builder()}.
@@ -1775,17 +1776,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             if(disablePreSelectLinkedRecords) {
                 Reflection.set("supportsPreSelectLinkedRecords", false, db); // (authorized)
             }
-            
+
             // Initialize save notification components if a listener is provided
-            if (saveListener != null) {
+            if(saveListener != null) {
                 db.saveListener = saveListener;
                 db.saveNotificationQueue = new LinkedBlockingQueue<>();
                 ThreadFactory threadFactory = r -> {
-                    Thread thread = new Thread(r, "runway-save-notification-worker");
+                    Thread thread = new Thread(r,
+                            "runway-save-notification-worker");
                     thread.setDaemon(true);
                     return thread;
                 };
-                db.saveNotificationExecutor = Executors.newSingleThreadExecutor(threadFactory);
+                db.saveNotificationExecutor = Executors
+                        .newSingleThreadExecutor(threadFactory);
                 db.saveNotificationExecutor.submit(() -> {
                     while (!Thread.currentThread().isInterrupted()) {
                         try {
@@ -1804,7 +1807,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     }
                 });
             }
-            
+
             return db;
         }
 
@@ -1821,7 +1824,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder cache(Cache<Long, Record> cache) {
             return this;
         }
-        
+
         /**
          * Disable the "pre-select" feature that improves performance by
          * selecting data for linked records instead of making multiple database
@@ -1876,7 +1879,39 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
         /**
-         * Set a listener that will be called whenever a record is successfully saved.
+         * Provide a listener that will be called <strong>after</strong> a
+         * record is successfully saved.
+         * <p>
+         * Save listening is designed for implementing side-effects that occur
+         * after a record
+         * is successfully persisted to the database. This is ideal for
+         * operations such as:
+         * <ul>
+         * <li>Triggering notifications or events</li>
+         * <li>Updating external systems</li>
+         * <li>Logging or auditing changes</li>
+         * <li>Performing asynchronous tasks that depend on the record being
+         * saved</li>
+         * </ul>
+         * </p>
+         * <p>
+         * The listener is executed asynchronously in a dedicated thread to
+         * prevent blocking the main application flow. Any exceptions thrown by
+         * the listener are caught and suppressed to maintain application
+         * stability.
+         * </p>
+         * <p>
+         * <strong>Important:</strong> Save listeners should not modify the
+         * state of the saved record. If you need to modify a record during the
+         * save process, use the {@link Record#preSave} hook instead, which is
+         * called before the record is persisted.
+         * </p>
+         * <p>
+         * <strong>NOTE:</strong>The {@code listener} will receive
+         * <em>every</em> saved record, so it should perform the necessary
+         * internal checks (e.g., checking the record type or specific
+         * properties) before taking action.
+         * </p>
          * 
          * @param listener a consumer that processes saved records
          * @return this builder
