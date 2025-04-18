@@ -15,7 +15,6 @@
  */
 package com.cinchapi.runway;
 
-
 import java.io.IOException;
 import java.io.Serializable;
 import java.lang.annotation.Annotation;
@@ -1196,7 +1195,7 @@ public abstract class Record implements Comparable<Record> {
      * {@link Record records}.
      * </p>
      */
-    public boolean save() {
+    public final boolean save() {
         Verify.that(connections != null,
                 "Cannot perform an implicit save because this Record isn't pinned to a Concourse instance");
         Concourse concourse = connections.request();
@@ -1276,6 +1275,33 @@ public abstract class Record implements Comparable<Record> {
     public final String toString() {
         return json();
     }
+
+    /**
+     * A hook that is executed immediately before this {@link Record} is
+     * {@link #save() saved} to the database. This method provides an
+     * opportunity to update the record's state or perform validation before
+     * persistence.
+     * <p>
+     * Implementations can use this hook to:
+     * <ul>
+     * <li>Perform last-minute data transformations or normalizations</li>
+     * <li>Update dependent fields based on current state</li>
+     * <li>Execute business logic that should affect the saved state</li>
+     * <li>Perform custom validation beyond what annotations provide</li>
+     * </ul>
+     * </p>
+     * <p>
+     * Any changes made to the record's fields within this method will be
+     * included in the save operation. This method is called within the same
+     * transaction as the save operation, ensuring atomicity.
+     * </p>
+     * <p>
+     * <strong>Note:</strong> This method should not throw exceptions unless the
+     * save operation should be aborted. If an exception is thrown, the
+     * transaction will be rolled back.
+     * </p>
+     */
+    protected void beforeSave() {}
 
     /**
      * Provide additional data about this Record that might not be encapsulated
@@ -1644,6 +1670,7 @@ public abstract class Record implements Comparable<Record> {
             deleteWithinTransaction(concourse);
         }
         else {
+            beforeSave();
             concourse.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
             if(_hasModifiedRealms) {
