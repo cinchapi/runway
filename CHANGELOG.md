@@ -28,6 +28,12 @@ Runway now provides comprehensive options for injecting logic into the save rout
   * **Efficient Processing**: Save notifications are processed in a dedicated background thread, allowing the main application to continue without waiting for notification processing to complete.
   * **Error Tolerance**: Exceptions thrown by save listeners are silently swallowed, ensuring that listener errors don't affect the application's core functionality.
 
+* **`overrideSave` Hook**: Added a protected `overrideSave` method to the `Record` class that allows completely bypassing the standard save routine:
+  * Returns a `Supplier<Boolean>` that determines the result of the save operation without database interaction
+  * When non-null, the normal persistence mechanism is skipped entirely
+  * Useful for creating in-memory only records or implementing custom persistence logic
+  * Works consistently with both individual and bulk save operations
+
 ##### New Functionality and Enhancements
 * Added `@Computed` and `@Derived` annotations that can be applied to methods to mark them as returning `computed` and `derived` properties, respectively. These annotations are meant to be used in lieu of the `#computed()` and `#derived()` methods, which are now deprecated
 * Introduced a new `Record.set(Map<String, Object> data)` method that allows for bulk updating of fields within a record.

@@ -1375,6 +1375,36 @@ public abstract class Record implements Comparable<Record> {
     protected void onLoad() {}
 
     /**
+     * Provide a hook to completely bypass the standard save routine.
+     * <p>
+     * This method can be overridden to return a {@link Supplier} that determines
+     * the result of a save operation without actually persisting data to the database.
+     * This is useful in scenarios such as:
+     * </p>
+     * <ul>
+     * <li>Creating ad hoc/in-memory only records that don't need database persistence</li>
+     * <li>Mocking save behavior for testing without database interaction</li>
+     * <li>Implementing custom persistence logic that doesn't use the standard flow</li>
+     * </ul>
+     * <p>
+     * When this method returns a non-null value, the normal save process is bypassed
+     * entirely, and the boolean result from the supplier is used as the save operation
+     * result.
+     * </p>
+     * <p>
+     * <strong>Note:</strong> Use this with caution as it completely circumvents the
+     * standard persistence mechanism. Records with overridden save behavior won't
+     * trigger save listeners or other standard save-related functionality.
+     * </p>
+     * 
+     * @return a {@link Supplier} that returns the result of the save operation,
+     *         or {@code null} to use the standard save process
+     */
+    protected Supplier<Boolean> overrideSave() {
+        return null;
+    }
+
+    /**
      * Return additional {@link TypeAdapter TypeAdapters} that should be used
      * when generating the {@link #json()} for this {@link Record}.
      * <p>
@@ -1608,6 +1638,10 @@ public abstract class Record implements Comparable<Record> {
      */
     /* package */ final boolean save(Concourse concourse, Set<Record> seen,
             Runway runway) {
+        Supplier<Boolean> override = overrideSave();
+        if(override != null) {
+            return override.get();
+        } 
         assign(runway);
         try {
             Preconditions.checkState(!inViolation);
@@ -1666,8 +1700,12 @@ public abstract class Record implements Comparable<Record> {
      */
     /* package */ void saveWithinTransaction(final Concourse concourse,
             Set<Record> seen) {
+        Supplier<Boolean> override = overrideSave();
         if(deleted) {
             deleteWithinTransaction(concourse);
+        }
+        else if(override != null) {
+            override.get();
         }
         else {
             beforeSave();
@@ -3244,7 +3282,7 @@ public abstract class Record implements Comparable<Record> {
             return data.size();
         }
 
-    }
+    };
 
     /**
      * A {@link DatabaseInterface} that reacts to the state of the
@@ -3721,7 +3759,7 @@ public abstract class Record implements Comparable<Record> {
             }
         }
 
-    };
+    }
 
     /**
      * A read-only {@link Multimap} interface for a {@link Map} where each key

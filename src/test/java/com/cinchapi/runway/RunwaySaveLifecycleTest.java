@@ -6,6 +6,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -58,6 +59,99 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
 
         Assert.assertTrue("Record should save successfully without a listener",
                 saved);
+    }
+
+    @Test
+    public void testOverrideSaveForSingleRecord() {
+        // Create a record that overrides save
+        OverrideSaveRecord record = new OverrideSaveRecord();
+        record.name = "Override Test";
+        record.overrideResult = true;
+
+        // Save the record
+        boolean saved = record.save();
+
+        // Verify the save result matches our override
+        Assert.assertTrue("Save should return the overridden result", saved);
+        Assert.assertTrue("overrideSave should have been called",
+                record.overrideCalled);
+
+        // Verify the record was not actually persisted
+        try {
+            runway.load(OverrideSaveRecord.class, record.id());
+            Assert.fail("Record should not exist in the database");
+        }
+        catch (IllegalStateException e) {
+            // Expected exception
+        }
+    }
+
+    @Test
+    public void testOverrideSaveInBulkSave() {
+        // Create multiple records, some with overridden save
+        PreSaveHookRecord record1 = new PreSaveHookRecord();
+        OverrideSaveRecord record2 = new OverrideSaveRecord();
+        PreSaveHookRecord record3 = new PreSaveHookRecord();
+
+        record1.name = "Normal Record 1";
+        record2.name = "Override Record";
+        record2.overrideResult = true;
+        record3.name = "Normal Record 2";
+
+        // Save all records in a bulk operation
+        boolean saved = runway.save(record1, record2, record3);
+
+        // Verify the save was successful
+        Assert.assertTrue("Bulk save should succeed", saved);
+
+        // Verify overrideSave was called
+        Assert.assertTrue("overrideSave should have been called",
+                record2.overrideCalled);
+
+        // Verify normal records were persisted
+        PreSaveHookRecord loaded1 = runway.load(PreSaveHookRecord.class,
+                record1.id());
+        Assert.assertEquals("Normal record 1 should be persisted",
+                "Normal Record 1 (Modified)", loaded1.name);
+
+        PreSaveHookRecord loaded3 = runway.load(PreSaveHookRecord.class,
+                record3.id());
+        Assert.assertEquals("Normal record 2 should be persisted",
+                "Normal Record 2 (Modified)", loaded3.name);
+
+        // Verify the overridden record was not persisted
+        try {
+            runway.load(OverrideSaveRecord.class, record2.id());
+            Assert.fail("Overridden record should not exist in the database");
+        }
+        catch (IllegalStateException e) {
+            // Expected exception
+        }
+    }
+
+    @Test
+    public void testOverrideSaveReturnsFalse() {
+        // Create a record that overrides save with a false result
+        OverrideSaveRecord record = new OverrideSaveRecord();
+        record.name = "Override Test";
+        record.overrideResult = false;
+
+        // Save the record
+        boolean saved = record.save();
+
+        // Verify the save result matches our override
+        Assert.assertFalse("Save should return the overridden result", saved);
+        Assert.assertTrue("overrideSave should have been called",
+                record.overrideCalled);
+
+        // Verify the record was not persisted
+        try {
+            runway.load(OverrideSaveRecord.class, record.id());
+            Assert.fail("Record should not exist in the database");
+        }
+        catch (IllegalStateException e) {
+            // Expected exception
+        }
     }
 
     @Test
@@ -143,6 +237,75 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     @Test
+    public void testPreSaveHookCalledWithBulkSave() throws Exception {
+        // Create multiple records with preSave implementations
+        int recordCount = 5;
+        PreSaveHookRecord[] records = new PreSaveHookRecord[recordCount];
+
+        for (int i = 0; i < recordCount; i++) {
+            records[i] = new PreSaveHookRecord();
+            records[i].name = "Bulk Record " + i;
+        }
+
+        // Save the records using bulk save
+        boolean saved = runway.save(records);
+
+        // Verify the save was successful
+        Assert.assertTrue("Bulk save should succeed", saved);
+
+        // Verify preSave was called for all records
+        for (int i = 0; i < recordCount; i++) {
+            Assert.assertTrue(
+                    "preSave hook should have been called for record " + i,
+                    records[i].preSaveCalled);
+            Assert.assertEquals("Field should be modified by preSave",
+                    "Bulk Record " + i + " (Modified)", records[i].name);
+
+            // Load the record to verify the changes were persisted
+            PreSaveHookRecord loaded = runway.load(PreSaveHookRecord.class,
+                    records[i].id());
+            Assert.assertEquals("Modified value should be persisted",
+                    "Bulk Record " + i + " (Modified)", loaded.name);
+        }
+    }
+
+    @Test
+    public void testPreSaveHookExceptionAbortsBulkSave() throws Exception {
+        // Create multiple records, with one that will throw an exception in
+        // preSave
+        PreSaveHookRecord record1 = new PreSaveHookRecord();
+        PreSaveHookRecord record2 = new PreSaveHookRecord();
+        PreSaveExceptionRecord exceptionRecord = new PreSaveExceptionRecord();
+        PreSaveHookRecord record3 = new PreSaveHookRecord();
+
+        record1.name = "Bulk Record 1";
+        record2.name = "Bulk Record 2";
+        exceptionRecord.name = "Exception Record";
+        record3.name = "Bulk Record 3";
+
+        // Attempt to save all records in a bulk operation
+        boolean saved = runway.save(record1, record2, exceptionRecord, record3);
+
+        // Verify the save failed
+        Assert.assertFalse(
+                "Bulk save should fail when a record's preSave throws an exception",
+                saved);
+
+        // Verify no records were persisted
+        for (Record record : new Record[] { record1, record2, exceptionRecord,
+                record3 }) {
+            try {
+                runway.load(record.getClass(), record.id());
+                Assert.fail("Record with ID " + record.id()
+                        + " should not exist in the database");
+            }
+            catch (IllegalStateException e) {
+                // Expected exception
+            }
+        }
+    }
+
+    @Test
     public void testPreSaveHookExceptionAbortsSave() throws Exception {
         // Create a record with a preSave implementation that throws an
         // exception
@@ -213,6 +376,62 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     @Test
+    public void testPreSaveHookModifiesFieldsInBulkSave() throws Exception {
+        // Create a record class that modifies multiple fields in preSave
+        ComplexPreSaveRecord record1 = new ComplexPreSaveRecord();
+        record1.name = "Complex Record 1";
+        record1.count = 10;
+
+        ComplexPreSaveRecord record2 = new ComplexPreSaveRecord();
+        record2.name = "Complex Record 2";
+        record2.count = 20;
+
+        // Save the records using bulk save
+        boolean saved = runway.save(record1, record2);
+
+        // Verify the save was successful
+        Assert.assertTrue("Bulk save should succeed", saved);
+
+        // Verify preSave was called and modified multiple fields
+        Assert.assertTrue("preSave hook should have been called for record1",
+                record1.preSaveCalled);
+        Assert.assertEquals("Name field should be modified by preSave",
+                "Complex Record 1 (Modified)", record1.name);
+        Assert.assertEquals("Count field should be incremented by preSave", 11,
+                record1.count);
+        Assert.assertNotNull("Timestamp field should be set by preSave",
+                record1.timestamp);
+
+        Assert.assertTrue("preSave hook should have been called for record2",
+                record2.preSaveCalled);
+        Assert.assertEquals("Name field should be modified by preSave",
+                "Complex Record 2 (Modified)", record2.name);
+        Assert.assertEquals("Count field should be incremented by preSave", 21,
+                record2.count);
+        Assert.assertNotNull("Timestamp field should be set by preSave",
+                record2.timestamp);
+
+        // Load the records to verify the changes were persisted
+        ComplexPreSaveRecord loaded1 = runway.load(ComplexPreSaveRecord.class,
+                record1.id());
+        Assert.assertEquals("Modified name should be persisted",
+                "Complex Record 1 (Modified)", loaded1.name);
+        Assert.assertEquals("Modified count should be persisted", 11,
+                loaded1.count);
+        Assert.assertNotNull("Timestamp should be persisted",
+                loaded1.timestamp);
+
+        ComplexPreSaveRecord loaded2 = runway.load(ComplexPreSaveRecord.class,
+                record2.id());
+        Assert.assertEquals("Modified name should be persisted",
+                "Complex Record 2 (Modified)", loaded2.name);
+        Assert.assertEquals("Modified count should be persisted", 21,
+                loaded2.count);
+        Assert.assertNotNull("Timestamp should be persisted",
+                loaded2.timestamp);
+    }
+
+    @Test
     public void testQueueSaveNotificationWithNoListenerIsNoOp()
             throws Exception {
         runway.close();
@@ -231,6 +450,51 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
 
         // If we got here without an exception, the test passes
         Assert.assertTrue(true);
+    }
+
+    @Test
+    public void testSaveListenerCalledForBulkSave() throws Exception {
+        int recordCount = 5;
+        CountDownLatch latch = new CountDownLatch(recordCount);
+        Set<Record> savedRecords = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    savedRecords.add(record);
+                    latch.countDown();
+                }).build();
+
+        // Create multiple records with preSave implementations
+        PreSaveHookRecord[] records = new PreSaveHookRecord[recordCount];
+
+        for (int i = 0; i < recordCount; i++) {
+            records[i] = new PreSaveHookRecord();
+            records[i].name = "Listener Bulk Record " + i;
+        }
+
+        // Save the records using bulk save
+        boolean saved = runway.save(records);
+
+        // Verify the save was successful
+        Assert.assertTrue("Bulk save should succeed", saved);
+
+        // Wait for all save listeners to be called
+        Assert.assertTrue("Not all save listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        // Verify all records were processed by the save listener
+        Assert.assertEquals(recordCount, savedRecords.size());
+        for (PreSaveHookRecord record : records) {
+            Assert.assertTrue(
+                    "Save listener should have processed record " + record.id(),
+                    savedRecords.contains(record));
+            Assert.assertTrue(
+                    "preSave hook should have been called before save listener",
+                    record.preSaveCalled);
+            Assert.assertTrue("Field should be modified by preSave",
+                    record.name.endsWith("(Modified)"));
+        }
     }
 
     @Test
@@ -461,174 +725,43 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(player2.score, loaded2.score);
     }
 
-    @Test
-    public void testPreSaveHookCalledWithBulkSave() throws Exception {
-        // Create multiple records with preSave implementations
-        int recordCount = 5;
-        PreSaveHookRecord[] records = new PreSaveHookRecord[recordCount];
+    /**
+     * A test record class that modifies multiple fields in preSave.
+     */
+    public static class ComplexPreSaveRecord extends Record {
 
-        for (int i = 0; i < recordCount; i++) {
-            records[i] = new PreSaveHookRecord();
-            records[i].name = "Bulk Record " + i;
-        }
+        public String name;
+        public int count;
+        public long timestamp;
+        public boolean preSaveCalled = false;
 
-        // Save the records using bulk save
-        boolean saved = runway.save(records);
-
-        // Verify the save was successful
-        Assert.assertTrue("Bulk save should succeed", saved);
-
-        // Verify preSave was called for all records
-        for (int i = 0; i < recordCount; i++) {
-            Assert.assertTrue(
-                    "preSave hook should have been called for record " + i,
-                    records[i].preSaveCalled);
-            Assert.assertEquals("Field should be modified by preSave",
-                    "Bulk Record " + i + " (Modified)", records[i].name);
-
-            // Load the record to verify the changes were persisted
-            PreSaveHookRecord loaded = runway.load(PreSaveHookRecord.class,
-                    records[i].id());
-            Assert.assertEquals("Modified value should be persisted",
-                    "Bulk Record " + i + " (Modified)", loaded.name);
-        }
-    }
-
-    @Test
-    public void testPreSaveHookExceptionAbortsBulkSave() throws Exception {
-        // Create multiple records, with one that will throw an exception in
-        // preSave
-        PreSaveHookRecord record1 = new PreSaveHookRecord();
-        PreSaveHookRecord record2 = new PreSaveHookRecord();
-        PreSaveExceptionRecord exceptionRecord = new PreSaveExceptionRecord();
-        PreSaveHookRecord record3 = new PreSaveHookRecord();
-
-        record1.name = "Bulk Record 1";
-        record2.name = "Bulk Record 2";
-        exceptionRecord.name = "Exception Record";
-        record3.name = "Bulk Record 3";
-
-        // Attempt to save all records in a bulk operation
-        boolean saved = runway.save(record1, record2, exceptionRecord, record3);
-
-        // Verify the save failed
-        Assert.assertFalse(
-                "Bulk save should fail when a record's preSave throws an exception",
-                saved);
-
-        // Verify no records were persisted
-        for (Record record : new Record[] { record1, record2, exceptionRecord,
-                record3 }) {
-            try {
-                runway.load(record.getClass(), record.id());
-                Assert.fail("Record with ID " + record.id()
-                        + " should not exist in the database");
+        @Override
+        protected void beforeSave() {
+            preSaveCalled = true;
+            if(name != null) {
+                name = name + " (Modified)";
             }
-            catch (IllegalStateException e) {
-                // Expected exception
-            }
+            count++;
+            timestamp = System.currentTimeMillis();
         }
     }
 
-    @Test
-    public void testSaveListenerCalledForBulkSave() throws Exception {
-        int recordCount = 5;
-        CountDownLatch latch = new CountDownLatch(recordCount);
-        Set<Record> savedRecords = Sets.newConcurrentHashSet();
+    /**
+     * A test record class that overrides the save operation.
+     */
+    public static class OverrideSaveRecord extends Record {
 
-        runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    savedRecords.add(record);
-                    latch.countDown();
-                }).build();
+        public String name;
+        public boolean overrideResult = true;
+        public boolean overrideCalled = false;
 
-        // Create multiple records with preSave implementations
-        PreSaveHookRecord[] records = new PreSaveHookRecord[recordCount];
-
-        for (int i = 0; i < recordCount; i++) {
-            records[i] = new PreSaveHookRecord();
-            records[i].name = "Listener Bulk Record " + i;
+        @Override
+        protected Supplier<Boolean> overrideSave() {
+            return () -> {
+                overrideCalled = true;
+                return overrideResult;
+            };
         }
-
-        // Save the records using bulk save
-        boolean saved = runway.save(records);
-
-        // Verify the save was successful
-        Assert.assertTrue("Bulk save should succeed", saved);
-
-        // Wait for all save listeners to be called
-        Assert.assertTrue("Not all save listeners were called within timeout",
-                latch.await(5, TimeUnit.SECONDS));
-
-        // Verify all records were processed by the save listener
-        Assert.assertEquals(recordCount, savedRecords.size());
-        for (PreSaveHookRecord record : records) {
-            Assert.assertTrue(
-                    "Save listener should have processed record " + record.id(),
-                    savedRecords.contains(record));
-            Assert.assertTrue(
-                    "preSave hook should have been called before save listener",
-                    record.preSaveCalled);
-            Assert.assertTrue("Field should be modified by preSave",
-                    record.name.endsWith("(Modified)"));
-        }
-    }
-
-    @Test
-    public void testPreSaveHookModifiesFieldsInBulkSave() throws Exception {
-        // Create a record class that modifies multiple fields in preSave
-        ComplexPreSaveRecord record1 = new ComplexPreSaveRecord();
-        record1.name = "Complex Record 1";
-        record1.count = 10;
-
-        ComplexPreSaveRecord record2 = new ComplexPreSaveRecord();
-        record2.name = "Complex Record 2";
-        record2.count = 20;
-
-        // Save the records using bulk save
-        boolean saved = runway.save(record1, record2);
-
-        // Verify the save was successful
-        Assert.assertTrue("Bulk save should succeed", saved);
-
-        // Verify preSave was called and modified multiple fields
-        Assert.assertTrue("preSave hook should have been called for record1",
-                record1.preSaveCalled);
-        Assert.assertEquals("Name field should be modified by preSave",
-                "Complex Record 1 (Modified)", record1.name);
-        Assert.assertEquals("Count field should be incremented by preSave", 11,
-                record1.count);
-        Assert.assertNotNull("Timestamp field should be set by preSave",
-                record1.timestamp);
-
-        Assert.assertTrue("preSave hook should have been called for record2",
-                record2.preSaveCalled);
-        Assert.assertEquals("Name field should be modified by preSave",
-                "Complex Record 2 (Modified)", record2.name);
-        Assert.assertEquals("Count field should be incremented by preSave", 21,
-                record2.count);
-        Assert.assertNotNull("Timestamp field should be set by preSave",
-                record2.timestamp);
-
-        // Load the records to verify the changes were persisted
-        ComplexPreSaveRecord loaded1 = runway.load(ComplexPreSaveRecord.class,
-                record1.id());
-        Assert.assertEquals("Modified name should be persisted",
-                "Complex Record 1 (Modified)", loaded1.name);
-        Assert.assertEquals("Modified count should be persisted", 11,
-                loaded1.count);
-        Assert.assertNotNull("Timestamp should be persisted",
-                loaded1.timestamp);
-
-        ComplexPreSaveRecord loaded2 = runway.load(ComplexPreSaveRecord.class,
-                record2.id());
-        Assert.assertEquals("Modified name should be persisted",
-                "Complex Record 2 (Modified)", loaded2.name);
-        Assert.assertEquals("Modified count should be persisted", 21,
-                loaded2.count);
-        Assert.assertNotNull("Timestamp should be persisted",
-                loaded2.timestamp);
     }
 
     /**
@@ -682,26 +815,5 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
 
         @Unique
         public String uniqueField;
-    }
-
-    /**
-     * A test record class that modifies multiple fields in preSave.
-     */
-    public static class ComplexPreSaveRecord extends Record {
-
-        public String name;
-        public int count;
-        public long timestamp;
-        public boolean preSaveCalled = false;
-
-        @Override
-        protected void beforeSave() {
-            preSaveCalled = true;
-            if(name != null) {
-                name = name + " (Modified)";
-            }
-            count++;
-            timestamp = System.currentTimeMillis();
-        }
     }
 }
