@@ -245,6 +245,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * The {@link Page pagination} parameter to use to limit the number of
+     * database records returned when trying to verify or enforce a uniqueness
+     * constraint.
+     */
+    private static Page UNIQUE_PAGINATION = Page.sized(2);
+
+    /**
      * The amount of time to wait for a bulk select to complete before streaming
      * the data.
      */
@@ -639,7 +646,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         try {
             if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                 Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
+                        clazz, criteria, NO_ORDER, UNIQUE_PAGINATION, realms);
                 if(data.isEmpty()) {
                     return null;
                 }
@@ -657,7 +664,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             else {
                 Set<T> records = filterAny(clazz, criteria, NO_ORDER,
-                        NO_PAGINATION, realms);
+                        UNIQUE_PAGINATION, realms);
                 if(records.isEmpty()) {
                     return null;
                 }
@@ -717,7 +724,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         try {
             if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                 Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
+                        clazz, criteria, NO_ORDER, UNIQUE_PAGINATION, realms);
                 if(data.isEmpty()) {
                     return null;
                 }
@@ -736,7 +743,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             else {
                 Set<T> records = filterAny(clazz, criteria, NO_ORDER,
-                        NO_PAGINATION, realms);
+                        UNIQUE_PAGINATION, realms);
                 if(records.isEmpty()) {
                     return null;
                 }
@@ -1076,6 +1083,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Queue up a record for save notification processing.
+     * 
+     * @param record the record that was saved
+     */
+    /* package */ final void enqueueSaveNotification(Record record) {
+        if(saveListener != null) {
+            saveNotificationQueue.offer(record);
+        }
+    }
+
+    /**
      * If this instance {@link #supportsPreSelectLinkedRecords} return the
      * {@link #PATHS_BY_CLASS_HIERARCHY} for {@code clazz}.
      * 
@@ -1113,17 +1131,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     <T extends Record> T load(long id) {
         return instantiate(id, null);
-    }
-
-    /**
-     * Queue up a record for save notification processing.
-     * 
-     * @param record the record that was saved
-     */
-    /* package */ final void enqueueSaveNotification(Record record) {
-        if(saveListener != null) {
-            saveNotificationQueue.offer(record);
-        }
     }
 
     /**

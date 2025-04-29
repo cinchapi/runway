@@ -22,6 +22,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
@@ -103,6 +104,8 @@ import com.google.common.collect.Multiset;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
+import com.google.common.hash.Hasher;
+import com.google.common.hash.Hashing;
 import com.google.common.io.BaseEncoding;
 import com.google.common.primitives.Longs;
 import com.google.gson.Gson;
@@ -265,6 +268,22 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Use reflection to get the value for {@code field} in {@code record}.
+     * 
+     * @param field
+     * @param record
+     * @return the value
+     */
+    private static Object getFieldValue(Field field, Record record) {
+        try {
+            return field.get(record);
+        }
+        catch (ReflectiveOperationException e) {
+            throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+    }
+
+    /**
      * Execute the equivalent logic of {@link Map#getOrDefault(Object, Object)}
      * on {@code map}, but ensure that a false negative bug does not occur.
      * 
@@ -291,6 +310,78 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return value != null ? value : defaultValue;
+    }
+
+    /**
+     * Add the canonical data representation of {@code value} to the
+     * {@code hasher}.
+     * 
+     * @param hasher
+     * @param value
+     */
+    @SuppressWarnings("rawtypes")
+    private static void hashValue(Hasher hasher, @Nullable Object value) {
+        if(value != null) {
+            hasher.putString(value.getClass().getName(),
+                    StandardCharsets.UTF_8);
+            if(Sequences.isSequence(value)) {
+                Sequences.forEach(value, item -> hashValue(hasher, item));
+            }
+            else if(value instanceof Record) {
+                Record record = (Record) value;
+                hasher.putLong(record.id());
+            }
+            else if(value instanceof DeferredReference) {
+                DeferredReference deferred = (DeferredReference) value;
+                hasher.putLong(deferred.$id());
+            }
+            else if(value instanceof Tag || value instanceof String) {
+                hasher.putString(value.toString(), StandardCharsets.UTF_8);
+            }
+            else if(value instanceof Enum) {
+                hasher.putInt(((Enum) value).ordinal());
+            }
+            else if(value instanceof Boolean
+                    || value.getClass() == boolean.class) {
+                hasher.putBoolean((boolean) value);
+            }
+            else if(value instanceof Byte || value.getClass() == byte.class) {
+                hasher.putByte((byte) value);
+            }
+            else if(value instanceof Double
+                    || value.getClass() == double.class) {
+                hasher.putDouble((double) value);
+            }
+            else if(value instanceof Float || value.getClass() == float.class) {
+                hasher.putFloat((float) value);
+            }
+            else if(value instanceof Integer || value.getClass() == int.class) {
+                hasher.putInt((int) value);
+            }
+            else if(value instanceof Long || value.getClass() == long.class) {
+                hasher.putLong((long) value);
+            }
+            else if(value instanceof Short || value.getClass() == short.class) {
+                hasher.putShort((short) value);
+            }
+            else if(value instanceof Timestamp) {
+                Timestamp timestamp = (Timestamp) value;
+                hasher.putLong(timestamp.getMicros());
+            }
+            else if(value instanceof Serializable) {
+                byte[] bytes = ByteBuffers.toByteArray(
+                        Serializables.getBytes((Serializable) value));
+                hasher.putBytes(bytes);
+            }
+            else {
+                String json = new Gson().toJson(value);
+                hasher.putString(json, StandardCharsets.UTF_8);
+            }
+        }
+        else {
+            hasher.putInt(0);
+            hasher.putInt(0);
+        }
     }
 
     /**
@@ -395,6 +486,40 @@ public abstract class Record implements Comparable<Record> {
         }
         catch (InstantiationException e) {
             throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+    }
+
+    /**
+     * If {@code value} is a {@link Record}, {@link DeferredReference} or a
+     * {@link Sequences#isSequence(Object) Sequence} that contains either, try
+     * to {@link #saveWithinTransaction(Concourse, Set) save} it, in case it has
+     * {@link #hasUnsavedChanges() unsaved} changes.
+     * 
+     * @param value
+     * @param concourse
+     * @param seen
+     */
+    @SuppressWarnings("rawtypes")
+    private static void saveModifiedReferenceWithinTransaction(Object value,
+            Concourse concourse, Set<Record> seen) {
+        if(Sequences.isSequence(value)) {
+            Sequences.forEach(value,
+                    item -> saveModifiedReferenceWithinTransaction(item,
+                            concourse, seen));
+        }
+        else {
+            Record record = null;
+            if(value instanceof Record) {
+                record = (Record) value;
+            }
+            else if(value instanceof DeferredReference) {
+                DeferredReference deferred = (DeferredReference) value;
+                record = deferred.$ref();
+            }
+
+            if(record != null && !seen.contains(record)) {
+                record.saveWithinTransaction(concourse, seen);
+            }
         }
     }
 
@@ -644,6 +769,19 @@ public abstract class Record implements Comparable<Record> {
      * {@link #delete(Concourse) deletion} from {@link Concourse}.
      */
     private Set<Record> waitingToBeDeleted = new LinkedHashSet<>();
+
+    /**
+     * The {@link Record}'s checksum that is generated and cached on
+     * {@link #load(Concourse, ConcurrentMap, Map, String) load} and
+     * {@link #saveWithinTransaction(Concourse, Set) save} events.
+     * <p>
+     * This value is <strong>NOT</strong> returned from {@link #checksum()}, but
+     * is instead compared against the value returned from that method to
+     * determine if this {@link Record} has any {@link #hasUnsavedChanges()
+     * unsaved} changes.
+     * </p>
+     */
+    private String __checksum = null;
 
     /**
      * Construct a new instance.
@@ -1377,24 +1515,28 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Provide a hook to completely bypass the standard save routine.
      * <p>
-     * This method can be overridden to return a {@link Supplier} that determines
-     * the result of a save operation without actually persisting data to the database.
+     * This method can be overridden to return a {@link Supplier} that
+     * determines the result of a save operation without actually persisting
+     * data to the database.
      * This is useful in scenarios such as:
      * </p>
      * <ul>
-     * <li>Creating ad hoc/in-memory only records that don't need database persistence</li>
+     * <li>Creating ad hoc/in-memory only records that don't need database
+     * persistence</li>
      * <li>Mocking save behavior for testing without database interaction</li>
-     * <li>Implementing custom persistence logic that doesn't use the standard flow</li>
+     * <li>Implementing custom persistence logic that doesn't use the standard
+     * flow</li>
      * </ul>
      * <p>
-     * When this method returns a non-null value, the normal save process is bypassed
-     * entirely, and the boolean result from the supplier is used as the save operation
-     * result.
+     * When this method returns a non-null value, the normal save process is
+     * bypassed entirely, and the boolean result from the supplier is used as
+     * the save operation result.
      * </p>
      * <p>
-     * <strong>Note:</strong> Use this with caution as it completely circumvents the
-     * standard persistence mechanism. Records with overridden save behavior won't
-     * trigger save listeners or other standard save-related functionality.
+     * <strong>Note:</strong> Use this with caution as it completely circumvents
+     * the standard persistence mechanism. Records with overridden save behavior
+     * won't trigger save listeners or other standard save-related
+     * functionality.
      * </p>
      * 
      * @return a {@link Supplier} that returns the result of the save operation,
@@ -1416,6 +1558,20 @@ public abstract class Record implements Comparable<Record> {
      */
     protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
         return ImmutableMap.of();
+    }
+
+    /**
+     * Return {@code true} if this {@link Record} has any unsaved changes.
+     * 
+     * @return {@code true} if there are changes that need to be saved.
+     */
+    /* package */ boolean hasUnsavedChanges() {
+        if(__checksum == null) {
+            return true;
+        }
+        else {
+            return !__checksum.equals(checksum());
+        }
     }
 
     /**
@@ -1588,6 +1744,7 @@ public abstract class Record implements Comparable<Record> {
                 throw CheckedExceptions.throwAsRuntimeException(e);
             }
         }
+        __checksum = checksum();
     }
 
     /**
@@ -1641,7 +1798,7 @@ public abstract class Record implements Comparable<Record> {
         Supplier<Boolean> override = overrideSave();
         if(override != null) {
             return override.get();
-        } 
+        }
         assign(runway);
         try {
             Preconditions.checkState(!inViolation);
@@ -1700,90 +1857,89 @@ public abstract class Record implements Comparable<Record> {
      */
     /* package */ void saveWithinTransaction(final Concourse concourse,
             Set<Record> seen) {
-        Supplier<Boolean> override = overrideSave();
+        if(_hasModifiedRealms) {
+            concourse.reconcile(REALMS_KEY, id, _realms);
+            _hasModifiedRealms = false;
+        }
         if(deleted) {
             deleteWithinTransaction(concourse);
         }
-        else if(override != null) {
-            override.get();
+        else if(!hasUnsavedChanges()) {
+            // This Record hasn't been modified, so simply go through each field
+            // and try to save any outgoing Record references that contain
+            // modifications.
+            for (Field field : fields()) {
+                Object value = getFieldValue(field, this);
+                saveModifiedReferenceWithinTransaction(value, concourse, seen);
+            }
+        }
+        else if(overrideSave() != null) {
+            overrideSave().get();
         }
         else {
             beforeSave();
             concourse.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
-            if(_hasModifiedRealms) {
-                concourse.reconcile(REALMS_KEY, id, _realms);
-                _hasModifiedRealms = false;
-            }
-            fields().forEach(field -> {
-                try {
-                    if(!Modifier.isTransient(field.getModifiers())) {
-                        String key = field.getName();
-                        Object value = field.get(this);
-                        boolean isSequence = Sequences.isSequence(value);
-                        // Enforce that Required fields have a non-empty value
-                        if(field.isAnnotationPresent(Required.class)
-                                && (isSequence
-                                        ? Sequences.stream(value).allMatch(
-                                                Empty.ness()::describes)
-                                        : Empty.ness().describes(value))) {
-                            throw new IllegalStateException(AnyStrings
-                                    .format("{}  is required in {}", key, __));
+            for (Field field : fields()) {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    String key = field.getName();
+                    Object value = getFieldValue(field, this);
+                    boolean isSequence = Sequences.isSequence(value);
+                    // Enforce that Required fields have a non-empty value
+                    if(field.isAnnotationPresent(Required.class) && (isSequence
+                            ? Sequences.stream(value)
+                                    .allMatch(Empty.ness()::describes)
+                            : Empty.ness().describes(value))) {
+                        throw new IllegalStateException(AnyStrings
+                                .format("{}  is required in {}", key, __));
+                    }
+                    if(value != null) {
+                        // Enforce that Unique fields have non-duplicated
+                        // values across the class
+                        if(field.isAnnotationPresent(Unique.class)
+                                && (isSequence ? Sequences.stream(value)
+                                        .anyMatch(Predicates.not(
+                                                item -> checkIsUnique(concourse,
+                                                        field, key, item,
+                                                        alreadyVerifiedUniqueConstraints)))
+                                        : !checkIsUnique(concourse, field, key,
+                                                value,
+                                                alreadyVerifiedUniqueConstraints))) {
+                            String name = field.getAnnotation(Unique.class)
+                                    .name();
+                            name = name.length() == 0 ? key : name;
+                            throw new IllegalStateException(AnyStrings.format(
+                                    "{} must be unique in {}", name, __));
                         }
-                        if(value != null) {
-                            // Enforce that Unique fields have non-duplicated
-                            // values across the class
-                            if(field.isAnnotationPresent(Unique.class)
-                                    && (isSequence ? Sequences.stream(value)
-                                            .anyMatch(Predicates
-                                                    .not(item -> checkIsUnique(
-                                                            concourse, field,
-                                                            key, item,
-                                                            alreadyVerifiedUniqueConstraints)))
-                                            : !checkIsUnique(concourse, field,
-                                                    key, value,
-                                                    alreadyVerifiedUniqueConstraints))) {
-                                String name = field.getAnnotation(Unique.class)
-                                        .name();
-                                name = name.length() == 0 ? key : name;
-                                throw new IllegalStateException(AnyStrings
-                                        .format("{} must be unique in {}", name,
-                                                __));
-                            }
-                            // Apply custom validation
-                            if(field.isAnnotationPresent(ValidatedBy.class)) {
-                                Class<? extends Validator> validatorClass = field
-                                        .getAnnotation(ValidatedBy.class)
-                                        .value();
-                                Validator validator = Reflection
-                                        .newInstance(validatorClass);
-                                if(isSequence
-                                        ? Sequences.stream(value)
-                                                .anyMatch(Predicates.not(
-                                                        validator::validate))
-                                        : !validator.validate(value)) {
-                                    throw new IllegalStateException(
-                                            validator.getErrorMessage());
+                        // Apply custom validation
+                        if(field.isAnnotationPresent(ValidatedBy.class)) {
+                            Class<? extends Validator> validatorClass = field
+                                    .getAnnotation(ValidatedBy.class).value();
+                            Validator validator = Reflection
+                                    .newInstance(validatorClass);
+                            if(isSequence
+                                    ? Sequences.stream(value).anyMatch(
+                                            Predicates.not(validator::validate))
+                                    : !validator.validate(value)) {
+                                throw new IllegalStateException(
+                                        validator.getErrorMessage());
 
-                                }
                             }
-                            value = transform(value, concourse, seen);
-                            if(value.getClass().isArray()) {
-                                concourse.reconcile(key, id, (Object[]) value);
-                            }
-                            else {
-                                concourse.verifyOrSet(key, value, id);
-                            }
+                        }
+                        value = transform(value, concourse, seen);
+                        if(value.getClass().isArray()) {
+                            concourse.reconcile(key, id, (Object[]) value);
                         }
                         else {
-                            concourse.clear(key, id);
+                            concourse.verifyOrSet(key, value, id);
                         }
                     }
+                    else {
+                        concourse.clear(key, id);
+                    }
                 }
-                catch (ReflectiveOperationException e) {
-                    throw CheckedExceptions.throwAsRuntimeException(e);
-                }
-            });
+            }
+            __checksum = checksum();
         }
     }
 
@@ -1945,6 +2101,24 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return true;
+    }
+
+    /**
+     * Return a checksum for this {@link Record} based on its current state.
+     * 
+     * @return the checksum
+     */
+    private final String checksum() {
+        Hasher hasher = Hashing.murmur3_128().newHasher();
+        Set<Field> fields = fields().stream()
+                .sorted((f1, f2) -> f1.getName().compareTo(f2.getName()))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        for (Field field : fields) {
+            Object value = getFieldValue(field, this);
+            hasher.putString(field.getName(), StandardCharsets.UTF_8);
+            hashValue(hasher, value);
+        }
+        return hasher.hash().toString();
     }
 
     /**
