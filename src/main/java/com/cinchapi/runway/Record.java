@@ -267,6 +267,13 @@ public abstract class Record implements Comparable<Record> {
         };
     }
 
+    /**
+     * Use reflection to get the value for {@code field} in {@code record}.
+     * 
+     * @param field
+     * @param record
+     * @return the value
+     */
     private static Object getFieldValue(Field field, Record record) {
         try {
             return field.get(record);
@@ -482,6 +489,16 @@ public abstract class Record implements Comparable<Record> {
         }
     }
 
+    /**
+     * If {@code value} is a {@link Record}, {@link DeferredReference} or a
+     * {@link Sequences#isSequence(Object) Sequence} that contains either, try
+     * to {@link #saveWithinTransaction(Concourse, Set) save} it, in case it has
+     * {@link #hasUnsavedChanges() unsaved} changes.
+     * 
+     * @param value
+     * @param concourse
+     * @param seen
+     */
     @SuppressWarnings("rawtypes")
     private static void saveModifiedReferenceWithinTransaction(Object value,
             Concourse concourse, Set<Record> seen) {
@@ -1552,7 +1569,7 @@ public abstract class Record implements Comparable<Record> {
      * 
      * @return {@code true} if there are changes that need to be saved.
      */
-    boolean hasUnsavedChanges() {
+    /* package */ boolean hasUnsavedChanges() {
         if(__checksum == null) {
             return true;
         }
