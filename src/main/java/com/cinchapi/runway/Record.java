@@ -1857,6 +1857,7 @@ public abstract class Record implements Comparable<Record> {
      */
     /* package */ void saveWithinTransaction(final Concourse concourse,
             Set<Record> seen) {
+        seen.add(this);
         if(_hasModifiedRealms) {
             concourse.reconcile(REALMS_KEY, id, _realms);
             _hasModifiedRealms = false;

@@ -1362,6 +1362,17 @@ public class RecordTest extends ClientServerTest {
         Assert.assertEquals(0, a.saves);
         Assert.assertEquals(1, b.saves);
     }
+    
+    @Test
+    public void testCircularDependencyOnlySavedOnce() {
+        HasBeforeSaveHook a = new HasBeforeSaveHook("a");
+        HasBeforeSaveHook b = new HasBeforeSaveHook("b");
+        a.child = b;
+        b.child = a;
+        a.save();
+        Assert.assertEquals(1, a.saves);
+        Assert.assertEquals(1, b.saves);
+    }
 
     // @Test
     // public void testReconcileCollectionPrimitiveValues() {
