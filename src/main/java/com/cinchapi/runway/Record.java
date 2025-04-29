@@ -333,7 +333,7 @@ public abstract class Record implements Comparable<Record> {
             }
             else if(value instanceof DeferredReference) {
                 DeferredReference deferred = (DeferredReference) value;
-                hasher.putLong(deferred.get().id());
+                hasher.putLong(deferred.$id());
             }
             else if(value instanceof Tag || value instanceof String) {
                 hasher.putString(value.toString(), StandardCharsets.UTF_8);
