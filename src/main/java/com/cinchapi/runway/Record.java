@@ -504,7 +504,7 @@ public abstract class Record implements Comparable<Record> {
             Concourse concourse, Set<Record> seen) {
         if(Sequences.isSequence(value)) {
             Sequences.forEach(value,
-                    item -> saveModifiedReferenceWithinTransaction(value,
+                    item -> saveModifiedReferenceWithinTransaction(item,
                             concourse, seen));
         }
         else {
@@ -1516,9 +1516,8 @@ public abstract class Record implements Comparable<Record> {
      * Provide a hook to completely bypass the standard save routine.
      * <p>
      * This method can be overridden to return a {@link Supplier} that
-     * determines
-     * the result of a save operation without actually persisting data to the
-     * database.
+     * determines the result of a save operation without actually persisting
+     * data to the database.
      * This is useful in scenarios such as:
      * </p>
      * <ul>
@@ -1530,17 +1529,14 @@ public abstract class Record implements Comparable<Record> {
      * </ul>
      * <p>
      * When this method returns a non-null value, the normal save process is
-     * bypassed
-     * entirely, and the boolean result from the supplier is used as the save
-     * operation
-     * result.
+     * bypassed entirely, and the boolean result from the supplier is used as
+     * the save operation result.
      * </p>
      * <p>
      * <strong>Note:</strong> Use this with caution as it completely circumvents
-     * the
-     * standard persistence mechanism. Records with overridden save behavior
-     * won't
-     * trigger save listeners or other standard save-related functionality.
+     * the standard persistence mechanism. Records with overridden save behavior
+     * won't trigger save listeners or other standard save-related
+     * functionality.
      * </p>
      * 
      * @return a {@link Supplier} that returns the result of the save operation,
