@@ -2113,6 +2113,7 @@ public abstract class Record implements Comparable<Record> {
         Hasher hasher = Hashing.murmur3_128().newHasher();
         Set<Field> fields = fields().stream()
                 .sorted((f1, f2) -> f1.getName().compareTo(f2.getName()))
+                .filter(field -> !Modifier.isTransient(field.getModifiers()))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         for (Field field : fields) {
             Object value = getFieldValue(field, this);
