@@ -1,9 +1,63 @@
 # Changelog
 
+#### Version 1.10.0 (May 11, 2025)
+
+##### Deletion Hooks
+New deletion hooks are available to ensure automatic referential integrity when records are deleted. These annotations streamline data management by automatically handling dependencies between records.
+
+* **`@CascadeDelete`**: Simplifies deletion of dependent records within the framework. Fields annotated with `@CascadeDelete` automatically delete their linked records when the containing record is removed. This functionality ensures that related records do not persist after their parent records are deleted, preserving consistency. Deletions occur in a single, atomic transaction, allowing for more efficient data cleanup.
+
+* **`@JoinDelete`**: Automates the deletion of containing records when a linked record is removed. Fields annotated with `@JoinDelete` trigger the deletion of the containing record if the linked record is deleted. This is the reverse of `@CascadeDelete`, as it removes all parent or container records that depend on the existence of linked records, thereby ensuring referential integrity. The operation is performed atomically.
+
+* **`@CaptureDelete`**: Facilitates automatic reference removal for cases where a linked record is deleted but the containing record should remain intact. When a record is deleted, fields annotated with `@CaptureDelete` are automatically set to `null` or removed from the containing record's collection. This allows for more flexible data management, maintaining integrity without deleting the containing record.
+
+##### Save Lifecycle Hooks
+Runway now provides comprehensive options for injecting logic into the save routine and responding to save events, enabling more flexible and reactive data management patterns.
+
+* **Breaking Change**: The `Record#save` method has been made `final` to ensure consistent behavior across all save operations, including bulk saves. Previously, overridden `save` methods were not called during Runway's bulk save operations, leading to inconsistent behavior. Applications should migrate any custom save logic to either the `beforeSave` hook or save listeners.
+
+* **`beforeSave` Hook**: Added a protected `beforeSave` method to the `Record` class that is automatically called before a record is saved to the database. This hook allows records to update their state or perform validation immediately before persistence:
+  * Executes within the same transaction as the save operation, ensuring atomicity
+  * Can modify record fields, with changes included in the save operation
+  * Allows for custom validation beyond what annotations provide
+  * Exceptions thrown from `beforeSave` abort the save operation and roll back the transaction
+  * Works consistently with both individual and bulk save operations
+
+* **Save Listeners**: Added support for registering save listeners that allow applications to be notified when records are successfully saved. This feature enables reactive workflows and improved integration with external systems:
+  * **Save Notification**: Using the `onSave` method of the `Runway.builder()`, applications can register a listener that will be called whenever a record is successfully saved. The listener is called asynchronously after the save transaction is committed, ensuring that notifications only occur for successful operations.
+  * **Efficient Processing**: Save notifications are processed in a dedicated background thread, allowing the main application to continue without waiting for notification processing to complete.
+  * **Error Tolerance**: Exceptions thrown by save listeners are silently swallowed, ensuring that listener errors don't affect the application's core functionality.
+
+* **`overrideSave` Hook**: Added a protected `overrideSave` method to the `Record` class that allows completely bypassing the standard save routine:
+  * Returns a `Supplier<Boolean>` that determines the result of the save operation without database interaction
+  * When non-null, the normal persistence mechanism is skipped entirely
+  * Useful for creating in-memory only records or implementing custom persistence logic
+  * Works consistently with both individual and bulk save operations
+
+##### New Functionality and Enhancements
+* Added `@Computed` and `@Derived` annotations that can be applied to methods to mark them as returning `computed` and `derived` properties, respectively. These annotations are meant to be used in lieu of the `#computed()` and `#derived()` methods, which are now deprecated
+* Introduced a new `Record.set(Map<String, Object> data)` method that allows for bulk updating of fields within a record.
+* added `Runway.ping()` to provide an interface to Concourse's new ping healthcheck, introduced in `0.11.10`.
+
+##### Improvements
+* Improved Runway's bulk loading functionality to ensure that the same object reference is used for a linked Record that exists as a value in multiple records. Previously, in a single bulk load operation, Runway would create a new Java object for EVERY loaded reference, regardless of whether that referenced object was already encountered earlier in the load, which created unnecessary heap bloat. This optimization reduces memory usage and ensures object identity is maintained across references to the same record within a single load operation.
+* Optimized computed value generation to ensure values are only computed once per map operation. Previously, when filtering null values during serialization, computed values were unnecessarily generated twice - once during the null check and again when adding to the result map. This improvement caches computed values within each map operation while still ensuring fresh values are generated for each new operation.
+* Enhanced the save functionality to detect when an existing Record has been modified and only attempt to write to the database if its required to reflect new state. Previously, whenever a Record was saved, Runway always attempted to write to the database, even if doing so was a no-op. This optimization eliminates unnecessary database operations and improves performance. This is especially true for Records that link to other Records since Runway's save functionality cascades and automatically save's any referenced Records to maintain referential integrity. Now, when a save is cascaded, those referenced Records will only perform database writes if they have indeed been modified.
+
+##### Bug Fixes
+* Fixed a regression that casued a `NullPointerException` to be thrown when a `null` intrinsic, `derived` or `computed` value was encountered while performing local `condition` evaluation.
+* Fixed a few bugs that caused `@Required`, `@Unique` and `@ValidatedBy` constraints to behave unexpectedly in certain scenarios:
+  * For a field containing a Sequence value, `@ValidatedBy` was applied to the entire Sequence as a whole, instead of to each item in the Sequence indivudally.
+  * For a field containing a Sequence value, `@Unique` was checked for the entire Sequence as a whole, instead of for each item in the Sequence indivudally.
+  * For a field containing a Sequence value, `@Required` was not properly enforced in cases when the Sequence was empty.
+* Fixed a bug that made it possible for a field containing a Sequence of `DeferredReference` objects, to have items in that sequence erroneously removed if those items were not loaded using `DeferredReference.get()` before the housing Record was saved.
+* Fixed a bug that caused a `NoSuchElementException` to be thrown instead of an `IllegalStateException` when attempting to `load` an non-existing `Record`.
+* Fixed a bug that caused record deletion via `deleteOnSave` to not persist if the deleted Record was saved using `Runway.save(Record...)` bulk save functionality.
+
 #### Version 1.9.4 (July 22, 2022)
 * Fixed a bug that occurred when using *pre-select* to load a Record containing a reference field whose **declared** type is the parent class of a descendant class with additionally defined fields and the stored value for that field is an instance of that descendant class. In this case, the pre-select logic did not load data for the descendant defined fields, which resulted in unexpected `NullPointerException` regressions or an overall inability to load those Records if the descendant defined field was annotated as `Required`.
 * Improved the efficiency of local `condition` evaluation by removing unnecessary data copying.
-* Addressed performance regressions that have been observed when performing pagination alongside a locally resolvable `filter` or `condition` whose matches are sparsely distributed among the unfiltered results. The pagination logic still incrementally loads possible matches (instead of all-at-once), but uses additional logic to dynamically adjust the number of possible matches loaded based on whether the previous batch contained any matches.  
+* Addressed performance regressions that have been observed when performing pagination alongside a locally resolvable `filter` or `condition` whose matches are sparsely distributed among the unfiltered results. The pagination logic still incrementally loads possible matches (instead of all-at-once), but uses additional logic to dynamically adjust the number of possible matches loaded based on whether the previous batch contained any matches.
 
 #### Version 1.9.3 (July 4, 2022)
 * For instances of Concourse Server at version [`0.11.3`](https://github.com/cinchapi/concourse/releases/tag/v0.11.3)) or greater, we improved overall read performance by pre-selecting data for linked Records, whenever possible. Previously, if a `Record` contained an attribute whose type was another `Record`, Runway would eagerly load the data for that reference in a separate database call. So, if Runway needed to process a read of many Records with references to other Records, performance was poor because there were too many database round trips required. Now, Runway will detect when a `Record` has references to other Records and will  pre-select the data for those references while selecting the data for the parent `Record` if it is possible to do so. This greatly reduces the number of database round trips which drastically improves performance by up to `89.7%`.
@@ -12,7 +66,7 @@
 * Improved the performance of `Runway` commands that perform pagination when a `filter` or a `condition` that must be resolved locally (e.g., because it references derived or computed keys not in the database) is provided. Previously, in these cases, `Runway` would load all possible records before applying the `filter` or `condition` and lastly performing pagination. Now, `Runway` incrementally loads possible matching records and applies the `filter` or `condition` on the fly until the requested `Page` has been filled.
 * Removed the `com.cinchapi.runway.util.Paging` class that was copied from the `concourse-server` project since it is no longer used for internal pagination logic.
 * Removed unnecessary random result set access when lazily instantiating the Set of records that match a `Runway` operation.
-* Optimized load performance by 
+* Optimized load performance by
   * using more intelligent logic to scaffold a `Record` instance and
   * performing static analysis and caching immutable metadata for `Record` types that was previously computed during each load.
 
@@ -40,23 +94,23 @@
 #### Version 1.7.0 (January 1, 2020)
 * Fixed a bug that caused `Runway` to exhibit poor performance when using the `withCache` option.
 * Fixed bugs that caused Runway's data caching to exhibit inconsistent behaviour where stale data could be added to the cache.
-* Added a `Runway#builder` option to specify a `readStrategy`. Runway's **read strategy** determines how Runway reads data from Concourse. 
-  * The `BULK` strategy uses Concourse's `select` method to pull in all the data for all the records that match a read at the same time. 
+* Added a `Runway#builder` option to specify a `readStrategy`. Runway's **read strategy** determines how Runway reads data from Concourse.
+  * The `BULK` strategy uses Concourse's `select` method to pull in all the data for all the records that match a read at the same time.
   * The `STREAM` option uses Concourse's `find` method to find the ids of all the records that match a read in order to stream the data for those records on-the-fly when needed.
   * The `AUTO` option contextually uses the `BULK` or `STREAM` option on a read-by-read basis (usually depending on which option will return results faster).
-By default, Runway uses the `AUTO` strategy unless a `cache` is provided, in which case, the `STREAM` option is used by default since data streaming is more cache-friendly and is consistent with the way record caching previously worked in previous versions of Runway.  
+By default, Runway uses the `AUTO` strategy unless a `cache` is provided, in which case, the `STREAM` option is used by default since data streaming is more cache-friendly and is consistent with the way record caching previously worked in previous versions of Runway.
 * Deprecated the `recordsPerSelectBufferSize` option in the `Runway#builder` in favor of the `streamingReadBufferSize` option which has the same effect.
 
 #### Version 1.6.0 (November 23, 2019)
-* Fixed a bug that caused `Runway` operations to occassionally trigger an `out of sequence response` error in the underlying Concourse connections. 
+* Fixed a bug that caused `Runway` operations to occassionally trigger an `out of sequence response` error in the underlying Concourse connections.
 * Added support **data caching**. This feature can be enabled by passing a `Cache` to the `Runway#builder#withCache` method. Data caching is an improvement over record caching. With this new feature, caching is managed closer to the level of database interaction to ensure greater performance, timely invalidation and scalability.
 * Improved internal logic that determines whether `Runway` serves a request by bulk selecting data or incrementally streaming.
-* Added initial support for `find`ing and `count`ing `Criteria` conditions that touch `computed` and `derived` data. There is currently no support for querying on non-intrinsic data of linked Records (e.g. no navigation). 
+* Added initial support for `find`ing and `count`ing `Criteria` conditions that touch `computed` and `derived` data. There is currently no support for querying on non-intrinsic data of linked Records (e.g. no navigation).
 
 #### Version 1.5.0 (November 17, 2019)
 * Fixed a bug that caused the `countAny` methods to return the wrong data.
 * Added methods to the `Runway` driver that support filtering data. Unlike a `Criteria` or `Condition` a `filter` is a `Predicate` that receives the loaded `Record` as input and executes business logic to determine whether the `Record` should be included in the result set. For example, filtering can be used to seamlessly enforce permissions in a `Runway` method call by passing in a predicate that checks whether the caller has access to the `Record`.
-* Remove support for record caching. The `Runway#builder#cache` method has been deprecated. Providing a record cache to Runway no longer has any effect. 
+* Remove support for record caching. The `Runway#builder#cache` method has been deprecated. Providing a record cache to Runway no longer has any effect.
 * Added an `onLoad` hook to the `Record` class that can be used to provide a routine that is executed whenever an existing Record is loaded from the database.
 * Fixed a bug that caused the linked objects included in the `map` or `json` functions to not respect the provided `SerializationOptions`.
 
@@ -99,7 +153,7 @@ By default, Runway uses the `AUTO` strategy unless a `cache` is provided, in whi
   * **NOTE:** Runway assignment happens automatically whenever a Record is 1) loaded, 2) saved and 3) created in a JVM where only a single Runway instance is available. If a Record is created when multiple Runway instances are available, the desired one can be assigned using the `Record#assign` method.
 
 #### Version 1.1.2 (February 13, 2019)
-* Fixed a regression introduced in Version `1.1.1`. This regression caused fields of `Records` to be stored in Concourse improperly. When saving, the items in those collections would overwrite each other so that only one value was stored at a time. This release fixes the bug and restores the correct functionality. 
+* Fixed a regression introduced in Version `1.1.1`. This regression caused fields of `Records` to be stored in Concourse improperly. When saving, the items in those collections would overwrite each other so that only one value was stored at a time. This release fixes the bug and restores the correct functionality.
 
 #### Version 1.1.1 (February 3, 2019)
 * Fixed a bug that cause an issue when updating non-collection `Record` fields (which are stored as `Links` in Concourse). Previously, updating a Record reference would cause the new value to be appended to the old value in Concourse so that multiple values were stored, simulating a collection. This behaviour has now been corrected so that the new value will overwrite the previously stored value.
@@ -108,7 +162,7 @@ By default, Runway uses the `AUTO` strategy unless a `cache` is provided, in whi
 * Added a `map(String...keys)` method with different semantics than that of the `get(String...keys)` method. In the `map` method, all the `Record`'s readable data is returned if no keys are provided. In the `get` implementation, an empty `Map` is returned instead.
 * Deprecated the `get(String...keys)` method since it is redundant in light of the introduction of the `map(String...keys)` method.
 * Added support for **negative filtering** in the `map(String...keys)` method. With negative filtering, you can provide a key that is prefixed with the minus sign (e.g. `-`) to indicate that the key should not be included in the data that is returned.
-* Added the `compute` hook to support calculating dervided properties that are "expensive" to compute, on-demand. 
+* Added the `compute` hook to support calculating dervided properties that are "expensive" to compute, on-demand.
 * Fixed a bug that cause the `Runway#connect()` factory to return `null`.
 * Deprecated the `Runway#findOne` methods in favor of ones named `Runway#findUnique` for better semantics and readability. The new methods have the same functionality as the old ones.
 * Added methods that query across application defined class hiearchies. These methods allow you to find and load records across a class hiearchy using a parent/base class.

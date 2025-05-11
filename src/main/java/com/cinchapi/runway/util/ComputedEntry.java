@@ -36,6 +36,11 @@ public class ComputedEntry<K, V> implements Entry<K, V> {
     private final Supplier<V> valueSupplier;
 
     /**
+     * A cached of the {@link #valueSupplier computed} value.
+     */
+    private transient V value = null;
+
+    /**
      * Construct a new instance.
      * 
      * @param entry
@@ -62,7 +67,10 @@ public class ComputedEntry<K, V> implements Entry<K, V> {
 
     @Override
     public V getValue() {
-        return valueSupplier.get();
+        if(value == null) {
+            value = valueSupplier.get();
+        }
+        return value;
     }
 
     @Override

@@ -103,6 +103,15 @@ public final class DeferredReference<T extends Record> {
     }
 
     /**
+     * Return the id of the reference.
+     * 
+     * @return the id
+     */
+    long $id() {
+        return id;
+    }
+
+    /**
      * Return the current, possible {@code null} reference. Unlike
      * {@link #get()} this method does not load the reference if it is not
      * current loaded.

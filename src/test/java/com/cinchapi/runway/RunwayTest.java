@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -622,10 +623,48 @@ public class RunwayTest extends ClientServerTest {
         child.save();
         parent.save();
         System.out.println(child.id());
-        parent = runway.findAnyUnique(Parent.class, Criteria.where()
-                .key("name").operator(Operator.EQUALS).value("Jeff Nelson"));
+        parent = runway.findAnyUnique(Parent.class, Criteria.where().key("name")
+                .operator(Operator.EQUALS).value("Jeff Nelson"));
         System.out.println(parent);
         Assert.assertEquals(parent.child.name, "A. Nelson");
+    }
+
+    @Test
+    public void testLocalConditionEvaluationWithNullValue() {
+        Slayer slayer = new Slayer();
+        slayer.name = "Jeff Nelson";
+        slayer.save();
+        Set<Slayer> slayers = runway.find(Slayer.class, Criteria.where()
+                .key("isAllStar").operator(Operator.EQUALS).value(true));
+        Assert.assertTrue(slayers.isEmpty());
+    }
+
+    @Test
+    public void testMultiSetSaveAndLoadById() {
+        Player record = new Player("Jeff Nelson", 36);
+        record.set(ImmutableMap.of("name", "John Doe"));
+        record.save();
+        Player loaded = runway.load(Player.class, record.id());
+        Assert.assertEquals("John Doe", loaded.get("name"));
+    }
+
+    @Test
+    public void testMultiSetSaveAndFindByCriteria() {
+        Player record1 = new Player("Jeff Nelson", 36);
+        record1.set(ImmutableMap.of("name", "John Doe", "age", 25));
+        Player record2 = new Player("Jeff Nelson", 36);
+        record2.set(ImmutableMap.of("name", "Jane Smith", "age", 30));
+        record1.save();
+        record2.save();
+        Criteria criteria = Criteria.where().key("name")
+                .operator(Operator.EQUALS).value("John Doe");
+        Set<Player> records = runway.find(Player.class, criteria);
+        Assert.assertEquals(1, records.size());
+        Assert.assertEquals("John Doe", records.iterator().next().get("name"));
+        Assert.assertTrue(runway
+                .find(Player.class, Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("Jeff Nelson"))
+                .isEmpty());
     }
 
     class Player extends Record {
@@ -655,6 +694,19 @@ public class RunwayTest extends ClientServerTest {
                         .getAverage();
                 return score < average;
             });
+        }
+
+    }
+
+    class Slayer extends Record {
+
+        String name;
+
+        @Override
+        protected Map<String, Object> derived() {
+            Map<String, Object> derived = new HashMap<>();
+            derived.put("isAllStar", null);
+            return derived;
         }
 
     }
@@ -837,9 +889,9 @@ public class RunwayTest extends ClientServerTest {
     class NonNonParent extends NonParent {
 
     }
-    
+
     class Toddler extends Human {
-        
+
         @Required
         int age;
     }

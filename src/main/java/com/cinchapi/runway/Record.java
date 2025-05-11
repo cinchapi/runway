@@ -15,13 +15,14 @@
  */
 package com.cinchapi.runway;
 
-import gnu.trove.map.TLongObjectMap;
-
 import java.io.IOException;
 import java.io.Serializable;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
@@ -38,6 +39,7 @@ import java.util.AbstractMap.SimpleEntry;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
@@ -46,6 +48,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import org.apache.commons.lang.StringUtils;
@@ -87,6 +90,7 @@ import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Predicates;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -100,6 +104,8 @@ import com.google.common.collect.Multiset;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
+import com.google.common.hash.Hasher;
+import com.google.common.hash.Hashing;
 import com.google.common.io.BaseEncoding;
 import com.google.common.primitives.Longs;
 import com.google.gson.Gson;
@@ -169,7 +175,7 @@ public abstract class Record implements Comparable<Record> {
      * @return the loaded Record
      */
     protected static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections,
+            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
             Runway runway, @Nullable Map<String, Set<Object>> data) {
         Concourse concourse = connections.request();
         try {
@@ -262,6 +268,22 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Use reflection to get the value for {@code field} in {@code record}.
+     * 
+     * @param field
+     * @param record
+     * @return the value
+     */
+    private static Object getFieldValue(Field field, Record record) {
+        try {
+            return field.get(record);
+        }
+        catch (ReflectiveOperationException e) {
+            throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+    }
+
+    /**
      * Execute the equivalent logic of {@link Map#getOrDefault(Object, Object)}
      * on {@code map}, but ensure that a false negative bug does not occur.
      * 
@@ -288,6 +310,78 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return value != null ? value : defaultValue;
+    }
+
+    /**
+     * Add the canonical data representation of {@code value} to the
+     * {@code hasher}.
+     * 
+     * @param hasher
+     * @param value
+     */
+    @SuppressWarnings("rawtypes")
+    private static void hashValue(Hasher hasher, @Nullable Object value) {
+        if(value != null) {
+            hasher.putString(value.getClass().getName(),
+                    StandardCharsets.UTF_8);
+            if(Sequences.isSequence(value)) {
+                Sequences.forEach(value, item -> hashValue(hasher, item));
+            }
+            else if(value instanceof Record) {
+                Record record = (Record) value;
+                hasher.putLong(record.id());
+            }
+            else if(value instanceof DeferredReference) {
+                DeferredReference deferred = (DeferredReference) value;
+                hasher.putLong(deferred.$id());
+            }
+            else if(value instanceof Tag || value instanceof String) {
+                hasher.putString(value.toString(), StandardCharsets.UTF_8);
+            }
+            else if(value instanceof Enum) {
+                hasher.putInt(((Enum) value).ordinal());
+            }
+            else if(value instanceof Boolean
+                    || value.getClass() == boolean.class) {
+                hasher.putBoolean((boolean) value);
+            }
+            else if(value instanceof Byte || value.getClass() == byte.class) {
+                hasher.putByte((byte) value);
+            }
+            else if(value instanceof Double
+                    || value.getClass() == double.class) {
+                hasher.putDouble((double) value);
+            }
+            else if(value instanceof Float || value.getClass() == float.class) {
+                hasher.putFloat((float) value);
+            }
+            else if(value instanceof Integer || value.getClass() == int.class) {
+                hasher.putInt((int) value);
+            }
+            else if(value instanceof Long || value.getClass() == long.class) {
+                hasher.putLong((long) value);
+            }
+            else if(value instanceof Short || value.getClass() == short.class) {
+                hasher.putShort((short) value);
+            }
+            else if(value instanceof Timestamp) {
+                Timestamp timestamp = (Timestamp) value;
+                hasher.putLong(timestamp.getMicros());
+            }
+            else if(value instanceof Serializable) {
+                byte[] bytes = ByteBuffers.toByteArray(
+                        Serializables.getBytes((Serializable) value));
+                hasher.putBytes(bytes);
+            }
+            else {
+                String json = new Gson().toJson(value);
+                hasher.putString(json, StandardCharsets.UTF_8);
+            }
+        }
+        else {
+            hasher.putInt(0);
+            hasher.putInt(0);
+        }
     }
 
     /**
@@ -329,7 +423,7 @@ public abstract class Record implements Comparable<Record> {
      * @return the loaded Record
      */
     private static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections,
+            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
             Concourse concourse, Runway runway,
             @Nullable Map<String, Set<Object>> data) {
         return load(clazz, id, existing, connections, concourse, runway, data,
@@ -349,11 +443,13 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
-            TLongObjectMap<Record> existing, ConnectionPool connections,
+            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
             Concourse concourse, Runway runway,
             @Nullable Map<String, Set<Object>> data, String prefix) {
         T record = (T) newDefaultInstance(clazz, connections);
         setInternalFieldValue("id", id, record);
+        setInternalFieldValue("waitingToBeDeleted", new LinkedHashSet<>(),
+                record);
         record.assign(runway);
         record.load(concourse, existing, data, prefix);
         record.onLoad();
@@ -394,6 +490,40 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * If {@code value} is a {@link Record}, {@link DeferredReference} or a
+     * {@link Sequences#isSequence(Object) Sequence} that contains either, try
+     * to {@link #saveWithinTransaction(Concourse, Set) save} it, in case it has
+     * {@link #hasUnsavedChanges() unsaved} changes.
+     * 
+     * @param value
+     * @param concourse
+     * @param seen
+     */
+    @SuppressWarnings("rawtypes")
+    private static void saveModifiedReferenceWithinTransaction(Object value,
+            Concourse concourse, Set<Record> seen) {
+        if(Sequences.isSequence(value)) {
+            Sequences.forEach(value,
+                    item -> saveModifiedReferenceWithinTransaction(item,
+                            concourse, seen));
+        }
+        else {
+            Record record = null;
+            if(value instanceof Record) {
+                record = (Record) value;
+            }
+            else if(value instanceof DeferredReference) {
+                DeferredReference deferred = (DeferredReference) value;
+                record = deferred.$ref();
+            }
+
+            if(record != null && !seen.contains(record)) {
+                record.saveWithinTransaction(concourse, seen);
+            }
+        }
+    }
+
+    /**
      * Serialize {@code value} by converting it to an object that can be stored
      * within the database. This method assumes that {@code value} is a scalar
      * (e.g. not a {@link Sequences#isSequence(Object)}).
@@ -402,18 +532,16 @@ public abstract class Record implements Comparable<Record> {
      * @return the serialized value
      */
     @SuppressWarnings("rawtypes")
-    private static Object serialize(Object value) {
-        // NOTE: This logic mirrors storage logic in the #store method. But,
-        // since the #store method has some optimizations, it doesn't call into
-        // this method directly. So, if modifications are made to this method,
-        // please make similar and appropriate modifications to #store.
+    private static Object serializeScalarValue(@Nonnull Object value) {
         Preconditions.checkArgument(!Sequences.isSequence(value));
         Preconditions.checkNotNull(value);
         if(value instanceof Record) {
-            return Link.to(((Record) value).id());
+            Record record = (Record) value;
+            return Link.to(record.id);
         }
         else if(value instanceof DeferredReference) {
-            return serialize(((DeferredReference) value).get());
+            DeferredReference deferred = (DeferredReference) value;
+            return Link.to(deferred.$id());
         }
         else if(value.getClass().isPrimitive() || value instanceof String
                 || value instanceof Tag || value instanceof Link
@@ -432,9 +560,34 @@ public abstract class Record implements Comparable<Record> {
             return base64;
         }
         else {
-            Gson gson = new Gson();
-            Tag json = Tag.create(gson.toJson(value));
-            return json;
+            return Tag.create(new Gson().toJson(value));
+        }
+    }
+
+    /**
+     * Set the {@code value} of an {@link #INTERNAL_FIELDS internal field} on
+     * the provided {@code instance}.
+     * <p>
+     * Use this method instead of {@link Reflection#set(String, Object, Object)}
+     * to take advantage of performance optimizations.
+     * </p>
+     * 
+     * @param name
+     * @param value
+     * @param instance
+     */
+    private static <T> void setInternalFieldValue(String name, Object value,
+            T instance) {
+        try {
+            Field field = INTERNAL_FIELDS.get(name);
+            Preconditions.checkArgument(field != null,
+                    "%s is not an internal field", name);
+            field.setAccessible(true);
+            field.set(instance, value);
+
+        }
+        catch (ReflectiveOperationException e) {
+            throw CheckedExceptions.throwAsRuntimeException(e);
         }
     }
 
@@ -629,6 +782,35 @@ public abstract class Record implements Comparable<Record> {
     private transient Runway runway = null;
 
     /**
+     * A cache of the {@link #$computed() properties}.
+     */
+    private transient Map<String, Supplier<Object>> computed = null;
+
+    /**
+     * A cache of the {@link #$derived() properties}.
+     */
+    private transient Map<String, Object> derived = null;
+
+    /**
+     * Tracks dependent {@link Records} that are pending
+     * {@link #delete(Concourse) deletion} from {@link Concourse}.
+     */
+    private Set<Record> waitingToBeDeleted = new LinkedHashSet<>();
+
+    /**
+     * The {@link Record}'s checksum that is generated and cached on
+     * {@link #load(Concourse, ConcurrentMap, Map, String) load} and
+     * {@link #saveWithinTransaction(Concourse, Set) save} events.
+     * <p>
+     * This value is <strong>NOT</strong> returned from {@link #checksum()}, but
+     * is instead compared against the value returned from that method to
+     * determine if this {@link Record} has any {@link #hasUnsavedChanges()
+     * unsaved} changes.
+     * </p>
+     */
+    private String __checksum = null;
+
+    /**
      * Construct a new instance.
      */
     public Record() {
@@ -738,8 +920,8 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Delete this {@link Record} from Concourse when the {@link #save()} method
-     * is called.
+     * Set this {@link Record} to be deleted from Concourse when the
+     * {@link #save()} method is called.
      */
     public void deleteOnSave() {
         deleted = true;
@@ -782,10 +964,10 @@ public abstract class Record implements Comparable<Record> {
                     catch (Exception e) {/* ignore */}
                 }
                 if(value == null) {
-                    value = derived().get(key);
+                    value = $derived().get(key);
                 }
                 if(value == null) {
-                    Supplier<?> computer = computed().get(key);
+                    Supplier<?> computer = $computed().get(key);
                     if(computer != null) {
                         value = computer.get();
                     }
@@ -1178,7 +1360,7 @@ public abstract class Record implements Comparable<Record> {
      * {@link Record records}.
      * </p>
      */
-    public boolean save() {
+    public final boolean save() {
         Verify.that(connections != null,
                 "Cannot perform an implicit save because this Record isn't pinned to a Concourse instance");
         Concourse concourse = connections.request();
@@ -1188,6 +1370,18 @@ public abstract class Record implements Comparable<Record> {
         finally {
             connections.release(concourse);
         }
+    }
+
+    /**
+     * {@link #set(String, Object) Set} each key/value pair within {@code data}
+     * as a dynamic attribute in this {@link Record}.
+     * 
+     * @param data
+     */
+    public void set(Map<String, Object> data) {
+        data.forEach((key, value) -> {
+            set(key, value);
+        });
     }
 
     /**
@@ -1248,6 +1442,33 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * A hook that is executed immediately before this {@link Record} is
+     * {@link #save() saved} to the database. This method provides an
+     * opportunity to update the record's state or perform validation before
+     * persistence.
+     * <p>
+     * Implementations can use this hook to:
+     * <ul>
+     * <li>Perform last-minute data transformations or normalizations</li>
+     * <li>Update dependent fields based on current state</li>
+     * <li>Execute business logic that should affect the saved state</li>
+     * <li>Perform custom validation beyond what annotations provide</li>
+     * </ul>
+     * </p>
+     * <p>
+     * Any changes made to the record's fields within this method will be
+     * included in the save operation. This method is called within the same
+     * transaction as the save operation, ensuring atomicity.
+     * </p>
+     * <p>
+     * <strong>Note:</strong> This method should not throw exceptions unless the
+     * save operation should be aborted. If an exception is thrown, the
+     * transaction will be rolled back.
+     * </p>
+     */
+    protected void beforeSave() {}
+
+    /**
      * Provide additional data about this Record that might not be encapsulated
      * in its native fields and is "computed" on-demand.
      * <p>
@@ -1261,7 +1482,9 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      * 
      * @return the computed data
+     * @deprecated Use the {@link Computed} annotation instead
      */
+    @Deprecated
     protected Map<String, Supplier<Object>> computed() {
         return Collections.emptyMap();
     }
@@ -1272,7 +1495,9 @@ public abstract class Record implements Comparable<Record> {
      * specific information that isn't persisted to the database.
      * 
      * @return the additional data
+     * @deprecated Use the {@link Derived} annotation instead
      */
+    @Deprecated
     protected Map<String, Object> derived() {
         return Maps.newHashMap();
     }
@@ -1315,6 +1540,40 @@ public abstract class Record implements Comparable<Record> {
     protected void onLoad() {}
 
     /**
+     * Provide a hook to completely bypass the standard save routine.
+     * <p>
+     * This method can be overridden to return a {@link Supplier} that
+     * determines the result of a save operation without actually persisting
+     * data to the database.
+     * This is useful in scenarios such as:
+     * </p>
+     * <ul>
+     * <li>Creating ad hoc/in-memory only records that don't need database
+     * persistence</li>
+     * <li>Mocking save behavior for testing without database interaction</li>
+     * <li>Implementing custom persistence logic that doesn't use the standard
+     * flow</li>
+     * </ul>
+     * <p>
+     * When this method returns a non-null value, the normal save process is
+     * bypassed entirely, and the boolean result from the supplier is used as
+     * the save operation result.
+     * </p>
+     * <p>
+     * <strong>Note:</strong> Use this with caution as it completely circumvents
+     * the standard persistence mechanism. Records with overridden save behavior
+     * won't trigger save listeners or other standard save-related
+     * functionality.
+     * </p>
+     * 
+     * @return a {@link Supplier} that returns the result of the save operation,
+     *         or {@code null} to use the standard save process
+     */
+    protected Supplier<Boolean> overrideSave() {
+        return null;
+    }
+
+    /**
      * Return additional {@link TypeAdapter TypeAdapters} that should be used
      * when generating the {@link #json()} for this {@link Record}.
      * <p>
@@ -1329,6 +1588,20 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if this {@link Record} has any unsaved changes.
+     * 
+     * @return {@code true} if there are changes that need to be saved.
+     */
+    /* package */ boolean hasUnsavedChanges() {
+        if(__checksum == null) {
+            return true;
+        }
+        else {
+            return !__checksum.equals(checksum());
+        }
+    }
+
+    /**
      * Load an existing record from the database and add all of it to this
      * instance in memory.
      * 
@@ -1336,7 +1609,7 @@ public abstract class Record implements Comparable<Record> {
      * @param existing
      */
     /* package */ final void load(Concourse concourse,
-            TLongObjectMap<Record> existing) {
+            ConcurrentMap<Long, Record> existing) {
         load(concourse, existing, null);
     }
 
@@ -1349,7 +1622,7 @@ public abstract class Record implements Comparable<Record> {
      * @param data
      */
     /* package */ final void load(Concourse concourse,
-            TLongObjectMap<Record> existing,
+            ConcurrentMap<Long, Record> existing,
             @Nullable Map<String, Set<Object>> data) {
         load(concourse, existing, data, null);
     }
@@ -1364,7 +1637,7 @@ public abstract class Record implements Comparable<Record> {
      *            only be provided from a trusted source
      */
     /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
-    final void load(Concourse concourse, TLongObjectMap<Record> existing,
+    final void load(Concourse concourse, ConcurrentMap<Long, Record> existing,
             @Nullable Map<String, Set<Object>> data, @Nullable String prefix) {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
@@ -1498,6 +1771,7 @@ public abstract class Record implements Comparable<Record> {
                 throw CheckedExceptions.throwAsRuntimeException(e);
             }
         }
+        __checksum = checksum();
     }
 
     /**
@@ -1548,18 +1822,21 @@ public abstract class Record implements Comparable<Record> {
      */
     /* package */ final boolean save(Concourse concourse, Set<Record> seen,
             Runway runway) {
+        Supplier<Boolean> override = overrideSave();
+        if(override != null) {
+            return override.get();
+        }
         assign(runway);
         try {
             Preconditions.checkState(!inViolation);
             errors.clear();
             concourse.stage();
-            if(deleted) {
-                delete(concourse);
+            saveWithinTransaction(concourse, seen);
+            boolean success = concourse.commit();
+            if(success && runway != null) {
+                runway.enqueueSaveNotification(this);
             }
-            else {
-                saveWithinTransaction(concourse, seen);
-            }
-            return concourse.commit();
+            return success;
         }
         catch (Throwable t) {
             concourse.abort();
@@ -1572,88 +1849,205 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Save the data in this record using the specified {@code concourse}
-     * connection. This method assumes that the caller has already started a
-     * transaction, if necessary and will commit the transaction after this
-     * method completes.
-     * 
-     * @param concourse
-     * @param seen
+     * Save the data within this record using the specified {@code concourse}
+     * connection, adhering to constraints specified by the record's field
+     * annotations.
+     * This method assumes that the caller has already started a transaction and
+     * will execute within the same transaction context.
+     * <p>
+     * It iterates over the fields of the record and performs different
+     * operations based on field annotations:
+     * </p>
+     * <ul>
+     * <li>{@link Required @Required} enforces that a value is non-empty or
+     * contains at least one non-empty item if a sequence.</li>
+     * <li>{@link ValidatedBy @ValidatedBy} applies a custom validation defined
+     * by the validator class specified in the annotation to each element.</li>
+     * <li>{@link Unique @Unique} ensures that each element in a field must be
+     * unique across all records in the class, failing to save if duplicate
+     * values are found.</li>
+     * </ul>
+     * <p>
+     * If the record has modified realms, it reconciles them with the existing
+     * ones. Values are transformed into storable form using the
+     * {@link #transform(Object, Concourse, Set)} method before saving. In case
+     * of violations of constraints, an {@code IllegalStateException} is thrown.
+     * </p>
+     *
+     * @param concourse The Concourse instance to execute the operation.
+     * @param seen Set of records already saved, to prevent infinite recursion.
+     * @throws IllegalStateException If required fields are missing, values are
+     *             not unique across
+     *             all records in the class, or validation fails.
+     * @throws ReflectiveOperationException If reflection-related errors occur
+     *             during processing.
      */
     /* package */ void saveWithinTransaction(final Concourse concourse,
             Set<Record> seen) {
-        concourse.verifyOrSet(SECTION_KEY, __, id);
-        Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
+        seen.add(this);
         if(_hasModifiedRealms) {
             concourse.reconcile(REALMS_KEY, id, _realms);
             _hasModifiedRealms = false;
         }
-        fields().forEach(field -> {
-            try {
+        if(deleted) {
+            deleteWithinTransaction(concourse);
+        }
+        else if(!hasUnsavedChanges()) {
+            // This Record hasn't been modified, so simply go through each field
+            // and try to save any outgoing Record references that contain
+            // modifications.
+            for (Field field : fields()) {
+                Object value = getFieldValue(field, this);
+                saveModifiedReferenceWithinTransaction(value, concourse, seen);
+            }
+        }
+        else if(overrideSave() != null) {
+            overrideSave().get();
+        }
+        else {
+            beforeSave();
+            concourse.verifyOrSet(SECTION_KEY, __, id);
+            Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
+            for (Field field : fields()) {
                 if(!Modifier.isTransient(field.getModifiers())) {
-                    final String key = field.getName();
-                    final Object value = field.get(this);
-                    if(field.isAnnotationPresent(ValidatedBy.class)) {
-                        Class<? extends Validator> validatorClass = field
-                                .getAnnotation(ValidatedBy.class).value();
-                        Validator validator = Reflection
-                                .newInstance(validatorClass);
-                        Preconditions.checkState(validator.validate(value),
-                                validator.getErrorMessage());
-                    }
-                    if(field.isAnnotationPresent(Unique.class)) {
-                        Unique constraint = field.getAnnotation(Unique.class);
-                        String name = constraint.name();
-                        if(name.length() == 0) {
-                            Preconditions
-                                    .checkState(isUnique(concourse, key, value),
-                                            field.getName()
-                                                    + " must be unique in "
-                                                    + __);
-                        }
-                        else if(!alreadyVerifiedUniqueConstraints
-                                .contains(name)) {
-                            // Find all the fields that have this constraint and
-                            // check for uniqueness.
-                            Map<String, Object> values = Maps.newHashMap();
-                            values.put(key, value);
-                            fields().stream().filter($field -> $field != field)
-                                    .filter($field -> $field
-                                            .isAnnotationPresent(Unique.class))
-                                    .filter($field -> $field
-                                            .getAnnotation(Unique.class).name()
-                                            .equals(name))
-                                    .forEach($field -> {
-                                        values.put($field.getName(), Reflection
-                                                .get($field.getName(), this));
-                                    });
-                            if(isUnique(concourse, values)) {
-                                alreadyVerifiedUniqueConstraints.add(name);
-                            }
-                            else {
-                                throw new IllegalStateException(AnyStrings
-                                        .format("{} must be unique in {}", name,
-                                                __));
-                            }
-                        }
-                    }
-                    if(field.isAnnotationPresent(Required.class)) {
-                        Preconditions.checkState(!Empty.ness().describes(value),
-                                field.getName() + " is required in " + __);
+                    String key = field.getName();
+                    Object value = getFieldValue(field, this);
+                    boolean isSequence = Sequences.isSequence(value);
+                    // Enforce that Required fields have a non-empty value
+                    if(field.isAnnotationPresent(Required.class) && (isSequence
+                            ? Sequences.stream(value)
+                                    .allMatch(Empty.ness()::describes)
+                            : Empty.ness().describes(value))) {
+                        throw new IllegalStateException(AnyStrings
+                                .format("{}  is required in {}", key, __));
                     }
                     if(value != null) {
-                        store(key, value, concourse, false, seen);
+                        // Enforce that Unique fields have non-duplicated
+                        // values across the class
+                        if(field.isAnnotationPresent(Unique.class)
+                                && (isSequence ? Sequences.stream(value)
+                                        .anyMatch(Predicates.not(
+                                                item -> checkIsUnique(concourse,
+                                                        field, key, item,
+                                                        alreadyVerifiedUniqueConstraints)))
+                                        : !checkIsUnique(concourse, field, key,
+                                                value,
+                                                alreadyVerifiedUniqueConstraints))) {
+                            String name = field.getAnnotation(Unique.class)
+                                    .name();
+                            name = name.length() == 0 ? key : name;
+                            throw new IllegalStateException(AnyStrings.format(
+                                    "{} must be unique in {}", name, __));
+                        }
+                        // Apply custom validation
+                        if(field.isAnnotationPresent(ValidatedBy.class)) {
+                            Class<? extends Validator> validatorClass = field
+                                    .getAnnotation(ValidatedBy.class).value();
+                            Validator validator = Reflection
+                                    .newInstance(validatorClass);
+                            if(isSequence
+                                    ? Sequences.stream(value).anyMatch(
+                                            Predicates.not(validator::validate))
+                                    : !validator.validate(value)) {
+                                throw new IllegalStateException(
+                                        validator.getErrorMessage());
+
+                            }
+                        }
+                        value = transform(value, concourse, seen);
+                        if(value.getClass().isArray()) {
+                            concourse.reconcile(key, id, (Object[]) value);
+                        }
+                        else {
+                            concourse.verifyOrSet(key, value, id);
+                        }
                     }
                     else {
                         concourse.clear(key, id);
                     }
                 }
             }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.throwAsRuntimeException(e);
-            }
-        });
+            __checksum = checksum();
+        }
+    }
 
+    /**
+     * Gather all of the computed properties.
+     * 
+     * @return the computer properties
+     */
+    private Map<String, Supplier<Object>> $computed() {
+        if(computed == null) {
+            computed = new HashMap<>();
+            computed.putAll(computed());
+            for (Method method : Reflection.getAllDeclaredMethods(this)) {
+                Computed annotation = method.getAnnotation(Computed.class);
+                if(annotation != null) {
+                    if(method.getParameterCount() == 0) {
+                        String key = annotation.value();
+                        if(key.isEmpty()) {
+                            key = method.getName();
+                        }
+                        computed.put(key, () -> {
+                            try {
+                                return method.invoke(this);
+                            }
+                            catch (ReflectiveOperationException e) {
+                                throw CheckedExceptions
+                                        .wrapAsRuntimeException(e);
+                            }
+                        });
+                    }
+                    else {
+                        throw new IllegalArgumentException(
+                                "A method annotated with "
+                                        + annotation.getClass().getSimpleName()
+                                        + " cannot require parameters");
+                    }
+
+                }
+
+            }
+        }
+        return computed;
+    }
+
+    /**
+     * Gather all of the derived properties.
+     * 
+     * @return the computer properties
+     */
+    private Map<String, Object> $derived() {
+        if(derived == null) {
+            derived = new HashMap<>();
+            derived.putAll(derived());
+            for (Method method : Reflection.getAllDeclaredMethods(this)) {
+                Derived annotation = method.getAnnotation(Derived.class);
+                if(annotation != null) {
+                    if(method.getParameterCount() == 0) {
+                        String key = annotation.value();
+                        if(key.isEmpty()) {
+                            key = method.getName();
+                        }
+                        try {
+                            derived.put(key, method.invoke(this));
+                        }
+                        catch (ReflectiveOperationException e) {
+                            throw CheckedExceptions.wrapAsRuntimeException(e);
+                        }
+                    }
+                    else {
+                        throw new IllegalArgumentException(
+                                "A method annotated with "
+                                        + annotation.getClass().getSimpleName()
+                                        + " cannot require parameters");
+                    }
+
+                }
+
+            }
+        }
+        return derived;
     }
 
     /**
@@ -1671,9 +2065,11 @@ public abstract class Record implements Comparable<Record> {
                 section = concourse.get(SECTION_KEY, id);
             }
             else {
-                section = (String) Iterables
-                        .getLast(data.computeIfAbsent(prefix + SECTION_KEY,
-                                ignore -> concourse.select(SECTION_KEY, id)));
+                Set<Object> $$ = data.computeIfAbsent(prefix + SECTION_KEY,
+                        $ -> concourse.select(SECTION_KEY, id));
+                if(!$$.isEmpty()) {
+                    section = (String) Iterables.getLast($$);
+                }
             }
             Verify.that(section != null);
             Verify.that(
@@ -1687,6 +2083,71 @@ public abstract class Record implements Comparable<Record> {
             inViolation = true;
             throw CheckedExceptions.wrapAsRuntimeException(e);
         }
+    }
+
+    /**
+     * Checks whether a given value for a field is unique across all records in
+     * the class. If the {@link Unique} constraint has a name, this method
+     * verifies the uniqueness for all fields with that same constraint name
+     * within the class. If the constraint has been already verified, it is
+     * skipped.
+     * 
+     * @param concourse The Concourse instance managing the transaction.
+     * @param field The field that is being checked for uniqueness.
+     * @param key The key or name of the field.
+     * @param value The value that needs to be checked for uniqueness.
+     * @param alreadyVerifiedUniqueConstraints A set containing names of
+     *            constraints that have already been verified.
+     * @return {@code true} if the value is unique according to the specified
+     *         constraints; {@code false} otherwise.
+     */
+    private boolean checkIsUnique(Concourse concourse, Field field, String key,
+            Object value, Set<String> alreadyVerifiedUniqueConstraints) {
+        Unique constraint = field.getAnnotation(Unique.class);
+        String name = constraint.name();
+        if(name.length() == 0 && !isUnique(concourse, key, value)) {
+            return false;
+        }
+        else if(!alreadyVerifiedUniqueConstraints.contains(name)) {
+            // Find all the fields that have this constraint and
+            // check for uniqueness.
+            Map<String, Object> values = Maps.newHashMap();
+            values.put(key, value);
+            fields().stream().filter($field -> $field != field)
+                    .filter($field -> $field.isAnnotationPresent(Unique.class))
+                    .filter($field -> $field.getAnnotation(Unique.class).name()
+                            .equals(name))
+                    .forEach($field -> {
+                        values.put($field.getName(),
+                                Reflection.get($field.getName(), this));
+                    });
+            if(isUnique(concourse, values)) {
+                alreadyVerifiedUniqueConstraints.add(name);
+            }
+            else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Return a checksum for this {@link Record} based on its current state.
+     * 
+     * @return the checksum
+     */
+    private final String checksum() {
+        Hasher hasher = Hashing.murmur3_128().newHasher();
+        Set<Field> fields = fields().stream()
+                .sorted((f1, f2) -> f1.getName().compareTo(f2.getName()))
+                .filter(field -> !Modifier.isTransient(field.getModifiers()))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        for (Field field : fields) {
+            Object value = getFieldValue(field, this);
+            hasher.putString(field.getName(), StandardCharsets.UTF_8);
+            hashValue(hasher, value);
+        }
+        return hasher.hash().toString();
     }
 
     /**
@@ -1768,7 +2229,7 @@ public abstract class Record implements Comparable<Record> {
     @Nullable
     @SuppressWarnings({ "unchecked", "rawtypes" })
     private Object convert(String key, Class<?> type, Object stored,
-            Concourse concourse, TLongObjectMap<Record> alreadyLoaded) {
+            Concourse concourse, ConcurrentMap<Long, Record> alreadyLoaded) {
         Object converted = null;
         if(Record.class.isAssignableFrom(type)
                 || type == DeferredReference.class) {
@@ -1830,13 +2291,13 @@ public abstract class Record implements Comparable<Record> {
 
             @Override
             public Set<Entry<String, Object>> entrySet() {
-                return computed().entrySet().stream().map(ComputedEntry::new)
+                return $computed().entrySet().stream().map(ComputedEntry::new)
                         .collect(Collectors.toSet());
             }
 
             @Override
             public Object get(Object key) {
-                Supplier<?> computer = computed().get(key);
+                Supplier<?> computer = $computed().get(key);
                 if(computer != null) {
                     return computer.get();
                 }
@@ -1847,11 +2308,11 @@ public abstract class Record implements Comparable<Record> {
 
             @Override
             public Set<String> keySet() {
-                return computed().keySet();
+                return $computed().keySet();
             }
 
         };
-        Map<String, Object> data = BackupReadSourcesHashMap.create(derived(),
+        Map<String, Object> data = BackupReadSourcesHashMap.create($derived(),
                 computed);
         fields().forEach(field -> {
             try {
@@ -1877,8 +2338,142 @@ public abstract class Record implements Comparable<Record> {
      * 
      * @param concourse
      */
-    private void delete(Concourse concourse) {
+    private void deleteWithinTransaction(Concourse concourse) {
+        // Ensure any fields to which this Record must @CascadeDelete are
+        // deleted within this transaction
+        Set<Field> dependents = StaticAnalysis.instance()
+                .getAnnotatedFields(getClass(), CascadeDelete.class);
+        for (Field dependent : dependents) {
+            try {
+                Object value = dependent.get(this);
+                if(value instanceof Record) {
+                    ensureDeletion((Record) value);
+                }
+                else if(Sequences.isSequence(value)) {
+                    Sequences.forEach(value, item -> {
+                        if(item instanceof Record) {
+                            ensureDeletion((Record) item);
+                        }
+                    });
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
+            }
+        }
+
+        // Check if there are any incoming links that used the @JoinDelete
+        // annotation to join in the deletion of this Record
+        Criteria potentialJoinDeletes = StaticAnalysis.instance()
+                .getJoinDeleteLookupCondition(this);
+        if(potentialJoinDeletes != null) {
+            for (Entry<Long, Set<Object>> entry : concourse
+                    .select(SECTION_KEY, potentialJoinDeletes).entrySet()) {
+                // It's necessary to load each of the Records (instead of
+                // directly clearing it in the database) in case any of them
+                // also have deletion hook annotations.
+                long id = entry.getKey();
+                String __ = (String) Iterables.getLast(entry.getValue());
+                Class<? extends Record> clazz = Reflection.getClassCasted(__);
+                Record record = db.load(clazz, id);
+                ensureDeletion(record);
+            }
+        }
+
+        // Check if there are any incoming links that used the @CaptureDelete
+        // annotation to remove references to this Record post deletion. Handle
+        // that business and save those records within this transaction
+        Criteria potentialCaptureDeletes = StaticAnalysis.instance()
+                .getCaptureDeleteLookupCondition(this);
+        if(potentialCaptureDeletes != null) {
+            for (Entry<Long, Set<Object>> entry : concourse
+                    .select(SECTION_KEY, potentialCaptureDeletes).entrySet()) {
+                long id = entry.getKey();
+                String __ = (String) Iterables.getLast(entry.getValue());
+                Class<? extends Record> clazz = Reflection.getClassCasted(__);
+                Record record = db.load(clazz, id);
+                Set<Field> fields = StaticAnalysis.instance()
+                        .getAnnotatedFields(record, CaptureDelete.class);
+                for (Field field : fields) {
+                    try {
+                        Object value = field.get(record);
+                        if(value instanceof Collection) {
+                            Collection<?> collection = (Collection<?>) value;
+                            while (collection.contains(this)) {
+                                collection.remove(this);
+                            }
+                        }
+                        else if(value.getClass().isArray()) {
+                            ArrayBuilder<Object> ab = ArrayBuilder.builder();
+                            Sequences.forEach(value, item -> {
+                                if(!item.equals(this)) {
+                                    ab.add(item);
+                                }
+                            });
+                            field.set(record, ab.build());
+                        }
+                        else if(value.equals(this)) {
+                            field.set(record, null);
+                        }
+                    }
+                    catch (ReflectiveOperationException e) {
+                        throw CheckedExceptions.wrapAsRuntimeException(e);
+                    }
+                }
+                record.saveWithinTransaction(concourse, new HashSet<>());
+            }
+        }
+
+        // Perform the deletion(s)
         concourse.clear(id);
+        for (Record record : waitingToBeDeleted) {
+            record.deleteWithinTransaction(concourse);
+        }
+    }
+
+    /**
+     * Dereference the {@code value} stored for {@code key} if it is a
+     * {@link DeferredReference} or a {@link Sequence} of them.
+     * 
+     * @param key
+     * @param value
+     * @return the dereferenced value if it can be dereferenced or the original
+     *         input
+     */
+    private Object dereference(String key, Object value) {
+        if(value == null) {
+            return value;
+        }
+        else if(value instanceof DeferredReference) {
+            value = ((DeferredReference<?>) value).get();
+        }
+        else if(Sequences.isSequence(value)) {
+            Collection<Class<?>> typeArgs = StaticAnalysis.instance()
+                    .getTypeArguments(this, key);
+            if(typeArgs.contains(DeferredReference.class)
+                    || typeArgs.contains(Object.class)) {
+                value = Sequences.stream(value)
+                        .map(item -> dereference(key, item))
+                        .collect(Collectors.toCollection(
+                                value instanceof Set ? LinkedHashSet::new
+                                        : ArrayList::new));
+            }
+        }
+        return value;
+    }
+
+    /**
+     * Ensure that {@code record} is scheduled for
+     * {@link #deleteWithinTransaction(Concourse) deletion} alongside this
+     * {@link Record}.
+     * 
+     * @param record
+     */
+    private void ensureDeletion(Record record) {
+        if(!record.deleted) {
+            waitingToBeDeleted.add(record);
+            record.deleted = true;
+        }
     }
 
     /**
@@ -1961,7 +2556,7 @@ public abstract class Record implements Comparable<Record> {
                 AtomicReference<BuildableState> $sub = new AtomicReference<>(
                         null);
                 Sequences.forEach(value, item -> {
-                    item = serialize(item);
+                    item = serializeScalarValue(item);
                     if($sub.get() == null) {
                         $sub.set(Criteria.where().key(key)
                                 .operator(Operator.EQUALS).value(item));
@@ -1975,7 +2570,7 @@ public abstract class Record implements Comparable<Record> {
                         .group($criteria.get().and().group($sub.get())));
             }
             else {
-                value = serialize(value);
+                value = serializeScalarValue(value);
                 $criteria.set($criteria.get().and().key(key)
                         .operator(Operator.EQUALS).value(value));
             }
@@ -2067,84 +2662,66 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Store {@code key} as {@code value} using the specified {@code concourse}
-     * connection. The {@code append} flag is used to indicate if the value
-     * should be appended using the {@link Concourse#add(String, Object, long)}
-     * method or inserted using the {@link Concourse#set(String, Object, long)}
-     * method.
-     * 
-     * @param key
-     * @param value
-     * @param concourse
-     * @param append
+     * Transforms the provided {@code value} into a primitive form that can be
+     * stored within {@link Concourse concourse}. The transformation is
+     * recursive, handling nested {@link Record records} and
+     * {@link Sequences#isSequence(Object) sequences}.
+     * <p>
+     * The result will either be a {@link Concourse} primitive or an array of
+     * {@link Concourse} primitives; include Java primitive types, {@link Tag
+     * tags}, {@link Link links}, and serialized representations of complex
+     * objects.
+     * </p>
+     * <p>
+     * If the value is an instance of {@link Record}, it's saved within the
+     * current {@link Concourse concourse} transaction and linked. If the value
+     * is a {@link DeferredReference}, it is similarly saved if the reference
+     * was {@link DeferredReference#get() loaded}.
+     * </p>
+     * <p>
+     * For simplicity, all {@link Sequences#isSequence(Object) Sequences} are
+     * transformed into arrays.
+     * </p>
+     *
+     * @param value The value to be transformed.
+     * @param concourse The Concourse instance managing the transaction.
+     * @param seen the records that have already been {@link #save() saved} (to
+     *            prevent infinite recursion)
+     * @return a {@link Concourse} primitive or an array of {@link Concourse}
+     *         primitives.
      */
     @SuppressWarnings("rawtypes")
-    private void store(String key, Object value, Concourse concourse,
-            boolean append, Set<Record> seen) {
-        // NOTE: This logic mirrors serialization logic in the #serialize
-        // method. Since this method has some optimizations, it doesn't call
-        // into #serialize directly. So, if modifications are made to this
-        // method, please make similar and appropriate modifications to
-        // #serialize.
-        // TODO: dirty field detection!
-        if(value instanceof Record) {
-            Record record = (Record) value;
-            if(!seen.contains(record)) {
+    private Object transform(@Nonnull Object value, Concourse concourse,
+            Set<Record> seen) {
+        if(Sequences.isSequence(value)) {
+            ArrayBuilder<Object> array = ArrayBuilder.builder();
+            Sequences.forEach(value, item -> {
+                array.add(transform(item, concourse, seen));
+            });
+            return array.length() > 0 ? array.build() : Array.containing();
+        }
+        else {
+            Object primitive = serializeScalarValue(value);
+            Record record;
+            if(value instanceof Record) {
+                record = (Record) value;
+            }
+            else if(value instanceof DeferredReference) {
+                DeferredReference deferred = (DeferredReference) value;
+                record = deferred.$ref();
+            }
+            else {
+                record = null;
+            }
+
+            // Ensure that Record references are saved within the current
+            // transaction
+            if(record != null && !seen.contains(record)) {
                 seen.add(record);
                 record.saveWithinTransaction(concourse, seen);
             }
-            if(append) {
-                concourse.link(key, record.id, id);
-            }
-            else {
-                concourse.verifyOrSet(key, Link.to(record.id), id);
-            }
-        }
-        else if(value instanceof DeferredReference) {
-            DeferredReference deferred = (DeferredReference) value;
-            Record ref = deferred.$ref();
-            if(ref != null) {
-                store(key, ref, concourse, append, seen);
-            }
-            else {
-                // no-op because the reference was not loaded and therefore has
-                // no changes to save...
-            }
-        }
-        else if(value instanceof Collection || value.getClass().isArray()) {
-            // TODO use reconcile() function once 0.5.0 comes out...
-            concourse.clear(key, id); // TODO this is extreme...move to a diff
-                                      // based approach to delete only values
-                                      // that should be deleted
-            for (Object item : (Iterable<?>) value) {
-                store(key, item, concourse, true, seen);
-            }
-        }
-        else if(value.getClass().isPrimitive() || value instanceof String
-                || value instanceof Tag || value instanceof Link
-                || value instanceof Integer || value instanceof Long
-                || value instanceof Float || value instanceof Double
-                || value instanceof Boolean || value instanceof Timestamp) {
-            if(append) {
-                concourse.add(key, value, id);
-            }
-            else {
-                concourse.verifyOrSet(key, value, id);
-            }
-        }
-        else if(value instanceof Enum) {
-            concourse.set(key, Tag.create(((Enum) value).name()), id);
-        }
-        else if(value instanceof Serializable) {
-            ByteBuffer bytes = Serializables.getBytes((Serializable) value);
-            Tag base64 = Tag.create(BaseEncoding.base64Url()
-                    .encode(ByteBuffers.toByteArray(bytes)));
-            store(key, base64, concourse, append, seen);
-        }
-        else {
-            Gson gson = new Gson();
-            Tag json = Tag.create(gson.toJson(value));
-            store(key, json, concourse, append, seen);
+
+            return primitive;
         }
     }
 
@@ -2337,8 +2914,7 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * A mapping from each {@link Record} class to each its non-internal
-         * keys,
-         * each of which is mapped to the associated {@link Field} object.
+         * keys, each of which is mapped to the associated {@link Field} object.
          */
         private final Map<Class<? extends Record>, Map<String, Field>> fieldsByClass;
 
@@ -2351,16 +2927,14 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * A collection containing each {@link Record} class that has at least
-         * one
-         * field whose type is a subclass of {@link Record}.
+         * one field whose type is a subclass of {@link Record}.
          */
         private final Set<Class<? extends Record>> hasRecordFieldTypeByClass;
 
         /**
          * A collection containing each {@link Record} class that itself or is
-         * the
-         * ancestors of a {@link Record} class that has at least one field whose
-         * type is a subclass of {@link Record}.
+         * the ancestors of a {@link Record} class that has at least one field
+         * whose type is a subclass of {@link Record}.
          */
         private final Set<Class<? extends Record>> hasRecordFieldTypeByClassHierarchy;
 
@@ -2369,6 +2943,38 @@ public abstract class Record implements Comparable<Record> {
          */
         private final Reflections reflection = new Reflections(
                 new SubTypesScanner());
+
+        /**
+         * A collection containing each {@link Record} class that has fields
+         * with annotations.
+         */
+        private final Map<Class<? extends Record>, Map<Class<? extends Annotation>, Set<Field>>> fieldAnnotationsByClass;
+
+        /**
+         * A mapping from each {@link Record} class to each of its related
+         * {@link Record} classes, each mapped to a set of field names that
+         * trigger deletion of records linked to it.
+         * <p>
+         * This structure enables efficient lookup of fields marked with the
+         * {@link JoinDelete} annotation, helping identify fields in linked
+         * records that should be deleted when the primary {@link Record} is
+         * deleted.
+         * </p>
+         */
+        private final Map<Class<? extends Record>, Map<Class<? extends Record>, Set<String>>> joinDeleteFieldsByClass;
+
+        /**
+         * A mapping from each {@link Record} class to each of its related
+         * {@link Record} classes, each mapped to a set of field names that
+         * trigger automatic reference nullification for records linked to it.
+         * <p>
+         * This structure enables efficient lookup of fields marked with the
+         * {@link CaptureDelete} annotation, helping identify fields in linked
+         * records that should be nullified when the primary {@link Record} is
+         * deleted.
+         * </p>
+         */
+        private final Map<Class<? extends Record>, Map<Class<? extends Record>, Set<String>>> captureDeleteFieldsByClass;
 
         /**
          * Construct a new instance.
@@ -2381,6 +2987,9 @@ public abstract class Record implements Comparable<Record> {
             this.fieldTypeArgumentsByClass = new HashMap<>();
             this.hasRecordFieldTypeByClass = new HashSet<>();
             this.hasRecordFieldTypeByClassHierarchy = new HashSet<>();
+            this.fieldAnnotationsByClass = new HashMap<>();
+            this.joinDeleteFieldsByClass = new HashMap<>();
+            this.captureDeleteFieldsByClass = new HashMap<>();
             Set<String> internalFieldNames = INTERNAL_FIELDS.keySet();
             reflection.getSubTypesOf(Record.class).forEach(type -> {
                 // Build class hierarchy
@@ -2405,6 +3014,15 @@ public abstract class Record implements Comparable<Record> {
                     if(Record.class.isAssignableFrom(field.getType())) {
                         hasRecordFieldTypeByClass.add(type);
                     }
+
+                    // Get annotations associated with each field
+                    for (Annotation annotation : field.getAnnotations()) {
+                        fieldAnnotationsByClass
+                                .computeIfAbsent(type, $ -> new HashMap<>())
+                                .computeIfAbsent(annotation.annotationType(),
+                                        $ -> new HashSet<>())
+                                .add(field);
+                    }
                 });
             });
 
@@ -2414,10 +3032,101 @@ public abstract class Record implements Comparable<Record> {
                 }
             });
 
+            // For each type, determine the types that have Link fields with the
+            // deletion hook annotations.
+            Map<Class<? extends Annotation>, Map<Class<? extends Record>, Map<Class<? extends Record>, Set<String>>>> hooks = ImmutableMap
+                    .of(JoinDelete.class, joinDeleteFieldsByClass,
+                            CaptureDelete.class, captureDeleteFieldsByClass);
+            hierarchies.keySet().forEach(type -> {
+                for (Class<? extends Record> incoming : hierarchies.keySet()) {
+                    hooks.forEach((annotation, data) -> {
+                        Set<Field> fields = getAnnotatedFields(incoming,
+                                annotation);
+                        for (Field field : fields) {
+                            if(isTypeCompatibleWithClassField(type, incoming,
+                                    field)) {
+                                data.computeIfAbsent(type, $ -> new HashMap<>())
+                                        .computeIfAbsent(incoming,
+                                                $$ -> new HashSet<>())
+                                        .add(field.getName());
+                            }
+                        }
+                    });
+                }
+            });
+
             // Now that the hierarchies and fields for each Record type have
             // been documented, go through again and compute the paths for each
             // one
             computeAllPossiblePaths();
+        }
+
+        /**
+         * Return a set of fields from a {@link Record} class that are annotated
+         * with a specific annotation.
+         * 
+         * @param <T> the type of record
+         * @param clazz the class of the record
+         * @param annotation the class of the annotation to look for
+         * @return a set of fields annotated with the specified annotation, or
+         *         an
+         *         empty set if none are found
+         * @throws IllegalArgumentException if the provided class is unknown
+         */
+        public <T extends Record> Set<Field> getAnnotatedFields(Class<T> clazz,
+                Class<? extends Annotation> annotation) {
+            try {
+                return fieldAnnotationsByClass
+                        .getOrDefault(clazz, ImmutableMap.of())
+                        .getOrDefault(annotation, ImmutableSet.of());
+            }
+            catch (NullPointerException e) {
+                throw new IllegalArgumentException(
+                        "Unknown Record type: " + clazz);
+            }
+        }
+
+        /**
+         * Return a set of fields from an instance of a {@link Record} that are
+         * annotated with a specific annotation.
+         * 
+         * @param <T> the type of record
+         * @param record the record instance
+         * @param annotation the class of the annotation to look for
+         * @return a set of fields annotated with the specified annotation, or
+         *         an
+         *         empty set if none are found
+         * @throws IllegalArgumentException if the provided record type is
+         *             unknown
+         */
+        public <T extends Record> Set<Field> getAnnotatedFields(T record,
+                Class<? extends Annotation> annotation) {
+            return getAnnotatedFields(record.getClass(), annotation);
+        }
+
+        /**
+         * Return a {@link Criteria} instance that defines the condition to
+         * locate records linked to the specified {@link Record} that should
+         * have fields nullified upon deletion of the specified record.
+         * <p>
+         * This condition is constructed by identifying fields in other
+         * {@link Record} classes that are annotated with {@link CaptureDelete}
+         * and linked to the specified {@code record}. These fields are grouped
+         * by related classes, and then a combined criteria is formed to match
+         * against the links found.
+         * </p>
+         *
+         * @param record the {@link Record} instance for which the nullification
+         *            condition is being determined
+         * @return a {@link Criteria} object representing the lookup condition
+         *         for records linked to the provided {@code record} that should
+         *         have references nullified, or {@code null} if no such links
+         *         are found
+         */
+        public <T extends Record> Criteria getCaptureDeleteLookupCondition(
+                Record record) {
+            return getDeletionHookLookupCondition(record,
+                    captureDeleteFieldsByClass);
         }
 
         /**
@@ -2485,6 +3194,30 @@ public abstract class Record implements Comparable<Record> {
          */
         public <T extends Record> Collection<Field> getFields(T record) {
             return getFields(record.getClass());
+        }
+
+        /**
+         * Return a {@link Criteria} instance that defines the condition to
+         * locate records linked to the specified {@link Record} for deletion.
+         * <p>
+         * This condition is constructed by identifying fields in other
+         * {@link Record} classes that are annotated with {@link JoinDelete} and
+         * linked to the specified {@code record}. These fields are grouped by
+         * related classes, and then a combined criteria is formed to match
+         * against the links found.
+         * </p>
+         *
+         * @param record the {@link Record} instance for which the delete
+         *            condition is being determined
+         * @return a {@link Criteria} object representing the delete lookup
+         *         condition for records linked to the provided {@code record};
+         *         or {@code null} if no such links are found
+         */
+        @Nullable
+        public <T extends Record> Criteria getJoinDeleteLookupCondition(
+                Record record) {
+            return getDeletionHookLookupCondition(record,
+                    joinDeleteFieldsByClass);
         }
 
         /**
@@ -2602,6 +3335,102 @@ public abstract class Record implements Comparable<Record> {
             });
         }
 
+        /**
+         * Return a {@link Criteria} instance that defines the condition to
+         * locate records linked to the specified {@link Record} based on a
+         * deletion hook.
+         * This method is designed to support various deletion hooks, such as
+         * {@link JoinDelete} and {@link CaptureDelete}, by using the provided
+         * data map to determine which fields in other records should be
+         * affected when the specified {@code record} is deleted.
+         * <p>
+         * This condition is constructed by gathering all fields in related
+         * {@link Record} classes that are marked with the specified deletion
+         * annotation and link to the specified {@code record}. Each associated
+         * class and its fields are combined into a single {@link Criteria}
+         * expression that matches records with fields needing to be either
+         * deleted or nullified, depending on the deletion hook type.
+         * </p>
+         *
+         * @param record the {@link Record} instance for which the deletion
+         *            condition is being constructed
+         * @param data a mapping that defines the deletion hooks for each
+         *            {@link Record} class, where each key is a {@link Record}
+         *            type linked by the hook, and each value is a set of field
+         *            names annotated with the deletion hook
+         * @return a {@link Criteria} instance representing the lookup condition
+         *         for records linked to the provided {@code record}, or
+         *         {@code null} if no linked records with the deletion hook are
+         *         found
+         */
+        @Nullable
+        private <T extends Record> Criteria getDeletionHookLookupCondition(
+                Record record,
+                Map<Class<? extends Record>, Map<Class<? extends Record>, Set<String>>> data) {
+            Criteria condition = null;
+            Map<Class<? extends Record>, Set<String>> components = data
+                    .getOrDefault(record.getClass(), ImmutableMap.of());
+            for (Entry<Class<? extends Record>, Set<String>> entry : components
+                    .entrySet()) {
+                Class<? extends Record> type = entry.getKey();
+                Set<String> keys = entry.getValue();
+                Criteria typePart = Criteria.where().key(SECTION_KEY)
+                        .operator(Operator.EQUALS).value(type.getName());
+                Criteria linkPart = null;
+                for (String key : keys) {
+                    Criteria $ = Criteria.where().key(key)
+                            .operator(Operator.LINKS_TO).value(record.id);
+                    if(linkPart == null) {
+                        linkPart = $;
+                    }
+                    else {
+                        linkPart = Criteria.where().group(linkPart).or()
+                                .group($);
+                    }
+                }
+                Criteria part = Criteria.where().group(typePart).and()
+                        .group(linkPart);
+                if(condition == null) {
+                    condition = part;
+                }
+                else {
+                    condition = Criteria.where().group(condition).or()
+                            .group(part);
+                }
+            }
+            return condition;
+        }
+
+        /**
+         * Determine whether the specified {@code type} is compatible with or
+         * assignable to the given {@code field} within {@code clazz}. This
+         * check includes both direct assignment compatibility as well as
+         * compatibility with the field's type arguments.
+         * 
+         * @param type the {@link Record} type to check for compatibility with
+         *            the field
+         * @param clazz the class that contains the {@code field}
+         * @param field the {@link Field} in {@code clazz} to check against
+         * @return {@code true} if {@code type} is compatible with the field, or
+         *         {@code false} otherwise
+         */
+        private boolean isTypeCompatibleWithClassField(
+                Class<? extends Record> type, Class<? extends Record> clazz,
+                Field field) {
+            if(field.getType().isAssignableFrom(type)) {
+                return true;
+            }
+            else {
+                for (Class<?> typeArg : getTypeArguments(clazz,
+                        field.getName())) {
+                    if(typeArg.isAssignableFrom(type)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
     }
 
     /**
@@ -2654,6 +3483,9 @@ public abstract class Record implements Comparable<Record> {
             else if(Sequences.isSequence(value)) {
                 return Sequences.stream(value).collect(Collectors.toList());
             }
+            else if(value == null) {
+                return ImmutableList.of();
+            }
             else {
                 return ImmutableList.of(value);
             }
@@ -2684,7 +3516,7 @@ public abstract class Record implements Comparable<Record> {
             return data.size();
         }
 
-    }
+    };
 
     /**
      * A {@link DatabaseInterface} that reacts to the state of the
@@ -3162,6 +3994,168 @@ public abstract class Record implements Comparable<Record> {
         }
 
     };
+
+    /**
+     * A read-only {@link Multimap} interface for a {@link Map} where each key
+     * is associated with a {@link Collection} of values.
+     * <p>
+     * A {@link SyntheticMultimap} allows for treating a {@link Map} with
+     * {@link Collection} values as a {@link Multimap} without explicitly
+     * copying the data over.
+     * </p>
+     *
+     * @author Jeff Nelson
+     */
+    private static class SyntheticMultimap<K, V> implements Multimap<K, V> {
+
+        /**
+         * The map that this interface treats like a {@link Multimap}.
+         */
+        private final Map<K, Collection<V>> data;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param data
+         */
+        public SyntheticMultimap(Map<K, Collection<V>> data) {
+            this.data = data;
+        }
+
+        @Override
+        public Map<K, Collection<V>> asMap() {
+            return data;
+        }
+
+        @Override
+        public void clear() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean containsEntry(Object key, Object value) {
+            Collection<V> values = data.getOrDefault(key, ImmutableSet.of());
+            return values.contains(value);
+        }
+
+        @Override
+        public boolean containsKey(Object key) {
+            return data.containsKey(key);
+        }
+
+        @Override
+        public boolean containsValue(Object value) {
+            for (Entry<K, Collection<V>> entry : data.entrySet()) {
+                for (V v : entry.getValue()) {
+                    if(v.equals(value)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        @Override
+        public Collection<Entry<K, V>> entries() {
+            List<Entry<K, V>> entries = new ArrayList<>();
+            for (Entry<K, Collection<V>> entry : data.entrySet()) {
+                K key = entry.getKey();
+                for (V value : entry.getValue()) {
+                    entries.add(
+                            new AbstractMap.SimpleImmutableEntry<>(key, value));
+                }
+            }
+            return entries;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if(obj instanceof Multimap) {
+                Multimap<?, ?> mmap = (Multimap<?, ?>) obj;
+                return mmap.asMap().equals(asMap());
+            }
+            else {
+                return false;
+            }
+        }
+
+        @Override
+        public Collection<V> get(K key) {
+            return data.get(key);
+        }
+
+        @Override
+        public int hashCode() {
+            return data.hashCode();
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return data.isEmpty();
+        }
+
+        @Override
+        public Multiset<K> keys() {
+            Multiset<K> keys = LinkedHashMultiset.create();
+            for (Entry<K, Collection<V>> entry : data.entrySet()) {
+                keys.add(entry.getKey(), entry.getValue().size());
+            }
+            return keys;
+        }
+
+        @Override
+        public Set<K> keySet() {
+            return data.keySet();
+        }
+
+        @Override
+        public boolean put(K key, V value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean putAll(K key, Iterable<? extends V> values) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean putAll(Multimap<? extends K, ? extends V> multimap) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean remove(Object key, Object value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Collection<V> removeAll(Object key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Collection<V> replaceValues(K key,
+                Iterable<? extends V> values) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int size() {
+            return data.size();
+        }
+
+        @Override
+        public String toString() {
+            return data.toString();
+        }
+
+        @Override
+        public Collection<V> values() {
+            return data.values().stream().flatMap(values -> values.stream())
+                    .collect(Collectors.toList());
+        }
+
+    }
 
     /**
      * A read-only {@link Multimap} interface for a {@link Map} where each key

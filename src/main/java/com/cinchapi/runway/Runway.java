@@ -25,6 +25,8 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -75,6 +77,11 @@ import com.google.common.collect.Sets;
 
 import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
+
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.function.Consumer;
+import java.util.concurrent.ThreadFactory;
 
 /**
  * {@link Runway} is the ORM controller for Concourse.
@@ -184,17 +191,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param <T>
      * @param clazz
      * @param id
+     * @param loaded a {@link ConcurrentMap} used to track loaded {@link Record}
+     *            references
      * @param connections
      * @param runway
      * @param data
      * @return the loaded {@link Record} instance
      */
     private static <T extends Record> T loadWithErrorHandling(Class<T> clazz,
-            long id, ConnectionPool connections, Runway runway,
+            long id, ConcurrentMap<Long, Record> loaded,
+            ConnectionPool connections, Runway runway,
             @Nullable Map<String, Set<Object>> data) {
         try {
-            return Record.load(clazz, id, new TLongObjectHashMap<>(),
-                    connections, runway, data);
+            return Record.load(clazz, id, loaded, connections, runway, data);
         }
         catch (Exception e) {
             runway.onLoadFailureHandler.accept(clazz, id, e);
@@ -234,6 +243,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         // Perform static analysis on initialization.
         StaticAnalysis.instance();
     }
+
+    /**
+     * The {@link Page pagination} parameter to use to limit the number of
+     * database records returned when trying to verify or enforce a uniqueness
+     * constraint.
+     */
+    private static Page UNIQUE_PAGINATION = Page.sized(2);
 
     /**
      * The amount of time to wait for a bulk select to complete before streaming
@@ -300,6 +316,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean supportsPreSelectLinkedRecords;
 
     /**
+     * A queue of records that have been successfully saved and are waiting
+     * for save notification processing.
+     */
+    private BlockingQueue<Record> saveNotificationQueue;
+
+    /**
+     * An executor service dedicated to processing save notifications.
+     */
+    private ExecutorService saveNotificationExecutor;
+
+    /**
+     * The consumer that processes save notifications for records.
+     */
+    @Nullable
+    private Consumer<Record> saveListener;
+
+    /**
      * Construct a new instance.
      * 
      * @param connections a Concourse {@link ConnectionPool}
@@ -319,7 +352,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Version actual = Versions
                     .parseSemanticVersion(concourse.getServerVersion());
             this.hasNativeSortingAndPagination = actual
-                    .greaterThanOrEqualTo(target);
+                    .greaterThanOrEqualTo(target)
+                    || actual.equals(
+                            Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
             target = Version.forIntegers(0, 11, 3);
             this.supportsPreSelectLinkedRecords = actual
                     .greaterThanOrEqualTo(target)
@@ -344,6 +379,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Record.PINNED_RUNWAY_INSTANCE = null;
         }
         executor.shutdownNow();
+        if(saveNotificationExecutor != null) {
+            saveNotificationExecutor.shutdownNow();
+        }
     }
 
     @Override
@@ -608,7 +646,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         try {
             if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                 Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
+                        clazz, criteria, NO_ORDER, UNIQUE_PAGINATION, realms);
                 if(data.isEmpty()) {
                     return null;
                 }
@@ -626,7 +664,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             else {
                 Set<T> records = filterAny(clazz, criteria, NO_ORDER,
-                        NO_PAGINATION, realms);
+                        UNIQUE_PAGINATION, realms);
                 if(records.isEmpty()) {
                     return null;
                 }
@@ -686,7 +724,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         try {
             if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
                 Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
+                        clazz, criteria, NO_ORDER, UNIQUE_PAGINATION, realms);
                 if(data.isEmpty()) {
                     return null;
                 }
@@ -705,7 +743,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             else {
                 Set<T> records = filterAny(clazz, criteria, NO_ORDER,
-                        NO_PAGINATION, realms);
+                        UNIQUE_PAGINATION, realms);
                 if(records.isEmpty()) {
                     return null;
                 }
@@ -928,6 +966,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * {@link Concourse#ping() Ping} the database and return {@code true} if it
+     * is accessible.
+     * 
+     * @return the database ping status
+     */
+    public boolean ping() {
+        Concourse concourse = connections.request();
+        try {
+            return concourse.ping();
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Return the interface that exposes the properties of this {@link Runway}
      * instance.
      * 
@@ -953,7 +1007,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(records.length == 1) {
             Concourse concourse = connections.request();
             try {
-                return records[0].save(concourse, Sets.newHashSet(), this);
+                boolean success = records[0].save(concourse, Sets.newHashSet(),
+                        this);
+                if(success) {
+                    enqueueSaveNotification(records[0]);
+                }
+                return success;
             }
             finally {
                 connections.release(concourse);
@@ -974,7 +1033,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     record.saveWithinTransaction(concourse, seen);
                 }
                 concourse.clear("transaction_id", METADATA_RECORD);
-                return concourse.commit();
+                boolean success = concourse.commit();
+                if(success) {
+                    // Queue save notifications for all records
+                    for (Record record : records) {
+                        enqueueSaveNotification(record);
+                    }
+                }
+                return success;
             }
             catch (Throwable t) {
                 concourse.abort();
@@ -1029,6 +1095,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
         finally {
             connections.release(concourse);
+        }
+    }
+
+    /**
+     * Queue up a record for save notification processing.
+     * 
+     * @param record the record that was saved
+     */
+    /* package */ final void enqueueSaveNotification(Record record) {
+        if(saveListener != null) {
+            saveNotificationQueue.offer(record);
         }
     }
 
@@ -1307,13 +1384,90 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * 
      * @param clazz
      * @param id
+     * @param loaded
+     * @param existing
+     * @param data
+     * @return the loaded {@link Record} instance
+     */
+    private <T extends Record> T instantiate(Class<T> clazz, long id,
+            ConcurrentMap<Long, Record> loaded,
+            @Nullable Map<String, Set<Object>> data) {
+        return loadWithErrorHandling(clazz, id, loaded, connections, this,
+                data);
+    }
+
+    /**
+     * Internal method to help recursively load records by keeping tracking of
+     * which ones currently exist. Ultimately this method will load the Record
+     * that is contained within the specified {@code clazz} and
+     * has the specified {@code id}.
+     * <p>
+     * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
+     * used), multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation. If a cache is provided, the rules (e.g.
+     * expiration policy, etc) of said cache govern when multiple calls to this
+     * method return the same instance for the provided parameters or not.
+     * </p>
+     * 
+     * @param clazz
+     * @param id
      * @param existing
      * @param data
      * @return the loaded {@link Record} instance
      */
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             @Nullable Map<String, Set<Object>> data) {
-        return loadWithErrorHandling(clazz, id, connections, this, data);
+        return instantiate(clazz, id, new ConcurrentHashMap<>(), data);
+    }
+
+    /**
+     * Internal method to help recursively load records by keeping tracking of
+     * which ones currently exist. Ultimately this method will load the Record
+     * that is contained within the specified {@code clazz} and
+     * has the specified {@code id}.
+     * <p>
+     * Unlike {@link #instantiate(Class, long, TLongObjectHashMap, Map)} this
+     * method
+     * does not need to know the desired {@link Class} of the loaded
+     * {@link Record}.
+     * </p>
+     * <p>
+     * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
+     * used), multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation. If a cache is provided, the rules (e.g.
+     * expiration policy, etc) of said cache govern when multiple calls to this
+     * method return the same instance for the provided parameters or not.
+     * </p>
+     * 
+     * @param id
+     * @param loaded
+     * @param existing
+     * @param data
+     * @return the loaded {@link Record} instance
+     */
+    private <T extends Record> T instantiate(long id,
+            ConcurrentMap<Long, Record> loaded,
+            @Nullable Map<String, Set<Object>> data) {
+        if(data == null) {
+            // Since the desired class isn't specified, we must
+            // prematurely select the record's data to determine it.
+            Concourse connection = connections.request();
+            try {
+                data = connection.select(id);
+            }
+            finally {
+                connections.release(connection);
+            }
+        }
+        String section = (String) Iterables
+                .getLast(data.get(Record.SECTION_KEY));
+        Class<T> clazz = Reflection.getClassCasted(section);
+        return loadWithErrorHandling(clazz, id, loaded, connections, this,
+                data);
     }
 
     /**
@@ -1344,21 +1498,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> T instantiate(long id,
             @Nullable Map<String, Set<Object>> data) {
-        if(data == null) {
-            // Since the desired class isn't specified, we must
-            // prematurely select the record's data to determine it.
-            Concourse connection = connections.request();
-            try {
-                data = connection.select(id);
-            }
-            finally {
-                connections.release(connection);
-            }
-        }
-        String section = (String) Iterables
-                .getLast(data.get(Record.SECTION_KEY));
-        Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, connections, this, data);
+        return instantiate(id, new ConcurrentHashMap<>(), data);
     }
 
     /**
@@ -1371,8 +1511,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Map<Long, Map<String, Set<Object>>> data) {
+        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
-            return instantiate(clazz, entry.getKey(), entry.getValue());
+            return instantiate(clazz, entry.getKey(), loaded, entry.getValue());
         });
         return records;
     }
@@ -1388,12 +1529,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Set<Long> ids) {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
                 Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
                 data.set(stream(paths, ids));
             }
-            return instantiate(clazz, id, data.get().get(id));
+            return instantiate(clazz, id, loaded, data.get().get(id));
         });
         return records;
     }
@@ -1406,8 +1548,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> instantiateAll(
             Map<Long, Map<String, Set<Object>>> data) {
+        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
-            return instantiate(entry.getKey(), entry.getValue());
+            return instantiate(entry.getKey(), loaded, entry.getValue());
         });
         return records;
     }
@@ -1424,11 +1567,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> instantiateAll(Set<Long> ids) {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
                 data.set(stream(null, ids));
             }
-            return instantiate(id, data.get().get(id));
+            return instantiate(id, loaded, data.get().get(id));
         });
         return records;
     }
@@ -1632,6 +1776,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private int streamingReadBufferSize = 100;
         private String username = "admin";
         private boolean disablePreSelectLinkedRecords = false;
+        private Consumer<Record> saveListener = null;
 
         /**
          * Build the configured {@link Runway} and return the instance.
@@ -1654,6 +1799,38 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             if(disablePreSelectLinkedRecords) {
                 Reflection.set("supportsPreSelectLinkedRecords", false, db); // (authorized)
             }
+
+            // Initialize save notification components if a listener is provided
+            if(saveListener != null) {
+                db.saveListener = saveListener;
+                db.saveNotificationQueue = new LinkedBlockingQueue<>();
+                ThreadFactory threadFactory = r -> {
+                    Thread thread = new Thread(r,
+                            "runway-save-notification-worker");
+                    thread.setDaemon(true);
+                    return thread;
+                };
+                db.saveNotificationExecutor = Executors
+                        .newSingleThreadExecutor(threadFactory);
+                db.saveNotificationExecutor.submit(() -> {
+                    while (!Thread.currentThread().isInterrupted()) {
+                        try {
+                            Record record = db.saveNotificationQueue.take();
+                            try {
+                                db.saveListener.accept(record);
+                            }
+                            catch (Exception e) {
+                                // Silently swallow exceptions from the listener
+                            }
+                        }
+                        catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+                });
+            }
+
             return db;
         }
 
@@ -1721,6 +1898,49 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder onLoadFailure(
                 TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler) {
             this.onLoadFailureHandler = onLoadFailureHandler;
+            return this;
+        }
+
+        /**
+         * Provide a listener that will be called <strong>after</strong> a
+         * record is successfully saved.
+         * <p>
+         * Save listening is designed for implementing side-effects that occur
+         * after a record
+         * is successfully persisted to the database. This is ideal for
+         * operations such as:
+         * <ul>
+         * <li>Triggering notifications or events</li>
+         * <li>Updating external systems</li>
+         * <li>Logging or auditing changes</li>
+         * <li>Performing asynchronous tasks that depend on the record being
+         * saved</li>
+         * </ul>
+         * </p>
+         * <p>
+         * The listener is executed asynchronously in a dedicated thread to
+         * prevent blocking the main application flow. Any exceptions thrown by
+         * the listener are caught and suppressed to maintain application
+         * stability.
+         * </p>
+         * <p>
+         * <strong>Important:</strong> Save listeners should not modify the
+         * state of the saved record. If you need to modify a record during the
+         * save process, use the {@link Record#preSave} hook instead, which is
+         * called before the record is persisted.
+         * </p>
+         * <p>
+         * <strong>NOTE:</strong>The {@code listener} will receive
+         * <em>every</em> saved record, so it should perform the necessary
+         * internal checks (e.g., checking the record type or specific
+         * properties) before taking action.
+         * </p>
+         * 
+         * @param listener a consumer that processes saved records
+         * @return this builder
+         */
+        public Builder onSave(Consumer<Record> listener) {
+            this.saveListener = listener;
             return this;
         }
 
