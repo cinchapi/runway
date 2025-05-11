@@ -966,6 +966,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * {@link Concourse#ping() Ping} the database and return {@code true} if it
+     * is accessible.
+     * 
+     * @return the database ping status
+     */
+    public boolean ping() {
+        Concourse concourse = connections.request();
+        try {
+            return concourse.ping();
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Return the interface that exposes the properties of this {@link Runway}
      * instance.
      * 
