@@ -298,6 +298,7 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         Assert.assertTrue(employerPublicResult.containsKey("title"));
         Assert.assertTrue(employerPublicResult.containsKey("employer"));
 
+        System.out.println(employerPublicResult);
         Map<String, Object> employerData = (Map<String, Object>) employerPublicResult.get("employer");
         Assert.assertEquals("PrivateCorp", employerData.get("name"));
     }
@@ -356,6 +357,43 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         } catch (RestrictedAccessException e) {
             // Expected exception
         }
+    }
+
+    @Test
+    public void testReadOperationWithNonExistentFields() {
+        // This test covers the TODO concern: "check this won't be an issue for non-existing keys/stops"
+        // Expected behavior: non-existent fields should NOT throw RestrictedAccessException
+
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@email.com";
+
+        // Should succeed and return existing fields, ignoring non-existent ones
+        Map<String, Object> result = admin.read(
+                ImmutableSet.of("name", "nonExistentField"), candidate);
+
+        Assert.assertNotNull("Should return result without throwing exception", result);
+        Assert.assertTrue("Should contain existing field", result.containsKey("name"));
+        Assert.assertEquals("Jane Developer", result.get("name"));
+        Assert.assertFalse("Should not contain non-existent field",
+                result.containsKey("nonExistentField"));
+
+        // Test with navigation to non-existent fields
+        Job job = new Job();
+        job.title = "Software Engineer";
+        job.published = true;
+
+        Map<String, Object> navResult = admin.read(
+                ImmutableSet.of("title", "nonExistent.field"), job);
+
+        Assert.assertNotNull("Should return result for navigation with non-existent paths", navResult);
+        Assert.assertTrue("Should contain existing field", navResult.containsKey("title"));
+        Assert.assertEquals("Software Engineer", navResult.get("title"));
+        Assert.assertFalse("Should not contain non-existent navigation path",
+                navResult.containsKey("nonExistent"));
     }
 
     @Test
