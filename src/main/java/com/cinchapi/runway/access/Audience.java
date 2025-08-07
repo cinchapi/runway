@@ -265,187 +265,183 @@ public interface Audience extends DatabaseInterface {
     public default <T extends Record & AccessControl> Map<String, Object> frame(
             Collection<String> keys, T subject) {
         Preconditions.checkNotNull(keys, "keys cannot be null");
-        if($checkIfVisible().test(subject)) {
-            if(subject instanceof AccessControl) {
-                // Break up navigation keys into root components that must be
-                // resolved in this Record to their subsequent stops that must
-                // be resolved in linked Records
-                Map<String, Set<String>> roots = new HashMap<>();
-                for (String key : keys) {
-                    String[] toks = key.split("\\.");
-                    // Handle negative rules: negative keys apply only to the
-                    // root level and are not distributed to nested paths
-                    String root = toks[0];
-                    String next = Stream.of(toks).skip(1)
-                            .collect(Collectors.joining("."));
-                    Set<String> nexts = roots.computeIfAbsent(root,
-                            $ -> new HashSet<>());
-                    if(!next.isEmpty()) {
-                        nexts.add(next);
-                    }
-                }
-                /*
-                 * Determine the keys to map based on what is requested and what is
-                 * readable for the #audience.
-                 *
-                 * @formatter:off
-                 * |-----------|----------|-----------------------------------------------------------|
-                 * | Requested | Readable | Result                                                    |
-                 * |-----------|----------|-----------------------------------------------------------|
-                 * | All       | All      | data = Record.map()                                       |
-                 * | All       | None     | data = an empty map                                       |
-                 * | All       | Some     | data = Record.map(keys) with the keys that are readable   |
-                 * | Some      | All      | data = Record.map(keys) with the keys that are requested  |
-                 * | Some      | None     | data = an empty Map                                       |
-                 * | Some      | Some     | data = Record.map(keys) with the intersection of the keys |
-                 * |                      | that are readable and requested                           |
-                 * |-----------|----------|-----------------------------------------------------------|
-                 * @formatter:on
-                 */
-                Set<String> requested = roots.keySet();
-                Set<String> readable = this instanceof Anonymous
-                        ? subject.$readableByAnonymous()
-                        : subject.$readableBy(this);
-                Map<String, Object> data;
-                if(readable == NO_KEYS) {
-                    data = ImmutableMap.of();
-                }
-                else if(requested.equals(ALL_KEYS)
-                        && readable.equals(ALL_KEYS)) {
-                    data = ((Record) this).map();
-                }
-                else {
-                    if(requested.equals(ALL_KEYS)
-                            && !readable.equals(ALL_KEYS)) {
-                        String[] visible = readable.toArray(Array.containing());
-                        data = subject.map(visible);
-                    }
-                    else if(!requested.equals(ALL_KEYS)
-                            && readable.equals(ALL_KEYS)) {
-                        String[] visible = requested
-                                .toArray(Array.containing());
-                        data = subject.map(visible);
-                    }
-                    else {
-                        Set<String> allowed = new HashSet<>();
-                        Set<String> denied = new HashSet<>();
-                        for (String key : readable) {
-                            if(key.startsWith("-")) {
-                                denied.add(key.substring(1));
-                            }
-                            else {
-                                allowed.add(key);
-                            }
-                        }
-                        String[] visible = requested.stream()
-                                .filter(key -> allowed.isEmpty()
-                                        || allowed.contains(key))
-                                .filter(key -> !denied.contains(key))
-                                .toArray(String[]::new);
-                        if(visible.length == 0) {
-                            // No keys are visible, but don't call Record#map
-                            // with an empty array because doing so will return
-                            // all data
-                            data = ImmutableMap.of();
-                        }
-                        else {
-                            data = subject.map(visible);
-                        }
-                    }
-                }
-                // Go through each value in the data and replace it with a
-                // subsequent call to #frame (via the Audience, if possible)
-                // using the next stops from the root. We use a ThreadLocal to
-                // keep track of records we've already seen so we don't have to
-                // have an overloaded method that takes #seen as a recursive
-                // parameter. In Java 9+ we could probably switch to that by
-                // using a private interface method.
-                Multiset<Record> seen = PREVIOUSLY_FRAMED_RECORDS.get();
-                seen.add(subject);
-                data = data.entrySet().stream().map(e -> {
-                    String key = e.getKey();
-                    Object value = e.getValue();
-                    Set<String> nexts = roots.get(key);
-                    if(nexts != null && nexts.isEmpty()) {
-                        // This is a terminal value
-                        return e;
-                    }
-                    else {
-                        String[] remaining = nexts != null
-                                ? nexts.toArray(Array.containing())
-                                : Array.containing();
-                        if(seen.contains(value)) {
-                            value = ((Record) value).id() + " (recursive link)";
-                        }
-                        else if(value instanceof AccessControl) {
-                            Record record = (Record) value;
-                            seen.add(record);
-                            value = frame(ImmutableSet.copyOf(remaining),
-                                    (T) record);
-                            seen.remove(record);
-                        }
-                        else if(value instanceof Record) {
-                            Record record = (Record) value;
-                            seen.add(record);
-                            value = record.map(remaining);
-                            seen.remove(record);
-                        }
-                        else if(Sequences.isSequence(value)) {
-                            value = Sequences.stream(value).map(item -> {
-                                if(seen.contains(item)) {
-                                    item = ((Record) item).id()
-                                            + " (recursive link)";
-                                }
-                                else {
-                                    if(item instanceof AccessControl) {
-                                        Record record = (Record) item;
-                                        seen.add(record);
-                                        item = frame(
-                                                ImmutableSet.copyOf(remaining),
-                                                (T) record);
-                                        seen.remove(record);
-                                    }
-                                    else if(item instanceof Record) {
-                                        Record record = (Record) item;
-                                        seen.add(record);
-                                        item = record.map(remaining);
-                                        seen.remove(record);
-                                    }
-                                }
-                                return item;
-                            }).collect(Collectors.toList());
-                        }
-                        else if(nexts != null) {
-                            // This is an attempt to navigate a non-navigable
-                            // value
-                            value = null;
-                        }
-                        return new SimpleEntry<>(key, value);
-                    }
-                }).collect(Association::of, (map, entry) -> {
-                    String k = entry.getKey();
-                    Object v = entry.getValue();
-                    if(v != null) {
-                        map.merge(k, v, MergeStrategies::upsert);
-                    }
-                    else {
-                        map.put(k, v);
-                    }
-                }, MergeStrategies::upsert);
-                seen.remove(subject);
-                if(seen.isEmpty()) {
-                    PREVIOUSLY_FRAMED_RECORDS.remove();
-                }
-                return data;
-            }
-            else {
-                return subject.map(keys.toArray(Array.containing()));
-            }
-        }
-        else {
+        if(!$checkIfVisible().test(subject)) {
             return null;
         }
-
+        else if(subject instanceof AccessControl) {
+            // Break up navigation keys into root components that must be
+            // resolved in this Record to their subsequent stops that must
+            // be resolved in linked Records
+            Map<String, Set<String>> roots = new HashMap<>();
+            for (String key : keys) {
+                String[] toks = key.split("\\.");
+                // Handle negative rules: negative keys apply only to the
+                // root level and are not distributed to nested paths
+                String root = toks[0];
+                String next = Stream.of(toks).skip(1)
+                        .collect(Collectors.joining("."));
+                Set<String> nexts = roots.computeIfAbsent(root,
+                        $ -> new HashSet<>());
+                if(!next.isEmpty()) {
+                    nexts.add(next);
+                }
+            }
+            /*
+             * Determine the keys to map based on what is requested and what is
+             * readable for the #audience.
+             *
+             * @formatter:off
+             * |-----------|----------|-----------------------------------------------------------|
+             * | Requested | Readable | Result                                                    |
+             * |-----------|----------|-----------------------------------------------------------|
+             * | All       | All      | data = Record.map()                                       |
+             * | All       | None     | data = an empty map                                       |
+             * | All       | Some     | data = Record.map(keys) with the keys that are readable   |
+             * | Some      | All      | data = Record.map(keys) with the keys that are requested  |
+             * | Some      | None     | data = an empty Map                                       |
+             * | Some      | Some     | data = Record.map(keys) with the intersection of the keys |
+             * |                      | that are readable and requested                           |
+             * |-----------|----------|-----------------------------------------------------------|
+             * @formatter:on
+             */
+            Set<String> requested = roots.keySet();
+            Set<String> readable = this instanceof Anonymous
+                    ? subject.$readableByAnonymous()
+                    : subject.$readableBy(this);
+            Map<String, Object> data;
+            if(readable == NO_KEYS) {
+                RESTRICTED_ACCESS_DETECTED.set(true);
+                data = ImmutableMap.of();
+            }
+            else if(requested.equals(ALL_KEYS) && readable.equals(ALL_KEYS)) {
+                data = ((Record) this).map();
+            }
+            else {
+                if(requested.equals(ALL_KEYS) && !readable.equals(ALL_KEYS)) {
+                    String[] visible = readable.toArray(Array.containing());
+                    data = subject.map(visible);
+                }
+                else if(!requested.equals(ALL_KEYS)
+                        && readable.equals(ALL_KEYS)) {
+                    String[] visible = requested.toArray(Array.containing());
+                    data = subject.map(visible);
+                }
+                else {
+                    Set<String> allowed = new HashSet<>();
+                    Set<String> denied = new HashSet<>();
+                    for (String key : readable) {
+                        if(key.startsWith("-")) {
+                            denied.add(key.substring(1));
+                        }
+                        else {
+                            allowed.add(key);
+                        }
+                    }
+                    String[] visible = requested.stream().filter(
+                            key -> allowed.isEmpty() || allowed.contains(key))
+                            .filter(key -> !denied.contains(key))
+                            .toArray(String[]::new);
+                    if(visible.length < requested.size()) {
+                        RESTRICTED_ACCESS_DETECTED.set(true);
+                    }
+                    if(visible.length == 0) {
+                        // No keys are visible, but don't call Record#map
+                        // with an empty array because doing so will return
+                        // all data
+                        data = ImmutableMap.of();
+                    }
+                    else {
+                        data = subject.map(visible);
+                    }
+                }
+            }
+            // Go through each value in the data and replace it with a
+            // subsequent call to #frame (via the Audience, if possible)
+            // using the next stops from the root. We use a ThreadLocal to
+            // keep track of records we've already seen so we don't have to
+            // have an overloaded method that takes #seen as a recursive
+            // parameter. In Java 9+ we could probably switch to that by
+            // using a private interface method.
+            Multiset<Record> seen = PREVIOUSLY_FRAMED_RECORDS.get();
+            seen.add(subject);
+            data = data.entrySet().stream().map(e -> {
+                String key = e.getKey();
+                Object value = e.getValue();
+                Set<String> nexts = roots.get(key);
+                if(nexts != null && nexts.isEmpty()) {
+                    // This is a terminal value
+                    return e;
+                }
+                else {
+                    String[] remaining = nexts != null
+                            ? nexts.toArray(Array.containing())
+                            : Array.containing();
+                    if(seen.contains(value)) {
+                        value = ((Record) value).id() + " (recursive link)";
+                    }
+                    else if(value instanceof AccessControl) {
+                        Record record = (Record) value;
+                        seen.add(record);
+                        value = frame(ImmutableSet.copyOf(remaining),
+                                (T) record);
+                        seen.remove(record);
+                    }
+                    else if(value instanceof Record) {
+                        Record record = (Record) value;
+                        seen.add(record);
+                        value = record.map(remaining);
+                        seen.remove(record);
+                    }
+                    else if(Sequences.isSequence(value)) {
+                        value = Sequences.stream(value).map(item -> {
+                            if(seen.contains(item)) {
+                                item = ((Record) item).id()
+                                        + " (recursive link)";
+                            }
+                            else {
+                                if(item instanceof AccessControl) {
+                                    Record record = (Record) item;
+                                    seen.add(record);
+                                    item = frame(ImmutableSet.copyOf(remaining),
+                                            (T) record);
+                                    seen.remove(record);
+                                }
+                                else if(item instanceof Record) {
+                                    Record record = (Record) item;
+                                    seen.add(record);
+                                    item = record.map(remaining);
+                                    seen.remove(record);
+                                }
+                            }
+                            return item;
+                        }).collect(Collectors.toList());
+                    }
+                    else if(nexts != null) {
+                        // This is an attempt to navigate a non-navigable
+                        // value
+                        value = null;
+                    }
+                    return new SimpleEntry<>(key, value);
+                }
+            }).collect(Association::of, (map, entry) -> {
+                String k = entry.getKey();
+                Object v = entry.getValue();
+                if(v != null) {
+                    map.merge(k, v, MergeStrategies::upsert);
+                }
+                else {
+                    map.put(k, v);
+                }
+            }, MergeStrategies::upsert);
+            seen.remove(subject);
+            if(seen.isEmpty()) {
+                PREVIOUSLY_FRAMED_RECORDS.remove();
+            }
+            return data;
+        }
+        else {
+            return subject.map(keys.toArray(Array.containing()));
+        }
     }
 
     /**
@@ -486,35 +482,17 @@ public interface Audience extends DatabaseInterface {
     public default <T extends Record & AccessControl> Map<String, Object> read(
             Collection<String> keys, T record)
             throws RestrictedAccessException {
-        // NOTE: these rules only apply to top-level access and don't account
-        // for potential restrictions on nested stops in a navigation key
-        Set<String> rules = this instanceof Anonymous
-                ? record.$readableByAnonymous()
-                : record.$readableBy(this);
-        if(isPermittedAccess(keys, rules)) {
+        try {
             Map<String, Object> data = frame(keys, record);
-            if(keys.equals(ALL_KEYS) || keys == NO_KEYS) {
-                // In this case, we do not need to check nested data since there
-                // was no explicit requests for keys that might be restricted.
-                return data;
+            if(RESTRICTED_ACCESS_DETECTED.get()) {
+                throw new RestrictedAccessException();
             }
             else {
-                // If the frame filtered out any of the explicitly requested
-                // keys/paths, assume it was because of an access restriction
-                // TODO: check this won't be an issue for non-existing
-                // keys/stops
-                Association flattened = Association.ensure(data);
-                Set<String> paths = flattened.paths();
-                for (String key : keys) {
-                    if(!paths.contains(key)) {
-                        throw new RestrictedAccessException();
-                    }
-                }
                 return data;
             }
         }
-        else {
-            throw new RestrictedAccessException();
+        finally {
+            RESTRICTED_ACCESS_DETECTED.remove();
         }
     }
 
@@ -535,15 +513,8 @@ public interface Audience extends DatabaseInterface {
      */
     public default <T extends Record & AccessControl> Object read(String key,
             T record) throws RestrictedAccessException {
-        Set<String> rules = this instanceof Anonymous
-                ? record.$readableByAnonymous()
-                : record.$readableBy(this);
-        if(isPermittedAccess(ImmutableSet.of(key), rules)) {
-            return record.get(key);
-        }
-        else {
-            throw new RestrictedAccessException();
-        }
+        Map<String, Object> data = frame(ImmutableSet.of(key), record);
+        return data.getOrDefault(key, null);
     }
 
     /**

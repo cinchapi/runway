@@ -28,7 +28,8 @@ import com.google.common.collect.Multiset;
  * Utility class for evaluating and applying access control rules within the
  * access control framework.
  * <p>
- * {@link AccessControlSupport} provides static methods for processing access rule sets
+ * {@link AccessControlSupport} provides static methods for processing access
+ * rule sets
  * that define which fields an {@link Audience} can access in
  * {@link AccessControl access controlled} records. Rules support both
  * allowlist (positive) and denylist (negative) patterns, where negative rules
@@ -114,5 +115,13 @@ class AccessControlSupport {
      */
     public static final ThreadLocal<Multiset<Record>> PREVIOUSLY_FRAMED_RECORDS = ThreadLocal
             .withInitial(HashMultiset::create);
+
+    /**
+     * Return a {@link ThreadLocal} variable to keep track of whether there was
+     * an attempt to access restricted data during the
+     * {@link Audience#frame(java.util.Collection, Record)} routine.
+     */
+    public static final ThreadLocal<Boolean> RESTRICTED_ACCESS_DETECTED = ThreadLocal
+            .withInitial(() -> false);
 
 }

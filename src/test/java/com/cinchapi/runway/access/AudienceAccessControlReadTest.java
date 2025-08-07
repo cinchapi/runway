@@ -361,9 +361,6 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
 
     @Test
     public void testReadOperationWithNonExistentFields() {
-        // This test covers the TODO concern: "check this won't be an issue for non-existing keys/stops"
-        // Expected behavior: non-existent fields should NOT throw RestrictedAccessException
-
         Admin admin = new Admin();
         admin.name = "System Admin";
 
