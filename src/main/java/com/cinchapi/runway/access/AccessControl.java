@@ -87,29 +87,6 @@ import com.google.common.collect.ImmutableSet;
 public interface AccessControl {
 
     /**
-     * Authorize that the specified {@link Audience} is permitted to create this
-     * {@link Record}.
-     * <p>
-     * This method verifies creation permissions before allowing the
-     * {@link Record} to be considered valid. It should be called after
-     * instantiation but before saving.
-     * </p>
-     *
-     * @param audience the {@link Audience} attempting to create the
-     *            {@link Record}, or {@code null} for anonymous access
-     * @throws RestrictedAccessException if the {@link Audience} is not
-     *             permitted to create this {@link Record}
-     */
-    public default void authorize(@Nullable Audience audience)
-            throws RestrictedAccessException {
-        if(((audience == null || audience instanceof Anonymous)
-                && !$isCreatableByAnonymous())
-                || (audience != null && !$isCreatableBy(audience))) {
-            throw new RestrictedAccessException();
-        }
-    }
-
-    /**
      * Signifies access to all fields in a {@link Record}.
      */
     public static final Set<String> ALL_KEYS = ImmutableSet.of();
@@ -118,15 +95,6 @@ public interface AccessControl {
      * Used to indicate that no fields are accessible.
      */
     public static final Set<String> NO_KEYS = null;
-
-    /**
-     * Determine whether anonymous {@link Audience audiences} are permitted to
-     * create instances of this {@link Record} type.
-     *
-     * @return {@code true} if anonymous creation is allowed, {@code false}
-     *         otherwise
-     */
-    public boolean $isCreatableByAnonymous();
 
     /**
      * Determine whether the specified {@link Audience} is permitted to create
@@ -139,6 +107,15 @@ public interface AccessControl {
     public boolean $isCreatableBy(@Nonnull Audience audience);
 
     /**
+     * Determine whether anonymous {@link Audience audiences} are permitted to
+     * create instances of this {@link Record} type.
+     *
+     * @return {@code true} if anonymous creation is allowed, {@code false}
+     *         otherwise
+     */
+    public boolean $isCreatableByAnonymous();
+
+    /**
      * Determine whether the specified {@link Audience} is permitted to delete
      * this {@link Record}.
      *
@@ -149,14 +126,23 @@ public interface AccessControl {
     public boolean $isDeletableBy(@Nonnull Audience audience);
 
     /**
-     * Return the set of field keys that anonymous {@link Audience audiences}
-     * are permitted to read from this {@link Record}.
+     * Determine whether the specified {@link Audience} is permitted to discover
+     * the existence of this {@link Record}.
      *
-     * @return a set of readable field keys, {@link #ALL_KEYS} for all fields,
-     *         or {@link #NO_KEYS} for no access
+     * @param audience the {@link Audience} to check
+     * @return {@code true} if the {@link Audience} can discover this
+     *         {@link Record}, {@code false} otherwise
      */
-    @Nullable
-    public Set<String> $readableByAnonymous();
+    public boolean $isDiscoverableBy(@Nonnull Audience audience);
+
+    /**
+     * Determine whether anonymous {@link Audience audiences} are permitted to
+     * discover the existence of this {@link Record}.
+     *
+     * @return {@code true} if anonymous discovery is allowed, {@code false}
+     *         otherwise
+     */
+    public boolean $isDiscoverableByAnonymous();
 
     /**
      * Return the set of field keys that the specified {@link Audience} is
@@ -168,6 +154,16 @@ public interface AccessControl {
      */
     @Nullable
     public Set<String> $readableBy(@Nonnull Audience audience);
+
+    /**
+     * Return the set of field keys that anonymous {@link Audience audiences}
+     * are permitted to read from this {@link Record}.
+     *
+     * @return a set of readable field keys, {@link #ALL_KEYS} for all fields,
+     *         or {@link #NO_KEYS} for no access
+     */
+    @Nullable
+    public Set<String> $readableByAnonymous();
 
     /**
      * Return the set of field keys that the specified {@link Audience} is
@@ -191,84 +187,74 @@ public interface AccessControl {
     public Set<String> $writableByAnonymous();
 
     /**
-     * Determine whether the specified {@link Audience} is permitted to discover
-     * the existence of this {@link Record}.
-     *
-     * @param audience the {@link Audience} to check
-     * @return {@code true} if the {@link Audience} can discover this
-     *         {@link Record}, {@code false} otherwise
-     */
-    public boolean $isDiscoverableBy(@Nonnull Audience audience);
-
-    /**
-     * Determine whether anonymous {@link Audience audiences} are permitted to
-     * discover the existence of this {@link Record}.
-     *
-     * @return {@code true} if anonymous discovery is allowed, {@code false}
-     *         otherwise
-     */
-    public boolean $isDiscoverableByAnonymous();
-
-    /**
-     * Write the {@code value} to the {@code key} in this {@link Record} on
-     * behalf of the specified {@link Audience}.
+     * Authorize that the specified {@link Audience} is permitted to create this
+     * {@link Record}.
      * <p>
-     * This is a convenience method that delegates to
-     * {@link Audience#write(String, Object, Record)}.
+     * This method verifies creation permissions before allowing the
+     * {@link Record} to be considered valid. It should be called after
+     * instantiation but before saving.
      * </p>
      *
-     * @param audience the {@link Audience} performing the write operation, or
-     *            {@code null} for anonymous access
-     * @param key the field to write to
-     * @param value the data to write
+     * @param audience the {@link Audience} attempting to create the
+     *            {@link Record}, or {@code null} for anonymous access
      * @throws RestrictedAccessException if the {@link Audience} is not
-     *             permitted to write to the {@code key}
+     *             permitted to create this {@link Record}
      */
-    public default void writeAs(@Nullable Audience audience, String key,
-            Object value) {
-        audience = audience == null ? Audience.anonymous() : audience;
-        audience.write(key, value, $this());
+    public default void authorize(@Nullable Audience audience)
+            throws RestrictedAccessException {
+        if(((audience == null || audience instanceof Anonymous)
+                && !$isCreatableByAnonymous())
+                || (audience != null && !$isCreatableBy(audience))) {
+            throw new RestrictedAccessException();
+        }
     }
 
     /**
-     * Write the {@code data} to this {@link Record} on behalf of the specified
-     * {@link Audience}.
+     * Delete this {@link Record} on behalf of the specified {@link Audience}.
+     *
+     * @param audience the {@link Audience} performing the delete operation, or
+     *            {@code null} for anonymous access
+     * @throws RestrictedAccessException if the {@link Audience} is not
+     *             permitted to delete this {@link Record}
+     */
+    public void deleteAs(@Nullable Audience audience);
+
+    /**
+     * Read a "frame" of data from this {@link Record} containing only the
+     * information that is visible to the specified {@link Audience}.
      * <p>
      * This is a convenience method that delegates to
-     * {@link Audience#write(Map, Record)}.
+     * {@link Audience#frame(Record)}.
      * </p>
      *
-     * @param audience the {@link Audience} performing the write operation, or
+     * @param audience the {@link Audience} performing the frame operation, or
      *            {@code null} for anonymous access
-     * @param data a map from keys to the values to write
-     * @throws RestrictedAccessException if the {@link Audience} is not
-     *             permitted to write to one or more of the keys in the
-     *             {@code data}
+     * @return a map of visible data or {@code null} if the {@link Record} is
+     *         not discoverable at all by the {@link Audience}
      */
-    public default void writeAs(@Nullable Audience audience,
-            Map<String, Object> data) {
+    public default Map<String, Object> frameAs(@Nullable Audience audience) {
         audience = audience == null ? Audience.anonymous() : audience;
-        audience.write(data, $this());
+        return audience.frame($this());
     }
 
     /**
-     * Read the value from the {@code key} in this {@link Record} on behalf of
-     * the specified {@link Audience}.
+     * Read a "frame" of data from this {@link Record} containing only the
+     * information that is visible to the specified {@link Audience}.
      * <p>
      * This is a convenience method that delegates to
-     * {@link Audience#read(String, Record)}.
+     * {@link Audience#frame(Collection, Record)}.
      * </p>
      *
-     * @param audience the {@link Audience} performing the read operation, or
+     * @param audience the {@link Audience} performing the frame operation, or
      *            {@code null} for anonymous access
-     * @param key the field to read from
-     * @return the value of the {@code key}
-     * @throws RestrictedAccessException if the {@link Audience} is not
-     *             permitted to read the {@code key}
+     * @param keys the fields to read from
+     * @return a map of visible data or {@code null} if the {@link Record} is
+     *         not discoverable at all by the {@link Audience}
      */
-    public default Object readAs(@Nullable Audience audience, String key) {
+    public default Map<String, Object> frameAs(@Nullable Audience audience,
+            Collection<String> keys) {
         audience = audience == null ? Audience.anonymous() : audience;
-        return audience.read(key, $this());
+        return audience.frame(keys, $this());
     }
 
     /**
@@ -293,52 +279,66 @@ public interface AccessControl {
     }
 
     /**
-     * Read a "frame" of data from this {@link Record} containing only the
-     * information that is visible to the specified {@link Audience}.
+     * Read the value from the {@code key} in this {@link Record} on behalf of
+     * the specified {@link Audience}.
      * <p>
      * This is a convenience method that delegates to
-     * {@link Audience#frame(Collection, Record)}.
+     * {@link Audience#read(String, Record)}.
      * </p>
      *
-     * @param audience the {@link Audience} performing the frame operation, or
+     * @param audience the {@link Audience} performing the read operation, or
      *            {@code null} for anonymous access
-     * @param keys the fields to read from
-     * @return a map of visible data or {@code null} if the {@link Record} is
-     *         not discoverable at all by the {@link Audience}
-     */
-    public default Map<String, Object> frameAs(@Nullable Audience audience,
-            Collection<String> keys) {
-        audience = audience == null ? Audience.anonymous() : audience;
-        return audience.frame(keys, $this());
-    }
-
-    /**
-     * Read a "frame" of data from this {@link Record} containing only the
-     * information that is visible to the specified {@link Audience}.
-     * <p>
-     * This is a convenience method that delegates to
-     * {@link Audience#frame(Record)}.
-     * </p>
-     *
-     * @param audience the {@link Audience} performing the frame operation, or
-     *            {@code null} for anonymous access
-     * @return a map of visible data or {@code null} if the {@link Record} is
-     *         not discoverable at all by the {@link Audience}
-     */
-    public default Map<String, Object> frameAs(@Nullable Audience audience) {
-        audience = audience == null ? Audience.anonymous() : audience;
-        return audience.frame($this());
-    }
-
-    /**
-     * Delete this {@link Record} on behalf of the specified {@link Audience}.
-     *
-     * @param audience the {@link Audience} performing the delete operation, or
-     *            {@code null} for anonymous access
+     * @param key the field to read from
+     * @return the value of the {@code key}
      * @throws RestrictedAccessException if the {@link Audience} is not
-     *             permitted to delete this {@link Record}
+     *             permitted to read the {@code key}
      */
-    public void deleteAs(@Nullable Audience audience);
+    public default Object readAs(@Nullable Audience audience, String key) {
+        audience = audience == null ? Audience.anonymous() : audience;
+        return audience.read(key, $this());
+    }
+
+    /**
+     * Write the {@code data} to this {@link Record} on behalf of the specified
+     * {@link Audience}.
+     * <p>
+     * This is a convenience method that delegates to
+     * {@link Audience#write(Map, Record)}.
+     * </p>
+     *
+     * @param audience the {@link Audience} performing the write operation, or
+     *            {@code null} for anonymous access
+     * @param data a map from keys to the values to write
+     * @throws RestrictedAccessException if the {@link Audience} is not
+     *             permitted to write to one or more of the keys in the
+     *             {@code data}
+     */
+    public default void writeAs(@Nullable Audience audience,
+            Map<String, Object> data) {
+        audience = audience == null ? Audience.anonymous() : audience;
+        audience.write(data, $this());
+    }
+
+    /**
+     * Write the {@code value} to the {@code key} in this {@link Record} on
+     * behalf of the specified {@link Audience}.
+     * <p>
+     * This is a convenience method that delegates to
+     * {@link Audience#write(String, Object, Record)}.
+     * </p>
+     *
+     * @param audience the {@link Audience} performing the write operation, or
+     *            {@code null} for anonymous access
+     * @param key the field to write to
+     * @param value the data to write
+     * @throws RestrictedAccessException if the {@link Audience} is not
+     *             permitted to write to the {@code key}
+     */
+    public default void writeAs(@Nullable Audience audience, String key,
+            Object value) {
+        audience = audience == null ? Audience.anonymous() : audience;
+        audience.write(key, value, $this());
+    }
 
     /**
      * Return this instance cast as a {@link Record}.
