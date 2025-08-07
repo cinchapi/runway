@@ -148,14 +148,6 @@ public interface AccessControl {
      */
     public boolean $isDeletableBy(@Nonnull Audience audience);
 
-    /*
-     * To replicate iXL Lens behaviour, the base class that implements
-     * AccessControl can have logic to check its type
-     * The way that Runway will implement this is that it will first create an
-     * instance of the class and then it will check the creatable permissions on
-     * it for the audience
-     */
-
     /**
      * Return the set of field keys that anonymous {@link Audience audiences}
      * are permitted to read from this {@link Record}.

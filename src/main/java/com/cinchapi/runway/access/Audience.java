@@ -17,6 +17,7 @@ package com.cinchapi.runway.access;
 
 import static com.cinchapi.runway.access.AccessControl.ALL_KEYS;
 import static com.cinchapi.runway.access.AccessControl.NO_KEYS;
+import static com.cinchapi.runway.access.AccessControlSupport.*;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -41,11 +42,10 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Realms;
 import com.cinchapi.runway.Record;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
-
-import com.cinchapi.runway.cache.Signature;
 
 /**
  * A {@link Record} that can "perform" database operations on other records
@@ -264,14 +264,9 @@ public interface Audience extends DatabaseInterface {
     @Nullable
     public default <T extends Record & AccessControl> Map<String, Object> frame(
             Collection<String> keys, T subject) {
+        Preconditions.checkNotNull(keys, "keys cannot be null");
         if($checkIfVisible().test(subject)) {
             if(subject instanceof AccessControl) {
-                Map<Signature, Map<String, Object>> cache = Framing.CACHE.get();
-                Signature signature = new Signature((Record) this, keys);
-                Map<String, Object> data = cache.get(signature);
-                if(data != null) {
-                    return data;
-                }
                 // Break up navigation keys into root components that must be
                 // resolved in this Record to their subsequent stops that must
                 // be resolved in linked Records
@@ -311,6 +306,7 @@ public interface Audience extends DatabaseInterface {
                 Set<String> readable = this instanceof Anonymous
                         ? subject.$readableByAnonymous()
                         : subject.$readableBy(this);
+                Map<String, Object> data;
                 if(readable == NO_KEYS) {
                     data = ImmutableMap.of();
                 }
@@ -358,10 +354,14 @@ public interface Audience extends DatabaseInterface {
                     }
                 }
                 // Go through each value in the data and replace it with a
-                // subsequent call to #map (via AccessControl, if possible)
-                // using the next stops from the root.
-                Multiset<Record> seen = Framing.PROCESSED.get();
-                seen.add((Record) this);
+                // subsequent call to #frame (via the Audience, if possible)
+                // using the next stops from the root. We use a ThreadLocal to
+                // keep track of records we've already seen so we don't have to
+                // have an overloaded method that takes #seen as a recursive
+                // parameter. In Java 9+ we could probably switch to that by
+                // using a private interface method.
+                Multiset<Record> seen = PREVIOUSLY_FRAMED_RECORDS.get();
+                seen.add(subject);
                 data = data.entrySet().stream().map(e -> {
                     String key = e.getKey();
                     Object value = e.getValue();
@@ -432,11 +432,10 @@ public interface Audience extends DatabaseInterface {
                         map.put(k, v);
                     }
                 }, MergeStrategies::upsert);
-                seen.remove((Record) this);
+                seen.remove(subject);
                 if(seen.isEmpty()) {
-                    Framing.PROCESSED.remove();
+                    PREVIOUSLY_FRAMED_RECORDS.remove();
                 }
-                cache.put(signature, data);
                 return data;
             }
             else {
@@ -492,7 +491,7 @@ public interface Audience extends DatabaseInterface {
         Set<String> rules = this instanceof Anonymous
                 ? record.$readableByAnonymous()
                 : record.$readableBy(this);
-        if(AccessRules.permits(keys, rules)) {
+        if(isPermittedAccess(keys, rules)) {
             Map<String, Object> data = frame(keys, record);
             if(keys.equals(ALL_KEYS) || keys == NO_KEYS) {
                 // In this case, we do not need to check nested data since there
@@ -539,7 +538,7 @@ public interface Audience extends DatabaseInterface {
         Set<String> rules = this instanceof Anonymous
                 ? record.$readableByAnonymous()
                 : record.$readableBy(this);
-        if(AccessRules.permits(ImmutableSet.of(key), rules)) {
+        if(isPermittedAccess(ImmutableSet.of(key), rules)) {
             return record.get(key);
         }
         else {
@@ -568,7 +567,7 @@ public interface Audience extends DatabaseInterface {
         Set<String> rules = this instanceof Anonymous
                 ? record.$writableByAnonymous()
                 : record.$writableBy(this);
-        if(AccessRules.permits(data.keySet(), rules)) {
+        if(isPermittedAccess(data.keySet(), rules)) {
             record.set(data);
         }
         else {
@@ -596,7 +595,7 @@ public interface Audience extends DatabaseInterface {
         Set<String> rules = this instanceof Anonymous
                 ? record.$writableByAnonymous()
                 : record.$writableBy(this);
-        if(AccessRules.permits(ImmutableSet.of(key), rules)) {
+        if(isPermittedAccess(ImmutableSet.of(key), rules)) {
             record.set(key, value);
         }
         else {

@@ -20,11 +20,15 @@ import java.util.HashSet;
 import java.util.Set;
 import javax.annotation.Nullable;
 
+import com.cinchapi.runway.Record;
+import com.google.common.collect.HashMultiset;
+import com.google.common.collect.Multiset;
+
 /**
  * Utility class for evaluating and applying access control rules within the
  * access control framework.
  * <p>
- * {@link AccessRules} provides static methods for processing access rule sets
+ * {@link AccessControlSupport} provides static methods for processing access rule sets
  * that define which fields an {@link Audience} can access in
  * {@link AccessControl access controlled} records. Rules support both
  * allowlist (positive) and denylist (negative) patterns, where negative rules
@@ -48,7 +52,7 @@ import javax.annotation.Nullable;
  *
  * @author Jeff Nelson
  */
-class AccessRules {
+class AccessControlSupport {
 
     /**
      * Check whether the {@code requested} keys are permitted by the access
@@ -72,7 +76,7 @@ class AccessRules {
      * @return {@code true} if all requested keys are permitted by the rules,
      *         {@code false} otherwise
      */
-    public static boolean permits(Collection<String> requested,
+    public static boolean isPermittedAccess(Collection<String> requested,
             @Nullable Set<String> rules) {
         if(rules == AccessControl.NO_KEYS) {
             return requested.isEmpty();
@@ -103,5 +107,12 @@ class AccessRules {
             return true;
         }
     }
+
+    /**
+     * Return a {@link ThreadLocal} variable to keep track of processed records
+     * during the {@link Audience#frame(java.util.Collection, Record)} routine.
+     */
+    public static final ThreadLocal<Multiset<Record>> PREVIOUSLY_FRAMED_RECORDS = ThreadLocal
+            .withInitial(HashMultiset::create);
 
 }
