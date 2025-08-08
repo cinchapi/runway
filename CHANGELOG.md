@@ -1,5 +1,28 @@
 # Changelog
 
+#### Version 1.11.0 (TBD)
+
+##### Access Control Framework
+Runway now provides a comprehensive access control framework that enables fine-grained, role-based access management for Record operations. This framework allows developers to define granular access rules that are automatically enforced across all database operations, ensuring data security and privacy at the application level.
+
+* **`AccessControl` Interface**: Records can implement the `AccessControl` interface to define granular access rules for creation, discovery, reading, writing, and deletion. The interface provides methods to specify field-level permissions based on the requesting audience:
+  * **Discovery Rules**: `$isDiscoverableBy(Audience)` and `$isDiscoverableByAnonymous()` control whether records can be found or seen at all
+  * **Field Access Rules**: `$readableBy(Audience)` and `$writableBy(Audience)` define which fields can be accessed for read and write operations
+  * **Lifecycle Rules**: `$isCreatableBy(Audience)` and `$isDeletableBy(Audience)` control record creation and deletion permissions
+  * **Rule Types**: Support for allowlists (`Set.of("field1", "field2")`), denylists (`Set.of("-field1", "-field2")`), combined rules, and special rule sets (`AccessControl.ALL_KEYS`, `AccessControl.NO_KEYS`)
+
+* **`Audience` Interface**: Represents the entity performing database operations and extends `DatabaseInterface` to provide access-controlled CRUD operations. Records implementing `Audience` can perform operations on behalf of themselves:
+  * **`read(keys, record)`**: Enforces access control and throws `RestrictedAccessException` if any requested field is denied
+  * **`frame(keys, record)`**: Filters out inaccessible data instead of throwing exceptions, returning only what the audience can access
+  * **`create(record)`**, **`write(keys, record)`**, **`delete(record)`**: Access-controlled CRUD operations that respect the target record's access rules
+  * **Navigation Support**: Automatic access control enforcement for dot-notation field access (e.g., `job.title`, `application.candidate.email`) where each navigation hop respects the target record's access rules
+
+* **`Anonymous` Audience**: Provides a singleton audience implementation for unauthenticated users, accessible via `Audience.anonymous()`. This enables differentiated access rules between authenticated and anonymous users.
+
+* **`RestrictedAccessException`**: A runtime exception thrown when an audience attempts unauthorized operations on access-controlled records, providing clear security boundary enforcement.
+
+This access control framework enables developers to build secure, multi-tenant applications with role-based access patterns while maintaining the simplicity and performance characteristics of Runway's existing Record operations.
+
 #### Version 1.10.0 (May 11, 2025)
 
 ##### Deletion Hooks

@@ -28,7 +28,7 @@ import com.google.common.collect.ImmutableMap;
  *
  * @author Jeff Nelson
  */
-abstract class RunwayBaseClientServerTest extends ClientServerTest {
+public abstract class RunwayBaseClientServerTest extends ClientServerTest {
 
     @Override
     protected String getServerVersion() {
