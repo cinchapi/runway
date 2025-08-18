@@ -314,7 +314,7 @@ public interface Audience extends DatabaseInterface {
                 data = ImmutableMap.of();
             }
             else if(requested.equals(ALL_KEYS) && readable.equals(ALL_KEYS)) {
-                data = ((Record) this).map();
+                data = subject.map();
             }
             else {
                 if(requested.equals(ALL_KEYS) && !readable.equals(ALL_KEYS)) {
