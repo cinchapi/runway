@@ -217,7 +217,10 @@ public interface AccessControl {
      * @throws RestrictedAccessException if the {@link Audience} is not
      *             permitted to delete this {@link Record}
      */
-    public void deleteAs(@Nullable Audience audience);
+    public default void deleteAs(@Nullable Audience audience) {
+        audience = audience == null ? Audience.anonymous() : audience;
+        audience.delete($this());
+    }
 
     /**
      * Read a "frame" of data from this {@link Record} containing only the
