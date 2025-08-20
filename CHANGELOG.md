@@ -23,6 +23,28 @@ Runway now provides a comprehensive access control framework that enables fine-g
 
 This access control framework enables developers to build secure, multi-tenant applications with role-based access patterns while maintaining the simplicity and performance characteristics of Runway's existing Record operations.
 
+##### Interface Default Method Support for Annotations
+Runway now recognizes `@Derived` and `@Computed` annotations on interface default methods, allowing implementing Records to inherit these property definitions without requiring explicit method overrides.
+
+* **Reusable Property Definitions**: This enables creating interfaces that define common derived or computed properties across multiple Record types
+
+##### Pluggable ID Support
+Runway now allows Records to provide a custom "id" dynamic property that will be returned instead of the database ID for calls to `get("id")`, `map()`, and other data access methods.
+
+* **Database ID Preservation**: The actual database ID remains unchanged and is always accessible using the `id()` method
+* **Fallback Behavior**: If no dynamic "id" property is provided, the database ID is still returned for that key
+
+##### Data Priority Consistency Fix
+Fixed a bug where there was inconsistent priorities in the order of data returned from `get()` vs `map()` operations.
+
+* **Priority Order Standardization**: The priority order for data resolution has been standardized across both `get()` and `map()` operations:
+  * **Dynamic data** (highest priority)
+  * **Intrinsic data**
+  * **Computed data**
+  * **Derived data** (lowest priority)
+* **Previous Inconsistency**: Previously, `get()` used the order: dynamic → intrinsic → derived → computed, while `map()` used: dynamic → intrinsic → computed → derived
+* **Impact**: This fix resolves issues that occurred when the same key was used in both computed and derived data, ensuring consistent behavior across all data access methods
+
 #### Version 1.10.0 (May 11, 2025)
 
 ##### Deletion Hooks

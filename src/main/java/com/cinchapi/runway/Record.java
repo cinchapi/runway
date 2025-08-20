@@ -919,7 +919,7 @@ public abstract class Record implements Comparable<Record> {
     @SuppressWarnings("unchecked")
     public <T> T get(String key) {
         if(key.equalsIgnoreCase("id")) {
-            return (T) new Long(id);
+            return (T) data().get(key);
         }
         else {
             String[] stops = key.split("\\.");
@@ -1953,7 +1953,11 @@ public abstract class Record implements Comparable<Record> {
         if(computed == null) {
             computed = new HashMap<>();
             computed.putAll(computed());
-            for (Method method : Reflection.getAllDeclaredMethods(this)) {
+            Stream<Method> defaults = Arrays.stream(Reflection
+                    .getAllNonOverriddenDefaultInterfaceMethods(this));
+            Stream<Method> declareds = Arrays
+                    .stream(Reflection.getAllDeclaredMethods(this));
+            Stream.concat(defaults, declareds).forEach(method -> {
                 Computed annotation = method.getAnnotation(Computed.class);
                 if(annotation != null) {
                     if(method.getParameterCount() == 0) {
@@ -1961,15 +1965,23 @@ public abstract class Record implements Comparable<Record> {
                         if(key.isEmpty()) {
                             key = method.getName();
                         }
-                        computed.put(key, () -> {
-                            try {
-                                return method.invoke(this);
-                            }
-                            catch (ReflectiveOperationException e) {
-                                throw CheckedExceptions
-                                        .wrapAsRuntimeException(e);
-                            }
-                        });
+                        Supplier<Object> supplier;
+                        if(method.isDefault()) {
+                            supplier = () -> Reflection
+                                    .invokeDefaultInterfaceMethod(this, method);
+                        }
+                        else {
+                            supplier = () -> {
+                                try {
+                                    return method.invoke(this);
+                                }
+                                catch (ReflectiveOperationException e) {
+                                    throw CheckedExceptions
+                                            .wrapAsRuntimeException(e);
+                                }
+                            };
+                        }
+                        computed.put(key, supplier);
                     }
                     else {
                         throw new IllegalArgumentException(
@@ -1977,10 +1989,8 @@ public abstract class Record implements Comparable<Record> {
                                         + annotation.getClass().getSimpleName()
                                         + " cannot require parameters");
                     }
-
                 }
-
-            }
+            });
         }
         return computed;
     }
@@ -1994,7 +2004,11 @@ public abstract class Record implements Comparable<Record> {
         if(derived == null) {
             derived = new HashMap<>();
             derived.putAll(derived());
-            for (Method method : Reflection.getAllDeclaredMethods(this)) {
+            Stream<Method> defaults = Arrays.stream(Reflection
+                    .getAllNonOverriddenDefaultInterfaceMethods(this));
+            Stream<Method> declareds = Arrays
+                    .stream(Reflection.getAllDeclaredMethods(this));
+            Stream.concat(defaults, declareds).forEach(method -> {
                 Derived annotation = method.getAnnotation(Derived.class);
                 if(annotation != null) {
                     if(method.getParameterCount() == 0) {
@@ -2002,12 +2016,21 @@ public abstract class Record implements Comparable<Record> {
                         if(key.isEmpty()) {
                             key = method.getName();
                         }
-                        try {
-                            derived.put(key, method.invoke(this));
+                        Object value;
+                        if(method.isDefault()) {
+                            value = Reflection
+                                    .invokeDefaultInterfaceMethod(this, method);
                         }
-                        catch (ReflectiveOperationException e) {
-                            throw CheckedExceptions.wrapAsRuntimeException(e);
+                        else {
+                            try {
+                                value = method.invoke(this);
+                            }
+                            catch (ReflectiveOperationException e) {
+                                throw CheckedExceptions
+                                        .wrapAsRuntimeException(e);
+                            }
                         }
+                        derived.put(key, value);
                     }
                     else {
                         throw new IllegalArgumentException(
@@ -2015,10 +2038,8 @@ public abstract class Record implements Comparable<Record> {
                                         + annotation.getClass().getSimpleName()
                                         + " cannot require parameters");
                     }
-
                 }
-
-            }
+            });
         }
         return derived;
     }
@@ -2285,8 +2306,8 @@ public abstract class Record implements Comparable<Record> {
             }
 
         };
-        Map<String, Object> data = BackupReadSourcesHashMap.create($derived(),
-                computed);
+        Map<String, Object> data = BackupReadSourcesHashMap
+                .create(ImmutableMap.of("id", id), $derived(), computed);
         fields().forEach(field -> {
             try {
                 Object value;
@@ -2301,7 +2322,6 @@ public abstract class Record implements Comparable<Record> {
                 throw CheckedExceptions.throwAsRuntimeException(e);
             }
         });
-        data.put("id", id);
         data.putAll(dynamicData);
         return data;
     }

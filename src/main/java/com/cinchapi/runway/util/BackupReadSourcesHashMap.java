@@ -19,12 +19,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 /**
- * A {@link BackupReadSourcesHashMap} is a {@link HashMap} that is configured to fetch
- * data from other {@link Map}s if a requested key was not explicitly added.
+ * A {@link BackupReadSourcesHashMap} is a {@link HashMap} that is configured to
+ * fetch data from other {@link Map}s if a requested key was not explicitly added.
  * <p>
  * NOTE: This map only reads through to the other sources and never modifies
  * them.
@@ -41,13 +43,15 @@ public class BackupReadSourcesHashMap<K, V> extends HashMap<K, V> {
      * additional lookup {@code sources} for data that is not in the map.
      * 
      * @param sources the additional sources for this {@link Map} in order of
-     *            decreasing priority (e.g. the value for a non-native key is
-     *            sought starting with the first source provided)
-     * @return the {@link BackupReadSourcesHashMap} configured to use the additional
+     *            increasing priority (e.g. the value for a non-native key is
+     *            sought starting with the last source provided)
+     * @return the {@link BackupReadSourcesHashMap} configured to use the
+     *         additional
      *         {@code sources}.
      */
     @SafeVarargs
-    public static <K, V> BackupReadSourcesHashMap<K, V> create(Map<K, V>... sources) {
+    public static <K, V> BackupReadSourcesHashMap<K, V> create(
+            Map<K, V>... sources) {
         return new BackupReadSourcesHashMap<>(sources);
     }
 
@@ -80,7 +84,8 @@ public class BackupReadSourcesHashMap<K, V> extends HashMap<K, V> {
     public V get(Object key) {
         V value = super.get(key);
         if(value == null) {
-            for (Map<K, V> source : additionalSources) {
+            for (Map<K, V> source : ImmutableList.copyOf(additionalSources)
+                    .reverse()) {
                 value = source.get(key);
                 if(value != null) {
                     return value;
