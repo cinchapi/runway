@@ -187,16 +187,18 @@ public interface Audience extends DatabaseInterface {
      * @throws RestrictedAccessException if this {@link Audience} is not
      *             permitted to create the {@link Record}
      */
-    public default <T extends Record & AccessControl> T create(Class<T> clazz,
-            Object... args) throws RestrictedAccessException {
+    public default <T extends Record> T create(Class<T> clazz, Object... args)
+            throws RestrictedAccessException {
         T record = Reflection.newInstance(clazz, args);
-        if((this instanceof Anonymous && record.$isCreatableByAnonymous())
-                || record.$isCreatableBy(this)) {
-            return record;
+        if(record instanceof AccessControl) {
+            AccessControl subject = (AccessControl) record;
+            if((this instanceof Anonymous && !subject.$isCreatableByAnonymous())
+                    || (!(this instanceof Anonymous)
+                            && !subject.$isCreatableBy(this))) {
+                throw new RestrictedAccessException();
+            }
         }
-        else {
-            throw new RestrictedAccessException();
-        }
+        return record;
     }
 
     /**
@@ -212,14 +214,14 @@ public interface Audience extends DatabaseInterface {
      * @throws RestrictedAccessException if this {@link Audience} is not
      *             permitted to delete the {@code record}
      */
-    public default <T extends Record & AccessControl> void delete(T record)
+    public default <T extends Record> void delete(T record)
             throws RestrictedAccessException {
-        if(record.$isDeletableBy(this)) {
-            record.deleteOnSave();
+        if(record instanceof AccessControl) {
+            if(!((AccessControl) record).$isDeletableBy(this)) {
+                throw new RestrictedAccessException();
+            }
         }
-        else {
-            throw new RestrictedAccessException();
-        }
+        record.deleteOnSave();
     }
 
     /**
@@ -262,13 +264,14 @@ public interface Audience extends DatabaseInterface {
      */
     @SuppressWarnings("unchecked")
     @Nullable
-    public default <T extends Record & AccessControl> Map<String, Object> frame(
+    public default <T extends Record> Map<String, Object> frame(
             Collection<String> keys, T subject) {
         Preconditions.checkNotNull(keys, "keys cannot be null");
         if(!$checkIfVisible().test(subject)) {
             return null;
         }
         else if(subject instanceof AccessControl) {
+            AccessControl gated = (AccessControl) subject;
             // Break up navigation keys into root components that must be
             // resolved in this Record to their subsequent stops that must
             // be resolved in linked Records
@@ -306,8 +309,8 @@ public interface Audience extends DatabaseInterface {
              */
             Set<String> requested = roots.keySet();
             Set<String> readable = this instanceof Anonymous
-                    ? subject.$readableByAnonymous()
-                    : subject.$readableBy(this);
+                    ? gated.$readableByAnonymous()
+                    : gated.$readableBy(this);
             Map<String, Object> data;
             if(readable == NO_KEYS) {
                 RESTRICTED_ACCESS_DETECTED.set(true);
@@ -459,8 +462,7 @@ public interface Audience extends DatabaseInterface {
      *         not discoverable at all by this {@link Audience}
      * @see #frame(Collection, Record)
      */
-    public default <T extends Record & AccessControl> Map<String, Object> frame(
-            T record) {
+    public default <T extends Record> Map<String, Object> frame(T record) {
         return frame(ALL_KEYS, record);
     }
 
@@ -479,7 +481,7 @@ public interface Audience extends DatabaseInterface {
      * @throws RestrictedAccessException if this {@link Audience} is not
      *             permitted to read one or more of the {@code keys}
      */
-    public default <T extends Record & AccessControl> Map<String, Object> read(
+    public default <T extends Record> Map<String, Object> read(
             Collection<String> keys, T record)
             throws RestrictedAccessException {
         try {
@@ -511,8 +513,8 @@ public interface Audience extends DatabaseInterface {
      * @throws RestrictedAccessException if this {@link Audience} is not
      *             permitted to read the {@code key}
      */
-    public default <T extends Record & AccessControl> Object read(String key,
-            T record) throws RestrictedAccessException {
+    public default <T extends Record> Object read(String key, T record)
+            throws RestrictedAccessException {
         Map<String, Object> data = frame(ImmutableSet.of(key), record);
         return data.getOrDefault(key, null);
     }
@@ -532,18 +534,18 @@ public interface Audience extends DatabaseInterface {
      *             permitted to write to one or more of the keys in the
      *             {@code data}
      */
-    public default <T extends Record & AccessControl> void write(
-            Map<String, Object> data, T record)
-            throws RestrictedAccessException {
-        Set<String> rules = this instanceof Anonymous
-                ? record.$writableByAnonymous()
-                : record.$writableBy(this);
-        if(isPermittedAccess(data.keySet(), rules)) {
-            record.set(data);
+    public default <T extends Record> void write(Map<String, Object> data,
+            T record) throws RestrictedAccessException {
+        if(record instanceof AccessControl) {
+            AccessControl subject = (AccessControl) record;
+            Set<String> rules = this instanceof Anonymous
+                    ? subject.$writableByAnonymous()
+                    : subject.$writableBy(this);
+            if(!isPermittedAccess(data.keySet(), rules)) {
+                throw new RestrictedAccessException();
+            }
         }
-        else {
-            throw new RestrictedAccessException();
-        }
+        record.set(data);
     }
 
     /**
@@ -561,17 +563,18 @@ public interface Audience extends DatabaseInterface {
      * @throws RestrictedAccessException if this {@link Audience} is not
      *             permitted to write to the {@code key}
      */
-    public default <T extends Record & AccessControl> void write(String key,
-            Object value, T record) throws RestrictedAccessException {
-        Set<String> rules = this instanceof Anonymous
-                ? record.$writableByAnonymous()
-                : record.$writableBy(this);
-        if(isPermittedAccess(ImmutableSet.of(key), rules)) {
-            record.set(key, value);
+    public default <T extends Record> void write(String key, Object value,
+            T record) throws RestrictedAccessException {
+        if(record instanceof AccessControl) {
+            AccessControl subject = (AccessControl) record;
+            Set<String> rules = this instanceof Anonymous
+                    ? subject.$writableByAnonymous()
+                    : subject.$writableBy(this);
+            if(!isPermittedAccess(ImmutableSet.of(key), rules)) {
+                throw new RestrictedAccessException();
+            }
         }
-        else {
-            throw new RestrictedAccessException();
-        }
+        record.set(key, value);
     }
 
     @Override
