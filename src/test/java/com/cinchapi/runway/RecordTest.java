@@ -200,10 +200,11 @@ public class RecordTest extends ClientServerTest {
     @Test
     public void testConcourseTypesJsonRepresentation() {
         Pock pock = new Pock("test");
-        Assert.assertEquals(
-                new GsonBuilder().setPrettyPrinting().create().toJson(
-                        ImmutableMap.of("tag", "test", "id", pock.id())),
-                pock.json());
+        JsonElement expected = new JsonParser()
+                .parse(new GsonBuilder().setPrettyPrinting().create().toJson(
+                        ImmutableMap.of("tag", "test", "id", pock.id())));
+        JsonElement actual = new JsonParser().parse(pock.json());
+        Assert.assertEquals(expected, actual);
     }
 
     @Test
@@ -1362,7 +1363,7 @@ public class RecordTest extends ClientServerTest {
         Assert.assertEquals(0, a.saves);
         Assert.assertEquals(1, b.saves);
     }
-    
+
     @Test
     public void testCircularDependencyOnlySavedOnce() {
         HasBeforeSaveHook a = new HasBeforeSaveHook("a");
