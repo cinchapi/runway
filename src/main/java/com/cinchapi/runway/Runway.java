@@ -106,7 +106,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Return a builder that can be used to precisely configure a {@link Runway}
      * instance.
-     * 
+     *
      * @return a {@link Runway} builder
      */
     public static Builder builder() {
@@ -116,7 +116,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Return a {@link Runway} instance that is connected to Concourse using the
      * default connection parameters.
-     * 
+     *
      * @return a {@link Runway} instance
      */
     public static Runway connect() {
@@ -126,7 +126,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Return a {@link Runway} instance that is connected to Concourse using the
      * provided connection parameters.
-     * 
+     *
      * @param host
      * @param port
      * @param username
@@ -144,7 +144,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Return a {@link Runway} instance that is connected to Concourse using the
      * provided connection parameters.
-     * 
+     *
      * @param host
      * @param port
      * @param username
@@ -162,7 +162,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Return a {@link List} based order specification.
-     * 
+     *
      * @param order
      * @return the list-based order
      */
@@ -187,7 +187,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Call
      * {@link Record#load(Class, long, TLongObjectMap, ConnectionPool, Runway, Map)}
      * and handle any errors with the {@link #onLoadFailureHandler}.
-     * 
+     *
      * @param <T>
      * @param clazz
      * @param id
@@ -333,8 +333,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Consumer<Record> saveListener;
 
     /**
+     * The cached {@link Gateway} instance that provides intelligent routing to
+     * database operations. Lazily initialized when first accessed.
+     */
+    private Gateway gateway = null;
+
+    /**
      * Construct a new instance.
-     * 
+     *
      * @param connections a Concourse {@link ConnectionPool}
      */
     private Runway(ConnectionPool connections) {
@@ -690,7 +696,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Find the one record of type {@code clazz} that matches the
      * {@code criteria}. If more than one record matches, throw a
      * {@link DuplicateEntryException}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @return the one matching record
@@ -706,7 +712,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Find the one record of type {@code clazz} that matches the
      * {@code criteria}. If more than one record matches, throw a
      * {@link DuplicateEntryException}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @return the one matching record
@@ -762,6 +768,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         finally {
             connections.release(concourse);
         }
+    }
+
+    @Override
+    public Gateway gateway() {
+        if(gateway == null) {
+            gateway = DatabaseInterface.super.gateway();
+        }
+        return gateway;
     }
 
     @Override
@@ -968,7 +982,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * {@link Concourse#ping() Ping} the database and return {@code true} if it
      * is accessible.
-     * 
+     *
      * @return the database ping status
      */
     public boolean ping() {
@@ -984,7 +998,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Return the interface that exposes the properties of this {@link Runway}
      * instance.
-     * 
+     *
      * @return the {@link Properties}
      */
     public Properties properties() {
@@ -999,7 +1013,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * <strong>NOTE:</strong> If there is only one record provided, this method
      * has the same effect as {@link Record#save(Runway)}.
      * </p>
-     * 
+     *
      * @param records one or more records to be saved
      * @return {@code true} if all the changes are atomically saved
      */
@@ -1059,7 +1073,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Search for records in {@code clazz} that match the search {@query} across
      * any of the provided {@code keys}.
-     * 
+     *
      * @param clazz
      * @param query
      * @param keys
@@ -1080,7 +1094,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Search for records across the hierarchy of {@code clazz} that match the
      * search {@query} across any of the provided {@code keys}.
-     * 
+     *
      * @param clazz
      * @param query
      * @param keys
@@ -1100,7 +1114,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Queue up a record for save notification processing.
-     * 
+     *
      * @param record the record that was saved
      */
     /* package */ final void enqueueSaveNotification(Record record) {
@@ -1112,7 +1126,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * If this instance {@link #supportsPreSelectLinkedRecords} return the
      * {@link #PATHS_BY_CLASS_HIERARCHY} for {@code clazz}.
-     * 
+     *
      * @param clazz
      * @return the paths
      */
@@ -1127,7 +1141,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * If this instance {@link #supportsPreSelectLinkedRecords} return the
      * {@link #PATHS_BY_CLASS} for {@code clazz}.
-     * 
+     *
      * @param clazz
      * @return the paths
      */
@@ -1141,7 +1155,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Load a record by {@code id} without knowing its class.
-     * 
+     *
      * @param id
      * @return the loaded record
      */
@@ -1151,7 +1165,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Perform the find operation using the {@code concourse} handler.
-     * 
+     *
      * @param concourse
      * @param clazz
      * @param criteria
@@ -1169,7 +1183,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Perform the "find any" operation using the {@code concourse} handler.
-     * 
+     *
      * @param concourse
      * @param clazz
      * @param criteria
@@ -1192,7 +1206,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Return the ids of all the {@code Record}s in the {@code clazz}, using the
      * provided {@code concourse} connection.
-     * 
+     *
      * @param concourse
      * @param clazz
      * @param order
@@ -1212,7 +1226,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Return the ids of all the {@code Record}s in the {@code clazz} hierarchy,
      * using the provided {@code concourse} connection.
-     * 
+     *
      * @param concourse
      * @param clazz
      * @param order
@@ -1231,7 +1245,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Perform a search.
-     * 
+     *
      * @param concourse
      * @param clazz
      * @param query
@@ -1250,7 +1264,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Internal method to perform a search across a {@code clazz} hierarchy and
      * return the matching ids.
-     * 
+     *
      * @param concourse
      * @param clazz
      * @param query
@@ -1281,7 +1295,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Return the number of {@link Record records} that match the
      * {@code criteria}.
-     * 
+     *
      * @param criteria
      * @return the number of matching records
      */
@@ -1298,7 +1312,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Perform local {@code criteria} resolution and return all the records in
      * {@code clazz} that match.
-     * 
+     *
      * @param <T>
      * @param clazz
      * @param criteria
@@ -1333,7 +1347,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Perform local {@code criteria} resolution and return all the records in
      * the hierarchy of {@code clazz} that match.
-     * 
+     *
      * @param <T>
      * @param clazz
      * @param criteria
@@ -1381,7 +1395,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * expiration policy, etc) of said cache govern when multiple calls to this
      * method return the same instance for the provided parameters or not.
      * </p>
-     * 
+     *
      * @param clazz
      * @param id
      * @param loaded
@@ -1410,7 +1424,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * expiration policy, etc) of said cache govern when multiple calls to this
      * method return the same instance for the provided parameters or not.
      * </p>
-     * 
+     *
      * @param clazz
      * @param id
      * @param existing
@@ -1442,7 +1456,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * expiration policy, etc) of said cache govern when multiple calls to this
      * method return the same instance for the provided parameters or not.
      * </p>
-     * 
+     *
      * @param id
      * @param loaded
      * @param existing
@@ -1490,7 +1504,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * expiration policy, etc) of said cache govern when multiple calls to this
      * method return the same instance for the provided parameters or not.
      * </p>
-     * 
+     *
      * @param id
      * @param existing
      * @param data
@@ -1504,7 +1518,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Create a {@link Record} instance of type {@code clazz} (or one of its
      * descendants) for each entry in the {@code data}
-     * 
+     *
      * @param clazz
      * @param data
      * @return the instantiated {@link Record}s
@@ -1521,7 +1535,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Create a {@link Record} instance of type {@code clazz} (or one of its
      * descendants) for each of the {@code ids}.
-     * 
+     *
      * @param clazz
      * @param ids
      * @return the instantiated {@link Record}s
@@ -1542,7 +1556,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Create a {@link Record} instance for each entry in the {@code data}
-     * 
+     *
      * @param data
      * @return the instantiated {@link Record}s
      */
@@ -1561,7 +1575,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The {@link Record} class will be determined by the data stored for each
      * of the {@code ids}.
      * </p>
-     * 
+     *
      * @param ids
      * @return the instantiated {@link Record}s
      */
@@ -1581,7 +1595,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Internal utility method to dispatch a "select" request" for a
      * {@code criteria} based on whether the {@code order} and/or {@code page}
      * params are non-null.
-     * 
+     *
      * @param concourse
      * @param criteria
      * @param order
@@ -1672,7 +1686,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * read operations so it takes its own connection from the
      * {@link #connections} pool instead of being passed one.
      * </p>
-     * 
+     *
      * @param concourse
      * @param ids
      * @return the selected data
@@ -1780,7 +1794,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Build the configured {@link Runway} and return the instance.
-         * 
+         *
          * @return a {@link Runway} instance
          */
         public Runway build() {
@@ -1836,7 +1850,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Set the connection's cache.
-         * 
+         *
          * @param cache
          * @return this builder
          * @deprecated {@link Record} caching has been deprecated in favor of
@@ -1854,7 +1868,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * roundtrips. Generally speaking, it is never advised to disable
          * pre-select, but this option exists for debugging the behaviour of
          * reading using the new functionality vs the legacy method.
-         * 
+         *
          * @return this builder
          */
         public Builder disablePreSelectLinkedRecords() {
@@ -1864,7 +1878,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Set the connection's environment.
-         * 
+         *
          * @param environment
          * @return this builder
          */
@@ -1875,7 +1889,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Set the connection's host.
-         * 
+         *
          * @param host
          * @return this builder
          */
@@ -1891,7 +1905,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * load} operation, the provided {@code onLoadFailureHandler} receives
          * the record's class, id and error for processing.
          * </p>
-         * 
+         *
          * @param onLoadFailureHandler
          * @return this builder
          */
@@ -1935,7 +1949,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * internal checks (e.g., checking the record type or specific
          * properties) before taking action.
          * </p>
-         * 
+         *
          * @param listener a consumer that processes saved records
          * @return this builder
          */
@@ -1946,7 +1960,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Set the connection's password.
-         * 
+         *
          * @param password
          * @return this builder
          */
@@ -1957,7 +1971,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Set the connection's port.
-         * 
+         *
          * @param port
          * @return this builder
          */
@@ -1972,7 +1986,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * The default {@link ReadStrategy} varies based on the
          * {@link #withCache(Cache) cache} setting.
          * </p>
-         * 
+         *
          * @param readStrategy
          * @return this builder
          */
@@ -1986,7 +2000,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * when streaming data from the database. This is only relevant if the
          * {@link #readStrategy(ReadStrategy) read strategy} is not
          * {@link ReadStrategy#BULK}.
-         * 
+         *
          * @param max
          * @return this builder
          * @deprecated use {@link #streamingReadBufferSize(int)} instead
@@ -2001,7 +2015,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * when streaming data from the database. This is only relevant if the
          * {@link #readStrategy(ReadStrategy) read strategy} is not
          * {@link ReadStrategy#BULK}.
-         * 
+         *
          * @param max
          * @return this builder
          */
@@ -2012,7 +2026,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Set the connection's username.
-         * 
+         *
          * @param username
          * @return this builder
          */
@@ -2023,7 +2037,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Set the connection's cache.
-         * 
+         *
          * @param cache
          * @return this builder
          */
@@ -2043,7 +2057,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         /**
          * Return {@code true} if this {@link Runway} client and the underlying
          * {@link Concourse} deployment allow linked records to be pre-selected.
-         * 
+         *
          * @return a boolean that indicates if pre-selection is supported
          */
         public boolean supportsPreSelectLinkedRecords() {
@@ -2093,10 +2107,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         /**
          * Utility method do ensure that the {@code criteria} is limited to
          * querying objects that belong to a specific {@code clazz} hierarchy.
-         * 
+         *
          * @param criteria
          * @param parent class
-         * 
+         *
          * @return the updated {@code criteria}
          */
         public static <T extends Record> Criteria accrossClassHierachy(
@@ -2108,7 +2122,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         /**
          * Utility method to ensure that the {@code criteria} is limited to
          * records that exist in the {@code realms}.
-         * 
+         *
          * @param realms
          * @param criteria
          * @return limiting {@link Criteria}
@@ -2131,7 +2145,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Return a {@link Criteria} to find records within {@code clazz}.
-         * 
+         *
          * @param clazz
          * @return the {@link Criteria}
          */
@@ -2143,7 +2157,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         /**
          * Return a {@link Criteria} to find records across the {@code clazz}
          * hierarchy.
-         * 
+         *
          * @param clazz
          * @return the {@link Criteria}
          */
@@ -2169,7 +2183,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         /**
          * Utility method to ensure that the {@code criteria} is limited to
          * querying objects that belong to a specific {@code clazz}.
-         * 
+         *
          * @param clazz
          * @param criteria
          * @return limiting {@link Criteria}

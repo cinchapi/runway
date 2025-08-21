@@ -34,6 +34,17 @@ Runway now allows Records to provide a custom "id" dynamic property that will be
 * **Database ID Preservation**: The actual database ID remains unchanged and is always accessible using the `id()` method
 * **Fallback Behavior**: If no dynamic "id" property is provided, the database ID is still returned for that key
 
+##### Gateway Database Access Layer
+Runway now provides a `Gateway` class that offers intelligent routing between database operations, simplifying database access by automatically choosing the most appropriate underlying operation based on the parameters provided.
+
+* **Intelligent Operation Routing**: The `Gateway` automatically routes to the appropriate database operation (`find`/`load` or `findAny`/`loadAny`) based on the parameters provided. When any parameters are null, they are ignored in the retrieval process, allowing for flexible and concise database queries.
+
+* **Unified Access Interface**: The `Gateway` provides a unified entry point for some database access without requiring manual accounting for optional arguments or conditional logic. This design allows client code to remain concise and expressive while ensuring that optional input such as `Criteria`, `Order`, or `Page` are honored consistently and efficiently.
+
+* **Lazy Initialization**: The `Gateway` is lazily initialized when first accessed through the `DatabaseInterface.gateway()` method, providing efficient resource management.
+
+* **Method Variants**: The `Gateway` provides both `retrieve` and `retrieveAny` methods that correspond to the underlying `find`/`load` and `findAny`/`loadAny` operations respectively, with full support for filtering, sorting, pagination, and realm-based access control.
+
 ##### Data Priority Consistency Fix
 Fixed a bug where there was inconsistent priorities in the order of data returned from `get()` vs `map()` operations.
 

@@ -38,7 +38,7 @@ public interface DatabaseInterface {
 
     /**
      * Return the {@code records} in sorted {@code order}.
-     * 
+     *
      * @param records
      * @param order
      * @return the sorted records
@@ -53,7 +53,7 @@ public interface DatabaseInterface {
 
     /**
      * Return the {@code records} in sorted {@code order}.
-     * 
+     *
      * @param records
      * @param order
      * @return the sorted records
@@ -67,7 +67,7 @@ public interface DatabaseInterface {
 
     /**
      * Return the number of {@link Records} in the {@code clazz}.
-     * 
+     *
      * @param clazz
      * @return the number of {@link Records} in {@code clazz}.
      */
@@ -76,21 +76,9 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Return the number of {@link Records} in the {@code clazz} among the
-     * provided {@code realms}.
-     * 
-     * @param clazz
-     * @param realms
-     * @return the number of {@link Records} in {@code clazz}.
-     */
-    public default <T extends Record> int count(Class<T> clazz, Realms realms) {
-        return load(clazz, realms).size();
-    }
-
-    /**
      * Return the number of {@link Records} in the {@code clazz} that match the
      * {@code criteria}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @return the number of {@link Records} in {@code clazz} that match the
@@ -103,23 +91,8 @@ public interface DatabaseInterface {
 
     /**
      * Return the number of {@link Records} in the {@code clazz} that match the
-     * {@code criteria} among the provided {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param realms
-     * @return the number of {@link Records} in {@code clazz} that match the
-     *         {@code criteria}.
-     */
-    public default <T extends Record> int count(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        return find(clazz, criteria, realms).size();
-    }
-
-    /**
-     * Return the number of {@link Records} in the {@code clazz} that match the
      * {@code criteria} and pass the {@code filter}
-     * 
+     *
      * @param clazz
      * @param filter
      * @return the number of {@link Records} in {@code clazz} that match the
@@ -134,7 +107,7 @@ public interface DatabaseInterface {
      * Return the number of {@link Records} in the {@code clazz} that match the
      * {@code criteria} and pass the {@code filter} among the provided
      * {@code realms}.
-     * 
+     *
      * @param clazz
      * @param filter
      * @param realms
@@ -147,9 +120,24 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Return the number of {@link Records} in the {@code clazz} that match the
+     * {@code criteria} among the provided {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz} that match the
+     *         {@code criteria}.
+     */
+    public default <T extends Record> int count(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        return find(clazz, criteria, realms).size();
+    }
+
+    /**
      * Return the number of {@link Records} in the {@code clazz} that pass the
      * {@code filter}.
-     * 
+     *
      * @param clazz
      * @param filter
      * @return the number of {@link Records} in {@code clazz}.
@@ -162,7 +150,7 @@ public interface DatabaseInterface {
     /**
      * Return the number of {@link Records} in the {@code clazz} that pass the
      * {@code filter} among the provided {@code realms}.
-     * 
+     *
      * @param clazz
      * @param filter
      * @param realms
@@ -174,9 +162,21 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Return the number of {@link Records} in the {@code clazz} among the
+     * provided {@code realms}.
+     *
+     * @param clazz
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz}.
+     */
+    public default <T extends Record> int count(Class<T> clazz, Realms realms) {
+        return load(clazz, realms).size();
+    }
+
+    /**
      * Return the number of {@link Records} across the hierarchy of
      * {@code clazz}.
-     * 
+     *
      * @param clazz
      * @return the number of {@link Records} in {@code clazz}.
      */
@@ -186,21 +186,8 @@ public interface DatabaseInterface {
 
     /**
      * Return the number of {@link Records} across the hierarchy of
-     * {@code clazz} among the provided {@code realms}.
-     * 
-     * @param clazz
-     * @param realms
-     * @return the number of {@link Records} in {@code clazz}.
-     */
-    public default <T extends Record> int countAny(Class<T> clazz,
-            Realms realms) {
-        return loadAny(clazz, realms).size();
-    }
-
-    /**
-     * Return the number of {@link Records} across the hierarchy of
      * {@code clazz} that match the {@code criteria}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @return the number of {@link Records} in {@code clazz} that match the
@@ -213,24 +200,8 @@ public interface DatabaseInterface {
 
     /**
      * Return the number of {@link Records} across the hierarchy of
-     * {@code clazz} that match the {@code criteria} among the provided
-     * {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param realms
-     * @return the number of {@link Records} in {@code clazz} that match the
-     *         {@code criteria}.
-     */
-    public default <T extends Record> int countAny(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        return findAny(clazz, criteria, realms).size();
-    }
-
-    /**
-     * Return the number of {@link Records} across the hierarchy of
      * {@code clazz} that match the {@code criteria}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param filter
@@ -246,7 +217,7 @@ public interface DatabaseInterface {
      * Return the number of {@link Records} across the hierarchy of
      * {@code clazz} that match the {@code criteria} among the provided
      * {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param filter
@@ -261,8 +232,24 @@ public interface DatabaseInterface {
 
     /**
      * Return the number of {@link Records} across the hierarchy of
+     * {@code clazz} that match the {@code criteria} among the provided
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz} that match the
+     *         {@code criteria}.
+     */
+    public default <T extends Record> int countAny(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        return findAny(clazz, criteria, realms).size();
+    }
+
+    /**
+     * Return the number of {@link Records} across the hierarchy of
      * {@code clazz} that pass the {@code filter}
-     * 
+     *
      * @param clazz
      * @param filter
      * @return the number of {@link Records} in {@code clazz}.
@@ -276,7 +263,7 @@ public interface DatabaseInterface {
      * Return the number of {@link Records} across the hierarchy of
      * {@code clazz} that pass the {@code filter} among the provided
      * {@code realms}.
-     * 
+     *
      * @param clazz
      * @param filter
      * @param realms
@@ -288,9 +275,22 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Return the number of {@link Records} across the hierarchy of
+     * {@code clazz} among the provided {@code realms}.
+     *
+     * @param clazz
+     * @param realms
+     * @return the number of {@link Records} in {@code clazz}.
+     */
+    public default <T extends Record> int countAny(Class<T> clazz,
+            Realms realms) {
+        return loadAny(clazz, realms).size();
+    }
+
+    /**
      * Find and return all the records of type {@code clazz} that match the
      * {@code criteria}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @return the matching records
@@ -302,20 +302,8 @@ public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria} among the provided {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param realms
-     * @return the matching records
-     */
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Realms realms);
-
-    /**
-     * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} sorted by the specified {@code order}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -332,7 +320,7 @@ public interface DatabaseInterface {
     /**
      * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} sorted by the specified {@code order}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -345,23 +333,9 @@ public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria} sorted by the specified {@code order} among the provided
-     * {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @param realms
-     * @return the matching records
-     */
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order, Realms realms);
-
-    /**
-     * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} sorted by the specified {@code order} and limited to the
      * specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -375,25 +349,10 @@ public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria} sorted by the specified {@code order} and limited to the
-     * specified {@code page} among the provided {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @param page
-     * @param realms
-     * @return the matching records
-     */
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order, Page page, Realms realms);
-
-    /**
-     * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} and pass the {@code filter}, sorted by the specified
      * {@code order} and limited to the
      * specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -411,7 +370,7 @@ public interface DatabaseInterface {
      * {@code criteria} and pass the {@code filter}, sorted by the specified
      * {@code order} and limited to the
      * specified {@code page} among the provided {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -430,9 +389,24 @@ public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order} and limited to the
+     * specified {@code page} among the provided {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @param realms
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Order order, Page page, Realms realms);
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} and pass the {@code filter}, sorted by the specified
      * {@code order}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -448,7 +422,7 @@ public interface DatabaseInterface {
      * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} and pass the {@code filter}, sorted by the specified
      * {@code order} among the provided {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -465,8 +439,22 @@ public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order} among the provided
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param realms
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Order order, Realms realms);
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} limited to the specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param page
@@ -479,23 +467,9 @@ public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria} limited to the specified {@code page} among the provided
-     * {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param page
-     * @param realms
-     * @return the matching records
-     */
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Page page, Realms realms);
-
-    /**
-     * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} sorted by the specified {@code order} and limited to the
      * specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -509,26 +483,9 @@ public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
-     * {@code criteria} sorted by the specified {@code order} and limited to the
-     * specified {@code page} among the provided {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @param page
-     * @param realms
-     * @return the matching records
-     */
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Page page, Order order, Realms realms) {
-        return find(clazz, criteria, order, page, realms);
-    }
-
-    /**
-     * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} and pass the {@code filter}, sorted by the specified
      * {@code order} and limited to the specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -546,7 +503,7 @@ public interface DatabaseInterface {
      * {@code criteria} and pass the {@code filter}, sorted by the specified
      * {@code order} and limited to the specified {@code page} among the
      * provided {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -563,9 +520,26 @@ public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} sorted by the specified {@code order} and limited to the
+     * specified {@code page} among the provided {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Page page, Order order, Realms realms) {
+        return find(clazz, criteria, order, page, realms);
+    }
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} and pass the {@code filter} limited to the specified
      * {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param page
@@ -581,7 +555,7 @@ public interface DatabaseInterface {
      * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} and pass the {@code filter} limited to the specified
      * {@code page} among the provided {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param page
@@ -597,8 +571,22 @@ public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} limited to the specified {@code page} among the provided
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @param realms
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Page page, Realms realms);
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} and pass the {@code filter}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param filter
@@ -613,7 +601,7 @@ public interface DatabaseInterface {
      * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} and pass the {@code filter} among the provided
      * {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param filter
@@ -628,8 +616,20 @@ public interface DatabaseInterface {
 
     /**
      * Find and return all the records of type {@code clazz} that match the
+     * {@code criteria} among the provided {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param realms
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
+            Realms realms);
+
+    /**
+     * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} sorted by the specified {@code order}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -646,7 +646,7 @@ public interface DatabaseInterface {
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
      * all of its descendants.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @return the matching records
@@ -657,21 +657,9 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
-     * all of its descendants among the provided {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param realms
-     * @return the matching records
-     */
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Realms realms);
-
-    /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants sorted by the specified {@code order}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -688,7 +676,7 @@ public interface DatabaseInterface {
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants sorted by the specified {@code order}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -701,23 +689,9 @@ public interface DatabaseInterface {
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order} among
-     * the provided {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @param realms
-     * @return the matching records
-     */
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Order order, Realms realms);
-
-    /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants sorted by the specified {@code order} and
      * limited to the specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -731,24 +705,9 @@ public interface DatabaseInterface {
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order} and
-     * limited to the specified {@code page} among the provided {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @param page
-     * @param realms
-     * @return the matching records
-     */
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Order order, Page page, Realms realms);
-
-    /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order} and limited to the specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -766,7 +725,7 @@ public interface DatabaseInterface {
      * and all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order} and limited to the specified {@code page} among
      * the provided {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -785,9 +744,24 @@ public interface DatabaseInterface {
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order} and
+     * limited to the specified {@code page} among the provided {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param page
+     * @param realms
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Order order, Page page, Realms realms);
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -803,7 +777,7 @@ public interface DatabaseInterface {
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order} among the provided {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -820,8 +794,22 @@ public interface DatabaseInterface {
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order} among
+     * the provided {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param realms
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Order order, Realms realms);
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants limited to the specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param page
@@ -834,23 +822,9 @@ public interface DatabaseInterface {
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants limited to the specified {@code page} among
-     * the provided {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param page
-     * @param realms
-     * @return the matching records
-     */
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Page page, Realms realms);
-
-    /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants sorted by the specified {@code order} and
      * limited to the specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param page
@@ -864,26 +838,9 @@ public interface DatabaseInterface {
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order} and
-     * limited to the specified {@code page} among the provided {@code realms}.
-     * 
-     * @param clazz
-     * @param criteria
-     * @param page
-     * @param order
-     * @param realms
-     * @return the matching records
-     */
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page, Order order, Realms realms) {
-        return findAny(clazz, criteria, order, page, realms);
-    }
-
-    /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order} and limited to the specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param page
@@ -901,7 +858,7 @@ public interface DatabaseInterface {
      * and all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order} and limited to the specified {@code page} among
      * the provided {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param page
@@ -918,9 +875,26 @@ public interface DatabaseInterface {
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants sorted by the specified {@code order} and
+     * limited to the specified {@code page} among the provided {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @param order
+     * @param realms
+     * @return the matching records
+     */
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Page page, Order order, Realms realms) {
+        return findAny(clazz, criteria, order, page, realms);
+    }
+
+    /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants that pass the {@code filter}, limited to the
      * specified {@code page}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param page
@@ -936,7 +910,7 @@ public interface DatabaseInterface {
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants that pass the {@code filter}, limited to the
      * specified {@code page} among the provided {@code realms}
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param page
@@ -952,9 +926,23 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
+     * and all of its descendants limited to the specified {@code page} among
+     * the provided {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param page
+     * @param realms
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Page page, Realms realms);
+
+    /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
      * all of its descendants and return those that pass the {@code filter}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param filter
@@ -969,7 +957,7 @@ public interface DatabaseInterface {
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
      * all of its descendants and return those that pass the {@code filter}
      * among the provided {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param filter
@@ -983,9 +971,21 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants among the provided {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param realms
+     * @return the matching records
+     */
+    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
+            Realms realms);
+
+    /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
      * and all of its descendants sorted by the specified {@code order}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param order
@@ -1002,7 +1002,7 @@ public interface DatabaseInterface {
     /**
      * Execute the {@link #findUnique(Class, Criteria)} query for {@code clazz}
      * and all of its descendants.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @return the one matching record
@@ -1015,7 +1015,7 @@ public interface DatabaseInterface {
     /**
      * Execute the {@link #findUnique(Class, Criteria)} query for {@code clazz}
      * and all of its descendants among the provided {@code realms}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param realms
@@ -1028,7 +1028,7 @@ public interface DatabaseInterface {
      * Find the one record of type {@code clazz} that matches the
      * {@code criteria}. If more than one record matches, throw a
      * {@link DuplicateEntryException}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @return the one matching record
@@ -1043,7 +1043,7 @@ public interface DatabaseInterface {
      * Find the one record of type {@code clazz} that matches the
      * {@code criteria} among the provided {@code realms}. If more than one
      * record matches, throw a {@link DuplicateEntryException}.
-     * 
+     *
      * @param clazz
      * @param criteria
      * @param realms
@@ -1054,16 +1054,28 @@ public interface DatabaseInterface {
             Realms realms);
 
     /**
+     * Create a {@link Gateway} instance that provides intelligent routing to
+     * the appropriate database operations based on the parameters provided.
+     * The gateway simplifies database access by automatically choosing between
+     * {@link #find} and {@link #load} operations.
+     *
+     * @return a new gateway instance for this database interface
+     */
+    public default Gateway gateway() {
+        return Gateway.to(this);
+    }
+
+    /**
      * Load all the Records that are contained within the specified
      * {@code clazz}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
      */
@@ -1073,32 +1085,15 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} among the {@code realms}.
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> load(Class<T> clazz, Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
      * {@code clazz} and sorted using the specified {@code order}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
      * @deprecated Use {@link #load(Class, Order)}
@@ -1119,7 +1114,7 @@ public interface DatabaseInterface {
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param id
      * @return the existing Record
@@ -1137,7 +1132,7 @@ public interface DatabaseInterface {
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param id
      * @return the existing Record
@@ -1147,14 +1142,14 @@ public interface DatabaseInterface {
     /**
      * Load all the Records that are contained within the specified
      * {@code clazz} and sorted using the specified {@code order}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param order
      * @return a {@link Set set} of {@link Record} objects
@@ -1165,36 +1160,16 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} and sorted using the specified {@code order} among the
-     * {@code realms}.
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param order
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
      * {@code clazz} and sorted using the specified {@code order} and limited to
      * the specified {@code page}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param order
      * @param page
@@ -1207,37 +1182,16 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} and sorted using the specified {@code order} and limited to
-     * the specified {@code page} among the {@code realms}.
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param order
-     * @param page
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page, Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
      * {@code clazz} that pass the {@code filter}, sorted using the specified
      * {@code order} and limited to the specified {@code page}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param order
      * @param page
@@ -1254,14 +1208,14 @@ public interface DatabaseInterface {
      * {@code clazz} that pass the {@code filter}, sorted using the specified
      * {@code order} and limited to the specified {@code page} among the
      * {@code realms}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param order
      * @param page
@@ -1277,16 +1231,37 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, sorted using the specified
-     * {@code order}.
-     * 
+     * {@code clazz} and sorted using the specified {@code order} and limited to
+     * the specified {@code page} among the {@code realms}.
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
+     * @param clazz
+     * @param order
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Page page, Realms realms);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, sorted using the specified
+     * {@code order}.
+     *
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     *
      * @param clazz
      * @param order
      * @param filter
@@ -1301,14 +1276,14 @@ public interface DatabaseInterface {
      * Load all the Records that are contained within the specified
      * {@code clazz} that pass the {@code filter}, sorted using the specified
      * {@code order} among the {@code realms}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param order
      * @param filter
@@ -1323,15 +1298,35 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} and limited to the specified {@code page}.
-     * 
+     * {@code clazz} and sorted using the specified {@code order} among the
+     * {@code realms}.
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
+     * @param clazz
+     * @param order
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Realms realms);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and limited to the specified {@code page}.
+     *
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     *
      * @param clazz
      * @param page
      * @return a {@link Set set} of {@link Record} objects
@@ -1342,36 +1337,16 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} and limited to the specified {@code page} among the
-     * {@code realms}.
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param page
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
      * {@code clazz} and sorted using the specified {@code order} and limited to
      * the specified {@code page}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param page
      * @param order
@@ -1386,14 +1361,14 @@ public interface DatabaseInterface {
      * Load all the Records that are contained within the specified
      * {@code clazz} that pass the {@code filter}, sorted using the specified
      * {@code order} and limited to the specified {@code page}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param page
      * @param order
@@ -1410,14 +1385,14 @@ public interface DatabaseInterface {
      * {@code clazz} that pass the {@code filter}, sorted using the specified
      * {@code order} and limited to the specified {@code page} among the
      * {@code realms}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param page
      * @param order
@@ -1434,14 +1409,14 @@ public interface DatabaseInterface {
      * Load all the Records that are contained within the specified
      * {@code clazz} that pass the {@code filter}, limited to the specified
      * {@code page}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param page
      * @param filter
@@ -1456,14 +1431,14 @@ public interface DatabaseInterface {
      * Load all the Records that are contained within the specified
      * {@code clazz} that pass the {@code filter}, limited to the specified
      * {@code page} among the {@code realms}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param page
      * @param filter
@@ -1478,15 +1453,35 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} and pass the {@code filter}.
-     * 
+     * {@code clazz} and limited to the specified {@code page} among the
+     * {@code realms}.
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
+     * @param clazz
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Realms realms);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and pass the {@code filter}.
+     *
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     *
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
      */
@@ -1498,14 +1493,14 @@ public interface DatabaseInterface {
     /**
      * Load all the Records that are contained within the specified
      * {@code clazz} and pass the {@code filter} among the {@code realms}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param realms
      * @return a {@link Set set} of {@link Record} objects
@@ -1518,15 +1513,32 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} and sorted using the specified {@code order}.
-     * 
+     * {@code clazz} among the {@code realms}.
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
+     * @param clazz
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> load(Class<T> clazz, Realms realms);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order}.
+     *
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     *
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
      * @deprecated Use {@link #load(Class, Order)} instead
@@ -1541,14 +1553,14 @@ public interface DatabaseInterface {
     /**
      * Load all the Records that are contained within the specified
      * {@code clazz} or any of its descendants.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
      */
@@ -1558,33 +1570,16 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants among the {@code realms}.
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
      * {@code clazz} or any of its descendants and sorted using the specified
      * {@code order}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
      * @deprecated Use {@link #loadAny(Class, Order)} instead
@@ -1600,14 +1595,14 @@ public interface DatabaseInterface {
      * Load all the Records that are contained within the specified
      * {@code clazz} or any of its descendants and sorted using the specified
      * {@code order}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param order
      * @return a {@link Set set} of {@link Record} objects
@@ -1620,35 +1615,15 @@ public interface DatabaseInterface {
     /**
      * Load all the Records that are contained within the specified
      * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order} among {@code realms}
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param order
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-            Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
      * {@code order} and limited to the specified {@code page}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param order
      * @param page
@@ -1661,39 +1636,17 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order} and limited to the specified {@code page} among the
-     * {@code realms}.
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param order
-     * @param page
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-            Page page, Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
      * {@code clazz} or any of its descendants that pass the {@code filter},
      * sorted using the specified {@code order} and limited to the specified
      * {@code page}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param order
      * @param page
@@ -1710,14 +1663,14 @@ public interface DatabaseInterface {
      * {@code clazz} or any of its descendants that pass the {@code filter},
      * sorted using the specified {@code order} and limited to the specified
      * {@code page} among the {@code realms}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param order
      * @param page
@@ -1733,16 +1686,38 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants that pass the {@code filter},
-     * sorted using the specified {@code order}.
-     * 
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * {@code realms}.
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
+     * @param clazz
+     * @param order
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+            Page page, Realms realms);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants that pass the {@code filter},
+     * sorted using the specified {@code order}.
+     *
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     *
      * @param clazz
      * @param order
      * @param filter
@@ -1757,14 +1732,14 @@ public interface DatabaseInterface {
      * Load all the Records that are contained within the specified
      * {@code clazz} or any of its descendants that pass the {@code filter},
      * sorted using the specified {@code order} among the {@code realms}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param order
      * @param filter
@@ -1779,15 +1754,35 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} and limited to the specified {@code page}.
-     * 
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} among {@code realms}
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
+     * @param clazz
+     * @param order
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
+            Realms realms);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and limited to the specified {@code page}.
+     *
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     *
      * @param clazz
      * @param page
      * @return a {@link Set set} of {@link Record} objects
@@ -1799,36 +1794,16 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} and limited to the specified {@code page} among the
-     * {@code realms}.
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param page
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
      * {@code clazz} or any of its descendants and sorted using the specified
      * {@code order} and limited to the specified {@code page}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param page
      * @param order
@@ -1841,41 +1816,17 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order} and limited to the specified {@code page} among the
-     * {@code realms}.
-     * 
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     * 
-     * @param clazz
-     * @param page
-     * @param order
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Order order, Realms realms) {
-        return loadAny(clazz, page, order, realms);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
      * {@code clazz} or any of its descendants that pass the {@code filter},
      * sorted using the specified {@code order} and limited to the specified
      * {@code page}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param page
      * @param order
@@ -1892,14 +1843,14 @@ public interface DatabaseInterface {
      * {@code clazz} or any of its descendants that pass the {@code filter},
      * sorted using the specified {@code order} and limited to the specified
      * {@code page}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param page
      * @param order
@@ -1914,16 +1865,40 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, limited to the specified
-     * {@code page}.
-     * 
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * {@code realms}.
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
+     * @param clazz
+     * @param page
+     * @param order
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Order order, Realms realms) {
+        return loadAny(clazz, page, order, realms);
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, limited to the specified
+     * {@code page}.
+     *
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     *
      * @param clazz
      * @param page
      * @param filter
@@ -1938,14 +1913,14 @@ public interface DatabaseInterface {
      * Load all the Records that are contained within the specified
      * {@code clazz} that pass the {@code filter}, limited to the specified
      * {@code page} among the {@code realms}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param page
      * @param filter
@@ -1960,15 +1935,35 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and pass the {@code filter}.
-     * 
+     * {@code clazz} and limited to the specified {@code page} among the
+     * {@code realms}.
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
+     * @param clazz
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Realms realms);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and pass the {@code filter}.
+     *
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     *
      * @param clazz
      * @param filter
      * @return a {@link Set set} of {@link Record} objects
@@ -1982,14 +1977,14 @@ public interface DatabaseInterface {
      * Load all the Records that are contained within the specified
      * {@code clazz} or any of its descendants and pass the {@code filter} amomg
      * the {@code realms}.
-     * 
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
      * @param clazz
      * @param filter
      * @param realms
@@ -2003,16 +1998,33 @@ public interface DatabaseInterface {
 
     /**
      * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order}.
-     * 
+     * {@code clazz} or any of its descendants among the {@code realms}.
+     *
      * <p>
      * Multiple calls to this method with the same parameters will return
      * <strong>different</strong> instances (e.g. the instances are not cached).
      * This is done deliberately so different threads/clients can make changes
      * to a Record in isolation.
      * </p>
-     * 
+     *
+     * @param clazz
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public <T extends Record> Set<T> loadAny(Class<T> clazz, Realms realms);
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order}.
+     *
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     *
      * @param clazz
      * @return a {@link Set set} of {@link Record} objects
      * @deprecated Use {@link #loadAny(Class, Order)} instead
