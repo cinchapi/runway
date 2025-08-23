@@ -36,10 +36,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.AbstractMap.SimpleEntry;
+import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
@@ -134,7 +136,7 @@ import com.google.gson.stream.JsonWriter;
  * And, private fields are never included in a {@link #json() json} dump or
  * {@link #toString()} output.
  * </p>
- * 
+ *
  * @author Jeff Nelson
  */
 @SuppressWarnings({ "restriction", "deprecation" })
@@ -145,7 +147,7 @@ public abstract class Record implements Comparable<Record> {
      * part of the specified {@code clazz} can be resolved entirely by the
      * database, or must be done so locally because it touches {@link #derived()
      * derived} or {@link #computed() computed} data.
-     * 
+     *
      * @param <T>
      * @param clazz
      * @param condition
@@ -167,7 +169,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
-     * 
+     *
      * @param clazz
      * @param id
      * @param existing
@@ -190,7 +192,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
      * track of linked records to prevent infinite recursion.
-     * 
+     *
      * @param options
      * @param from the {@link Record} that is the parent link for any
      *            encountered links
@@ -238,7 +240,7 @@ public abstract class Record implements Comparable<Record> {
             /**
              * Return {@code true} of a link {@code from} one {@link Record}
              * {@code to} another one creates a cycle.
-             * 
+             *
              * @param from
              * @param to
              * @return a boolean that indicates whether the link between two
@@ -269,7 +271,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Use reflection to get the value for {@code field} in {@code record}.
-     * 
+     *
      * @param field
      * @param record
      * @return the value
@@ -286,7 +288,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Execute the equivalent logic of {@link Map#getOrDefault(Object, Object)}
      * on {@code map}, but ensure that a false negative bug does not occur.
-     * 
+     *
      * @param map
      * @param key
      * @param defaultValue
@@ -315,7 +317,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Add the canonical data representation of {@code value} to the
      * {@code hasher}.
-     * 
+     *
      * @param hasher
      * @param value
      */
@@ -387,7 +389,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return {@code true} if the record identified by {@code id} is in a
      * "zombie" state meaning it exists in the database without any actual data.
-     * 
+     *
      * @param id
      * @param concourse
      * @return {@code true} if the record is a zombie
@@ -401,7 +403,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return {@code true} if the {@code field} is considered readable.
-     * 
+     *
      * @param field
      * @return a boolean that expresses the readability of the field
      */
@@ -414,7 +416,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
-     * 
+     *
      * @param clazz
      * @param id
      * @param existing
@@ -433,7 +435,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
-     * 
+     *
      * @param clazz
      * @param id
      * @param existing
@@ -460,7 +462,7 @@ public abstract class Record implements Comparable<Record> {
      * Get a new instance of {@code clazz} by calling the default (zero-arg)
      * constructor, if it exists. This method attempts to correctly invoke
      * constructors for nested inner classes.
-     * 
+     *
      * @param clazz
      * @param connections
      * @return the instance of the {@code clazz}.
@@ -494,7 +496,7 @@ public abstract class Record implements Comparable<Record> {
      * {@link Sequences#isSequence(Object) Sequence} that contains either, try
      * to {@link #saveWithinTransaction(Concourse, Set) save} it, in case it has
      * {@link #hasUnsavedChanges() unsaved} changes.
-     * 
+     *
      * @param value
      * @param concourse
      * @param seen
@@ -527,7 +529,7 @@ public abstract class Record implements Comparable<Record> {
      * Serialize {@code value} by converting it to an object that can be stored
      * within the database. This method assumes that {@code value} is a scalar
      * (e.g. not a {@link Sequences#isSequence(Object)}).
-     * 
+     *
      * @param value
      * @return the serialized value
      */
@@ -571,7 +573,7 @@ public abstract class Record implements Comparable<Record> {
      * Use this method instead of {@link Reflection#set(String, Object, Object)}
      * to take advantage of performance optimizations.
      * </p>
-     * 
+     *
      * @param name
      * @param value
      * @param instance
@@ -589,6 +591,49 @@ public abstract class Record implements Comparable<Record> {
         catch (ReflectiveOperationException e) {
             throw CheckedExceptions.throwAsRuntimeException(e);
         }
+    }
+
+    /**
+     * Update a value at the specified index within a sequence-like object.
+     * <p>
+     * This method handles different types of sequences including {@link List},
+     * arrays, and {@link Set} collections. For sets, a new ordered set is
+     * created with the replacement value at the specified position.
+     * </p>
+     * <p>
+     * The method returns the potentially modified sequence object, which may
+     * be a new instance in the case of immutable or set-based sequences.
+     * </p>
+     *
+     * @param sequence the sequence object to modify
+     * @param index the zero-based index at which to place the value
+     * @param value the value to set at the specified index
+     * @return the sequence object, potentially a new instance if the original
+     *         was immutable or required reconstruction
+     */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private static Object setSequenceValue(Object sequence, int index,
+            Object value) {
+        if(Sequences.isSequence(sequence)) {
+            if(sequence instanceof List) {
+                ((List) sequence).set(index, value);
+            }
+            else if(sequence.getClass().isArray()) {
+                java.lang.reflect.Array.set(sequence, index, value);
+            }
+            else if(sequence instanceof Set) {
+                Set set = new LinkedHashSet<>();
+                AtomicInteger i = new AtomicInteger(0);
+                Sequences.forEach(sequence, item -> {
+                    if(i.getAndIncrement() == index) {
+                        item = value;
+                    }
+                    set.add(item);
+                });
+                sequence = set;
+            }
+        }
+        return sequence;
     }
 
     /* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
@@ -796,7 +841,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Add this {@link Record} to {@code realm}.
-     * 
+     *
      * @param realm
      * @return {@code true} if this {@link Record} was added to {@link realm};
      *         otherwise {@code false}
@@ -817,7 +862,7 @@ public abstract class Record implements Comparable<Record> {
      * single {@link Runway} instance is auto assigned to all Records when they
      * are created and loaded.
      * </p>
-     * 
+     *
      * @param runway the {@link Runway} instance where this {@link Record} is
      *            stored.
      */
@@ -842,7 +887,7 @@ public abstract class Record implements Comparable<Record> {
      * (i.e. reverse) order. If a sort key has no prefix, it is sorted in
      * ascending order.
      * </p>
-     * 
+     *
      * @param record the object to be compared
      * @param order a list of sort keys
      * @return a negative integer, zero, or a positive integer as this object is
@@ -879,7 +924,7 @@ public abstract class Record implements Comparable<Record> {
      * (i.e. reverse) order. If a sort key has no prefix, it is sorted in
      * ascending order.
      * </p>
-     * 
+     *
      * @param record the object to be compared
      * @param order a space separated string containing sort keys
      * @return a negative integer, zero, or a positive integer as this object is
@@ -912,7 +957,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Retrieve a dynamic value.
-     * 
+     *
      * @param key the key name
      * @return the dynamic value
      */
@@ -982,7 +1027,7 @@ public abstract class Record implements Comparable<Record> {
      * If you want to return all the readable data, use the {@link #map()}
      * method.
      * </p>
-     * 
+     *
      * @return the data in this record
      * @deprecated use {@link #map(String...)} instead
      */
@@ -999,7 +1044,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return the {@link #id} that uniquely identifies this record.
-     * 
+     *
      * @return the id
      */
     public final long id() {
@@ -1009,7 +1054,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return {@code true} if this {@link Record} and the other {@code record}
      * exist in at least one overlapping realm.
-     * 
+     *
      * @param record
      * @return {@code true} if this and {@code record} share any realms
      */
@@ -1031,7 +1076,7 @@ public abstract class Record implements Comparable<Record> {
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
      * </p>
-     * 
+     *
      * @return the intrinsic data record
      */
     public Map<String, Object> intrinsic() {
@@ -1051,7 +1096,7 @@ public abstract class Record implements Comparable<Record> {
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
      * </p>
-     * 
+     *
      * @param keys
      * @return the intrinsic record data
      */
@@ -1070,7 +1115,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data.
-     * 
+     *
      * @return json string
      */
     public String json() {
@@ -1080,7 +1125,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data.
-     * 
+     *
      * @param flattenSingleElementCollections
      * @return json string
      * @deprecated use {@link #json(SerializationOptions) instead}
@@ -1103,7 +1148,7 @@ public abstract class Record implements Comparable<Record> {
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
      * </p>
-     * 
+     *
      * @param flattenSingleElementCollections
      * @param keys
      * @return json string
@@ -1156,7 +1201,7 @@ public abstract class Record implements Comparable<Record> {
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
      * </p>
-     * 
+     *
      * @param keys
      * @return json string
      */
@@ -1175,7 +1220,7 @@ public abstract class Record implements Comparable<Record> {
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
      * </p>
-     * 
+     *
      * @return the data in this record
      */
     public Map<String, Object> map() {
@@ -1289,7 +1334,7 @@ public abstract class Record implements Comparable<Record> {
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
      * </p>
-     * 
+     *
      * @param keys
      * @return the data in this record
      */
@@ -1300,7 +1345,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return the names of all the {@link Realms} where this {@link Record}
      * exists.
-     * 
+     *
      * @return this {@link Record Record's} realms
      */
     public Set<String> realms() {
@@ -1309,7 +1354,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Remove this {@link Record} from {@code realm}.
-     * 
+     *
      * @param realm
      * @return {@code true} if this {@link Record} was removed from
      *         {@code realm}; otherwise {@code false} (e.g. this {@link Record}
@@ -1324,6 +1369,38 @@ public abstract class Record implements Comparable<Record> {
                 _realms = ImmutableSet.of();
             }
         }
+    }
+
+    /**
+     * Recursively replace <strong>all</strong> references to a specific
+     * {@link Record} ({@code find}) with another {@link Record}
+     * ({@code replace}) throughout the object graph starting from this record.
+     * <p>
+     * This method is essential when you need to update all references to a
+     * record instance throughout a complex object hierarchy. Common use cases
+     * include:
+     * </p>
+     * <ul>
+     * <li>Replacing a placeholder or template record with an actual
+     * instance</li>
+     * <li>Updating references after merging or consolidating records</li>
+     * <li>Swapping record implementations while maintaining referential
+     * integrity</li>
+     * <li>Replacing mock or test records with production instances</li>
+     * </ul>
+     * <p>
+     * The method traverses the entire object graph <strong>reachable from this
+     * {@link Record}</strong>, including nested records, deferred references,
+     * and sequences, replacing any occurrence of the target record with the
+     * replacement record. The operation maintains referential integrity by
+     * ensuring all references point to the new record instance.
+     * </p>
+     *
+     * @param find the {@link Record} instance to be replaced
+     * @param replace the {@link Record} instance to use as the replacement
+     */
+    public void replace(Record find, Record replace) {
+        replace(find, replace, new HashSet<>());
     }
 
     /**
@@ -1348,7 +1425,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * {@link #set(String, Object) Set} each key/value pair within {@code data}
      * as a dynamic attribute in this {@link Record}.
-     * 
+     *
      * @param data
      */
     public void set(Map<String, Object> data) {
@@ -1359,7 +1436,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Set a dynamic attribute in this Record.
-     * 
+     *
      * @param key the key name
      * @param value the value to set
      */
@@ -1388,7 +1465,7 @@ public abstract class Record implements Comparable<Record> {
      * Thrown an exception that describes any exceptions that were previously
      * suppressed. If none occurred, then this method does nothing. This is a
      * good way to understand why a save operation fails.
-     * 
+     *
      * @throws RuntimeException
      */
     public void throwSupressedExceptions() {
@@ -1453,7 +1530,7 @@ public abstract class Record implements Comparable<Record> {
      * NOTE: Computed attributes are never cached. Each time one is requested,
      * the computation that generates the value is done anew.
      * </p>
-     * 
+     *
      * @return the computed data
      * @deprecated Use the {@link Computed} annotation instead
      */
@@ -1466,7 +1543,7 @@ public abstract class Record implements Comparable<Record> {
      * Provide additional data about this Record that might not be encapsulated
      * in its fields. For example, this is a good way to provide template
      * specific information that isn't persisted to the database.
-     * 
+     *
      * @return the additional data
      * @deprecated Use the {@link Derived} annotation instead
      */
@@ -1478,7 +1555,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
      * use when generating the {@link #json()} for this {@link Record}.
-     * 
+     *
      * @return a mapping from a {@link Class} to a corresponding
      *         {@link JsonTypeWriter}.
      * @deprecated use {@link #typeAdapters()} instead
@@ -1491,7 +1568,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
      * use when generating the {@link #json()} for this {@link Record}.
-     * 
+     *
      * @return a mapping from a {@link Class} to a corresponding
      *         {@link JsonTypeWriter}.
      * @deprecated use {@link #typeAdapters()} instead
@@ -1538,7 +1615,7 @@ public abstract class Record implements Comparable<Record> {
      * won't trigger save listeners or other standard save-related
      * functionality.
      * </p>
-     * 
+     *
      * @return a {@link Supplier} that returns the result of the save operation,
      *         or {@code null} to use the standard save process
      */
@@ -1553,7 +1630,7 @@ public abstract class Record implements Comparable<Record> {
      * Each {@link TypeAdapter} should be mapped from the most generic class or
      * interface for which the adapter applies.
      * </p>
-     * 
+     *
      * @return the type adapters to use when serializing the Record to JSON.
      */
     protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
@@ -1562,7 +1639,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return {@code true} if this {@link Record} has any unsaved changes.
-     * 
+     *
      * @return {@code true} if there are changes that need to be saved.
      */
     /* package */ boolean hasUnsavedChanges() {
@@ -1577,7 +1654,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Load an existing record from the database and add all of it to this
      * instance in memory.
-     * 
+     *
      * @param concourse
      * @param existing
      */
@@ -1589,7 +1666,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Load an existing record from the database and add all of it to this
      * instance in memory.
-     * 
+     *
      * @param concourse
      * @param existing
      * @param data
@@ -1603,7 +1680,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Load an existing record from the database and add all of it to this
      * instance in memory.
-     * 
+     *
      * @param concourse
      * @param existing
      * @param data data that is pre-loaded from {@code concourse}; this should
@@ -1619,7 +1696,7 @@ public abstract class Record implements Comparable<Record> {
             Set<String> paths = runway
                     .getPathsForClassIfSupported(this.getClass());
             // @formatter:off
-            data = paths != null 
+            data = paths != null
                     ? concourse.select(paths, id)
                     : concourse.select(id);
             // @formatter:on
@@ -1749,7 +1826,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
-     * 
+     *
      * @return the data {@link Multimap}
      */
     /* package */ Multimap<String, Object> mmap() {
@@ -1758,7 +1835,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
-     * 
+     *
      * @param options
      * @param keys
      * @return the data {@link Multimap}
@@ -1773,7 +1850,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
-     * 
+     *
      * @param keys
      * @return the data {@link Multimap}
      */
@@ -1790,7 +1867,7 @@ public abstract class Record implements Comparable<Record> {
      * to use the save method in the {@link Runway} class instead of this for
      * consistent semantics.
      * </p>
-     * 
+     *
      * @return {@code true} if all the changes have been atomically saved.
      */
     /* package */ final boolean save(Concourse concourse, Set<Record> seen,
@@ -1946,7 +2023,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Gather all of the computed properties.
-     * 
+     *
      * @return the computer properties
      */
     private Map<String, Supplier<Object>> $computed() {
@@ -1997,7 +2074,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Gather all of the derived properties.
-     * 
+     *
      * @return the computer properties
      */
     private Map<String, Object> $derived() {
@@ -2047,7 +2124,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Check to ensure that this Record does not violate any constraints. If so,
      * throw an {@link IllegalStateException}.
-     * 
+     *
      * @param concourse
      * @throws IllegalStateException
      */
@@ -2085,7 +2162,7 @@ public abstract class Record implements Comparable<Record> {
      * verifies the uniqueness for all fields with that same constraint name
      * within the class. If the constraint has been already verified, it is
      * skipped.
-     * 
+     *
      * @param concourse The Concourse instance managing the transaction.
      * @param field The field that is being checked for uniqueness.
      * @param key The key or name of the field.
@@ -2127,7 +2204,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return a checksum for this {@link Record} based on its current state.
-     * 
+     *
      * @return the checksum
      */
     private final String checksum() {
@@ -2147,7 +2224,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Compare this object to another {@code record} using the provided
      * {@code order} specification.
-     * 
+     *
      * @param record the object to be compared
      * @param order an ordered mapping (i.e. {@link LinkedHashMap}) from sort
      *            key to an integer that specifies the sort direction (e.g. a
@@ -2212,7 +2289,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Convert the {@code stored} value for {@code key} into the appropriate
      * Java object based on the field {@code type}.
-     * 
+     *
      * @param key
      * @param type
      * @param stored
@@ -2275,7 +2352,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return a map that contains all of the readable data in this record.
-     * 
+     *
      * @return the data in this record
      */
     private Map<String, Object> data() {
@@ -2328,7 +2405,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Perform an actual "deletion" of this record from the database.
-     * 
+     *
      * @param concourse
      */
     private void deleteWithinTransaction(Concourse concourse) {
@@ -2427,7 +2504,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Dereference the {@code value} stored for {@code key} if it is a
      * {@link DeferredReference} or a {@link Sequence} of them.
-     * 
+     *
      * @param key
      * @param value
      * @return the dereferenced value if it can be dereferenced or the original
@@ -2459,7 +2536,7 @@ public abstract class Record implements Comparable<Record> {
      * Ensure that {@code record} is scheduled for
      * {@link #deleteWithinTransaction(Concourse) deletion} alongside this
      * {@link Record}.
-     * 
+     *
      * @param record
      */
     private void ensureDeletion(Record record) {
@@ -2471,7 +2548,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return all the non-internal {@link Field fields} in this class.
-     * 
+     *
      * @return the non-internal {@link Field fields}
      */
     private Collection<Field> fields() {
@@ -2481,7 +2558,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return {@code true} if this record is in a "zombie" state meaning it
      * exists in the database without any actual data.
-     * 
+     *
      * @param concourse
      * @return {@code true} if this record is a zombie
      */
@@ -2499,7 +2576,7 @@ public abstract class Record implements Comparable<Record> {
      * {@code true} if and only if every element in every
      * {@link Sequences#isSequence(Object) sequence} is unique.
      * </p>
-     * 
+     *
      * @param concourse
      * @param data
      * @return
@@ -2549,7 +2626,7 @@ public abstract class Record implements Comparable<Record> {
      * with that mapping. If {@code value} is a collection, then this method
      * will return {@code true} if and only if every element in the collection
      * is unique.
-     * 
+     *
      * @param concourse
      * @param key
      * @param value
@@ -2563,13 +2640,13 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return the JSON string for this {@link Record}.
-     * 
+     *
      * <p>
      * This method also supports <strong>negative filtering</strong>. You can
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
      * </p>
-     * 
+     *
      * @param options
      * @param links
      * @param keys the attributes to include in the JSON
@@ -2621,6 +2698,71 @@ public abstract class Record implements Comparable<Record> {
         });
         Gson gson = builder.create();
         return gson.toJson(data);
+    }
+
+    /**
+     * Recursively replace all references to a specific {@link Record} with
+     * another {@link Record} throughout the object graph.
+     *
+     * @param find the {@link Record} instance to be replaced
+     * @param replace the {@link Record} instance to use as the replacement
+     * @param seen the set of records that have already been processed
+     */
+    private void replace(Record find, Record replace, Set<Record> seen) {
+        seen.add(this);
+        Stream<Entry<String, Object>> data = fields().stream()
+                .filter(field -> !Modifier.isTransient(field.getModifiers()))
+                .map(field -> new SimpleImmutableEntry<>(field.getName(),
+                       Reflection.get(field.getName(), this)));
+        data.forEach(e -> {
+            String key = e.getKey();
+            Object value = e.getValue();
+            if(value == null) {
+                return;
+            }
+            else if(value.equals(find)) {
+                set(key, replace);
+            }
+            else if(value instanceof Record && !seen.contains(value)) {
+                ((Record) value).replace(find, replace, seen);
+            }
+            else if(value instanceof DeferredReference) {
+                DeferredReference<?> ref = (DeferredReference<?>) value;
+                Record target = ref.get();
+                if(target.equals(find)) {
+                    set(key, new DeferredReference<>(replace));
+                }
+                else if(!seen.contains(target)) {
+                    target.replace(find, replace, seen);
+                }
+            }
+            else if(Sequences.isSequence(value)) {
+                AtomicInteger index = new AtomicInteger(0);
+                AtomicReference<Object> sequence = new AtomicReference<>(value);
+                Sequences.forEach(value, item -> {
+                    int current = index.getAndIncrement();
+                    if(item.equals(find)) {
+                        sequence.set(setSequenceValue(sequence.get(), current,
+                                replace));
+                    }
+                    else if(item instanceof Record && !seen.contains(item)) {
+                        ((Record) item).replace(find, replace, seen);
+                    }
+                    else if(item instanceof DeferredReference) {
+                        DeferredReference<?> ref = (DeferredReference<?>) item;
+                        Record target = ref.get();
+                        if(target.equals(find)) {
+                            sequence.set(setSequenceValue(sequence.get(),
+                                    current, new DeferredReference<>(replace)));
+                        }
+                        else if(!seen.contains(target)) {
+                            target.replace(find, replace, seen);
+                        }
+                    }
+                });
+                set(key, sequence.get());
+            }
+        });
     }
 
     /**
@@ -2702,7 +2844,7 @@ public abstract class Record implements Comparable<Record> {
          * costs proportional to the number of classes defined, so it is only
          * done once to minimize the effect of the cost.
          * </p>
-         * 
+         *
          * @return the {@link StaticAnalysis}
          */
         public static StaticAnalysis instance() {
@@ -2713,7 +2855,7 @@ public abstract class Record implements Comparable<Record> {
          * Return the non-cyclic paths (e.g., keys and navigation keys) for
          * the fields in {@code clazz}; all prefixed with {@code prefix} and
          * using {@code ancestors} for cycle detection.
-         * 
+         *
          * @param clazz
          * @param hierarchies
          * @param fieldsByClass
@@ -2730,7 +2872,7 @@ public abstract class Record implements Comparable<Record> {
          * Return the non-cyclic paths (e.g., keys and navigation keys) for
          * the fields in {@code clazz}; all prefixed with {@code prefix} and
          * using {@code ancestors} for cycle detection.
-         * 
+         *
          * @param clazz
          * @param hierarchies
          * @param fieldsByClass
@@ -2783,7 +2925,7 @@ public abstract class Record implements Comparable<Record> {
         /**
          * Perform {@link #computePaths(Class, Multimap, Map)} for each
          * {@link Class} in the {@link #hierarchies hierarchy} of {@code clazz}.
-         * 
+         *
          * @param clazz
          * @param hierarchies
          * @param fieldsByClass
@@ -2807,7 +2949,7 @@ public abstract class Record implements Comparable<Record> {
          * Return {@code true} if {@code clazz} has any descendants in its
          * hierarchy that have additional fields that are not defined in
          * {@code clazz}.
-         * 
+         *
          * @param clazz
          * @param hierarchies
          * @param fieldsByClass
@@ -3026,7 +3168,7 @@ public abstract class Record implements Comparable<Record> {
         /**
          * Return a set of fields from a {@link Record} class that are annotated
          * with a specific annotation.
-         * 
+         *
          * @param <T> the type of record
          * @param clazz the class of the record
          * @param annotation the class of the annotation to look for
@@ -3051,7 +3193,7 @@ public abstract class Record implements Comparable<Record> {
         /**
          * Return a set of fields from an instance of a {@link Record} that are
          * annotated with a specific annotation.
-         * 
+         *
          * @param <T> the type of record
          * @param record the record instance
          * @param annotation the class of the annotation to look for
@@ -3093,7 +3235,7 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Return the descendants of {@code clazz}.
-         * 
+         *
          * @param clazz
          * @return the hierarchy
          */
@@ -3104,7 +3246,7 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Return the {@link Field} object for {@code key} in {@code clazz}.
-         * 
+         *
          * @param clazz
          * @param key
          * @return the {@link Field} object
@@ -3122,7 +3264,7 @@ public abstract class Record implements Comparable<Record> {
         /**
          * Return the {@link Field} object for {@code key} in the {@link Class}
          * of {@code record}.
-         * 
+         *
          * @param record
          * @param key
          * @return the {@link Field} object
@@ -3133,7 +3275,7 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Return the non-internal {@link Field} objects for {@code clazz}.
-         * 
+         *
          * @param clazz
          * @return the {@link Fields}
          */
@@ -3150,7 +3292,7 @@ public abstract class Record implements Comparable<Record> {
         /**
          * Return the non-internal {@link Field} objects for {@link Class} of
          * {@code record}.
-         * 
+         *
          * @param record
          * @return the {@link Fields}
          */
@@ -3184,7 +3326,7 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Return the names of the non-internal fields in {@code clazz}.
-         * 
+         *
          * @param clazz
          * @return the keys
          */
@@ -3202,7 +3344,7 @@ public abstract class Record implements Comparable<Record> {
          * Return all the paths (e.g., navigable keys based on fields with
          * linked
          * {@link Record} types) for {@code clazz}.
-         * 
+         *
          * @param clazz
          * @return the paths
          */
@@ -3214,7 +3356,7 @@ public abstract class Record implements Comparable<Record> {
          * Return all the paths (e.g., navigable keys based on fields with
          * linked
          * {@link Record} types) for {@code clazz} and all of its descendents.
-         * 
+         *
          * @param clazz
          * @return the paths
          */
@@ -3225,7 +3367,7 @@ public abstract class Record implements Comparable<Record> {
         /**
          * Return any defined type arguments for the field named {@code key} in
          * {@code clazz}.
-         * 
+         *
          * @param clazz
          * @param key
          * @return the type arguments
@@ -3245,7 +3387,7 @@ public abstract class Record implements Comparable<Record> {
          * Return any defined type arguments for the field named {@code key} in
          * the
          * {@link Class} of {@code record}.
-         * 
+         *
          * @param clazz
          * @param key
          * @return the type arguments
@@ -3258,7 +3400,7 @@ public abstract class Record implements Comparable<Record> {
         /**
          * Return {@code true} if {@code clazz} has any fields whose type is a
          * subclass of {@link Record}.
-         * 
+         *
          * @param clazz
          * @return {@code true} if {@code clazz} has any {@link Record} type
          *         fields
@@ -3272,7 +3414,7 @@ public abstract class Record implements Comparable<Record> {
          * Return {@code true} if {@code clazz}, or any of its descendants, have
          * any
          * fields whose type is a subclass of {@link Record}.
-         * 
+         *
          * @param clazz
          * @return {@code true} if {@code clazz}, or any of its children, have
          *         any
@@ -3368,7 +3510,7 @@ public abstract class Record implements Comparable<Record> {
          * assignable to the given {@code field} within {@code clazz}. This
          * check includes both direct assignment compatibility as well as
          * compatibility with the field's type arguments.
-         * 
+         *
          * @param type the {@link Record} type to check for compatibility with
          *            the field
          * @param clazz the class that contains the {@code field}
@@ -3414,7 +3556,7 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Construct a new instance.
-         * 
+         *
          * @param data
          */
         public CollectionValueWrapperMap(Map<K, Object> data) {
@@ -3498,7 +3640,7 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Construct a new instance.
-         * 
+         *
          * @param tracked
          */
         private ReactiveDatabaseInterface(Record tracked) {
@@ -3977,7 +4119,7 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Construct a new instance.
-         * 
+         *
          * @param data
          */
         public SyntheticMultimap(Map<K, Collection<V>> data) {

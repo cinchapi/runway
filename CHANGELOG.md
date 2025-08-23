@@ -56,6 +56,9 @@ Fixed a bug where there was inconsistent priorities in the order of data returne
 * **Previous Inconsistency**: Previously, `get()` used the order: dynamic → intrinsic → derived → computed, while `map()` used: dynamic → intrinsic → computed → derived
 * **Impact**: This fix resolves issues that occurred when the same key was used in both computed and derived data, ensuring consistent behavior across all data access methods
 
+##### Other Improvements
+* **Record Reference Replacement**: Added a new `replace(Record find, Record replace)` method to the `Record` class that recursively replaces all references to a specific record instance with another record throughout the object graph, maintaining referential integrity while handling nested records, deferred references, and sequences.
+
 #### Version 1.10.0 (May 11, 2025)
 
 ##### Deletion Hooks
