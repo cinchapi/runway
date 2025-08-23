@@ -267,6 +267,7 @@ public interface Audience extends DatabaseInterface {
     public default <T extends Record> Map<String, Object> frame(
             Collection<String> keys, T subject) {
         Preconditions.checkNotNull(keys, "keys cannot be null");
+        Map<String, Object> data;
         if(!$checkIfVisible().test(subject)) {
             return null;
         }
@@ -311,7 +312,6 @@ public interface Audience extends DatabaseInterface {
             Set<String> readable = this instanceof Anonymous
                     ? gated.$readableByAnonymous()
                     : gated.$readableBy(this);
-            Map<String, Object> data;
             if(readable == NO_KEYS) {
                 RESTRICTED_ACCESS_DETECTED.set(true);
                 data = ImmutableMap.of();
@@ -440,11 +440,16 @@ public interface Audience extends DatabaseInterface {
             if(seen.isEmpty()) {
                 PREVIOUSLY_FRAMED_RECORDS.remove();
             }
-            return data;
         }
         else {
-            return subject.map(keys.toArray(Array.containing()));
+            data = subject.map(keys.toArray(Array.containing()));
         }
+        // By convention, the subject's id should always be included when
+        // framing.
+        if(!data.containsKey("id")) {
+            data.put("id", subject.get("id"));
+        }
+        return data;
     }
 
     /**
