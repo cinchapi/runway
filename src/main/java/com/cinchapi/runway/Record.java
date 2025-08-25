@@ -227,7 +227,8 @@ public abstract class Record implements Comparable<Record> {
                                 out.jsonValue(value.json(options, links));
                             }
                             else {
-                                out.value(value.id() + " (recursive link)");
+                                out.value(
+                                        value.get("id") + " (recursive link)");
                             }
                         }
                     }.nullSafe();
@@ -827,6 +828,12 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      */
     private String __checksum = null;
+
+    /**
+     * Cached copy of audit data used by some {@link Metadata} operations.
+     */
+    @Nullable
+    private transient Map<Timestamp, List<String>> _audit = null;
 
     /**
      * Construct a new instance.
@@ -1939,6 +1946,9 @@ public abstract class Record implements Comparable<Record> {
             concourse.reconcile(REALMS_KEY, id, _realms);
             _hasModifiedRealms = false;
         }
+        // TODO: check if the author is non-null, and if so set it within the
+        // transaction and null it afterwards. If the author is null, then clear
+        // it within the transaction
         if(deleted) {
             deleteWithinTransaction(concourse);
         }
@@ -2017,6 +2027,7 @@ public abstract class Record implements Comparable<Record> {
                     }
                 }
             }
+            _audit = null;
             __checksum = checksum();
         }
     }
@@ -2713,7 +2724,7 @@ public abstract class Record implements Comparable<Record> {
         Stream<Entry<String, Object>> data = fields().stream()
                 .filter(field -> !Modifier.isTransient(field.getModifiers()))
                 .map(field -> new SimpleImmutableEntry<>(field.getName(),
-                       Reflection.get(field.getName(), this)));
+                        Reflection.get(field.getName(), this)));
         data.forEach(e -> {
             String key = e.getKey();
             Object value = e.getValue();

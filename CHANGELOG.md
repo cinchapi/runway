@@ -58,6 +58,7 @@ Fixed a bug where there was inconsistent priorities in the order of data returne
 
 ##### Other Improvements
 * **Record Reference Replacement**: Added a new `replace(Record find, Record replace)` method to the `Record` class that recursively replaces all references to a specific record instance with another record throughout the object graph, maintaining referential integrity while handling nested records, deferred references, and sequences.
+* **Metadata Interface**: Added a new `Metadata` interface that provides implementing Record types with computed properties to obtain the Record's timestamps for creation and most recent update (including the ability to filter for most recent update to specific keys).
 
 #### Version 1.10.0 (May 11, 2025)
 
