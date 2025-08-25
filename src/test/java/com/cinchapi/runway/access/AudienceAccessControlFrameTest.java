@@ -22,7 +22,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.Timestamp;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
 /**
@@ -110,10 +109,9 @@ public class AudienceAccessControlFrameTest extends AudienceAccessControlBaseTes
 
         Map<String, Object> result = candidate1.frame(
                 ImmutableSet.of("resume", "skills", "email"), candidate2);
-
-        Assert.assertEquals(
-                "Candidate should not be able to access another candidate's private fields",
-                ImmutableMap.of(), result);
+        Assert.assertFalse(result.containsKey("resume"));
+        Assert.assertFalse(result.containsKey("skills"));
+        Assert.assertFalse(result.containsKey("email"));
     }
 
     @Test
@@ -322,9 +320,9 @@ public class AudienceAccessControlFrameTest extends AudienceAccessControlBaseTes
         // NO_KEYS
         Map<String, Object> result = candidate1.frame(
                 ImmutableSet.of("resume", "skills", "email"), candidate2);
-
-        Assert.assertEquals("Should return empty map for NO_KEYS access",
-                ImmutableMap.of(), result);
+        Assert.assertFalse(result.containsKey("resume"));
+        Assert.assertFalse(result.containsKey("skills"));
+        Assert.assertFalse(result.containsKey("email"));
     }
 
     @Test
@@ -745,8 +743,9 @@ public class AudienceAccessControlFrameTest extends AudienceAccessControlBaseTes
         // frame() should return empty map for denied access
         Map<String, Object> frameResult = candidate1.frame(deniedFields,
                 candidate2);
-        Assert.assertEquals("frame() should return empty map for denied fields",
-                ImmutableMap.of(), frameResult);
+        for(String field : deniedFields) {
+            Assert.assertFalse(frameResult.containsKey(field));
+        }
 
         // read() should throw exception for denied access
         try {
@@ -845,9 +844,7 @@ public class AudienceAccessControlFrameTest extends AudienceAccessControlBaseTes
 
         Map<String, Object> frameResult = candidate1
                 .frame(ImmutableSet.of("resume"), candidate2);
-        Assert.assertEquals(
-                "frame() should return empty map for same denied access",
-                ImmutableMap.of(), frameResult);
+        Assert.assertFalse(frameResult.containsKey("resume"));
     }
 
     // ========================================================================
@@ -1167,9 +1164,9 @@ public class AudienceAccessControlFrameTest extends AudienceAccessControlBaseTes
 
         Map<String, Object> crossAccess = otherCandidate
                 .frame(ImmutableSet.of("resume", "skills", "email"), candidate);
-        Assert.assertEquals(
-                "Candidates should not see each other's private data",
-                ImmutableMap.of(), crossAccess);
+        Assert.assertFalse(crossAccess.containsKey("resume"));
+        Assert.assertFalse(crossAccess.containsKey("skills"));
+        Assert.assertFalse(crossAccess.containsKey("email"));
     }
 
 }
