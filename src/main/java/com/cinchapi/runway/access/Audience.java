@@ -198,6 +198,9 @@ public interface Audience extends DatabaseInterface {
                 throw new RestrictedAccessException();
             }
         }
+        if(this instanceof Record) {
+            Reflection.set("_author", (Record) this, record);
+        }
         return record;
     }
 
@@ -550,6 +553,9 @@ public interface Audience extends DatabaseInterface {
                 throw new RestrictedAccessException();
             }
         }
+        if(this instanceof Record) {
+            Reflection.set("_author", (Record) this, record);
+        }
         record.set(data);
     }
 
@@ -578,6 +584,9 @@ public interface Audience extends DatabaseInterface {
             if(!isPermittedAccess(ImmutableSet.of(key), rules)) {
                 throw new RestrictedAccessException();
             }
+        }
+        if(this instanceof Record) {
+            Reflection.set("_author", (Record) this, record);
         }
         record.set(key, value);
     }

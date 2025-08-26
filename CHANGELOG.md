@@ -23,6 +23,16 @@ Runway now provides a comprehensive access control framework that enables fine-g
 
 This access control framework enables developers to build secure, multi-tenant applications with role-based access patterns while maintaining the simplicity and performance characteristics of Runway's existing Record operations.
 
+##### Auditing
+Runway now provides comprehensive auditing capabilities that hook into Concourse's ability to automatically track all changes to Record instances over time. The new `audit()` method returns a chronological history of modifications, including what changed, when it changed, and, possibly, who made the changes:
+
+* **Complete Change History**: Each timestamp in the audit trail represents a save operation, with associated revisions showing specific field changes
+* **Author Attribution**: Changes made through the `Audience` framework are automatically attributed to the responsible Audience, providing clear accountability for all modifications
+* **Unattributed Changes**: Changes made outside the Audience framework are still tracked but marked as "unknown author", ensuring complete visibility into all record modifications
+* **Flexible Filtering**: Support for both positive and negative key filtering (e.g., `audit("name", "-internal")`) allows focusing on specific fields while excluding unwanted data
+* **Change Type Detection**: The audit system automatically identifies SET operations (new values), CLEARED operations (removed values), and CHANGED operations (modified values)
+* **Intrinsic Properties Only**: Change tracking is limited to intrinsic properties; computed, derived, and dynamic properties are not included in the audit trail as they are calculated on-demand rather than stored persistently
+
 ##### Interface Default Method Support for Annotations
 Runway now recognizes `@Derived` and `@Computed` annotations on interface default methods, allowing implementing Records to inherit these property definitions without requiring explicit method overrides.
 
