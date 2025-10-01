@@ -413,7 +413,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Realms realms) {
         if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
             return count($Criteria.amongRealms(realms,
-                    $Criteria.withinClass(clazz, criteria)));
+                    $Criteria.accrossClassHierachy(clazz, criteria)));
         }
         else {
             return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
