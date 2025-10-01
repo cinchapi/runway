@@ -69,189 +69,195 @@ public final class Gateway {
     }
 
     /**
-     * Retrieve records from the specified class, possibly filtered by criteria,
-     * possibly sorted by order, and possibly paginated by page. This method
-     * intelligently routes to the appropriate database operation ({@link
-     * DatabaseInterface#find} or {@link DatabaseInterface#load}) based on the
-     * parameters provided. When any of these elements are null, they are ignored
-     * in the retrieval process.
+     * Fetch records from the specified class, possibly filtered by
+     * {@code criteria}, possibly sorted by {@code order}, and possibly
+     * paginated by {@code page}. This method intelligently routes to the
+     * appropriate database operation ({@link DatabaseInterface#find} or
+     * {@link DatabaseInterface#load}) based on the parameters provided. When
+     * any of these elements are null, they are ignored in the fetch process.
      *
-     * @param clazz the class of records to retrieve
+     * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
      * @param order the sort order, possibly null
      * @param page the pagination details, possibly null
-     * @return the retrieved records
+     * @return the fetched records
      */
-    public <T extends Record> Set<T> retrieve(Class<T> clazz,
+    public <T extends Record> Set<T> fetch(Class<T> clazz,
             @Nullable Criteria criteria, @Nullable Order order,
             @Nullable Page page) {
-        return retrieve(clazz, criteria, order, page, Realms.any(), false);
+        return fetch(clazz, criteria, order, page, Realms.any(), false);
     }
 
     /**
-     * Retrieve records from the specified class, possibly filtered by criteria,
-     * possibly sorted by order, and possibly paginated by page, within the
-     * specified realms. This method intelligently routes to the appropriate
-     * database operation ({@link DatabaseInterface#find} or {@link
-     * DatabaseInterface#load}) based on the parameters provided. When any of
-     * these elements are null, they are ignored in the retrieval process.
+     * Fetch records from the specified class, possibly filtered by
+     * {@code criteria}, possibly sorted by {@code order}, and possibly
+     * paginated by {@code page}, within the specified {@code realms}. This
+     * method intelligently routes to the appropriate database operation
+     * ({@link DatabaseInterface#find} or {@link DatabaseInterface#load})
+     * based on the parameters provided. When any of these elements are null,
+     * they are ignored in the fetch process.
      *
-     * @param clazz the class of records to retrieve
+     * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
      * @param order the sort order, possibly null
      * @param page the pagination details, possibly null
      * @param realms the realms to search within
-     * @return the retrieved records
+     * @return the fetched records
      */
-    public <T extends Record> Set<T> retrieve(Class<T> clazz,
+    public <T extends Record> Set<T> fetch(Class<T> clazz,
             @Nullable Criteria criteria, @Nullable Order order,
             @Nullable Page page, Realms realms) {
-        return retrieve(clazz, criteria, order, page, realms, false);
+        return fetch(clazz, criteria, order, page, realms, false);
     }
 
     /**
-     * Retrieve records from the specified class, possibly filtered by criteria,
-     * possibly sorted by order, and possibly paginated by page. This method
-     * intelligently routes to the appropriate database operation ({@link
-     * DatabaseInterface#find} or {@link DatabaseInterface#load}) based on the
-     * parameters provided. When any of these elements are null, they are ignored
-     * in the retrieval process.
+     * Fetch records from the specified class, possibly filtered by
+     * {@code criteria}, possibly sorted by {@code order}, and possibly
+     * paginated by {@code page}. This method intelligently routes to the
+     * appropriate database operation ({@link DatabaseInterface#find} or
+     * {@link DatabaseInterface#load}) based on the parameters provided. When
+     * any of these elements are null, they are ignored in the fetch process.
      *
-     * @param clazz the class of records to retrieve
+     * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
      * @param page the pagination details, possibly null
      * @param order the sort order, possibly null
-     * @return the retrieved records
+     * @return the fetched records
      */
-    public <T extends Record> Set<T> retrieve(Class<T> clazz,
+    public <T extends Record> Set<T> fetch(Class<T> clazz,
             @Nullable Criteria criteria, @Nullable Page page,
             @Nullable Order order) {
-        return retrieve(clazz, criteria, order, page, Realms.any(), false);
+        return fetch(clazz, criteria, order, page, Realms.any(), false);
     }
 
     /**
-     * Retrieve records from the specified class, possibly filtered by criteria,
-     * possibly sorted by order, and possibly paginated by page, within the
-     * specified realms. This method intelligently routes to the appropriate
-     * database operation ({@link DatabaseInterface#find} or {@link
-     * DatabaseInterface#load}) based on the parameters provided. When any of
-     * these elements are null, they are ignored in the retrieval process.
+     * Fetch records from the specified class, possibly filtered by
+     * {@code criteria}, possibly sorted by {@code order}, and possibly
+     * paginated by {@code page}, within the specified {@code realms}. This
+     * method intelligently routes to the appropriate database operation
+     * ({@link DatabaseInterface#find} or {@link DatabaseInterface#load})
+     * based on the parameters provided. When any of these elements are null,
+     * they are ignored in the fetch process.
      *
-     * @param clazz the class of records to retrieve
+     * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
      * @param page the pagination details, possibly null
      * @param order the sort order, possibly null
      * @param realms the realms to search within, possibly null
-     * @return the retrieved records
+     * @return the fetched records
      */
-    public <T extends Record> Set<T> retrieve(Class<T> clazz,
+    public <T extends Record> Set<T> fetch(Class<T> clazz,
             @Nullable Criteria criteria, @Nullable Page page,
             @Nullable Order order, @Nullable Realms realms) {
-        return retrieve(clazz, criteria, order, page, realms, false);
+        return fetch(clazz, criteria, order, page, realms, false);
     }
 
     /**
-     * Retrieve records from the specified class or its descendants, possibly
-     * filtered by criteria, possibly sorted by order, and possibly paginated
-     * by page. This method intelligently routes to the appropriate database
-     * operation ({@link DatabaseInterface#findAny} or {@link
-     * DatabaseInterface#loadAny}) based on the parameters provided. When any of
-     * these elements are null, they are ignored in the retrieval process.
+     * Fetch records from the specified class or its descendants, possibly
+     * filtered by {@code criteria}, possibly sorted by {@code order}, and
+     * possibly paginated by {@code page}. This method intelligently routes to
+     * the appropriate database operation ({@link DatabaseInterface#findAny}
+     * or {@link DatabaseInterface#loadAny}) based on the parameters provided.
+     * When any of these elements are null, they are ignored in the fetch
+     * process.
      *
-     * @param clazz the class of records to retrieve
+     * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
      * @param order the sort order, possibly null
      * @param page the pagination details, possibly null
-     * @return the retrieved records
+     * @return the fetched records
      */
-    public <T extends Record> Set<T> retrieveAny(Class<T> clazz,
+    public <T extends Record> Set<T> fetchAny(Class<T> clazz,
             @Nullable Criteria criteria, @Nullable Order order,
             @Nullable Page page) {
-        return retrieve(clazz, criteria, order, page, Realms.any(), true);
+        return fetch(clazz, criteria, order, page, Realms.any(), true);
     }
 
     /**
-     * Retrieve records from the specified class or its descendants, possibly
-     * filtered by criteria, possibly sorted by order, and possibly paginated
-     * by page, within the specified realms. This method intelligently routes
-     * to the appropriate database operation ({@link DatabaseInterface#findAny}
-     * or {@link DatabaseInterface#loadAny}) based on the parameters provided.
-     * When any of these elements are null, they are ignored in the retrieval
+     * Fetch records from the specified class or its descendants, possibly
+     * filtered by {@code criteria}, possibly sorted by {@code order}, and
+     * possibly paginated by {@code page}, within the specified
+     * {@code realms}. This method intelligently routes to the appropriate
+     * database operation ({@link DatabaseInterface#findAny} or
+     * {@link DatabaseInterface#loadAny}) based on the parameters provided.
+     * When any of these elements are null, they are ignored in the fetch
      * process.
      *
-     * @param clazz the class of records to retrieve
+     * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
      * @param order the sort order, possibly null
      * @param page the pagination details, possibly null
      * @param realms the realms to search within
-     * @return the retrieved records
+     * @return the fetched records
      */
-    public <T extends Record> Set<T> retrieveAny(Class<T> clazz,
+    public <T extends Record> Set<T> fetchAny(Class<T> clazz,
             @Nullable Criteria criteria, @Nullable Order order,
             @Nullable Page page, Realms realms) {
-        return retrieve(clazz, criteria, order, page, realms, true);
+        return fetch(clazz, criteria, order, page, realms, true);
     }
 
     /**
-     * Retrieve records from the specified class or its descendants, possibly
-     * filtered by criteria, possibly sorted by order, and possibly paginated
-     * by page. This method intelligently routes to the appropriate database
-     * operation ({@link DatabaseInterface#findAny} or {@link
-     * DatabaseInterface#loadAny}) based on the parameters provided. When any of
-     * these elements are null, they are ignored in the retrieval process.
+     * Fetch records from the specified class or its descendants, possibly
+     * filtered by {@code criteria}, possibly sorted by {@code order}, and
+     * possibly paginated by {@code page}. This method intelligently routes to
+     * the appropriate database operation ({@link DatabaseInterface#findAny}
+     * or {@link DatabaseInterface#loadAny}) based on the parameters provided.
+     * When any of these elements are null, they are ignored in the fetch
+     * process.
      *
-     * @param clazz the class of records to retrieve
+     * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
      * @param page the pagination details, possibly null
      * @param order the sort order, possibly null
-     * @return the retrieved records
+     * @return the fetched records
      */
-    public <T extends Record> Set<T> retrieveAny(Class<T> clazz,
+    public <T extends Record> Set<T> fetchAny(Class<T> clazz,
             @Nullable Criteria criteria, @Nullable Page page,
             @Nullable Order order) {
-        return retrieve(clazz, criteria, order, page, Realms.any(), true);
+        return fetch(clazz, criteria, order, page, Realms.any(), true);
     }
 
     /**
-     * Retrieve records from the specified class or its descendants, possibly
-     * filtered by criteria, possibly sorted by order, and possibly paginated
-     * by page, within the specified realms. This method intelligently routes
-     * to the appropriate database operation ({@link DatabaseInterface#findAny}
-     * or {@link DatabaseInterface#loadAny}) based on the parameters provided.
-     * When any of these elements are null, they are ignored in the retrieval
+     * Fetch records from the specified class or its descendants, possibly
+     * filtered by {@code criteria}, possibly sorted by {@code order}, and
+     * possibly paginated by {@code page}, within the specified
+     * {@code realms}. This method intelligently routes to the appropriate
+     * database operation ({@link DatabaseInterface#findAny} or
+     * {@link DatabaseInterface#loadAny}) based on the parameters provided.
+     * When any of these elements are null, they are ignored in the fetch
      * process.
      *
-     * @param clazz the class of records to retrieve
+     * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
      * @param page the pagination details, possibly null
      * @param order the sort order, possibly null
      * @param realms the realms to search within, possibly null
-     * @return the retrieved records
+     * @return the fetched records
      */
-    public <T extends Record> Set<T> retrieveAny(Class<T> clazz,
+    public <T extends Record> Set<T> fetchAny(Class<T> clazz,
             @Nullable Criteria criteria, @Nullable Page page,
             @Nullable Order order, @Nullable Realms realms) {
-        return retrieve(clazz, criteria, order, page, realms, true);
+        return fetch(clazz, criteria, order, page, realms, true);
     }
 
     /**
-     * Route the database retrieval calls based on the provided parameters.
+     * Route the database fetch calls based on the provided parameters.
      * Different combinations of non-null parameters route to different database
      * operations ({@link DatabaseInterface#find}/{@link DatabaseInterface#findAny}
      * or {@link DatabaseInterface#load}/{@link DatabaseInterface#loadAny}).
      *
-     * @param <T> the type of the records to retrieve
+     * @param <T> the type of the records to fetch
      * @param clazz the class of the records
      * @param criteria the conditions that the records must meet, possibly null
      * @param order the order in which to sort the records, possibly null
      * @param page the pagination details, possibly null
-     * @param realms the realms to look into when retrieving records
-     * @param any flag to indicate whether to retrieve from {@code clazz} and its
+     * @param realms the realms to look into when fetching records
+     * @param any flag to indicate whether to fetch from {@code clazz} and its
      *            descendants
      * @return a set of records meeting the criteria, sorted, paginated and
      *         limited to realms as specified
      */
-    private <T extends Record> Set<T> retrieve(Class<T> clazz,
+    private <T extends Record> Set<T> fetch(Class<T> clazz,
             @Nullable Criteria criteria, @Nullable Order order,
             @Nullable Page page, Realms realms, boolean any) {
         Set<T> records;
