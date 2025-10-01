@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.10.1 (October 1, 2025)
+* Fixed a bug that caused the `countAny(Class, Criteria, Realms)` method to incorrectly count records within only the specified class instead of across the entire class hierarchy.
+
 #### Version 1.10.0 (May 11, 2025)
 
 ##### Deletion Hooks
