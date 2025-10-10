@@ -43,7 +43,6 @@ import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Realms;
 import com.cinchapi.runway.Record;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
 
@@ -317,7 +316,7 @@ public interface Audience extends DatabaseInterface {
                     : gated.$readableBy(this);
             if(readable == NO_KEYS) {
                 RESTRICTED_ACCESS_DETECTED.set(true);
-                data = ImmutableMap.of();
+                data = new HashMap<>();
             }
             else if(requested.equals(ALL_KEYS) && readable.equals(ALL_KEYS)) {
                 data = subject.map();
@@ -354,7 +353,7 @@ public interface Audience extends DatabaseInterface {
                         // No keys are visible, but don't call Record#map
                         // with an empty array because doing so will return
                         // all data
-                        data = ImmutableMap.of();
+                        data = new HashMap<>();
                     }
                     else {
                         data = subject.map(visible);
