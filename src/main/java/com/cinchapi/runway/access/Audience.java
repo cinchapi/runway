@@ -383,7 +383,7 @@ public interface Audience extends DatabaseInterface {
                             ? nexts.toArray(Array.containing())
                             : Array.containing();
                     if(seen.contains(value)) {
-                        value = ((Record) value).id() + " (recursive link)";
+                        value = ((Record) value).get("id") + " (recursive link)";
                     }
                     else if(value instanceof AccessControl) {
                         Record record = (Record) value;
