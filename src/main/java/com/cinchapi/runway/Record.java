@@ -719,6 +719,19 @@ public abstract class Record implements Comparable<Record> {
     private static long NULL_ID = -1;
 
     /**
+     * A sentinel id used to indicate that a record is its own author.
+     * <p>
+     * Since Concourse does not allow records to link to themselves, this
+     * sentinel value is used as a placeholder in the database to represent
+     * self-authorship. When a record is saved with itself as the author,
+     * the framework automatically substitutes this sentinel ID. When loading
+     * or auditing records, the sentinel is transparently converted back to
+     * a true self-reference.
+     * </p>
+     */
+    private static final long SELF_AUTHOR_SENTINEL_ID = -2;
+
+    /**
      * The coefficient multiplied by the result of a comparison to push the
      * sorting in the ascending direction.
      */
@@ -1011,8 +1024,15 @@ public abstract class Record implements Comparable<Record> {
                 if(_author instanceof Link) {
                     Link link = (Link) _author;
                     long target = link.longValue();
-                    author = authors.computeIfAbsent(target,
-                            $ -> new DeferredReference<Record>(target, runway));
+                    // Check if the author is the sentinel ID indicating
+                    // self-authorship
+                    if(target == SELF_AUTHOR_SENTINEL_ID) {
+                        author = new DeferredReference<>(this);
+                    }
+                    else {
+                        author = authors.computeIfAbsent(target,
+                                $ -> new DeferredReference<Record>(target, runway));
+                    }
                 }
                 else {
                     author = null;
@@ -2190,7 +2210,11 @@ public abstract class Record implements Comparable<Record> {
             _hasModifiedRealms = false;
         }
         if(_author != null) {
-            concourse.set(AUTHOR_KEY, Link.to(_author.id), id);
+            // Check for self-authorship: if this record is its own author,
+            // use the sentinel ID to avoid self-referential links in Concourse
+            long authorId = _author.id == this.id ? SELF_AUTHOR_SENTINEL_ID
+                    : _author.id;
+            concourse.set(AUTHOR_KEY, Link.to(authorId), id);
             _author = null;
         }
         else {

@@ -625,6 +625,160 @@ public class AudienceAuthorTrackingTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(75000.0, budgetChange.to());
     }
 
+    @Test
+    public void testSelfAuthorshipOnInitialSave() {
+        // Create a User that is its own author (e.g., self-registration)
+        User user = new User();
+        user.name = "Self Registrant";
+        user.email = "self@example.com";
+        user.roles = Arrays.asList("user");
+        user.active = true;
+
+        // Set the user as its own author
+        user.write("name", user.name, user);
+        user.write("email", user.email, user);
+        user.write("roles", user.roles, user);
+        user.write("active", user.active, user);
+
+        // This should not throw an exception about self-referential links
+        boolean saved = runway.save(user);
+        if(!saved) {
+            user.throwSupressedExceptions();
+        }
+        Assert.assertTrue(saved);
+
+        // Verify the record was saved
+        Assert.assertNotEquals(0, user.id());
+
+        // Verify audit trail shows self-authorship
+        Map<Timestamp, Map<String, Revision>> audit = user.audit();
+        Assert.assertFalse(audit.isEmpty());
+
+        Map<String, Revision> revisions = audit.values().iterator().next();
+        Revision nameRevision = revisions.get("name");
+        Assert.assertTrue(nameRevision.isAttributed());
+        Assert.assertEquals(user, nameRevision.author());
+        Assert.assertEquals(user.id(), nameRevision.author().id());
+    }
+
+    @Test
+    public void testSelfAuthorshipAfterLoad() {
+        // Create a User that is its own author
+        User user = new User();
+        user.name = "Self Author";
+        user.email = "selfauthor@example.com";
+        user.roles = Arrays.asList("admin");
+        user.active = true;
+
+        user.write("name", user.name, user);
+        user.write("email", user.email, user);
+        runway.save(user);
+
+        long userId = user.id();
+
+        // Load the user from the database
+        User loadedUser = runway.load(User.class, userId);
+
+        // Verify the audit trail still shows self-authorship
+        Map<Timestamp, Map<String, Revision>> audit = loadedUser.audit();
+        Assert.assertFalse(audit.isEmpty());
+
+        Map<String, Revision> revisions = audit.values().iterator().next();
+        Revision nameRevision = revisions.get("name");
+        Assert.assertTrue(nameRevision.isAttributed());
+        Assert.assertEquals(loadedUser, nameRevision.author());
+        Assert.assertEquals(loadedUser.id(), nameRevision.author().id());
+    }
+
+    @Test
+    public void testSelfAuthorshipWithMultipleChanges() {
+        // Create a User that is its own author
+        User user = new User();
+        user.name = "Evolving User";
+        user.email = "evolving@example.com";
+        user.roles = Arrays.asList("user");
+        user.active = true;
+
+        // First save - self-authored
+        user.write("name", user.name, user);
+        user.write("email", user.email, user);
+        runway.save(user);
+
+        // Second save - still self-authored
+        user.write("roles", Arrays.asList("user", "editor"), user);
+        user.write("active", true, user);
+        runway.save(user);
+
+        // Third save - promote to admin, still self-authored
+        user.write("roles", Arrays.asList("user", "editor", "admin"), user);
+        runway.save(user);
+
+        // Verify audit trail shows all changes with self-authorship
+        Map<Timestamp, Map<String, Revision>> audit = user.audit();
+        Assert.assertEquals(3, audit.size());
+
+        // Verify all revisions are attributed to self
+        for (Map<String, Revision> revisions : audit.values()) {
+            for (Revision revision : revisions.values()) {
+                if(revision.isAttributed()) {
+                    Assert.assertEquals(user, revision.author());
+                    Assert.assertEquals(user.id(), revision.author().id());
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testSelfAuthorshipMixedWithOtherAuthors() {
+        // User creates itself
+        User user1 = new User();
+        user1.name = "User One";
+        user1.email = "user1@example.com";
+        user1.roles = Arrays.asList("user");
+        user1.active = true;
+
+        user1.write("name", user1.name, user1);
+        user1.write("email", user1.email, user1);
+        runway.save(user1);
+
+        // Another user creates itself
+        User user2 = new User();
+        user2.name = "User Two";
+        user2.email = "user2@example.com";
+        user2.roles = Arrays.asList("admin");
+        user2.active = true;
+
+        user2.write("name", user2.name, user2);
+        user2.write("email", user2.email, user2);
+        runway.save(user2);
+
+        // Now user2 modifies user1 (cross-authorship)
+        User loadedUser1 = runway.load(User.class, user1.id());
+        user2.write("roles", Arrays.asList("user", "verified"), loadedUser1);
+        runway.save(user2, loadedUser1);
+
+        // Verify user1's audit trail shows self-authorship then user2
+        Map<Timestamp, Map<String, Revision>> audit = loadedUser1.audit();
+        Assert.assertEquals(2, audit.size());
+
+        List<Map<String, Revision>> allRevisions = new ArrayList<>(
+                audit.values());
+
+        // First save - self-authored
+        Map<String, Revision> firstRevisions = allRevisions.get(0);
+        Revision firstNameRevision = firstRevisions.get("name");
+        Assert.assertTrue(firstNameRevision.isAttributed());
+        Assert.assertEquals(loadedUser1.id(),
+                firstNameRevision.author().id());
+
+        // Second save - authored by user2
+        Map<String, Revision> secondRevisions = allRevisions.get(1);
+        Revision rolesRevision = secondRevisions.get("roles");
+        Assert.assertTrue(rolesRevision.isAttributed());
+        Assert.assertEquals(user2.id(), rolesRevision.author().id());
+        Assert.assertNotEquals(loadedUser1.id(), rolesRevision.author().id());
+    }
+
     static class User extends Record implements Audience {
         String name;
         int age;
