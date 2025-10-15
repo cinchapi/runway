@@ -955,7 +955,8 @@ public abstract class Record implements Comparable<Record> {
      * operation.
      * </p>
      * <p>
-     * <strong>Change tracking is only available for intrinsic properties.</strong>
+     * <strong>Change tracking is only available for intrinsic
+     * properties.</strong>
      * Changes to {@link #computed() computed} and {@link #derived() derived}
      * properties are not tracked, as these values are calculated on-demand
      * rather than stored persistently. Dynamic data added via
@@ -1031,7 +1032,8 @@ public abstract class Record implements Comparable<Record> {
                     }
                     else {
                         author = authors.computeIfAbsent(target,
-                                $ -> new DeferredReference<Record>(target, runway));
+                                $ -> new DeferredReference<Record>(target,
+                                        runway));
                     }
                 }
                 else {
@@ -1693,10 +1695,8 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Thrown an exception that describes any exceptions that were
-     * previously
-     * suppressed. If none occurred, then this method does nothing. This is
-     * a
-     * good way to understand why a save operation fails.
+     * previously suppressed. If none occurred, then this method does nothing.
+     * This is a good way to understand why a save operation fails.
      *
      * @throws RuntimeException
      */
@@ -1711,7 +1711,7 @@ public abstract class Record implements Comparable<Record> {
                 stacktrace.add(t.getStackTrace());
                 it.remove();
             }
-            RuntimeException supressed = new RuntimeException(
+            SuppressedRunwayException supressed = new SuppressedRunwayException(
                     summary.toString().trim().substring(1));
             supressed.setStackTrace(stacktrace.build());
             throw supressed;

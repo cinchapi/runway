@@ -7,7 +7,7 @@ package com.cinchapi.runway;
  * @author jnelson
  */
 @SuppressWarnings("serial")
-public class ZombieException extends RuntimeException {
+public class ZombieException extends RunwayException {
 
     public ZombieException() {
         super("Encountered a zombie attack!");
