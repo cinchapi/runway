@@ -382,7 +382,8 @@ public interface Audience extends DatabaseInterface {
                             ? nexts.toArray(Array.containing())
                             : Array.containing();
                     if(seen.contains(value)) {
-                        value = ((Record) value).get("id") + " (recursive link)";
+                        value = ((Record) value).get("id")
+                                + " (recursive link)";
                     }
                     else if(value instanceof AccessControl) {
                         Record record = (Record) value;
@@ -400,7 +401,7 @@ public interface Audience extends DatabaseInterface {
                     else if(Sequences.isSequence(value)) {
                         value = Sequences.stream(value).map(item -> {
                             if(seen.contains(item)) {
-                                item = ((Record) item).id()
+                                item = ((Record) item).get("id")
                                         + " (recursive link)";
                             }
                             else {
