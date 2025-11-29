@@ -1940,8 +1940,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * <p>
          * <strong>Important:</strong> Save listeners should not modify the
          * state of the saved record. If you need to modify a record during the
-         * save process, use the {@link Record#preSave} hook instead, which is
-         * called before the record is persisted.
+         * save process, use the {@link Record#beforeSave} hook instead, which
+         * is called before the record is persisted.
          * </p>
          * <p>
          * <strong>NOTE:</strong>The {@code listener} will receive
