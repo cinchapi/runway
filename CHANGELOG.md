@@ -71,6 +71,9 @@ Fixed a bug where there was inconsistent priorities in the order of data returne
 * **Metadata Interface**: Added a new `Metadata` interface that provides implementing Record types with computed properties to obtain the Record's timestamps for creation and most recent update (including the ability to filter for most recent update to specific keys).
 * **Runway Exception Hierarchy**: Introduced a dedicated exception hierarchy for Runway-specific errors to enable more nuanced error handling. The `Record#throwSuppressedExceptions()` method now throws a `SuppressedRunwayException` (which extends the new `RunwayException` base class) instead of a generic `RuntimeException`. Additionally, `ZombieException` now extends `RunwayException`. This change is fully backward compatible since both `RunwayException` and `SuppressedRunwayException` extend `RuntimeException`, meaning existing code that catches `RuntimeException` will continue to work as expected. This enhancement allows applications to distinguish between Runway-specific exceptions and other runtime exceptions, facilitating more precise exception handling strategies.
 
+##### Bug Fixes
+* Fixed an issue where static analysis failed to detect `Record` subtypes on Java 9+, causing runtime errors where Record subclasses were not properly recognized. This was due to classloader changes introduced by the Java Platform Module System (JPMS) that prevented the Reflections library from discovering classpath entries using its default configuration.
+
 #### Version 1.10.1 (October 1, 2025)
 * Fixed a bug that caused the `countAny(Class, Criteria, Realms)` method to incorrectly count records within only the specified class instead of across the entire class hierarchy.
 

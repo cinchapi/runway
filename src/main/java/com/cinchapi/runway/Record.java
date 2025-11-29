@@ -57,6 +57,8 @@ import javax.annotation.concurrent.Immutable;
 import org.apache.commons.lang.StringUtils;
 import org.reflections.Reflections;
 import org.reflections.scanners.SubTypesScanner;
+import org.reflections.util.ClasspathHelper;
+import org.reflections.util.ConfigurationBuilder;
 
 import com.cinchapi.ccl.Parser;
 import com.cinchapi.common.base.AnyStrings;
@@ -1503,8 +1505,7 @@ public abstract class Record implements Comparable<Record> {
         }
         else {
             // NOTE: later on the #filter will attempt to remove keys that
-            // are
-            // explicitly excluded, which will have no affect here since
+            // are explicitly excluded, which will have no affect here since
             // #include and #exclude will never both have values at the same
             // time.
             pool = include.stream().map(key -> {
@@ -1512,11 +1513,9 @@ public abstract class Record implements Comparable<Record> {
                 String[] stops = key.split("\\.");
                 if(stops.length > 1) {
                     // For mapping navigation keys, we must manually perform
-                    // the
-                    // navigation and collect a series of nested
-                    // maps/sequences
-                    // so that merging multiple navigation keys can be done
-                    // sensibly.
+                    // the navigation and collect a series of nested
+                    // maps/sequences so that merging multiple navigation keys
+                    // can be done sensibly.
                     key = stops[0];
                     String path = StringUtils.join(stops, '.', 1, stops.length);
                     Object destination = get(key);
@@ -2065,8 +2064,7 @@ public abstract class Record implements Comparable<Record> {
                     }
                     else {
                         // no-op; NOTE: Java doesn't allow primitive types
-                        // to
-                        // hold null values
+                        // to hold null values
                     }
                 }
             }
@@ -2225,8 +2223,7 @@ public abstract class Record implements Comparable<Record> {
         }
         else if(!hasUnsavedChanges()) {
             // This Record hasn't been modified, so simply go through each
-            // field
-            // and try to save any outgoing Record references that contain
+            // field and try to save any outgoing Record references that contain
             // modifications.
             for (Field field : fields()) {
                 Object value = getFieldValue(field, this);
@@ -3299,10 +3296,8 @@ public abstract class Record implements Comparable<Record> {
          * Return the {@link StaticAnalysis}.
          * <p>
          * NOTE: Scanning the classpath to perform static analysis adds
-         * startup
-         * costs proportional to the number of classes defined, so it is
-         * only
-         * done once to minimize the effect of the cost.
+         * startup costs proportional to the number of classes defined, so it is
+         * only done once to minimize the effect of the cost.
          * </p>
          *
          * @return the {@link StaticAnalysis}
@@ -3410,6 +3405,42 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
+         * Return a {@link Reflections} instance configured appropriately for
+         * the current Java version.
+         *
+         * @return a properly configured {@link Reflections} instance
+         */
+        private static Reflections createReflections() {
+            // In Java 8, the system classloader was a URLClassLoader, and
+            // Reflections could call getURLs() on it to discover all JARs and
+            // directories on the classpath. However, in Java 9+, the Java
+            // Platform Module System (JPMS) changed the classloader
+            // architecture: the system classloader is now an internal
+            // implementation (jdk.internal.loader.ClassLoaders$AppClassLoader)
+            // that does NOT extend URLClassLoader.
+            //
+            // As a result, when Reflections is created without explicit URL
+            // configuration in Java 9+, it cannot discover classpath entries
+            // and silently returns empty results from methods like
+            // getSubTypesOf().
+            //
+            // To fix this, we use ClasspathHelper#forJavaClassPath() which
+            // parses the java.class.path system property directly. This
+            // property contains the same classpath information that was
+            // previously accessible via URLClassLoader.getURLs(), and it works
+            // consistently across all Java versions because it's a fundamental
+            // JVM property that has existed since Java 1.0.
+            if(isJava9OrHigher()) {
+                return new Reflections(new ConfigurationBuilder()
+                        .setUrls(ClasspathHelper.forJavaClassPath())
+                        .setScanners(new SubTypesScanner(false)));
+            }
+            else {
+                return new Reflections(new SubTypesScanner());
+            }
+        }
+
+        /**
          * Return {@code true} if {@code clazz} has any descendants in its
          * hierarchy that have additional fields that are not defined in
          * {@code clazz}.
@@ -3438,6 +3469,33 @@ public abstract class Record implements Comparable<Record> {
                 }
                 return false;
             }
+        }
+
+        /**
+         * Return {@code true} if the current JVM is Java 9 or higher.
+         *
+         * @return {@code true} if running on Java 9 or higher
+         */
+        private static boolean isJava9OrHigher() {
+            // There are several system properties that can be used to determine
+            // the Java version:
+            // - java.version: Full version string (e.g., "1.8.0_292",
+            //   "11.0.12", "17.0.1"). More detailed but harder to parse.
+            // - java.specification.version: Specification version (e.g., "1.8",
+            //   "9", "11", "17"). Cleaner and easier to parse.
+            // - java.class.version: Class file format version (e.g., "52.0" for
+            //   Java 8, "53.0" for Java 9, "61.0" for Java 17). Represents JVM
+            //   capability, not source compatibility.
+            //
+            // We use java.specification.version because it directly reflects
+            // the Java language specification version and follows a well-
+            // defined versioning scheme: Java 8 and earlier use "1.x" format,
+            // while Java 9+ use just the major version number (per JEP 223).
+            String version = System.getProperty("java.specification.version");
+            // Java 8 and earlier: "1.8", "1.7", "1.6", etc.
+            // Java 9 and later: "9", "10", "11", "17", "21", etc.
+            // If it doesn't start with "1.", it's Java 9+
+            return !version.startsWith("1.");
         }
 
         /**
@@ -3519,8 +3577,7 @@ public abstract class Record implements Comparable<Record> {
         /**
          * Reflection handler
          */
-        private final Reflections reflection = new Reflections(
-                new SubTypesScanner());
+        private final Reflections reflection = createReflections();
 
         /**
          * A collection containing each {@link Record} class that has fields
@@ -3549,10 +3606,8 @@ public abstract class Record implements Comparable<Record> {
          * <p>
          * This structure enables efficient lookup of fields marked with the
          * {@link CaptureDelete} annotation, helping identify fields in
-         * linked
-         * records that should be nullified when the primary {@link Record}
-         * is
-         * deleted.
+         * linked records that should be nullified when the primary
+         * {@link Record} is deleted.
          * </p>
          */
         private final Map<Class<? extends Record>, Map<Class<? extends Record>, Set<String>>> captureDeleteFieldsByClass;
@@ -3614,8 +3669,7 @@ public abstract class Record implements Comparable<Record> {
             });
 
             // For each type, determine the types that have Link fields with
-            // the
-            // deletion hook annotations.
+            // the deletion hook annotations.
             Map<Class<? extends Annotation>, Map<Class<? extends Record>, Map<Class<? extends Record>, Set<String>>>> hooks = ImmutableMap
                     .of(JoinDelete.class, joinDeleteFieldsByClass,
                             CaptureDelete.class, captureDeleteFieldsByClass);
@@ -3639,8 +3693,7 @@ public abstract class Record implements Comparable<Record> {
 
             // Now that the hierarchies and fields for each Record type have
             // been documented, go through again and compute the paths for
-            // each
-            // one
+            // each one
             computeAllPossiblePaths();
         }
 
