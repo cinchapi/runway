@@ -1,13 +1,8 @@
 plugins {
-    id 'java'
+    id 'java-library'
     id 'eclipse'
-    id 'maven'
     id 'maven-publish'
     id 'signing'
-}
-
-task wrapper(type: Wrapper) {
-    gradleVersion = '3.0'
 }
 
 if (JavaVersion.current().isJava8Compatible()) {
@@ -56,25 +51,29 @@ repositories {
 ext.concourseVersion = '0.11.10'
 
 dependencies {
-	compile 'com.google.guava:guava:25.1-jre'
-	compile (group: 'com.cinchapi', name: 'accent4j', version: '1.16.0-SNAPSHOT', changing:true) {
+    // Internal dependencies (not exposed to consumers)
+    implementation 'com.google.guava:guava:25.1-jre'
+    implementation (group: 'com.cinchapi', name: 'accent4j', version: '1.16.0-SNAPSHOT', changing:true) {
         force = true
     }
-	compile group: 'com.cinchapi', name: 'concourse-driver-java', version: concourseVersion, changing:true
-  	compile group: 'com.cinchapi', name: 'concourse-import', version: concourseVersion, changing:true
-	compile group: 'com.cinchapi', name: 'concourse-plugin-core', version: concourseVersion, changing:true
-	compile 'org.slf4j:slf4j-api:1.7.5'
-	compile 'ch.qos.logback:logback-classic:1.0.13'
-	compile 'com.google.code.gson:gson:2.2.4'
-	compile 'net.sf.trove4j:trove4j:3.0.3'
-	compile 'com.github.stephenc.high-scale-lib:high-scale-lib:1.1.4'
-	compile ('org.reflections:reflections:0.9.9-RC2'){
+    implementation 'org.slf4j:slf4j-api:1.7.5'
+    implementation 'ch.qos.logback:logback-classic:1.0.13'
+    implementation 'com.google.code.gson:gson:2.2.4'
+    implementation 'net.sf.trove4j:trove4j:3.0.3'
+    implementation 'com.github.stephenc.high-scale-lib:high-scale-lib:1.1.4'
+    implementation ('org.reflections:reflections:0.9.9-RC2'){
         exclude group: 'org.javassist', module:'javassist'
     }
-    compile 'org.javassist:javassist:3.18.2-GA'
+    implementation 'org.javassist:javassist:3.18.2-GA'
 
-	testCompile 'junit:junit:4.11'
-	testCompile group: 'com.cinchapi', name: 'concourse-ete-test-core', version: concourseVersion, changing:true
+    // Concourse dependencies (exposed to consumers via api)
+    api group: 'com.cinchapi', name: 'concourse-driver-java', version: concourseVersion, changing:true
+    api group: 'com.cinchapi', name: 'concourse-import', version: concourseVersion, changing:true
+    api group: 'com.cinchapi', name: 'concourse-plugin-core', version: concourseVersion, changing:true
+
+    // Test dependencies
+    testImplementation 'junit:junit:4.11'
+    testImplementation group: 'com.cinchapi', name: 'concourse-ete-test-core', version: concourseVersion, changing:true
 }
 
 def getVersion = { ->
@@ -102,18 +101,18 @@ jar {
 }
 
 task sourcesJar(type: Jar, dependsOn: classes) {
-	classifier = 'sources'
-	from sourceSets.main.allSource
+    archiveClassifier = 'sources'
+    from sourceSets.main.allSource
 }
 
 task javadocJar(type: Jar, dependsOn: javadoc) {
-	classifier = 'javadoc'
-	from javadoc.destinationDir
+    archiveClassifier = 'javadoc'
+    from javadoc.destinationDir
 }
 
 artifacts {
-	archives sourcesJar
-	archives javadocJar
+    archives sourcesJar
+    archives javadocJar
 }
 
 publishing {
@@ -142,6 +141,7 @@ publishing {
 }
 
 test {
+    maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
     testLogging {
         showStandardStreams = true
     }
