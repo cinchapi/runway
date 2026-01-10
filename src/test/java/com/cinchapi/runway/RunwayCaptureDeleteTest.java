@@ -26,11 +26,11 @@ import org.junit.Test;
  * Unit test for verifying {@link CaptureDelete} functionality in various
  * scenarios. Tests confirm that annotated fields are nullified or removed
  * from collections when the linked record is deleted.
- * 
+ *
  * author Jeff Nelson
  */
 public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
-    
+
     @Test
     public void testBasicReferenceNullification() {
         // Create a parent and child relationship
@@ -48,7 +48,7 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
         Assert.assertNull("Child reference should be null after deletion", parent.child);
         Assert.assertEquals("Parent1", parent.name);
     }
-    
+
     @Test
     public void testCollectionFieldWithCaptureDelete() {
         // Create a parent record with a collection of children
@@ -68,7 +68,7 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
         Assert.assertEquals("Remaining child should be child1", child1.id(), parent.children.get(0).id());
         Assert.assertEquals("CollectionParent", parent.name);
     }
-    
+
     @Test
     public void testMultipleCaptureDeleteFields() {
         // Create a record with two children, each linked with CaptureDelete
@@ -89,7 +89,7 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
         Assert.assertNotNull("child2 reference should remain intact", parent.child2);
         Assert.assertEquals("MultiParent", parent.name);
     }
-    
+
     @Test
     public void testMixedDeletionAnnotations() {
         // Create a record with mixed deletion annotations
@@ -110,7 +110,7 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
         Assert.assertNotNull("cascadeChild should remain intact", parent.cascadeChild);
         Assert.assertEquals("MixedParent", parent.name);
     }
-    
+
     @Test
     public void testCircularReferenceWithCaptureDelete() {
         // Create two records with circular references using CaptureDelete
@@ -129,13 +129,27 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
         Assert.assertNull("recordB reference should be null in recordA", recordA.recordB);
     }
 
+    @Test
+    public void testSaveSucceedsWhenSiblingCaptureDeleteFieldIsNull() {
+        MultiChildRecord parent = new MultiChildRecord("Parent");
+        ChildRecord child1 = new ChildRecord("Child");
+        ChildRecord child2 = new ChildRecord("Child");
+        parent.child1 = child1;
+        parent.child2 = null;
+        runway.save(parent, child1, child2);
+        child1.deleteOnSave();
+        Assert.assertTrue(child1.save());
+        parent = runway.load(MultiChildRecord.class, parent.id());
+        Assert.assertNull(parent.child1);
+    }
+
     /**
      * Represents a parent record with a single child record linked with
      * {@link CaptureDelete} that is nullified when the child is deleted.
      */
     class ParentRecord extends Record {
         String name;
-        
+
         @CaptureDelete
         public ChildRecord child;
 
@@ -180,8 +194,8 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents a record with mixed deletion annotations, containing a child 
-     * with {@link CaptureDelete} and another with {@link CascadeDelete}, 
+     * Represents a record with mixed deletion annotations, containing a child
+     * with {@link CaptureDelete} and another with {@link CascadeDelete},
      * allowing independent deletion behavior for each linked record.
      */
     class MixedDeletionRecord extends Record {
@@ -199,7 +213,7 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents a child record with a name field, used in tests to check 
+     * Represents a child record with a name field, used in tests to check
      * deletion behavior.
      */
     class ChildRecord extends Record {
@@ -221,9 +235,9 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
             this.data = data;
         }
     }
-    
+
     /**
-     * Represents a record with a circular reference to another record via 
+     * Represents a record with a circular reference to another record via
      * {@link CaptureDelete} for testing circular reference nullification.
      */
     class CircularRecordA extends Record {
@@ -238,7 +252,7 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents a record with a circular reference back to {@link CircularRecordA} 
+     * Represents a record with a circular reference back to {@link CircularRecordA}
      * via {@link CaptureDelete} for testing circular reference nullification.
      */
     class CircularRecordB extends Record {

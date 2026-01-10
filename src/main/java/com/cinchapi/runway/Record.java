@@ -2002,8 +2002,7 @@ public abstract class Record implements Comparable<Record> {
                                     && !Modifier
                                             .isInterface(type.getModifiers())) {
                                 // This is a concrete Collection type that
-                                // can
-                                // be instantiated
+                                // can be instantiated
                                 value = Reflection.newInstance(type);
                             }
                             else if(type == Set.class) {
@@ -2025,8 +2024,7 @@ public abstract class Record implements Comparable<Record> {
                                 && Record.class.isAssignableFrom(type)) {
                             // Check to see if data for a nested Record was
                             // pre-selected and load it without making
-                            // another
-                            // database roundtrip.
+                            // another database roundtrip.
                             String prepend = path + ".";
                             Long id = (Long) Iterables.getFirst(
                                     data.getOrDefault(prepend + IDENTIFIER_KEY,
@@ -2157,12 +2155,10 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Save the data within this record using the specified
-     * {@code concourse}
-     * connection, adhering to constraints specified by the record's field
-     * annotations.
-     * This method assumes that the caller has already started a transaction
-     * and
-     * will execute within the same transaction context.
+     * {@code concourse} connection, adhering to constraints specified by the
+     * record's field annotations. This method assumes that the caller has
+     * already started a transaction and will execute within the same
+     * transaction context.
      * <p>
      * It iterates over the fields of the record and performs different
      * operations based on field annotations:
@@ -2175,17 +2171,14 @@ public abstract class Record implements Comparable<Record> {
      * by the validator class specified in the annotation to each
      * element.</li>
      * <li>{@link Unique @Unique} ensures that each element in a field must
-     * be
-     * unique across all records in the class, failing to save if duplicate
+     * be unique across all records in the class, failing to save if duplicate
      * values are found.</li>
      * </ul>
      * <p>
      * If the record has modified realms, it reconciles them with the
-     * existing
-     * ones. Values are transformed into storable form using the
+     * existing ones. Values are transformed into storable form using the
      * {@link #transform(Object, Concourse, Set)} method before saving. In
-     * case
-     * of violations of constraints, an {@code IllegalStateException} is
+     * case of violations of constraints, an {@code IllegalStateException} is
      * thrown.
      * </p>
      *
@@ -2193,12 +2186,10 @@ public abstract class Record implements Comparable<Record> {
      * @param seen Set of records already saved, to prevent infinite
      *            recursion.
      * @throws IllegalStateException If required fields are missing, values
-     *             are
-     *             not unique across
-     *             all records in the class, or validation fails.
+     *             are not unique across all records in the class, or validation
+     *             fails.
      * @throws ReflectiveOperationException If reflection-related errors
-     *             occur
-     *             during processing.
+     *             occur during processing.
      */
     /* package */ void saveWithinTransaction(final Concourse concourse,
             Set<Record> seen) {
@@ -2741,10 +2732,9 @@ public abstract class Record implements Comparable<Record> {
         }
 
         // Check if there are any incoming links that used the
-        // @CaptureDelete
-        // annotation to remove references to this Record post deletion.
-        // Handle
-        // that business and save those records within this transaction
+        // @CaptureDelete annotation to remove references to this Record post
+        // deletion. Handle that business and save those records within this
+        // transaction
         Criteria potentialCaptureDeletes = StaticAnalysis.instance()
                 .getCaptureDeleteLookupCondition(this);
         if(potentialCaptureDeletes != null) {
@@ -2759,7 +2749,10 @@ public abstract class Record implements Comparable<Record> {
                 for (Field field : fields) {
                     try {
                         Object value = field.get(record);
-                        if(value instanceof Collection) {
+                        if(value == null) { // GH-58
+                            continue;
+                        }
+                        else if(value instanceof Collection) {
                             Collection<?> collection = (Collection<?>) value;
                             while (collection.contains(this)) {
                                 collection.remove(this);
@@ -3480,12 +3473,12 @@ public abstract class Record implements Comparable<Record> {
             // There are several system properties that can be used to determine
             // the Java version:
             // - java.version: Full version string (e.g., "1.8.0_292",
-            //   "11.0.12", "17.0.1"). More detailed but harder to parse.
+            // "11.0.12", "17.0.1"). More detailed but harder to parse.
             // - java.specification.version: Specification version (e.g., "1.8",
-            //   "9", "11", "17"). Cleaner and easier to parse.
+            // "9", "11", "17"). Cleaner and easier to parse.
             // - java.class.version: Class file format version (e.g., "52.0" for
-            //   Java 8, "53.0" for Java 9, "61.0" for Java 17). Represents JVM
-            //   capability, not source compatibility.
+            // Java 8, "53.0" for Java 9, "61.0" for Java 17). Represents JVM
+            // capability, not source compatibility.
             //
             // We use java.specification.version because it directly reflects
             // the Java language specification version and follows a well-

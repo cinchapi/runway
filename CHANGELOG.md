@@ -73,6 +73,7 @@ Fixed a bug where there was inconsistent priorities in the order of data returne
 
 ##### Bug Fixes
 * Fixed an issue where static analysis failed to detect `Record` subtypes on Java 9+, causing runtime errors where Record subclasses were not properly recognized. This was due to classloader changes introduced by the Java Platform Module System (JPMS) that prevented the Reflections library from discovering classpath entries using its default configuration.
+* Fixed a bug that caused deletion to fail when the record subject to deletion was referenced under a `@CaptureDelete` field in a parent that also had another `@CaptureDelete` field containing a `null` value
 
 #### Version 1.10.1 (October 1, 2025)
 * Fixed a bug that caused the `countAny(Class, Criteria, Realms)` method to incorrectly count records within only the specified class instead of across the entire class hierarchy.
