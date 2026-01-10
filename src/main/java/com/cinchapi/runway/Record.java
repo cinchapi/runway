@@ -2594,8 +2594,9 @@ public abstract class Record implements Comparable<Record> {
                 }
                 else {
                     Map<String, Set<Object>> data = concourse.select(target);
-                    String section = (String) Iterables
-                            .getLast(data.get(SECTION_KEY), null);
+                    Set<Object> sections = data.getOrDefault(SECTION_KEY,
+                            ImmutableSet.of());
+                    String section = (String) Iterables.getLast(sections, null);
                     if(Empty.ness().describes(section)) {
                         concourse.remove(key, stored, id); // do some ad-hoc
                                                            // cleanup

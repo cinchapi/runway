@@ -73,7 +73,8 @@ Fixed a bug where there was inconsistent priorities in the order of data returne
 
 ##### Bug Fixes
 * Fixed an issue where static analysis failed to detect `Record` subtypes on Java 9+, causing runtime errors where Record subclasses were not properly recognized. This was due to classloader changes introduced by the Java Platform Module System (JPMS) that prevented the Reflections library from discovering classpath entries using its default configuration.
-* Fixed a bug that caused deletion to fail when the record subject to deletion was referenced under a `@CaptureDelete` field in a parent that also had another `@CaptureDelete` field containing a `null` value
+* [GH-68](https://github.com/cinchapi/runway/issues/68): Fixed a bug that caused deletion to fail when the record subject to deletion was referenced under a `@CaptureDelete` field in a parent that also had another `@CaptureDelete` field containing a `null` value
+* [GH-67](https://github.com/cinchapi/runway/issues/67): Fixed a bug that caused loading to fail when a `Record` contained a collection of linked `Records` and one of those links had been deleted or cleared (e.g., had no data in the database). Now, in this scenario, Runway will remove the stale reference.
 
 #### Version 1.10.1 (October 1, 2025)
 * Fixed a bug that caused the `countAny(Class, Criteria, Realms)` method to incorrectly count records within only the specified class instead of across the entire class hierarchy.

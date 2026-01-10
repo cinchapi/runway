@@ -24,11 +24,12 @@ import org.junit.Test;
 import com.cinchapi.runway.validation.EmailValidator;
 
 /**
- * Repro GH-139
+ * Repro GH-39
+ * https://github.com/cinchapi/runway/issues/39
  *
  * @author Jeff Nelson
  */
-public class GH_139ReproTest extends RunwayBaseClientServerTest {
+public class GH39 extends RunwayBaseClientServerTest {
 
     @Test
     public void reproNoValidationCheckForNoValues() {
