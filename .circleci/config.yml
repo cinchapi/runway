@@ -64,7 +64,12 @@ jobs:
               | sed 's|/|.|g' \
               | sed 's|\.java$||' \
               | circleci tests split --split-by=timings)
-            ./gradlew test --tests "$CLASSNAMES" --no-daemon
+            # Build --tests arguments for each class
+            GRADLE_ARGS=""
+            for classname in $CLASSNAMES; do
+              GRADLE_ARGS="$GRADLE_ARGS --tests $classname"
+            done
+            ./gradlew test $GRADLE_ARGS --no-daemon
       - run:
           name: Save test results
           command: |
