@@ -1,36 +1,132 @@
-version: 2
-jobs:
-  build:
+version: 2.1
+
+executors:
+  java-executor:
     docker:
       - image: cimg/openjdk:8.0.322
     resource_class: xlarge
     environment:
-      GRADLE_OPTS: "-Djenkins=true"
+      GRADLE_OPTS: "-Djenkins=true -Xmx8192m"
       TERM: dumb
       CONTAINER_BUILD: "true"
+
+jobs:
+  setup:
+    executor: java-executor
     steps:
-      - checkout:
-          path: ~/$CIRCLE_PROJECT_REPONAME
-      - run: 
-          name: Build and Upload
-          context: bintray-creds
+      - checkout
+      - run:
+          name: Generate gradle.lock
           command: |
-            cd ~/$CIRCLE_PROJECT_REPONAME 
-            ./gradlew clean build publish --refresh-dependencies
+            find ~/project -type f -name build.gradle | sort -d | xargs cat > ~/gradle.lock
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - project
+            - gradle.lock
+
+  compile:
+    executor: java-executor
+    steps:
+      - attach_workspace:
+          at: ~/
+      - restore_cache:
+          key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
+      - run:
+          name: Compile Project
+          command: |
+            cd ~/project
+            ./gradlew compileJava compileTestJava --refresh-dependencies --no-daemon
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - project
+      - save_cache:
+          paths:
+            - ~/.gradle
+          key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
+
+  test:
+    executor: java-executor
+    parallelism: 4
+    steps:
+      - attach_workspace:
+          at: ~/
+      - restore_cache:
+          key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
+      - run:
+          name: Run Tests
+          command: |
+            cd ~/project
+            # Split tests across containers using CircleCI's test splitting
+            CLASSNAMES=$(circleci tests glob "src/test/java/**/*.java" \
+              | sed 's|src/test/java/||' \
+              | sed 's|/|.|g' \
+              | sed 's|\.java$||' \
+              | circleci tests split --split-by=timings)
+            # Build --tests arguments for each class
+            GRADLE_ARGS=""
+            for classname in $CLASSNAMES; do
+              GRADLE_ARGS="$GRADLE_ARGS --tests $classname"
+            done
+            ./gradlew test $GRADLE_ARGS --no-daemon
       - run:
           name: Save test results
           command: |
-            cd ~/$CIRCLE_PROJECT_REPONAME
+            cd ~/project
             mkdir -p ~/junit/
             find . -type f -regex ".*/build/test-results/.*xml" -exec cp {} ~/junit/ \;
           when: always
       - store_test_results:
           path: ~/junit
-      - run: 
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - project
+            - junit
+
+  publish:
+    executor: java-executor
+    steps:
+      - attach_workspace:
+          at: ~/
+      - restore_cache:
+          key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
+      - run:
+          name: Package and Publish
+          command: |
+            cd ~/project
+            ./gradlew assemble publish --no-daemon
+
+  collect_artifacts:
+    executor: java-executor
+    steps:
+      - attach_workspace:
+          at: ~/
+      - run:
           name: Save artifacts
           command: |
-            cd ~/$CIRCLE_PROJECT_REPONAME
+            cd ~/project
             mkdir -p ~/artifacts/
             find . -type f -regex ".*/build/libs/.*jar" -exec cp {} ~/artifacts/ \;
+          when: always
       - store_artifacts:
-          path: ~/artifacts 
+          path: ~/artifacts
+
+workflows:
+  version: 2
+  build_and_publish:
+    jobs:
+      - setup
+      - compile:
+          requires:
+            - setup
+      - test:
+          requires:
+            - compile
+      - publish:
+          requires:
+            - test
+      - collect_artifacts:
+          requires:
+            - publish
