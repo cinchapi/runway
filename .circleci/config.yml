@@ -93,10 +93,10 @@ jobs:
       - restore_cache:
           key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
       - run:
-          name: Build and Publish
+          name: Package and Publish
           command: |
             cd ~/project
-            ./gradlew build publish --no-daemon
+            ./gradlew assemble publish --no-daemon
 
   collect_artifacts:
     executor: java-executor
