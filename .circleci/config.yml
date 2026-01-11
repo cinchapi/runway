@@ -15,14 +15,22 @@ commands:
     steps:
       - checkout:
           path: ~/$CIRCLE_PROJECT_REPONAME
+
+  save_project:
+    steps:
       - run:
-          name: Create project symlink
-          command: ln -s ~/$CIRCLE_PROJECT_REPONAME ~/project
+          name: Save project to workspace
+          command: cp -r ~/$CIRCLE_PROJECT_REPONAME ~/project
+
+  restore_project:
+    steps:
+      - run:
+          name: Restore project from workspace
+          command: cp -r ~/project/* ~/$CIRCLE_PROJECT_REPONAME/
 
 jobs:
   setup:
     executor: java-executor
-    working_directory: ~/$CIRCLE_PROJECT_REPONAME
     steps:
       - init
       - run:
@@ -37,7 +45,6 @@ jobs:
 
   compile:
     executor: java-executor
-    working_directory: ~/$CIRCLE_PROJECT_REPONAME
     steps:
       - init
       - attach_workspace:
@@ -53,21 +60,22 @@ jobs:
           paths:
             - ~/.gradle
           key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
+      - save_project
       - persist_to_workspace:
-          root: ~/project
+          root: ~/
           paths:
-            - build
+            - project
 
   test:
     executor: java-executor
     parallelism: 4
-    working_directory: ~/$CIRCLE_PROJECT_REPONAME
     steps:
       - init
       - attach_workspace:
-          at: ~/project
+          at: ~/
       - restore_cache:
           key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
+      - restore_project
       - run:
           name: Run Tests
           command: |
@@ -93,13 +101,13 @@ jobs:
 
   publish:
     executor: java-executor
-    working_directory: ~/$CIRCLE_PROJECT_REPONAME
     steps:
       - init
       - attach_workspace:
-          at: ~/project
+          at: ~/
       - restore_cache:
           key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
+      - restore_project
       - run:
           name: Package and Publish
           command: |
