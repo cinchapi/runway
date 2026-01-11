@@ -20,15 +20,17 @@ commands:
     steps:
       - run:
           name: Save project to workspace
-          command: cp -r ~/$CIRCLE_PROJECT_REPONAME ~/project
+          command: |
+            rm -rf ~/project
+            cp -a ~/$CIRCLE_PROJECT_REPONAME ~/project
 
   restore_project:
     steps:
       - run:
           name: Restore project from workspace
           command: |
+            rm -rf ~/$CIRCLE_PROJECT_REPONAME
             cp -a ~/project ~/$CIRCLE_PROJECT_REPONAME
-            ls -la ~/$CIRCLE_PROJECT_REPONAME/
 
 jobs:
   setup:
