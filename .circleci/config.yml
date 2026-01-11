@@ -10,24 +10,47 @@ executors:
       TERM: dumb
       CONTAINER_BUILD: "true"
 
+commands:
+  init:
+    steps:
+      - checkout:
+          path: ~/$CIRCLE_PROJECT_REPONAME
+
+  save_project:
+    steps:
+      - run:
+          name: Save project to workspace
+          command: |
+            rm -rf ~/project
+            cp -a ~/$CIRCLE_PROJECT_REPONAME ~/project
+
+  restore_project:
+    steps:
+      - run:
+          name: Restore project from workspace
+          command: |
+            rm -rf ~/$CIRCLE_PROJECT_REPONAME
+            cp -a ~/project ~/$CIRCLE_PROJECT_REPONAME
+
 jobs:
   setup:
     executor: java-executor
     steps:
-      - checkout
+      - init
       - run:
           name: Generate gradle.lock
           command: |
-            find ~/project -type f -name build.gradle | sort -d | xargs cat > ~/gradle.lock
+            cd ~/$CIRCLE_PROJECT_REPONAME
+            cat build.gradle > ~/gradle.lock
       - persist_to_workspace:
           root: ~/
           paths:
-            - project
             - gradle.lock
 
   compile:
     executor: java-executor
     steps:
+      - init
       - attach_workspace:
           at: ~/
       - restore_cache:
@@ -35,16 +58,17 @@ jobs:
       - run:
           name: Compile Project
           command: |
-            cd ~/project
+            cd ~/$CIRCLE_PROJECT_REPONAME
             ./gradlew compileJava compileTestJava --refresh-dependencies --no-daemon
-      - persist_to_workspace:
-          root: ~/
-          paths:
-            - project
       - save_cache:
           paths:
             - ~/.gradle
           key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
+      - save_project
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - project
 
   test:
     executor: java-executor
@@ -54,36 +78,29 @@ jobs:
           at: ~/
       - restore_cache:
           key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
+      - restore_project
       - run:
           name: Run Tests
           command: |
-            cd ~/project
-            # Split tests across containers using CircleCI's test splitting
-            CLASSNAMES=$(circleci tests glob "src/test/java/**/*.java" \
+            cd ~/$CIRCLE_PROJECT_REPONAME
+            mkdir -p ~/junit/
+            # Use circleci tests run for rerun-failed-tests support
+            circleci tests glob "src/test/java/**/*.java" \
               | sed 's|src/test/java/||' \
               | sed 's|/|.|g' \
               | sed 's|\.java$||' \
-              | circleci tests split --split-by=timings)
-            # Build --tests arguments for each class
-            GRADLE_ARGS=""
-            for classname in $CLASSNAMES; do
-              GRADLE_ARGS="$GRADLE_ARGS --tests $classname"
-            done
-            ./gradlew test $GRADLE_ARGS --no-daemon
+              | circleci tests run --command="xargs bash -c './gradlew test --no-daemon \$(printf \" --tests %s\" \"\$@\")' _" --verbose --split-by=timings
       - run:
           name: Save test results
           command: |
-            cd ~/project
+            cd ~/$CIRCLE_PROJECT_REPONAME
             mkdir -p ~/junit/
             find . -type f -regex ".*/build/test-results/.*xml" -exec cp {} ~/junit/ \;
           when: always
       - store_test_results:
           path: ~/junit
-      - persist_to_workspace:
-          root: ~/
-          paths:
-            - project
-            - junit
+      - store_artifacts:
+          path: ~/junit
 
   publish:
     executor: java-executor
@@ -92,24 +109,18 @@ jobs:
           at: ~/
       - restore_cache:
           key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
+      - restore_project
       - run:
           name: Package and Publish
           command: |
-            cd ~/project
+            cd ~/$CIRCLE_PROJECT_REPONAME
             ./gradlew assemble publish --no-daemon
-
-  collect_artifacts:
-    executor: java-executor
-    steps:
-      - attach_workspace:
-          at: ~/
       - run:
           name: Save artifacts
           command: |
-            cd ~/project
+            cd ~/$CIRCLE_PROJECT_REPONAME
             mkdir -p ~/artifacts/
             find . -type f -regex ".*/build/libs/.*jar" -exec cp {} ~/artifacts/ \;
-          when: always
       - store_artifacts:
           path: ~/artifacts
 
@@ -127,6 +138,3 @@ workflows:
       - publish:
           requires:
             - test
-      - collect_artifacts:
-          requires:
-            - publish
