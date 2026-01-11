@@ -15,6 +15,9 @@ commands:
     steps:
       - checkout:
           path: ~/$CIRCLE_PROJECT_REPONAME
+      - run:
+          name: Create project symlink
+          command: ln -s ~/$CIRCLE_PROJECT_REPONAME ~/project
 
 jobs:
   setup:
@@ -51,7 +54,7 @@ jobs:
             - ~/.gradle
           key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
       - persist_to_workspace:
-          root: ~/$CIRCLE_PROJECT_REPONAME
+          root: ~/project
           paths:
             - build
 
@@ -62,7 +65,7 @@ jobs:
     steps:
       - init
       - attach_workspace:
-          at: ~/$CIRCLE_PROJECT_REPONAME
+          at: ~/project
       - restore_cache:
           key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
       - run:
@@ -94,7 +97,7 @@ jobs:
     steps:
       - init
       - attach_workspace:
-          at: ~/$CIRCLE_PROJECT_REPONAME
+          at: ~/project
       - restore_cache:
           key: v1-jars-{{ .Environment.CIRCLE_PROJECT_REPONAME }}-{{ .Branch }}-{{ checksum "~/gradle.lock" }}
       - run:
