@@ -64,7 +64,7 @@ jobs:
               | sed 's|src/test/java/||' \
               | sed 's|/|.|g' \
               | sed 's|\.java$||' \
-              | circleci tests run --command="xargs ./gradlew test --no-daemon --tests" --verbose --split-by=timings
+              | circleci tests run --command="xargs bash -c './gradlew test --no-daemon \$(printf \" --tests %s\" \"\$@\")' _" --verbose --split-by=timings
       - run:
           name: Save test results
           command: |
