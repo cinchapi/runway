@@ -14,15 +14,16 @@ jobs:
   setup:
     executor: java-executor
     steps:
-      - checkout
+      - checkout:
+          path: ~/$CIRCLE_PROJECT_REPONAME
       - run:
           name: Generate gradle.lock
           command: |
-            find ~/project -type f -name build.gradle | sort -d | xargs cat > ~/gradle.lock
+            find ~/$CIRCLE_PROJECT_REPONAME -type f -name build.gradle | sort -d | xargs cat > ~/gradle.lock
       - persist_to_workspace:
           root: ~/
           paths:
-            - project
+            - $CIRCLE_PROJECT_REPONAME
             - gradle.lock
 
   compile:
@@ -35,12 +36,12 @@ jobs:
       - run:
           name: Compile Project
           command: |
-            cd ~/project
+            cd ~/$CIRCLE_PROJECT_REPONAME
             ./gradlew compileJava compileTestJava --refresh-dependencies --no-daemon
       - persist_to_workspace:
           root: ~/
           paths:
-            - project
+            - $CIRCLE_PROJECT_REPONAME
       - save_cache:
           paths:
             - ~/.gradle
@@ -57,7 +58,7 @@ jobs:
       - run:
           name: Run Tests
           command: |
-            cd ~/project
+            cd ~/$CIRCLE_PROJECT_REPONAME
             mkdir -p ~/junit/
             # Use circleci tests run for rerun-failed-tests support
             circleci tests glob "src/test/java/**/*.java" \
@@ -68,7 +69,7 @@ jobs:
       - run:
           name: Save test results
           command: |
-            cd ~/project
+            cd ~/$CIRCLE_PROJECT_REPONAME
             mkdir -p ~/junit/
             find . -type f -regex ".*/build/test-results/.*xml" -exec cp {} ~/junit/ \;
           when: always
@@ -79,7 +80,7 @@ jobs:
       - persist_to_workspace:
           root: ~/
           paths:
-            - project
+            - $CIRCLE_PROJECT_REPONAME
             - junit
 
   publish:
@@ -92,12 +93,12 @@ jobs:
       - run:
           name: Package and Publish
           command: |
-            cd ~/project
+            cd ~/$CIRCLE_PROJECT_REPONAME
             ./gradlew assemble publish --no-daemon
       - persist_to_workspace:
           root: ~/
           paths:
-            - project
+            - $CIRCLE_PROJECT_REPONAME
 
   collect_artifacts:
     executor: java-executor
@@ -107,7 +108,7 @@ jobs:
       - run:
           name: Save artifacts
           command: |
-            cd ~/project
+            cd ~/$CIRCLE_PROJECT_REPONAME
             mkdir -p ~/artifacts/
             find . -type f -regex ".*/build/libs/.*jar" -exec cp {} ~/artifacts/ \;
           when: always
