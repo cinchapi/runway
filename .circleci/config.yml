@@ -58,18 +58,13 @@ jobs:
           name: Run Tests
           command: |
             cd ~/project
-            # Split tests across containers using CircleCI's test splitting
-            CLASSNAMES=$(circleci tests glob "src/test/java/**/*.java" \
+            mkdir -p ~/junit/
+            # Use circleci tests run for rerun-failed-tests support
+            circleci tests glob "src/test/java/**/*.java" \
               | sed 's|src/test/java/||' \
               | sed 's|/|.|g' \
               | sed 's|\.java$||' \
-              | circleci tests split --split-by=timings)
-            # Build --tests arguments for each class
-            GRADLE_ARGS=""
-            for classname in $CLASSNAMES; do
-              GRADLE_ARGS="$GRADLE_ARGS --tests $classname"
-            done
-            ./gradlew test $GRADLE_ARGS --no-daemon
+              | circleci tests run --command="xargs ./gradlew test --no-daemon --tests" --verbose --split-by=timings
       - run:
           name: Save test results
           command: |
@@ -78,6 +73,8 @@ jobs:
             find . -type f -regex ".*/build/test-results/.*xml" -exec cp {} ~/junit/ \;
           when: always
       - store_test_results:
+          path: ~/junit
+      - store_artifacts:
           path: ~/junit
       - persist_to_workspace:
           root: ~/
