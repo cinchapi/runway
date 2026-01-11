@@ -27,8 +27,8 @@ commands:
       - run:
           name: Restore project from workspace
           command: |
-            mkdir -p ~/$CIRCLE_PROJECT_REPONAME
-            cp -r ~/project/* ~/$CIRCLE_PROJECT_REPONAME/
+            cp -a ~/project ~/$CIRCLE_PROJECT_REPONAME
+            ls -la ~/$CIRCLE_PROJECT_REPONAME/
 
 jobs:
   setup:
