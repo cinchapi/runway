@@ -94,6 +94,10 @@ jobs:
           command: |
             cd ~/project
             ./gradlew assemble publish --no-daemon
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - project
 
   collect_artifacts:
     executor: java-executor
