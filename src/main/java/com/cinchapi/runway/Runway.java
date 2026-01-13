@@ -19,9 +19,11 @@ import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -339,6 +341,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Gateway gateway = null;
 
     /**
+     * Thread-local storage for attached {@link FederatedDataSource} instances.
+     * Each thread maintains its own map of attached sources, enabling
+     * request-scoped or context-scoped federation.
+     * <p>
+     * The map is lazily initialized only when {@link #attach} is called to
+     * avoid unnecessary allocations for threads that never use federation.
+     * </p>
+     */
+    private final ThreadLocal<Map<Class<? extends Record>, FederatedDataSource<?>>> attached = new ThreadLocal<>();
+
+    /**
      * Construct a new instance.
      *
      * @param connections a Concourse {@link ConnectionPool}
@@ -390,48 +403,167 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
     }
 
+    /**
+     * Attach one or more {@link FederatedDataSource FederatedDataSources} to
+     * this {@link Runway} instance for the current thread.
+     * <p>
+     * When a source is attached, queries for its {@link Record} type are
+     * routed to the source instead of the underlying database. This enables
+     * transparent federation of programmatic data sources with persistent
+     * data.
+     * </p>
+     * <p>
+     * <strong>Note:</strong> Federation does not support cross-data-source
+     * reads. Once a source is attached for a type, all queries for that type
+     * (or its hierarchy via {@code loadAny}/{@code findAny}) are served
+     * exclusively from the attached source(s). The underlying database is not
+     * consulted for attached types.
+     * </p>
+     * <p>
+     * The returned {@link DatabaseInterface} delegates to this {@link Runway}
+     * instance and implements {@link AutoCloseable} to automatically detach
+     * all sources when closed. Both the returned handle and this
+     * {@link Runway} instance can be used for queries while sources are
+     * attached.
+     * </p>
+     * <h2>Usage</h2>
+     *
+     * <pre>
+     * {@code
+     * try (DatabaseInterface db = runway.attach(source)) {
+     *     db.load(MyAdHocRecord.class); // Uses attached source
+     *     runway.load(MyAdHocRecord.class); // Also uses attached source
+     * }
+     * // Sources automatically detached
+     * }
+     * </pre>
+     *
+     * @param sources the {@link FederatedDataSource FederatedDataSources} to
+     *            attach
+     * @return a {@link DatabaseInterface} that auto-detaches on close
+     */
+    public AttachmentScope attach(FederatedDataSource<?>... sources) {
+        Map<Class<? extends Record>, FederatedDataSource<?>> map = attached
+                .get();
+        if(map == null) {
+            map = new LinkedHashMap<>();
+            attached.set(map);
+        }
+        for (FederatedDataSource<?> source : sources) {
+            map.put(source.type(), source);
+        }
+        return new AttachmentScope(this, sources);
+    }
+
+    /**
+     * Detach a {@link FederatedDataSource} from this {@link Runway} instance
+     * for the current thread.
+     *
+     * @param source the source to detach
+     */
+    public void detach(FederatedDataSource<?> source) {
+        Map<Class<? extends Record>, FederatedDataSource<?>> map = attached
+                .get();
+        if(map != null) {
+            map.remove(source.type());
+        }
+    }
+
+    /**
+     * Detach the {@link FederatedDataSource} for the given {@link Record}
+     * class from this {@link Runway} instance for the current thread.
+     *
+     * @param clazz the {@link Record} class whose source should be detached
+     */
+    public void detach(Class<? extends Record> clazz) {
+        Map<Class<? extends Record>, FederatedDataSource<?>> map = attached
+                .get();
+        if(map != null) {
+            map.remove(clazz);
+        }
+    }
+
     @Override
     public <T extends Record> int count(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            return count($Criteria.amongRealms(realms,
-                    $Criteria.withinClass(clazz, criteria)));
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.count(clazz, criteria, realms);
         }
         else {
-            return filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
-                    .size();
+            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                return count($Criteria.amongRealms(realms,
+                        $Criteria.withinClass(clazz, criteria)));
+            }
+            else {
+                return filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
+                        .size();
+            }
         }
     }
 
     @Override
     public <T extends Record> int count(Class<T> clazz, Realms realms) {
-        return count($Criteria.amongRealms(realms, $Criteria.forClass(clazz)));
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.count(clazz, realms);
+        }
+        else {
+            return count(
+                    $Criteria.amongRealms(realms, $Criteria.forClass(clazz)));
+        }
     }
 
     @Override
     public <T extends Record> int countAny(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            return count($Criteria.amongRealms(realms,
-                    $Criteria.accrossClassHierachy(clazz, criteria)));
+        Set<FederatedDataSource<? extends T>> sources = getAttachedSourcesForHierarchy(
+                clazz);
+        if(!sources.isEmpty()) {
+            int count = 0;
+            for (FederatedDataSource<? extends T> source : sources) {
+                count += source.countAny(clazz, criteria, realms);
+            }
+            return count;
         }
         else {
-            return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
-                    .size();
+            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                return count($Criteria.amongRealms(realms,
+                        $Criteria.accrossClassHierachy(clazz, criteria)));
+            }
+            else {
+                return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION,
+                        realms).size();
+            }
         }
     }
 
     @Override
     public <T extends Record> int countAny(Class<T> clazz, Realms realms) {
-        return count($Criteria.amongRealms(realms,
-                $Criteria.forClassHierarchy(clazz)));
+        Set<FederatedDataSource<? extends T>> sources = getAttachedSourcesForHierarchy(
+                clazz);
+        if(!sources.isEmpty()) {
+            int count = 0;
+            for (FederatedDataSource<? extends T> source : sources) {
+                count += source.countAny(clazz, realms);
+            }
+            return count;
+        }
+        else {
+            return count($Criteria.amongRealms(realms,
+                    $Criteria.forClassHierarchy(clazz)));
+        }
     }
 
     @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
             Order order, Page page, Realms realms) {
-        if(hasNativeSortingAndPagination) {
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.find(clazz, criteria, order, page, realms);
+        }
+        else if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
@@ -460,7 +592,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
             Order order, Realms realms) {
-        if(hasNativeSortingAndPagination) {
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.find(clazz, criteria, order, realms);
+        }
+        else if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
@@ -489,7 +625,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
             Page page, Realms realms) {
-        if(hasNativeSortingAndPagination) {
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.find(clazz, criteria, page, realms);
+        }
+        else if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
@@ -518,19 +658,26 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        Concourse concourse = connections.request();
-        try {
-            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
-                return instantiateAll(clazz, data);
-            }
-            else {
-                return filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
-            }
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.find(clazz, criteria, realms);
         }
-        finally {
-            connections.release(concourse);
+        else {
+            Concourse concourse = connections.request();
+            try {
+                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                    Map<Long, Map<String, Set<Object>>> data = $find(concourse,
+                            clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
+                    return instantiateAll(clazz, data);
+                }
+                else {
+                    return filter(clazz, criteria, NO_ORDER, NO_PAGINATION,
+                            realms);
+                }
+            }
+            finally {
+                connections.release(concourse);
+            }
         }
     }
 
@@ -538,29 +685,50 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Order order, Page page, Realms realms) {
-        if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    Map<Long, Map<String, Set<Object>>> data = $findAny(
-                            concourse, clazz, criteria, order, page, realms);
-                    return instantiateAll(data);
-                }
-                else {
-                    return filterAny(clazz, criteria, order, page, realms);
-                }
+        Set<FederatedDataSource<? extends T>> sources = getAttachedSourcesForHierarchy(
+                clazz);
+        if(!sources.isEmpty()) {
+            Set<T> results = new LinkedHashSet<>();
+            for (FederatedDataSource<? extends T> source : sources) {
+                results.addAll(source.findAny(clazz, criteria, realms));
             }
-            finally {
-                connections.release(concourse);
+            if(order != null) {
+                results = DatabaseInterface.sort(results,
+                        backwardsCompatible(order));
             }
+            if(page != null) {
+                results = results.stream().skip(page.skip()).limit(page.limit())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+            }
+            return results;
         }
         else {
-            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            if(hasNativeSortingAndPagination) {
+                Concourse concourse = connections.request();
+                try {
+                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                        Map<Long, Map<String, Set<Object>>> data = $findAny(
+                                concourse, clazz, criteria, order, page,
+                                realms);
+                        return instantiateAll(data);
+                    }
+                    else {
+                        return filterAny(clazz, criteria, order, page, realms);
+                    }
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            else {
+                return findAny(clazz, criteria, backwardsCompatible(order))
+                        .stream()
+                        .filter(record -> realms.names().isEmpty() || !Sets
+                                .intersection(record.realms(), realms.names())
+                                .isEmpty())
+                        .skip(page.skip()).limit(page.limit())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+            }
         }
     }
 
@@ -568,127 +736,130 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Order order, Realms realms) {
-        if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    Map<Long, Map<String, Set<Object>>> data = $findAny(
-                            concourse, clazz, criteria, order, NO_PAGINATION,
-                            realms);
-                    return instantiateAll(data);
-                }
-                else {
-                    return filterAny(clazz, criteria, order, NO_PAGINATION,
-                            realms);
-                }
+        Set<FederatedDataSource<? extends T>> sources = getAttachedSourcesForHierarchy(
+                clazz);
+        if(!sources.isEmpty()) {
+            Set<T> results = new LinkedHashSet<>();
+            for (FederatedDataSource<? extends T> source : sources) {
+                results.addAll(source.findAny(clazz, criteria, realms));
             }
-            finally {
-                connections.release(concourse);
+            if(order != null) {
+                results = DatabaseInterface.sort(results,
+                        backwardsCompatible(order));
             }
+            return results;
         }
         else {
-            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            if(hasNativeSortingAndPagination) {
+                Concourse concourse = connections.request();
+                try {
+                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                        Map<Long, Map<String, Set<Object>>> data = $findAny(
+                                concourse, clazz, criteria, order,
+                                NO_PAGINATION, realms);
+                        return instantiateAll(data);
+                    }
+                    else {
+                        return filterAny(clazz, criteria, order, NO_PAGINATION,
+                                realms);
+                    }
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            else {
+                return findAny(clazz, criteria, backwardsCompatible(order))
+                        .stream()
+                        .filter(record -> realms.names().isEmpty() || !Sets
+                                .intersection(record.realms(), realms.names())
+                                .isEmpty())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+            }
         }
     }
 
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Page page, Realms realms) {
-        if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    Map<Long, Map<String, Set<Object>>> data = $findAny(
-                            concourse, clazz, criteria, NO_ORDER, page, realms);
-                    return instantiateAll(data);
-                }
-                else {
-                    return filterAny(clazz, criteria, NO_ORDER, page, realms);
-                }
+        Set<FederatedDataSource<? extends T>> sources = getAttachedSourcesForHierarchy(
+                clazz);
+        if(!sources.isEmpty()) {
+            Set<T> results = new LinkedHashSet<>();
+            for (FederatedDataSource<? extends T> source : sources) {
+                results.addAll(source.findAny(clazz, criteria, realms));
             }
-            finally {
-                connections.release(concourse);
+            if(page != null) {
+                results = results.stream().skip(page.skip()).limit(page.limit())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
             }
+            return results;
         }
         else {
-            return findAny(clazz, criteria).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            if(hasNativeSortingAndPagination) {
+                Concourse concourse = connections.request();
+                try {
+                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                        Map<Long, Map<String, Set<Object>>> data = $findAny(
+                                concourse, clazz, criteria, NO_ORDER, page,
+                                realms);
+                        return instantiateAll(data);
+                    }
+                    else {
+                        return filterAny(clazz, criteria, NO_ORDER, page,
+                                realms);
+                    }
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            else {
+                return findAny(clazz, criteria).stream()
+                        .filter(record -> realms.names().isEmpty() || !Sets
+                                .intersection(record.realms(), realms.names())
+                                .isEmpty())
+                        .skip(page.skip()).limit(page.limit())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+            }
         }
     }
 
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        Concourse concourse = connections.request();
-        try {
-            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
-                return instantiateAll(data);
+        Set<FederatedDataSource<? extends T>> sources = getAttachedSourcesForHierarchy(
+                clazz);
+        if(!sources.isEmpty()) {
+            Set<T> results = new LinkedHashSet<>();
+            for (FederatedDataSource<? extends T> source : sources) {
+                results.addAll(source.findAny(clazz, criteria, realms));
             }
-            else {
-                return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION,
-                        realms);
-            }
+            return results;
         }
-        finally {
-            connections.release(concourse);
+        else {
+            return findAnyFromDatabase(clazz, criteria, realms);
         }
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public <T extends Record> T findAnyUnique(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        Concourse concourse = connections.request();
-        try {
-            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
-                        clazz, criteria, NO_ORDER, UNIQUE_PAGINATION, realms);
-                if(data.isEmpty()) {
-                    return null;
-                }
-                else if(data.size() == 1) {
-                    return (T) instantiate(data.keySet().iterator().next(),
-                            data.values().iterator().next());
-                }
-                else {
-                    throw new DuplicateEntryException(
-                            new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                    AnyStrings.format(
-                                            "There are more than one records that match {} in the hierarchy of {}",
-                                            criteria, clazz)));
-                }
-            }
-            else {
-                Set<T> records = filterAny(clazz, criteria, NO_ORDER,
-                        UNIQUE_PAGINATION, realms);
-                if(records.isEmpty()) {
-                    return null;
-                }
-                else if(records.size() == 1) {
-                    return records.iterator().next();
-                }
-                else {
-                    throw new DuplicateEntryException(
-                            new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                    AnyStrings.format(
-                                            "There are more than one records that match {} in the hierarchy of {}",
-                                            criteria, clazz)));
-                }
-
-            }
+        // Use findAny which already handles federation, then enforce uniqueness
+        Set<T> results = findAny(clazz, criteria, NO_ORDER, UNIQUE_PAGINATION,
+                realms);
+        if(results.isEmpty()) {
+            return null;
         }
-        finally {
-            connections.release(concourse);
+        else if(results.size() == 1) {
+            return results.iterator().next();
+        }
+        else {
+            throw new DuplicateEntryException(
+                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                            AnyStrings.format(
+                                    "There are more than one records that match {} in the hierarchy of {}",
+                                    criteria, clazz)));
         }
     }
 
@@ -726,47 +897,54 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        Concourse concourse = connections.request();
-        try {
-            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                        clazz, criteria, NO_ORDER, UNIQUE_PAGINATION, realms);
-                if(data.isEmpty()) {
-                    return null;
-                }
-                else if(data.size() == 1) {
-                    return (T) instantiate(clazz,
-                            data.keySet().iterator().next(),
-                            data.values().iterator().next());
-                }
-                else {
-                    throw new DuplicateEntryException(
-                            new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                    AnyStrings.format(
-                                            "There are more than one records that match {} in {}",
-                                            criteria, clazz)));
-                }
-            }
-            else {
-                Set<T> records = filterAny(clazz, criteria, NO_ORDER,
-                        UNIQUE_PAGINATION, realms);
-                if(records.isEmpty()) {
-                    return null;
-                }
-                else if(records.size() == 1) {
-                    return records.iterator().next();
-                }
-                else {
-                    throw new DuplicateEntryException(
-                            new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                    AnyStrings.format(
-                                            "There are more than one records that match {} in {}",
-                                            criteria, clazz)));
-                }
-            }
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.findUnique(clazz, criteria, realms);
         }
-        finally {
-            connections.release(concourse);
+        else {
+            Concourse concourse = connections.request();
+            try {
+                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                    Map<Long, Map<String, Set<Object>>> data = $find(concourse,
+                            clazz, criteria, NO_ORDER, UNIQUE_PAGINATION,
+                            realms);
+                    if(data.isEmpty()) {
+                        return null;
+                    }
+                    else if(data.size() == 1) {
+                        return (T) instantiate(clazz,
+                                data.keySet().iterator().next(),
+                                data.values().iterator().next());
+                    }
+                    else {
+                        throw new DuplicateEntryException(
+                                new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                                        AnyStrings.format(
+                                                "There are more than one records that match {} in {}",
+                                                criteria, clazz)));
+                    }
+                }
+                else {
+                    Set<T> records = filterAny(clazz, criteria, NO_ORDER,
+                            UNIQUE_PAGINATION, realms);
+                    if(records.isEmpty()) {
+                        return null;
+                    }
+                    else if(records.size() == 1) {
+                        return records.iterator().next();
+                    }
+                    else {
+                        throw new DuplicateEntryException(
+                                new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                                        AnyStrings.format(
+                                                "There are more than one records that match {} in {}",
+                                                criteria, clazz)));
+                    }
+                }
+            }
+            finally {
+                connections.release(concourse);
+            }
         }
     }
 
@@ -780,42 +958,52 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     @Override
     public <T extends Record> T load(Class<T> clazz, long id, Realms realms) {
-        if(StaticAnalysis.instance().getClassHierarchy(clazz).size() > 1) {
-            // The provided clazz has descendants, so it is possible that the
-            // Record with the #id is actually a member of a subclass
-            Concourse connection = connections.request();
-            try {
-                String section = connection.get(Record.SECTION_KEY, id);
-                if(section != null) {
-                    clazz = Reflection.getClassCasted(section);
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.load(clazz, id, realms);
+        }
+        else {
+            if(StaticAnalysis.instance().getClassHierarchy(clazz).size() > 1) {
+                // The provided clazz has descendants, so it is possible that
+                // the Record with the #id is actually a member of a subclass
+                Concourse connection = connections.request();
+                try {
+                    String section = connection.get(Record.SECTION_KEY, id);
+                    if(section != null) {
+                        clazz = Reflection.getClassCasted(section);
+                    }
+                }
+                finally {
+                    connections.release(connection);
                 }
             }
-            finally {
-                connections.release(connection);
-            }
-        }
-        if(!realms.names().isEmpty()) {
-            Concourse connection = connections.request();
-            try {
-                Set<String> $realms = MoreObjects.firstNonNull(
-                        connection.select(Record.REALMS_KEY, id),
-                        ImmutableSet.of());
-                if(Sets.intersection($realms, realms.names()).isEmpty()) {
-                    return null; // TODO: what to do here?
+            if(!realms.names().isEmpty()) {
+                Concourse connection = connections.request();
+                try {
+                    Set<String> $realms = MoreObjects.firstNonNull(
+                            connection.select(Record.REALMS_KEY, id),
+                            ImmutableSet.of());
+                    if(Sets.intersection($realms, realms.names()).isEmpty()) {
+                        return null; // TODO: what to do here?
+                    }
+                }
+                finally {
+                    connections.release(connection);
                 }
             }
-            finally {
-                connections.release(connection);
-            }
+            return instantiate(clazz, id, null);
         }
-        return instantiate(clazz, id, null);
     }
 
     @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Page page, Realms realms) {
-        if(hasNativeSortingAndPagination) {
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.load(clazz, order, page, realms);
+        }
+        else if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $load(concourse,
@@ -840,7 +1028,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Realms realms) {
-        if(hasNativeSortingAndPagination) {
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.load(clazz, order, realms);
+        }
+        else if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $load(concourse,
@@ -859,7 +1051,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Realms realms) {
-        if(hasNativeSortingAndPagination) {
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.load(clazz, page, realms);
+        }
+        else if(hasNativeSortingAndPagination) {
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $load(concourse,
@@ -882,14 +1078,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Realms realms) {
-        Concourse concourse = connections.request();
-        try {
-            Map<Long, Map<String, Set<Object>>> data = $load(concourse, clazz,
-                    NO_ORDER, NO_PAGINATION, realms);
-            return instantiateAll(clazz, data);
+        FederatedDataSource<T> source = getAttachedSource(clazz);
+        if(source != null) {
+            return source.load(clazz, realms);
         }
-        finally {
-            connections.release(concourse);
+        else {
+            Concourse concourse = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> data = $load(concourse,
+                        clazz, NO_ORDER, NO_PAGINATION, realms);
+                return instantiateAll(clazz, data);
+            }
+            finally {
+                connections.release(concourse);
+            }
         }
     }
 
@@ -897,24 +1099,43 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
             Page page, Realms realms) {
-        if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                        clazz, order, page, realms);
-                return instantiateAll(data);
+        Set<FederatedDataSource<? extends T>> sources = getAttachedSourcesForHierarchy(
+                clazz);
+        if(!sources.isEmpty()) {
+            Set<T> results = new LinkedHashSet<>();
+            for (FederatedDataSource<? extends T> source : sources) {
+                results.addAll(source.loadAny(clazz, realms));
             }
-            finally {
-                connections.release(concourse);
+            if(order != null) {
+                results = DatabaseInterface.sort(results,
+                        backwardsCompatible(order));
             }
+            if(page != null) {
+                results = results.stream().skip(page.skip()).limit(page.limit())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+            }
+            return results;
         }
         else {
-            return load(clazz, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            if(hasNativeSortingAndPagination) {
+                Concourse concourse = connections.request();
+                try {
+                    Map<Long, Map<String, Set<Object>>> data = $loadAny(
+                            concourse, clazz, order, page, realms);
+                    return instantiateAll(data);
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            else {
+                return load(clazz, backwardsCompatible(order)).stream()
+                        .filter(record -> realms.names().isEmpty() || !Sets
+                                .intersection(record.realms(), realms.names())
+                                .isEmpty())
+                        .skip(page.skip()).limit(page.limit())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+            }
         }
     }
 
@@ -922,60 +1143,93 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
             Realms realms) {
-        if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                        clazz, order, NO_PAGINATION, realms);
-                return instantiateAll(data);
+        Set<FederatedDataSource<? extends T>> sources = getAttachedSourcesForHierarchy(
+                clazz);
+        if(!sources.isEmpty()) {
+            Set<T> results = new LinkedHashSet<>();
+            for (FederatedDataSource<? extends T> source : sources) {
+                results.addAll(source.loadAny(clazz, realms));
             }
-            finally {
-                connections.release(concourse);
+            if(order != null) {
+                results = DatabaseInterface.sort(results,
+                        backwardsCompatible(order));
             }
+            return results;
         }
         else {
-            return load(clazz, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            if(hasNativeSortingAndPagination) {
+                Concourse concourse = connections.request();
+                try {
+                    Map<Long, Map<String, Set<Object>>> data = $loadAny(
+                            concourse, clazz, order, NO_PAGINATION, realms);
+                    return instantiateAll(data);
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            else {
+                return load(clazz, backwardsCompatible(order)).stream()
+                        .filter(record -> realms.names().isEmpty() || !Sets
+                                .intersection(record.realms(), realms.names())
+                                .isEmpty())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+            }
         }
     }
 
     @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Realms realms) {
-        if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                        clazz, NO_ORDER, page, realms);
-                return instantiateAll(data);
+        Set<FederatedDataSource<? extends T>> sources = getAttachedSourcesForHierarchy(
+                clazz);
+        if(!sources.isEmpty()) {
+            Set<T> results = new LinkedHashSet<>();
+            for (FederatedDataSource<? extends T> source : sources) {
+                results.addAll(source.loadAny(clazz, realms));
             }
-            finally {
-                connections.release(concourse);
+            if(page != null) {
+                results = results.stream().skip(page.skip()).limit(page.limit())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
             }
+            return results;
         }
         else {
-            return load(clazz).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            if(hasNativeSortingAndPagination) {
+                Concourse concourse = connections.request();
+                try {
+                    Map<Long, Map<String, Set<Object>>> data = $loadAny(
+                            concourse, clazz, NO_ORDER, page, realms);
+                    return instantiateAll(data);
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            else {
+                return load(clazz).stream()
+                        .filter(record -> realms.names().isEmpty() || !Sets
+                                .intersection(record.realms(), realms.names())
+                                .isEmpty())
+                        .skip(page.skip()).limit(page.limit())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+            }
         }
     }
 
     @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Realms realms) {
-        Concourse concourse = connections.request();
-        try {
-            Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                    clazz, NO_ORDER, NO_PAGINATION, realms);
-            return instantiateAll(data);
+        Set<FederatedDataSource<? extends T>> sources = getAttachedSourcesForHierarchy(
+                clazz);
+        if(!sources.isEmpty()) {
+            Set<T> results = new LinkedHashSet<>();
+            for (FederatedDataSource<? extends T> source : sources) {
+                results.addAll(source.loadAny(clazz, realms));
+            }
+            return results;
         }
-        finally {
-            connections.release(concourse);
+        else {
+            return loadAnyFromDatabase(clazz, realms);
         }
     }
 
@@ -1161,6 +1415,55 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     <T extends Record> T load(long id) {
         return instantiate(id, null);
+    }
+
+    /**
+     * Find records across the hierarchy of {@code clazz} that match
+     * {@code criteria} from the database only (ignoring attached sources).
+     *
+     * @param clazz the class hierarchy to search
+     * @param criteria the filter criteria
+     * @param realms the realms filter
+     * @return the matching records from the database
+     */
+    private <T extends Record> Set<T> findAnyFromDatabase(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        Concourse concourse = connections.request();
+        try {
+            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
+                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
+                return instantiateAll(data);
+            }
+            else {
+                return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION,
+                        realms);
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * Load all records across the hierarchy of {@code clazz} from the database
+     * only (ignoring attached sources).
+     *
+     * @param clazz the class hierarchy to load
+     * @param realms the realms filter
+     * @return all records from the database in the class hierarchy
+     */
+    private <T extends Record> Set<T> loadAnyFromDatabase(Class<T> clazz,
+            Realms realms) {
+        Concourse concourse = connections.request();
+        try {
+            Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
+                    clazz, NO_ORDER, NO_PAGINATION, realms);
+            return instantiateAll(data);
+        }
+        finally {
+            connections.release(concourse);
+        }
     }
 
     /**
@@ -1770,6 +2073,60 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         };
 
+    }
+
+    /**
+     * Return the {@link FederatedDataSource} attached for the exact
+     * {@code clazz}, or {@code null} if none is attached.
+     *
+     * @param clazz the class to check
+     * @return the attached source, or {@code null}
+     */
+    @SuppressWarnings("unchecked")
+    @Nullable
+    private <T extends Record> FederatedDataSource<T> getAttachedSource(
+            Class<T> clazz) {
+        Map<Class<? extends Record>, FederatedDataSource<?>> map = attached
+                .get();
+        if(map == null) {
+            return null;
+        }
+        else {
+            return (FederatedDataSource<T>) map.get(clazz);
+        }
+    }
+
+    /**
+     * Return all {@link FederatedDataSource FederatedDataSources} attached for
+     * classes in the hierarchy of {@code clazz}.
+     * <p>
+     * This method finds all attached sources whose class is assignable from
+     * the requested class (i.e., sources that handle subclasses of the
+     * requested class).
+     * </p>
+     *
+     * @param clazz the class to check
+     * @return the attached sources (may be empty)
+     */
+    @SuppressWarnings("unchecked")
+    private <T extends Record> Set<FederatedDataSource<? extends T>> getAttachedSourcesForHierarchy(
+            Class<T> clazz) {
+        Map<Class<? extends Record>, FederatedDataSource<?>> map = attached
+                .get();
+        if(map == null) {
+            return ImmutableSet.of();
+        }
+        else {
+            Set<FederatedDataSource<? extends T>> sources = new LinkedHashSet<>();
+            for (Entry<Class<? extends Record>, FederatedDataSource<?>> entry : map
+                    .entrySet()) {
+                if(clazz.isAssignableFrom(entry.getKey())) {
+                    sources.add((FederatedDataSource<? extends T>) entry
+                            .getValue());
+                }
+            }
+            return sources;
+        }
     }
 
     /**

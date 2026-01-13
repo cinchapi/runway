@@ -38,10 +38,10 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 
 /**
- * A {@link DatabaseInterface} that serves a single {@link AdHocRecord} type
+ * A {@link FederatedDataSource} that serves a single {@link AdHocRecord} type
  * from an in-memory data source.
  * <p>
- * An {@link AdHocDatabase} bridges programmatic data sources with Runway's
+ * An {@link AdHocDataSource} bridges programmatic data sources with Runway's
  * query interface. Data is supplied via a {@link Supplier} that is evaluated
  * on each query, allowing for dynamic or computed data.
  * </p>
@@ -51,17 +51,29 @@ import com.google.common.collect.Lists;
  * results.
  * </p>
  * <p>
- * To combine multiple {@link AdHocDatabase AdHocDatabases} or integrate with
- * a persistent database, use {@link FederatedRunway}.
+ * To use this source with a {@link Runway} instance, attach it using
+ * {@link Runway#attach(FederatedDataSource...)}:
  * </p>
+ * 
+ * <pre>
+ * {@code
+ * AdHocDataSource<ReportRecord> reports = new AdHocDataSource<>(
+ *         ReportRecord.class, () -> generateReports());
  *
- * @param <T> the type of {@link AdHocRecord} served by this database
+ * try (DatabaseInterface db = runway.attach(reports)) {
+ *     db.load(ReportRecord.class); // Served from reports source
+ * }
+ * }
+ * </pre>
+ *
+ * @param <T> the type of {@link AdHocRecord} served by this source
  * @author Jeff Nelson
  */
-public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
+public class AdHocDataSource<T extends AdHocRecord> implements
+        FederatedDataSource<T> {
 
     /**
-     * The class of {@link AdHocRecord} served by this database.
+     * The class of {@link AdHocRecord} served by this source.
      */
     private final Class<T> clazz;
 
@@ -73,10 +85,10 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
     /**
      * Construct a new instance.
      *
-     * @param clazz the {@link AdHocRecord} class this database serves
+     * @param clazz the {@link AdHocRecord} class this source serves
      * @param supplier the data source; invoked on each query
      */
-    public AdHocDatabase(Class<T> clazz, Supplier<Collection<T>> supplier) {
+    public AdHocDataSource(Class<T> clazz, Supplier<Collection<T>> supplier) {
         this.clazz = clazz;
         this.supplier = supplier;
     }
@@ -192,6 +204,11 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
     }
 
     @Override
+    public Class<T> type() {
+        return clazz;
+    }
+
+    @Override
     public <R extends Record> R load(Class<R> clazz, long id, Realms realms) {
         if(handles(clazz)) {
             return doLoad(id);
@@ -292,12 +309,17 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
     }
 
     /**
-     * Return the class of {@link AdHocRecord} served by this database.
+     * Create a filter predicate from the given criteria.
      *
-     * @return the registered class
+     * @param criteria the filter criteria
+     * @return a predicate that tests records against the criteria
      */
-    public Class<T> registeredClass() {
-        return clazz;
+    private Predicate<T> createFilter(Criteria criteria) {
+        ConcourseCompiler compiler = ConcourseCompiler.get();
+        ConditionTree ast = (ConditionTree) compiler.parse(criteria);
+        String[] keys = compiler.analyze(ast).keys()
+                .toArray(Array.containing());
+        return record -> compiler.evaluate(ast, record.mmap(keys));
     }
 
     /**
@@ -309,9 +331,7 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
     @SuppressWarnings("unchecked")
     private <R extends Record> Set<R> doFind(Criteria criteria) {
         Predicate<T> filter = createFilter(criteria);
-        return supplier.get().stream()
-                .filter(filter)
-                .map(record -> (R) record)
+        return supplier.get().stream().filter(filter).map(record -> (R) record)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
@@ -328,8 +348,7 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
         Predicate<T> filter = createFilter(criteria);
         return supplier.get().stream()
                 .filter(record -> requestedClass.isInstance(record))
-                .filter(filter)
-                .map(record -> (R) record)
+                .filter(filter).map(record -> (R) record)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
@@ -340,8 +359,7 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
      */
     @SuppressWarnings("unchecked")
     private <R extends Record> Set<R> doLoad() {
-        return supplier.get().stream()
-                .map(record -> (R) record)
+        return supplier.get().stream().map(record -> (R) record)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
@@ -353,11 +371,8 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
      */
     @SuppressWarnings("unchecked")
     private <R extends Record> R doLoad(long id) {
-        return supplier.get().stream()
-                .filter(record -> record.id() == id)
-                .map(record -> (R) record)
-                .findFirst()
-                .orElse(null);
+        return supplier.get().stream().filter(record -> record.id() == id)
+                .map(record -> (R) record).findFirst().orElse(null);
     }
 
     /**
@@ -375,34 +390,20 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
     }
 
     /**
-     * Create a filter predicate from the given criteria.
-     *
-     * @param criteria the filter criteria
-     * @return a predicate that tests records against the criteria
-     */
-    private Predicate<T> createFilter(Criteria criteria) {
-        ConcourseCompiler compiler = ConcourseCompiler.get();
-        ConditionTree ast = (ConditionTree) compiler.parse(criteria);
-        String[] keys = compiler.analyze(ast).keys()
-                .toArray(Array.containing());
-        return record -> compiler.evaluate(ast, record.mmap(keys));
-    }
-
-    /**
-     * Return {@code true} if this database handles the exact class.
+     * Return {@code true} if this source handles the exact class.
      *
      * @param requestedClass the class being queried
-     * @return {@code true} if this database serves the class
+     * @return {@code true} if this source serves the class
      */
     private boolean handles(Class<?> requestedClass) {
         return clazz.equals(requestedClass);
     }
 
     /**
-     * Return {@code true} if this database handles the class hierarchy.
+     * Return {@code true} if this source handles the class hierarchy.
      *
      * @param requestedClass the class being queried
-     * @return {@code true} if this database serves the class or a subclass
+     * @return {@code true} if this source serves the class or a subclass
      */
     private boolean handlesHierarchy(Class<?> requestedClass) {
         return requestedClass.isAssignableFrom(clazz);
@@ -420,9 +421,7 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
         if(page == null) {
             return records;
         }
-        return records.stream()
-                .skip(page.skip())
-                .limit(page.limit())
+        return records.stream().skip(page.skip()).limit(page.limit())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
@@ -485,4 +484,3 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
     }
 
 }
-
