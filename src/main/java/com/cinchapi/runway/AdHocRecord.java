@@ -32,8 +32,8 @@ import java.util.function.Supplier;
  * </p>
  * <p>
  * {@link AdHocRecord AdHocRecords} are typically served through an
- * {@link AdHocDatabase} and can be federated with a persistent data source via
- * {@link FederatedRunway}.
+ * {@link AdHocDataSource} and can be attached to a {@link Runway} instance via
+ * {@link Runway#attach(AdHocDataSource...)}.
  * </p>
  *
  * @author Jeff Nelson
