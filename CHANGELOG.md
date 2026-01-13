@@ -92,7 +92,7 @@ Runway now provides infrastructure for serving non-persistent, in-memory data th
 
 * **Thread Isolation**: All attached sources are thread-local, enabling request-scoped or context-scoped attachment. Sources attached in one thread do not affect queries in other threads, making this feature safe for use in multi-threaded web applications.
 
-* **No Cross-Source Queries**: When an `AdHocDataSource` is attached for a type, queries for that type (or its hierarchy via `loadAny`/`findAny`) are served exclusively from the attached source(s). The underlying database is not consulted for attached types. This design aligns naturally with the fact that `AdHocRecords` cannot be persisted—there is no use case for mixing ad-hoc and persistent data for the same type.
+* **Search Not Supported**: Full-text search operations (`search` and `searchAny`) are not supported for attached `AdHocDataSource` instances. These methods always query the underlying database. Use `find` with appropriate `Criteria` for filtering ad-hoc data.
 
 ##### Other Improvements
 * **Record Reference Replacement**: Added a new `replace(Record find, Record replace)` method to the `Record` class that recursively replaces all references to a specific record instance with another record throughout the object graph, maintaining referential integrity while handling nested records, deferred references, and sequences.

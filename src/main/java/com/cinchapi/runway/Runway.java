@@ -417,6 +417,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * {@link Runway} instance can be used for queries while sources are
      * attached.
      * </p>
+     * <p>
+     * <strong>Note:</strong> Full-text {@link #search} operations are not
+     * supported for attached sources. Search always queries the underlying
+     * database. Use {@link #find} with appropriate {@link Criteria} for
+     * filtering ad-hoc data.
+     * </p>
      * <h2>Usage</h2>
      *
      * <pre>
@@ -484,15 +490,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             return count;
         }
+        else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+            return count($Criteria.amongRealms(realms,
+                    $Criteria.withinClass(clazz, criteria)));
+        }
         else {
-            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                return count($Criteria.amongRealms(realms,
-                        $Criteria.withinClass(clazz, criteria)));
-            }
-            else {
-                return filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
-                        .size();
-            }
+            return filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
+                    .size();
         }
     }
 
@@ -523,15 +527,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             return count;
         }
+        else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+            return count($Criteria.amongRealms(realms,
+                    $Criteria.accrossClassHierachy(clazz, criteria)));
+        }
         else {
-            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                return count($Criteria.amongRealms(realms,
-                        $Criteria.accrossClassHierachy(clazz, criteria)));
-            }
-            else {
-                return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION,
-                        realms).size();
-            }
+            return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
+                    .size();
         }
     }
 
@@ -572,38 +574,34 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 if(page != null) {
                     results = results.stream().skip(page.skip())
-                            .limit(page.limit())
-                            .collect(Collectors.toCollection(LinkedHashSet::new));
+                            .limit(page.limit()).collect(Collectors
+                                    .toCollection(LinkedHashSet::new));
                 }
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                    Map<Long, Map<String, Set<Object>>> data = $find(concourse,
+                            clazz, criteria, order, page, realms);
+                    return instantiateAll(clazz, data);
+                }
+                else {
+                    return filter(clazz, criteria, order, page, realms);
+                }
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                        Map<Long, Map<String, Set<Object>>> data = $find(
-                                concourse, clazz, criteria, order, page,
-                                realms);
-                        return instantiateAll(clazz, data);
-                    }
-                    else {
-                        return filter(clazz, criteria, order, page, realms);
-                    }
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return find(clazz, criteria, backwardsCompatible(order))
-                        .stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return find(clazz, criteria, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -629,33 +627,29 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                    Map<Long, Map<String, Set<Object>>> data = $find(concourse,
+                            clazz, criteria, order, NO_PAGINATION, realms);
+                    return instantiateAll(clazz, data);
+                }
+                else {
+                    return filter(clazz, criteria, order, NO_PAGINATION,
+                            realms);
+                }
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                        Map<Long, Map<String, Set<Object>>> data = $find(
-                                concourse, clazz, criteria, order,
-                                NO_PAGINATION, realms);
-                        return instantiateAll(clazz, data);
-                    }
-                    else {
-                        return filter(clazz, criteria, order, NO_PAGINATION,
-                                realms);
-                    }
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return find(clazz, criteria, backwardsCompatible(order))
-                        .stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return find(clazz, criteria, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -675,38 +669,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 if(page != null) {
                     results = results.stream().skip(page.skip())
-                            .limit(page.limit())
-                            .collect(Collectors.toCollection(LinkedHashSet::new));
+                            .limit(page.limit()).collect(Collectors
+                                    .toCollection(LinkedHashSet::new));
                 }
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                    Map<Long, Map<String, Set<Object>>> data = $find(concourse,
+                            clazz, criteria, NO_ORDER, page, realms);
+                    return instantiateAll(clazz, data);
+                }
+                else {
+                    return filter(clazz, criteria, NO_ORDER, page, realms);
+                }
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                        Map<Long, Map<String, Set<Object>>> data = $find(
-                                concourse, clazz, criteria, NO_ORDER, page,
-                                realms);
-                        return instantiateAll(clazz, data);
-                    }
-                    else {
-                        return filter(clazz, criteria, NO_ORDER, page, realms);
-                    }
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return find(clazz, criteria).stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .limit(page.limit())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return find(clazz, criteria).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -761,39 +752,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 if(page != null) {
                     results = results.stream().skip(page.skip())
-                            .limit(page.limit())
-                            .collect(Collectors.toCollection(LinkedHashSet::new));
+                            .limit(page.limit()).collect(Collectors
+                                    .toCollection(LinkedHashSet::new));
                 }
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                    Map<Long, Map<String, Set<Object>>> data = $findAny(
+                            concourse, clazz, criteria, order, page, realms);
+                    return instantiateAll(data);
+                }
+                else {
+                    return filterAny(clazz, criteria, order, page, realms);
+                }
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                        Map<Long, Map<String, Set<Object>>> data = $findAny(
-                                concourse, clazz, criteria, order, page,
-                                realms);
-                        return instantiateAll(data);
-                    }
-                    else {
-                        return filterAny(clazz, criteria, order, page, realms);
-                    }
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return findAny(clazz, criteria, backwardsCompatible(order))
-                        .stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .skip(page.skip()).limit(page.limit())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -819,33 +806,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                    Map<Long, Map<String, Set<Object>>> data = $findAny(
+                            concourse, clazz, criteria, order, NO_PAGINATION,
+                            realms);
+                    return instantiateAll(data);
+                }
+                else {
+                    return filterAny(clazz, criteria, order, NO_PAGINATION,
+                            realms);
+                }
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                        Map<Long, Map<String, Set<Object>>> data = $findAny(
-                                concourse, clazz, criteria, order,
-                                NO_PAGINATION, realms);
-                        return instantiateAll(data);
-                    }
-                    else {
-                        return filterAny(clazz, criteria, order, NO_PAGINATION,
-                                realms);
-                    }
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return findAny(clazz, criteria, backwardsCompatible(order))
-                        .stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -865,39 +849,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 if(page != null) {
                     results = results.stream().skip(page.skip())
-                            .limit(page.limit())
-                            .collect(Collectors.toCollection(LinkedHashSet::new));
+                            .limit(page.limit()).collect(Collectors
+                                    .toCollection(LinkedHashSet::new));
                 }
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                    Map<Long, Map<String, Set<Object>>> data = $findAny(
+                            concourse, clazz, criteria, NO_ORDER, page, realms);
+                    return instantiateAll(data);
+                }
+                else {
+                    return filterAny(clazz, criteria, NO_ORDER, page, realms);
+                }
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                        Map<Long, Map<String, Set<Object>>> data = $findAny(
-                                concourse, clazz, criteria, NO_ORDER, page,
-                                realms);
-                        return instantiateAll(data);
-                    }
-                    else {
-                        return filterAny(clazz, criteria, NO_ORDER, page,
-                                realms);
-                    }
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return findAny(clazz, criteria).stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .skip(page.skip()).limit(page.limit())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return findAny(clazz, criteria).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -992,49 +972,46 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                         criteria, clazz)));
             }
         }
-        else {
+        else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
             Concourse concourse = connections.request();
             try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                            clazz, criteria, NO_ORDER, UNIQUE_PAGINATION,
-                            realms);
-                    if(data.isEmpty()) {
-                        return null;
-                    }
-                    else if(data.size() == 1) {
-                        return (T) instantiate(clazz,
-                                data.keySet().iterator().next(),
-                                data.values().iterator().next());
-                    }
-                    else {
-                        throw new DuplicateEntryException(
-                                new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                        AnyStrings.format(
-                                                "There are more than one records that match {} in {}",
-                                                criteria, clazz)));
-                    }
+                Map<Long, Map<String, Set<Object>>> data = $find(concourse,
+                        clazz, criteria, NO_ORDER, UNIQUE_PAGINATION, realms);
+                if(data.isEmpty()) {
+                    return null;
+                }
+                else if(data.size() == 1) {
+                    return (T) instantiate(clazz,
+                            data.keySet().iterator().next(),
+                            data.values().iterator().next());
                 }
                 else {
-                    Set<T> records = filterAny(clazz, criteria, NO_ORDER,
-                            UNIQUE_PAGINATION, realms);
-                    if(records.isEmpty()) {
-                        return null;
-                    }
-                    else if(records.size() == 1) {
-                        return records.iterator().next();
-                    }
-                    else {
-                        throw new DuplicateEntryException(
-                                new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                        AnyStrings.format(
-                                                "There are more than one records that match {} in {}",
-                                                criteria, clazz)));
-                    }
+                    throw new DuplicateEntryException(
+                            new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                                    AnyStrings.format(
+                                            "There are more than one records that match {} in {}",
+                                            criteria, clazz)));
                 }
             }
             finally {
                 connections.release(concourse);
+            }
+        }
+        else {
+            Set<T> records = filterAny(clazz, criteria, NO_ORDER,
+                    UNIQUE_PAGINATION, realms);
+            if(records.isEmpty()) {
+                return null;
+            }
+            else if(records.size() == 1) {
+                return records.iterator().next();
+            }
+            else {
+                throw new DuplicateEntryException(
+                        new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                                AnyStrings.format(
+                                        "There are more than one records that match {} in {}",
+                                        criteria, clazz)));
             }
         }
     }
@@ -1113,32 +1090,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 if(page != null) {
                     results = results.stream().skip(page.skip())
-                            .limit(page.limit())
-                            .collect(Collectors.toCollection(LinkedHashSet::new));
+                            .limit(page.limit()).collect(Collectors
+                                    .toCollection(LinkedHashSet::new));
                 }
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> data = $load(concourse,
+                        clazz, order, page, realms);
+                return instantiateAll(clazz, data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    Map<Long, Map<String, Set<Object>>> data = $load(concourse,
-                            clazz, order, page, realms);
-                    return instantiateAll(clazz, data);
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return load(clazz, backwardsCompatible(order)).stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .skip(page.skip()).limit(page.limit())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return load(clazz, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -1163,21 +1138,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> data = $load(concourse,
+                        clazz, order, NO_PAGINATION, realms);
+                return instantiateAll(clazz, data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    Map<Long, Map<String, Set<Object>>> data = $load(concourse,
-                            clazz, order, NO_PAGINATION, realms);
-                    return instantiateAll(clazz, data);
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return load(clazz, backwardsCompatible(order));
-            }
+            return load(clazz, backwardsCompatible(order));
         }
     }
 
@@ -1196,32 +1169,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 if(page != null) {
                     results = results.stream().skip(page.skip())
-                            .limit(page.limit())
-                            .collect(Collectors.toCollection(LinkedHashSet::new));
+                            .limit(page.limit()).collect(Collectors
+                                    .toCollection(LinkedHashSet::new));
                 }
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> data = $load(concourse,
+                        clazz, NO_ORDER, page, realms);
+                return instantiateAll(clazz, data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    Map<Long, Map<String, Set<Object>>> data = $load(concourse,
-                            clazz, NO_ORDER, page, realms);
-                    return instantiateAll(clazz, data);
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return load(clazz).stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .skip(page.skip()).limit(page.limit())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return load(clazz).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -1269,32 +1240,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 if(page != null) {
                     results = results.stream().skip(page.skip())
-                            .limit(page.limit())
-                            .collect(Collectors.toCollection(LinkedHashSet::new));
+                            .limit(page.limit()).collect(Collectors
+                                    .toCollection(LinkedHashSet::new));
                 }
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
+                        clazz, order, page, realms);
+                return instantiateAll(data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    Map<Long, Map<String, Set<Object>>> data = $loadAny(
-                            concourse, clazz, order, page, realms);
-                    return instantiateAll(data);
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return load(clazz, backwardsCompatible(order)).stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .skip(page.skip()).limit(page.limit())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return load(clazz, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -1319,25 +1288,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
+                        clazz, order, NO_PAGINATION, realms);
+                return instantiateAll(data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    Map<Long, Map<String, Set<Object>>> data = $loadAny(
-                            concourse, clazz, order, NO_PAGINATION, realms);
-                    return instantiateAll(data);
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return load(clazz, backwardsCompatible(order)).stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return load(clazz, backwardsCompatible(order)).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
@@ -1356,32 +1323,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 if(page != null) {
                     results = results.stream().skip(page.skip())
-                            .limit(page.limit())
-                            .collect(Collectors.toCollection(LinkedHashSet::new));
+                            .limit(page.limit()).collect(Collectors
+                                    .toCollection(LinkedHashSet::new));
                 }
                 return results;
             }
         }
+        else if(hasNativeSortingAndPagination) {
+            Concourse concourse = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
+                        clazz, NO_ORDER, page, realms);
+                return instantiateAll(data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            if(hasNativeSortingAndPagination) {
-                Concourse concourse = connections.request();
-                try {
-                    Map<Long, Map<String, Set<Object>>> data = $loadAny(
-                            concourse, clazz, NO_ORDER, page, realms);
-                    return instantiateAll(data);
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            else {
-                return load(clazz).stream()
-                        .filter(record -> realms.names().isEmpty() || !Sets
-                                .intersection(record.realms(), realms.names())
-                                .isEmpty())
-                        .skip(page.skip()).limit(page.limit())
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
+            return load(clazz).stream()
+                    .filter(record -> realms.names().isEmpty() || !Sets
+                            .intersection(record.realms(), realms.names())
+                            .isEmpty())
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
