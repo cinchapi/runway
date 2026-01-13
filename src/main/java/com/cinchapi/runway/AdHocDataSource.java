@@ -38,7 +38,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 
 /**
- * A {@link FederatedDataSource} that serves a single {@link AdHocRecord} type
+ * A {@link DatabaseInterface} that serves a single {@link AdHocRecord} type
  * from an in-memory data source.
  * <p>
  * An {@link AdHocDataSource} bridges programmatic data sources with Runway's
@@ -51,10 +51,17 @@ import com.google.common.collect.Lists;
  * results.
  * </p>
  * <p>
- * To use this source with a {@link Runway} instance, attach it using
- * {@link Runway#attach(FederatedDataSource...)}:
+ * <strong>Note on Realms:</strong> {@link AdHocRecord AdHocRecords} do not
+ * have realm associations. While query methods accept {@link Realms}
+ * parameters for API compatibility, the realm constraints are not applied
+ * to ad-hoc data. All records from the supplier are considered visible
+ * regardless of the specified realms.
  * </p>
- * 
+ * <p>
+ * To use this source with a {@link Runway} instance, attach it using
+ * {@link Runway#attach(AdHocDataSource...)}:
+ * </p>
+ *
  * <pre>
  * {@code
  * AdHocDataSource<ReportRecord> reports = new AdHocDataSource<>(
@@ -69,8 +76,8 @@ import com.google.common.collect.Lists;
  * @param <T> the type of {@link AdHocRecord} served by this source
  * @author Jeff Nelson
  */
-public class AdHocDataSource<T extends AdHocRecord> implements
-        FederatedDataSource<T> {
+public class AdHocDataSource<T extends AdHocRecord>
+        implements DatabaseInterface {
 
     /**
      * The class of {@link AdHocRecord} served by this source.
@@ -203,7 +210,11 @@ public class AdHocDataSource<T extends AdHocRecord> implements
         return unique(results, clazz, criteria);
     }
 
-    @Override
+    /**
+     * Return the {@link AdHocRecord} {@link Class} served by this data source.
+     *
+     * @return the {@link AdHocRecord} class this source serves
+     */
     public Class<T> type() {
         return clazz;
     }

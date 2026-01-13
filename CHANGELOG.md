@@ -66,16 +66,14 @@ Fixed a bug where there was inconsistent priorities in the order of data returne
 * **Previous Inconsistency**: Previously, `get()` used the order: dynamic → intrinsic → derived → computed, while `map()` used: dynamic → intrinsic → computed → derived
 * **Impact**: This fix resolves issues that occurred when the same key was used in both computed and derived data, ensuring consistent behavior across all data access methods
 
-##### Ad-Hoc Records and Federated Data Sources
-Runway now provides infrastructure for serving non-persistent, in-memory data through the standard `DatabaseInterface` API. This enables seamless integration of programmatic data sources with persistent database records, with thread-local scoping for request-aware federation.
+##### Ad-Hoc Records
+Runway now provides infrastructure for serving non-persistent, in-memory data through the standard `DatabaseInterface` API. This enables seamless integration of programmatic data sources with persistent database records, with thread-local scoping for request-aware data attachment.
 
 * **`AdHocRecord`**: A read-only `Record` base class for temporary, non-persistent data structures. Subclasses define their schema through fields like regular Records, but attempts to persist or modify an `AdHocRecord` will throw an `UnsupportedOperationException`. This is useful for generating report-like structures, aggregated data views, or other read-only data representations that need to be compatible with the application's data access patterns.
 
-* **`FederatedDataSource`**: An interface extending `DatabaseInterface` that defines a contract for data sources that can be dynamically attached to a `Runway` instance. Implementations must provide a `getRecordClass()` method indicating which `Record` type they serve.
+* **`AdHocDataSource`**: A `DatabaseInterface` implementation that serves a single `AdHocRecord` type from an in-memory data source. Data is supplied via a `Supplier` that is evaluated on each query, allowing for dynamic or computed data. The `AdHocDataSource` supports full query capabilities including `Criteria` filtering, `Order` sorting, and `Page` pagination—all resolved in-memory against the supplied collection.
 
-* **`AdHocDataSource`**: A `FederatedDataSource` implementation that serves a single `AdHocRecord` type from an in-memory data source. Data is supplied via a `Supplier` that is evaluated on each query, allowing for dynamic or computed data. The `AdHocDataSource` supports full query capabilities including `Criteria` filtering, `Order` sorting, and `Page` pagination—all resolved in-memory against the supplied collection.
-
-* **`Runway.attach(FederatedDataSource...)`**: Attaches one or more data sources to the Runway instance for the current thread. When attached, queries for the source's `Record` type are automatically routed to the attached source instead of the underlying database. Returns an `AttachmentScope` that implements `DatabaseInterface` and `AutoCloseable` for convenient try-with-resources usage:
+* **`Runway.attach(AdHocDataSource...)`**: Attaches one or more ad-hoc data sources to the Runway instance for the current thread. When attached, queries for the source's `AdHocRecord` type are automatically routed to the attached source instead of the underlying database. Returns an `AttachmentScope` that implements `DatabaseInterface` and `AutoCloseable` for convenient try-with-resources usage:
   ```java
   AdHocDataSource<ReportRecord> reports = new AdHocDataSource<>(
       ReportRecord.class, () -> generateReports());
@@ -90,9 +88,11 @@ Runway now provides infrastructure for serving non-persistent, in-memory data th
   // Sources automatically detached on close
   ```
 
-* **`Runway.detach(FederatedDataSource)`** / **`Runway.detach(Class)`**: Explicitly detaches a data source from the current thread, restoring normal database routing for that Record type.
+* **`Runway.detach(AdHocDataSource)`** / **`Runway.detach(Class)`**: Explicitly detaches an ad-hoc data source from the current thread, restoring normal database routing for that Record type.
 
-* **Thread Isolation**: All attached sources are thread-local, enabling request-scoped or context-scoped federation. Sources attached in one thread do not affect queries in other threads, making this feature safe for use in multi-threaded web applications.
+* **Thread Isolation**: All attached sources are thread-local, enabling request-scoped or context-scoped attachment. Sources attached in one thread do not affect queries in other threads, making this feature safe for use in multi-threaded web applications.
+
+* **No Cross-Source Queries**: When an `AdHocDataSource` is attached for a type, queries for that type (or its hierarchy via `loadAny`/`findAny`) are served exclusively from the attached source(s). The underlying database is not consulted for attached types. This design aligns naturally with the fact that `AdHocRecords` cannot be persisted—there is no use case for mixing ad-hoc and persistent data for the same type.
 
 ##### Other Improvements
 * **Record Reference Replacement**: Added a new `replace(Record find, Record replace)` method to the `Record` class that recursively replaces all references to a specific record instance with another record throughout the object graph, maintaining referential integrity while handling nested records, deferred references, and sequences.

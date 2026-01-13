@@ -22,11 +22,11 @@ import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 
 /**
- * A scoped attachment of {@link FederatedDataSource FederatedDataSources}
+ * A scoped attachment of {@link AdHocDataSource AdHocDataSources}
  * to a {@link Runway} instance.
  * <p>
  * An {@link AttachmentScope} is returned by
- * {@link Runway#attach(FederatedDataSource...)} and provides a
+ * {@link Runway#attach(AdHocDataSource...)} and provides a
  * {@link DatabaseInterface} that delegates to the underlying {@link Runway}
  * while the attached sources are active. When {@link #close() closed}, all
  * attached sources are automatically detached.
@@ -34,7 +34,7 @@ import com.cinchapi.concourse.lang.sort.Order;
  * <p>
  * This class implements {@link AutoCloseable} for use with try-with-resources:
  * </p>
- * 
+ *
  * <pre>
  * {@code
  * try (AttachmentScope scope = runway.attach(source)) {
@@ -56,7 +56,7 @@ public class AttachmentScope implements DatabaseInterface, AutoCloseable {
     /**
      * The attached sources, held for detachment on close.
      */
-    private final FederatedDataSource<?>[] sources;
+    private final AdHocDataSource<?>[] sources;
 
     /**
      * Flag indicating whether this scope has been closed.
@@ -69,7 +69,7 @@ public class AttachmentScope implements DatabaseInterface, AutoCloseable {
      * @param runway the underlying {@link Runway}
      * @param sources the attached sources
      */
-    AttachmentScope(Runway runway, FederatedDataSource<?>[] sources) {
+    AttachmentScope(Runway runway, AdHocDataSource<?>[] sources) {
         this.runway = runway;
         this.sources = sources;
     }
@@ -77,7 +77,7 @@ public class AttachmentScope implements DatabaseInterface, AutoCloseable {
     @Override
     public void close() {
         if(!closed) {
-            for (FederatedDataSource<?> source : sources) {
+            for (AdHocDataSource<?> source : sources) {
                 runway.detach(source);
             }
             closed = true;

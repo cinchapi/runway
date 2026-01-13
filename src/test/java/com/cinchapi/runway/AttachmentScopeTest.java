@@ -26,11 +26,13 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.paginate.Page;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.Operator;
 
 /**
- * Unit tests for {@link Runway#attach(FederatedDataSource...)} and
- * {@link Runway#detach(FederatedDataSource)} functionality, including
+ * Unit tests for {@link Runway#attach(AdHocDataSource...)} and
+ * {@link Runway#detach(AdHocDataSource)} functionality, including
  * thread isolation guarantees.
  *
  * @author Jeff Nelson
@@ -504,6 +506,309 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         try (AttachmentScope scope = runway.attach(source)) {
             Set<AdHocRecord> results = runway.loadAny(AdHocRecord.class);
             Assert.assertEquals(1, results.size());
+        }
+    }
+
+    // ========================================================================
+    // Multiple Sources for Same Type Tests
+    // ========================================================================
+
+    @Test
+    public void testMultipleSourcesForSameTypeAggregatesResults() {
+        // Two separate data sources for the same AdHocRecord type
+        Collection<TestAdHocRecord> data1 = Arrays.asList(
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 25));
+        Collection<TestAdHocRecord> data2 = Arrays.asList(
+                new TestAdHocRecord("Charlie", 35),
+                new TestAdHocRecord("Diana", 40));
+
+        AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data1);
+        AdHocDataSource<TestAdHocRecord> source2 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data2);
+
+        try (AttachmentScope scope = runway.attach(source1, source2)) {
+            // load should aggregate from both sources
+            Set<TestAdHocRecord> results = runway.load(TestAdHocRecord.class);
+            Assert.assertEquals(4, results.size());
+
+            // Verify all records present
+            Set<String> names = results.stream().map(r -> r.name)
+                    .collect(java.util.stream.Collectors.toSet());
+            Assert.assertTrue(names.contains("Alice"));
+            Assert.assertTrue(names.contains("Bob"));
+            Assert.assertTrue(names.contains("Charlie"));
+            Assert.assertTrue(names.contains("Diana"));
+        }
+    }
+
+    @Test
+    public void testMultipleSourcesForSameTypeFindAggregatesResults() {
+        Collection<TestAdHocRecord> data1 = Arrays.asList(
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 25));
+        Collection<TestAdHocRecord> data2 = Arrays.asList(
+                new TestAdHocRecord("Charlie", 35),
+                new TestAdHocRecord("Diana", 28));
+
+        AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data1);
+        AdHocDataSource<TestAdHocRecord> source2 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data2);
+
+        try (AttachmentScope scope = runway.attach(source1, source2)) {
+            // find with criteria should search both sources
+            Criteria criteria = Criteria.where().key("age")
+                    .operator(Operator.GREATER_THAN).value(27).build();
+            Set<TestAdHocRecord> results = runway.find(TestAdHocRecord.class,
+                    criteria);
+
+            // Alice (30), Charlie (35), Diana (28) match
+            Assert.assertEquals(3, results.size());
+        }
+    }
+
+    @Test
+    public void testMultipleSourcesForSameTypeCountAggregates() {
+        Collection<TestAdHocRecord> data1 = Arrays.asList(
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 25));
+        Collection<TestAdHocRecord> data2 = Arrays.asList(
+                new TestAdHocRecord("Charlie", 35));
+
+        AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data1);
+        AdHocDataSource<TestAdHocRecord> source2 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data2);
+
+        try (AttachmentScope scope = runway.attach(source1, source2)) {
+            int count = runway.count(TestAdHocRecord.class);
+            Assert.assertEquals(3, count);
+        }
+    }
+
+    @Test
+    public void testMultipleSourcesForSameTypeWithSortingAndPagination() {
+        Collection<TestAdHocRecord> data1 = Arrays.asList(
+                new TestAdHocRecord("Charlie", 35),
+                new TestAdHocRecord("Alice", 30));
+        Collection<TestAdHocRecord> data2 = Arrays.asList(
+                new TestAdHocRecord("Bob", 25),
+                new TestAdHocRecord("Diana", 40));
+
+        AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data1);
+        AdHocDataSource<TestAdHocRecord> source2 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data2);
+
+        try (AttachmentScope scope = runway.attach(source1, source2)) {
+            // Sort by name, get first page of 2
+            Order order = Order.by("name").ascending().build();
+            Page page = Page.sized(2).go(1);
+
+            Set<TestAdHocRecord> results = runway.load(TestAdHocRecord.class,
+                    order, page);
+
+            Assert.assertEquals(2, results.size());
+
+            // Should be Alice, Bob (sorted alphabetically, first 2)
+            String[] names = results.stream().map(r -> r.name)
+                    .toArray(String[]::new);
+            Assert.assertEquals("Alice", names[0]);
+            Assert.assertEquals("Bob", names[1]);
+        }
+    }
+
+    // ========================================================================
+    // Additional Coverage Tests
+    // ========================================================================
+
+    @Test
+    public void testFindAnyUniqueWithAttachedSource() {
+        Collection<TestAdHocRecord> data = Arrays.asList(
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 25));
+        AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data);
+
+        try (AttachmentScope scope = runway.attach(source)) {
+            Criteria criteria = Criteria.where().key("name")
+                    .operator(Operator.EQUALS).value("Alice").build();
+            AdHocRecord result = runway.findAnyUnique(AdHocRecord.class,
+                    criteria);
+            Assert.assertNotNull(result);
+            Assert.assertTrue(result instanceof TestAdHocRecord);
+            Assert.assertEquals("Alice", ((TestAdHocRecord) result).name);
+        }
+    }
+
+    @Test
+    public void testFindAnyUniqueWithMultipleSourcesInHierarchy() {
+        Collection<TestAdHocRecord> testData = Arrays.asList(
+                new TestAdHocRecord("Alice", 30));
+        Collection<OtherAdHocRecord> otherData = Arrays.asList(
+                new OtherAdHocRecord("Report1"));
+
+        AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> testData);
+        AdHocDataSource<OtherAdHocRecord> source2 = new AdHocDataSource<>(
+                OtherAdHocRecord.class, () -> otherData);
+
+        try (AttachmentScope scope = runway.attach(source1, source2)) {
+            Criteria criteria = Criteria.where().key("name")
+                    .operator(Operator.EQUALS).value("Alice").build();
+            AdHocRecord result = runway.findAnyUnique(AdHocRecord.class,
+                    criteria);
+            Assert.assertNotNull(result);
+            Assert.assertEquals("Alice", ((TestAdHocRecord) result).name);
+        }
+    }
+
+    @Test
+    public void testLoadByIdWithAttachedSource() {
+        TestAdHocRecord alice = new TestAdHocRecord("Alice", 30);
+        TestAdHocRecord bob = new TestAdHocRecord("Bob", 25);
+        Collection<TestAdHocRecord> data = Arrays.asList(alice, bob);
+        AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data);
+
+        try (AttachmentScope scope = runway.attach(source)) {
+            // Load by specific id
+            TestAdHocRecord loaded = runway.load(TestAdHocRecord.class,
+                    alice.id());
+            Assert.assertNotNull(loaded);
+            Assert.assertEquals("Alice", loaded.name);
+
+            // Load non-existent id
+            TestAdHocRecord notFound = runway.load(TestAdHocRecord.class,
+                    999999L);
+            Assert.assertNull(notFound);
+        }
+    }
+
+    @Test
+    public void testLoadAnyWithSortingAcrossMultipleSources() {
+        // Create records with ages that interleave when sorted
+        Collection<TestAdHocRecord> testData = Arrays.asList(
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 20));
+        Collection<OtherAdHocRecord> otherData = Arrays.asList(
+                new OtherAdHocRecord("Charlie"),  // no age field
+                new OtherAdHocRecord("Dave"));
+
+        AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> testData);
+        AdHocDataSource<OtherAdHocRecord> source2 = new AdHocDataSource<>(
+                OtherAdHocRecord.class, () -> otherData);
+
+        try (AttachmentScope scope = runway.attach(source1, source2)) {
+            // Sort by name ascending
+            Order order = Order.by("name").ascending().build();
+            Set<AdHocRecord> results = runway.loadAny(AdHocRecord.class, order);
+            Assert.assertEquals(4, results.size());
+
+            // Verify order: Alice, Bob, Charlie, Dave
+            String[] expectedOrder = {"Alice", "Bob", "Charlie", "Dave"};
+            int i = 0;
+            for (AdHocRecord record : results) {
+                String name = record instanceof TestAdHocRecord
+                        ? ((TestAdHocRecord) record).name
+                        : ((OtherAdHocRecord) record).value;
+                Assert.assertEquals(expectedOrder[i], name);
+                i++;
+            }
+        }
+    }
+
+    @Test
+    public void testLoadAnyWithPaginationAcrossMultipleSources() {
+        Collection<TestAdHocRecord> testData = Arrays.asList(
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 25));
+        Collection<OtherAdHocRecord> otherData = Arrays.asList(
+                new OtherAdHocRecord("Report1"),
+                new OtherAdHocRecord("Report2"),
+                new OtherAdHocRecord("Report3"));
+
+        AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> testData);
+        AdHocDataSource<OtherAdHocRecord> source2 = new AdHocDataSource<>(
+                OtherAdHocRecord.class, () -> otherData);
+
+        try (AttachmentScope scope = runway.attach(source1, source2)) {
+            // Total 5 records, get page 2 with size 2 (records 3-4)
+            Page page = Page.sized(2).go(2);
+            Set<AdHocRecord> results = runway.loadAny(AdHocRecord.class, page);
+            Assert.assertEquals(2, results.size());
+        }
+    }
+
+    @Test
+    public void testFindAnyWithSortingAndPaginationAcrossMultipleSources() {
+        Collection<TestAdHocRecord> testData = Arrays.asList(
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 25),
+                new TestAdHocRecord("Charlie", 35));
+        Collection<OtherAdHocRecord> otherData = Arrays.asList(
+                new OtherAdHocRecord("Dave"),
+                new OtherAdHocRecord("Eve"));
+
+        AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> testData);
+        AdHocDataSource<OtherAdHocRecord> source2 = new AdHocDataSource<>(
+                OtherAdHocRecord.class, () -> otherData);
+
+        try (AttachmentScope scope = runway.attach(source1, source2)) {
+            // Find all with any name containing criteria, sort by name, page 1
+            Criteria criteria = Criteria.where().key("name")
+                    .operator(Operator.REGEX).value(".*").build();
+            Order order = Order.by("name").ascending().build();
+            Page page = Page.sized(2).go(1);
+
+            Set<TestAdHocRecord> results = runway.findAny(TestAdHocRecord.class,
+                    criteria, order, page);
+            // Only TestAdHocRecords match, sorted: Alice, Bob, Charlie
+            // Page 1 with size 2: Alice, Bob
+            Assert.assertEquals(2, results.size());
+
+            String[] names = results.stream()
+                    .map(r -> r.name)
+                    .toArray(String[]::new);
+            Assert.assertEquals("Alice", names[0]);
+            Assert.assertEquals("Bob", names[1]);
+        }
+    }
+
+    @Test
+    public void testFindAnyWithCriteriaAndOrderAppliesOrder() {
+        // Regression test: findAny(Class, Criteria, Order) was ignoring order
+        Collection<TestAdHocRecord> testData = Arrays.asList(
+                new TestAdHocRecord("Charlie", 35),
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 25));
+
+        AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> testData);
+
+        try (AttachmentScope scope = runway.attach(source)) {
+            Criteria criteria = Criteria.where().key("age")
+                    .operator(Operator.GREATER_THAN).value(0).build();
+            Order order = Order.by("name").ascending().build();
+
+            // Use the 3-arg overload: findAny(Class, Criteria, Order)
+            Set<TestAdHocRecord> results = runway.findAny(
+                    TestAdHocRecord.class, criteria, order);
+
+            Assert.assertEquals(3, results.size());
+
+            // Verify results are sorted by name: Alice, Bob, Charlie
+            String[] names = results.stream()
+                    .map(r -> r.name)
+                    .toArray(String[]::new);
+            Assert.assertEquals("Alice", names[0]);
+            Assert.assertEquals("Bob", names[1]);
+            Assert.assertEquals("Charlie", names[2]);
         }
     }
 
