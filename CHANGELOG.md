@@ -66,6 +66,29 @@ Fixed a bug where there was inconsistent priorities in the order of data returne
 * **Previous Inconsistency**: Previously, `get()` used the order: dynamic → intrinsic → derived → computed, while `map()` used: dynamic → intrinsic → computed → derived
 * **Impact**: This fix resolves issues that occurred when the same key was used in both computed and derived data, ensuring consistent behavior across all data access methods
 
+##### Ad-Hoc Records and Federated Data Sources
+Runway now provides infrastructure for serving non-persistent, in-memory data through the standard `DatabaseInterface` API. This enables seamless integration of programmatic data sources with persistent database records.
+
+* **`AdHocRecord`**: A read-only `Record` base class for temporary, non-persistent data structures. Subclasses define their schema through fields like regular Records, but attempts to persist or modify an `AdHocRecord` will throw an `UnsupportedOperationException`. This is useful for generating report-like structures, aggregated data views, or other read-only data representations that need to be compatible with the application's data access patterns.
+
+* **`AdHocDatabase`**: A `DatabaseInterface` implementation that serves a single `AdHocRecord` type from an in-memory data source. Data is supplied via a `Supplier` that is evaluated on each query, allowing for dynamic or computed data. The `AdHocDatabase` supports full query capabilities including `Criteria` filtering, `Order` sorting, and `Page` pagination—all resolved in-memory against the supplied collection.
+
+* **`FederatedRunway`**: A `DatabaseInterface` implementation that unifies persistent data from `Runway` with ad-hoc data from one or more `AdHocDatabase` instances. Queries are automatically routed to the appropriate data source based on the requested class. This enables applications to expose both persistent and programmatic data through a single, unified API.
+  ```java
+  AdHocDatabase<ReportRecord> reports = new AdHocDatabase<>(
+      ReportRecord.class, () -> generateReports());
+
+  FederatedRunway db = FederatedRunway.builder()
+      .defaultTo(runway)
+      .register(reports)
+      .build();
+
+  // Routes to Runway
+  db.load(User.class);
+  // Routes to AdHocDatabase
+  db.find(ReportRecord.class, criteria);
+  ```
+
 ##### Other Improvements
 * **Record Reference Replacement**: Added a new `replace(Record find, Record replace)` method to the `Record` class that recursively replaces all references to a specific record instance with another record throughout the object graph, maintaining referential integrity while handling nested records, deferred references, and sequences.
 * **Metadata Interface**: Added a new `Metadata` interface that provides implementing Record types with computed properties to obtain the Record's timestamps for creation and most recent update (including the ability to filter for most recent update to specific keys).
