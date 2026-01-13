@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
@@ -181,6 +182,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         return components;
+    }
+
+    private static boolean doesNotRequireSortingOrPagination(Order order,
+            Page page) {
+        return order == null && page == null;
     }
 
     /**
@@ -383,24 +389,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
     }
 
-    @Override
-    public void close() throws Exception {
-        if(!connections.isClosed()) {
-            connections.close();
-        }
-        instances.remove(this);
-        if(instances.size() == 1) {
-            Record.PINNED_RUNWAY_INSTANCE = instances.iterator().next();
-        }
-        else {
-            Record.PINNED_RUNWAY_INSTANCE = null;
-        }
-        executor.shutdownNow();
-        if(saveNotificationExecutor != null) {
-            saveNotificationExecutor.shutdownNow();
-        }
-    }
-
     /**
      * Attach one or more {@link AdHocDataSource AdHocDataSources} to
      * this {@link Runway} instance for the current thread.
@@ -451,31 +439,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return new AttachmentScope(this, sources);
     }
 
-    /**
-     * Detach an {@link AdHocDataSource} from this {@link Runway} instance
-     * for the current thread.
-     *
-     * @param source the source to detach
-     */
-    public void detach(AdHocDataSource<?> source) {
-        Set<AdHocDataSource<?>> set = attached.get();
-        if(set != null) {
-            set.remove(source);
+    @Override
+    public void close() throws Exception {
+        if(!connections.isClosed()) {
+            connections.close();
         }
-    }
-
-    /**
-     * Detach all {@link AdHocDataSource AdHocDataSources} for the given
-     * {@link AdHocRecord} class from this {@link Runway} instance for the
-     * current thread.
-     *
-     * @param clazz the {@link AdHocRecord} class whose sources should be
-     *            detached
-     */
-    public void detach(Class<? extends AdHocRecord> clazz) {
-        Set<AdHocDataSource<?>> set = attached.get();
-        if(set != null) {
-            set.removeIf(source -> source.type().equals(clazz));
+        instances.remove(this);
+        if(instances.size() == 1) {
+            Record.PINNED_RUNWAY_INSTANCE = instances.iterator().next();
+        }
+        else {
+            Record.PINNED_RUNWAY_INSTANCE = null;
+        }
+        executor.shutdownNow();
+        if(saveNotificationExecutor != null) {
+            saveNotificationExecutor.shutdownNow();
         }
     }
 
@@ -553,6 +531,34 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
     }
 
+    /**
+     * Detach an {@link AdHocDataSource} from this {@link Runway} instance
+     * for the current thread.
+     *
+     * @param source the source to detach
+     */
+    public void detach(AdHocDataSource<?> source) {
+        Set<AdHocDataSource<?>> set = attached.get();
+        if(set != null) {
+            set.remove(source);
+        }
+    }
+
+    /**
+     * Detach all {@link AdHocDataSource AdHocDataSources} for the given
+     * {@link AdHocRecord} class from this {@link Runway} instance for the
+     * current thread.
+     *
+     * @param clazz the {@link AdHocRecord} class whose sources should be
+     *            detached
+     */
+    public void detach(Class<? extends AdHocRecord> clazz) {
+        Set<AdHocDataSource<?>> set = attached.get();
+        if(set != null) {
+            set.removeIf(source -> source.type().equals(clazz));
+        }
+    }
+
     @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
@@ -580,152 +586,57 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return results;
             }
         }
-        else if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+        else if(hasNativeSortingAndPagination
+                || doesNotRequireSortingOrPagination(order, page)) {
+            // When native sorting/pagination is supported OR no
+            // sorting/pagination is requested, the database can handle the
+            // query directly without client-side stream manipulation.
+            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                Concourse concourse = connections.request();
+                try {
                     Map<Long, Map<String, Set<Object>>> data = $find(concourse,
                             clazz, criteria, order, page, realms);
                     return instantiateAll(clazz, data);
                 }
-                else {
-                    return filter(clazz, criteria, order, page, realms);
+                finally {
+                    connections.release(concourse);
                 }
             }
-            finally {
-                connections.release(concourse);
+            else {
+                return filter(clazz, criteria, order, page, realms);
             }
         }
         else {
-            return find(clazz, criteria, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            // Legacy servers lack native sorting/pagination, so results must
+            // be fetched and processed client-side.
+            Stream<T> stream = order != null
+                    ? find(clazz, criteria, backwardsCompatible(order)).stream()
+                    : find(clazz, criteria).stream();
+            stream = stream.filter(record -> realms.names().isEmpty() || !Sets
+                    .intersection(record.realms(), realms.names()).isEmpty());
+            if(page != null) {
+                stream = stream.skip(page.skip()).limit(page.limit());
+            }
+            return stream.collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
-    @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
             Order order, Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
-        if(!sources.isEmpty()) {
-            if(sources.size() == 1) {
-                return sources.iterator().next().find(clazz, criteria, order,
-                        realms);
-            }
-            else {
-                Set<T> results = new LinkedHashSet<>();
-                for (AdHocDataSource<?> source : sources) {
-                    results.addAll(source.find(clazz, criteria, realms));
-                }
-                if(order != null) {
-                    results = DatabaseInterface.sort(results,
-                            backwardsCompatible(order));
-                }
-                return results;
-            }
-        }
-        else if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                            clazz, criteria, order, NO_PAGINATION, realms);
-                    return instantiateAll(clazz, data);
-                }
-                else {
-                    return filter(clazz, criteria, order, NO_PAGINATION,
-                            realms);
-                }
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return find(clazz, criteria, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-        }
+        return find(clazz, criteria, order, NO_PAGINATION, realms);
     }
 
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
             Page page, Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
-        if(!sources.isEmpty()) {
-            if(sources.size() == 1) {
-                return sources.iterator().next().find(clazz, criteria, page,
-                        realms);
-            }
-            else {
-                Set<T> results = new LinkedHashSet<>();
-                for (AdHocDataSource<?> source : sources) {
-                    results.addAll(source.find(clazz, criteria, realms));
-                }
-                if(page != null) {
-                    results = results.stream().skip(page.skip())
-                            .limit(page.limit()).collect(Collectors
-                                    .toCollection(LinkedHashSet::new));
-                }
-                return results;
-            }
-        }
-        else if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                            clazz, criteria, NO_ORDER, page, realms);
-                    return instantiateAll(clazz, data);
-                }
-                else {
-                    return filter(clazz, criteria, NO_ORDER, page, realms);
-                }
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return find(clazz, criteria).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-        }
+        return find(clazz, criteria, NO_ORDER, page, realms);
     }
 
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
-        if(!sources.isEmpty()) {
-            Set<T> results = new LinkedHashSet<>();
-            for (AdHocDataSource<?> source : sources) {
-                results.addAll(source.find(clazz, criteria, realms));
-            }
-            return results;
-        }
-        else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
-                return instantiateAll(clazz, data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
-        }
+        return find(clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
     }
 
     @SuppressWarnings("deprecation")
@@ -755,160 +666,63 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return results;
             }
         }
-        else if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+        else if(hasNativeSortingAndPagination
+                || doesNotRequireSortingOrPagination(order, page)) {
+            // When native sorting/pagination is supported OR no
+            // sorting/pagination is requested, the database can handle the
+            // query directly without client-side stream manipulation.
+            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                Concourse concourse = connections.request();
+                try {
                     Map<Long, Map<String, Set<Object>>> data = $findAny(
                             concourse, clazz, criteria, order, page, realms);
                     return instantiateAll(data);
                 }
-                else {
-                    return filterAny(clazz, criteria, order, page, realms);
+                finally {
+                    connections.release(concourse);
                 }
             }
-            finally {
-                connections.release(concourse);
+            else {
+                return filterAny(clazz, criteria, order, page, realms);
             }
         }
         else {
-            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            // Legacy servers lack native sorting/pagination, so results must
+            // be fetched and processed client-side.
+            Stream<T> stream = order != null
+                    ? findAny(clazz, criteria, backwardsCompatible(order))
+                            .stream()
+                    : findAny(clazz, criteria).stream();
+            stream = stream.filter(record -> realms.names().isEmpty() || !Sets
+                    .intersection(record.realms(), realms.names()).isEmpty());
+            if(page != null) {
+                stream = stream.skip(page.skip()).limit(page.limit());
+            }
+            return stream.collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
-    @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Order order, Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
-        if(!sources.isEmpty()) {
-            if(sources.size() == 1) {
-                return sources.iterator().next().findAny(clazz, criteria, order,
-                        realms);
-            }
-            else {
-                Set<T> results = new LinkedHashSet<>();
-                for (AdHocDataSource<?> source : sources) {
-                    results.addAll(source.findAny(clazz, criteria, realms));
-                }
-                if(order != null) {
-                    results = DatabaseInterface.sort(results,
-                            backwardsCompatible(order));
-                }
-                return results;
-            }
-        }
-        else if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    Map<Long, Map<String, Set<Object>>> data = $findAny(
-                            concourse, clazz, criteria, order, NO_PAGINATION,
-                            realms);
-                    return instantiateAll(data);
-                }
-                else {
-                    return filterAny(clazz, criteria, order, NO_PAGINATION,
-                            realms);
-                }
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return findAny(clazz, criteria, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-        }
+        return findAny(clazz, criteria, order, NO_PAGINATION, realms);
     }
 
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Page page, Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
-        if(!sources.isEmpty()) {
-            if(sources.size() == 1) {
-                return sources.iterator().next().findAny(clazz, criteria, page,
-                        realms);
-            }
-            else {
-                Set<T> results = new LinkedHashSet<>();
-                for (AdHocDataSource<?> source : sources) {
-                    results.addAll(source.findAny(clazz, criteria, realms));
-                }
-                if(page != null) {
-                    results = results.stream().skip(page.skip())
-                            .limit(page.limit()).collect(Collectors
-                                    .toCollection(LinkedHashSet::new));
-                }
-                return results;
-            }
-        }
-        else if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    Map<Long, Map<String, Set<Object>>> data = $findAny(
-                            concourse, clazz, criteria, NO_ORDER, page, realms);
-                    return instantiateAll(data);
-                }
-                else {
-                    return filterAny(clazz, criteria, NO_ORDER, page, realms);
-                }
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return findAny(clazz, criteria).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-        }
+        return findAny(clazz, criteria, NO_ORDER, page, realms);
     }
 
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
-        if(!sources.isEmpty()) {
-            Set<T> results = new LinkedHashSet<>();
-            for (AdHocDataSource<?> source : sources) {
-                results.addAll(source.findAny(clazz, criteria, realms));
-            }
-            return results;
-        }
-        else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
-                return instantiateAll(data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
-        }
+        return findAny(clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
     }
 
     @Override
     public <T extends Record> T findAnyUnique(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        // Use findAny which already handles federation, then enforce uniqueness
         Set<T> results = findAny(clazz, criteria, NO_ORDER, UNIQUE_PAGINATION,
                 realms);
         if(results.isEmpty()) {
@@ -960,67 +774,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
-        if(!sources.isEmpty()) {
-            Set<T> results = new LinkedHashSet<>();
-            for (AdHocDataSource<?> source : sources) {
-                results.addAll(source.find(clazz, criteria, realms));
-            }
-            if(results.isEmpty()) {
-                return null;
-            }
-            else if(results.size() == 1) {
-                return results.iterator().next();
-            }
-            else {
-                throw new DuplicateEntryException(
-                        new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                AnyStrings.format(
-                                        "There are more than one records that match {} in {}",
-                                        criteria, clazz)));
-            }
+        Set<T> results = find(clazz, criteria, NO_ORDER, UNIQUE_PAGINATION,
+                realms);
+        if(results.isEmpty()) {
+            return null;
         }
-        else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                        clazz, criteria, NO_ORDER, UNIQUE_PAGINATION, realms);
-                if(data.isEmpty()) {
-                    return null;
-                }
-                else if(data.size() == 1) {
-                    return (T) instantiate(clazz,
-                            data.keySet().iterator().next(),
-                            data.values().iterator().next());
-                }
-                else {
-                    throw new DuplicateEntryException(
-                            new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                    AnyStrings.format(
-                                            "There are more than one records that match {} in {}",
-                                            criteria, clazz)));
-                }
-            }
-            finally {
-                connections.release(concourse);
-            }
+        else if(results.size() == 1) {
+            return results.iterator().next();
         }
         else {
-            Set<T> records = filterAny(clazz, criteria, NO_ORDER,
-                    UNIQUE_PAGINATION, realms);
-            if(records.isEmpty()) {
-                return null;
-            }
-            else if(records.size() == 1) {
-                return records.iterator().next();
-            }
-            else {
-                throw new DuplicateEntryException(
-                        new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                                AnyStrings.format(
-                                        "There are more than one records that match {} in {}",
-                                        criteria, clazz)));
-            }
+            throw new DuplicateEntryException(
+                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                            AnyStrings.format(
+                                    "There are more than one records that match {} in {}",
+                                    criteria, clazz)));
         }
     }
 
@@ -1104,7 +871,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return results;
             }
         }
-        else if(hasNativeSortingAndPagination) {
+        else if(hasNativeSortingAndPagination
+                || doesNotRequireSortingOrPagination(order, page)) {
+            // When native sorting/pagination is supported OR no
+            // sorting/pagination is requested, the database can handle the
+            // query directly without client-side stream manipulation.
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $load(concourse,
@@ -1116,115 +887,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
-            return load(clazz, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            // Legacy servers lack native sorting/pagination, so results must
+            // be fetched and processed client-side.
+            Stream<T> stream = order != null
+                    ? load(clazz, backwardsCompatible(order)).stream()
+                    : load(clazz).stream();
+            stream = stream.filter(record -> realms.names().isEmpty() || !Sets
+                    .intersection(record.realms(), realms.names()).isEmpty());
+            if(page != null) {
+                stream = stream.skip(page.skip()).limit(page.limit());
+            }
+            return stream.collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
-    @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
-        if(!sources.isEmpty()) {
-            if(sources.size() == 1) {
-                return sources.iterator().next().load(clazz, order, realms);
-            }
-            else {
-                Set<T> results = new LinkedHashSet<>();
-                for (AdHocDataSource<?> source : sources) {
-                    results.addAll(source.load(clazz, realms));
-                }
-                if(order != null) {
-                    results = DatabaseInterface.sort(results,
-                            backwardsCompatible(order));
-                }
-                return results;
-            }
-        }
-        else if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $load(concourse,
-                        clazz, order, NO_PAGINATION, realms);
-                return instantiateAll(clazz, data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return load(clazz, backwardsCompatible(order));
-        }
+        return load(clazz, order, NO_PAGINATION, realms);
     }
 
     @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
-        if(!sources.isEmpty()) {
-            if(sources.size() == 1) {
-                return sources.iterator().next().load(clazz, page, realms);
-            }
-            else {
-                Set<T> results = new LinkedHashSet<>();
-                for (AdHocDataSource<?> source : sources) {
-                    results.addAll(source.load(clazz, realms));
-                }
-                if(page != null) {
-                    results = results.stream().skip(page.skip())
-                            .limit(page.limit()).collect(Collectors
-                                    .toCollection(LinkedHashSet::new));
-                }
-                return results;
-            }
-        }
-        else if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $load(concourse,
-                        clazz, NO_ORDER, page, realms);
-                return instantiateAll(clazz, data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return load(clazz).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-        }
+        return load(clazz, NO_ORDER, page, realms);
     }
 
     @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
-        if(!sources.isEmpty()) {
-            Set<T> results = new LinkedHashSet<>();
-            for (AdHocDataSource<?> source : sources) {
-                results.addAll(source.load(clazz, realms));
-            }
-            return results;
-        }
-        else {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $load(concourse,
-                        clazz, NO_ORDER, NO_PAGINATION, realms);
-                return instantiateAll(clazz, data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
+        return load(clazz, NO_ORDER, NO_PAGINATION, realms);
     }
 
     @SuppressWarnings("deprecation")
@@ -1254,7 +945,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return results;
             }
         }
-        else if(hasNativeSortingAndPagination) {
+        else if(hasNativeSortingAndPagination
+                || doesNotRequireSortingOrPagination(order, page)) {
+            // When native sorting/pagination is supported OR no
+            // sorting/pagination is requested, the database can handle the
+            // query directly without client-side stream manipulation.
             Concourse concourse = connections.request();
             try {
                 Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
@@ -1266,119 +961,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
-            return load(clazz, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            // Legacy servers lack native sorting/pagination, so results must
+            // be fetched and processed client-side.
+            Stream<T> stream = order != null
+                    ? loadAny(clazz, backwardsCompatible(order)).stream()
+                    : loadAny(clazz).stream();
+            stream = stream.filter(record -> realms.names().isEmpty() || !Sets
+                    .intersection(record.realms(), realms.names()).isEmpty());
+            if(page != null) {
+                stream = stream.skip(page.skip()).limit(page.limit());
+            }
+            return stream.collect(Collectors.toCollection(LinkedHashSet::new));
         }
     }
 
-    @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
             Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
-        if(!sources.isEmpty()) {
-            if(sources.size() == 1) {
-                return sources.iterator().next().loadAny(clazz, order, realms);
-            }
-            else {
-                Set<T> results = new LinkedHashSet<>();
-                for (AdHocDataSource<?> source : sources) {
-                    results.addAll(source.loadAny(clazz, realms));
-                }
-                if(order != null) {
-                    results = DatabaseInterface.sort(results,
-                            backwardsCompatible(order));
-                }
-                return results;
-            }
-        }
-        else if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                        clazz, order, NO_PAGINATION, realms);
-                return instantiateAll(data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return load(clazz, backwardsCompatible(order)).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-        }
+        return loadAny(clazz, order, NO_PAGINATION, realms);
     }
 
     @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
-        if(!sources.isEmpty()) {
-            if(sources.size() == 1) {
-                return sources.iterator().next().loadAny(clazz, page, realms);
-            }
-            else {
-                Set<T> results = new LinkedHashSet<>();
-                for (AdHocDataSource<?> source : sources) {
-                    results.addAll(source.loadAny(clazz, realms));
-                }
-                if(page != null) {
-                    results = results.stream().skip(page.skip())
-                            .limit(page.limit()).collect(Collectors
-                                    .toCollection(LinkedHashSet::new));
-                }
-                return results;
-            }
-        }
-        else if(hasNativeSortingAndPagination) {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                        clazz, NO_ORDER, page, realms);
-                return instantiateAll(data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return load(clazz).stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty())
-                    .skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-        }
+        return loadAny(clazz, NO_ORDER, page, realms);
     }
 
     @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
-        if(!sources.isEmpty()) {
-            Set<T> results = new LinkedHashSet<>();
-            for (AdHocDataSource<?> source : sources) {
-                results.addAll(source.loadAny(clazz, realms));
-            }
-            return results;
-        }
-        else {
-            Concourse concourse = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                        clazz, NO_ORDER, NO_PAGINATION, realms);
-                return instantiateAll(data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
+        return loadAny(clazz, NO_ORDER, NO_PAGINATION, realms);
     }
 
     /**
@@ -1784,6 +1395,59 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Return all {@link AdHocDataSource AdHocDataSources} attached for the
+     * exact {@code clazz}.
+     *
+     * @param clazz the class to check
+     * @return the attached sources (may be empty)
+     */
+    private <T extends Record> Set<AdHocDataSource<?>> getAttachedSources(
+            Class<T> clazz) {
+        Set<AdHocDataSource<?>> set = attached.get();
+        if(set == null) {
+            return ImmutableSet.of();
+        }
+        else {
+            Set<AdHocDataSource<?>> sources = new LinkedHashSet<>();
+            for (AdHocDataSource<?> source : set) {
+                if(source.type().equals(clazz)) {
+                    sources.add(source);
+                }
+            }
+            return sources;
+        }
+    }
+
+    /**
+     * Return all {@link AdHocDataSource AdHocDataSources} attached for
+     * classes in the hierarchy of {@code clazz}.
+     * <p>
+     * This method finds all attached sources whose class is assignable from
+     * the requested class (i.e., sources that handle subclasses of the
+     * requested class).
+     * </p>
+     *
+     * @param clazz the class to check
+     * @return the attached sources (may be empty)
+     */
+    private <T extends Record> Set<AdHocDataSource<?>> getAttachedSourcesForHierarchy(
+            Class<T> clazz) {
+        Set<AdHocDataSource<?>> set = attached.get();
+        if(set == null) {
+            return ImmutableSet.of();
+        }
+        else {
+            Set<AdHocDataSource<?>> sources = new LinkedHashSet<>();
+            for (AdHocDataSource<?> source : set) {
+                if(clazz.isAssignableFrom(source.type())) {
+                    sources.add(source);
+                }
+            }
+            return sources;
+        }
+    }
+
+    /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
      * that is contained within the specified {@code clazz} and
@@ -2172,59 +1836,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         };
 
-    }
-
-    /**
-     * Return all {@link AdHocDataSource AdHocDataSources} attached for the
-     * exact {@code clazz}.
-     *
-     * @param clazz the class to check
-     * @return the attached sources (may be empty)
-     */
-    private <T extends Record> Set<AdHocDataSource<?>> getAttachedSources(
-            Class<T> clazz) {
-        Set<AdHocDataSource<?>> set = attached.get();
-        if(set == null) {
-            return ImmutableSet.of();
-        }
-        else {
-            Set<AdHocDataSource<?>> sources = new LinkedHashSet<>();
-            for (AdHocDataSource<?> source : set) {
-                if(source.type().equals(clazz)) {
-                    sources.add(source);
-                }
-            }
-            return sources;
-        }
-    }
-
-    /**
-     * Return all {@link AdHocDataSource AdHocDataSources} attached for
-     * classes in the hierarchy of {@code clazz}.
-     * <p>
-     * This method finds all attached sources whose class is assignable from
-     * the requested class (i.e., sources that handle subclasses of the
-     * requested class).
-     * </p>
-     *
-     * @param clazz the class to check
-     * @return the attached sources (may be empty)
-     */
-    private <T extends Record> Set<AdHocDataSource<?>> getAttachedSourcesForHierarchy(
-            Class<T> clazz) {
-        Set<AdHocDataSource<?>> set = attached.get();
-        if(set == null) {
-            return ImmutableSet.of();
-        }
-        else {
-            Set<AdHocDataSource<?>> sources = new LinkedHashSet<>();
-            for (AdHocDataSource<?> source : set) {
-                if(clazz.isAssignableFrom(source.type())) {
-                    sources.add(source);
-                }
-            }
-            return sources;
-        }
     }
 
     /**
