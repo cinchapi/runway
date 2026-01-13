@@ -478,7 +478,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(!sources.isEmpty()) {
             int count = 0;
             for (AdHocDataSource<?> source : sources) {
-                count += source.count(clazz, criteria, realms);
+                count += criteria == null ? source.count(clazz, realms)
+                        : source.count(clazz, criteria, realms);
             }
             return count;
         }
@@ -509,7 +510,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(!sources.isEmpty()) {
             int count = 0;
             for (AdHocDataSource<?> source : sources) {
-                count += source.countAny(clazz, criteria, realms);
+                count += criteria == null ? source.countAny(clazz, realms)
+                        : source.countAny(clazz, criteria, realms);
             }
             return count;
         }
