@@ -30,11 +30,11 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.Operator;
 
 /**
- * Unit tests for {@link AdHocDatabase}.
+ * Unit tests for {@link AdHocDataSource}.
  *
  * @author Jeff Nelson
  */
-public class AdHocDatabaseTest {
+public class AdHocDataSourceTest {
 
     @Test
     public void testLoadAllRecords() {
@@ -42,7 +42,7 @@ public class AdHocDatabaseTest {
                 new MockAdHocRecord("Alice", 30),
                 new MockAdHocRecord("Bob", 25),
                 new MockAdHocRecord("Charlie", 35));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         Set<MockAdHocRecord> results = db.load(MockAdHocRecord.class);
@@ -55,7 +55,7 @@ public class AdHocDatabaseTest {
         MockAdHocRecord alice = new MockAdHocRecord("Alice", 30);
         MockAdHocRecord bob = new MockAdHocRecord("Bob", 25);
         Collection<MockAdHocRecord> data = Arrays.asList(alice, bob);
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         MockAdHocRecord result = db.load(MockAdHocRecord.class, alice.id());
@@ -68,7 +68,7 @@ public class AdHocDatabaseTest {
     public void testLoadByIdNotFound() {
         Collection<MockAdHocRecord> data = Arrays
                 .asList(new MockAdHocRecord("Alice", 30));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         MockAdHocRecord result = db.load(MockAdHocRecord.class, 99999L);
@@ -82,7 +82,7 @@ public class AdHocDatabaseTest {
                 new MockAdHocRecord("Alice", 30),
                 new MockAdHocRecord("Bob", 25),
                 new MockAdHocRecord("Charlie", 35));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         Criteria criteria = Criteria.where().key("age")
@@ -98,7 +98,7 @@ public class AdHocDatabaseTest {
                 new MockAdHocRecord("Alice", 30),
                 new MockAdHocRecord("Bob", 25),
                 new MockAdHocRecord("Charlie", 35));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         Criteria criteria = Criteria.where().key("age")
@@ -120,7 +120,7 @@ public class AdHocDatabaseTest {
                 new MockAdHocRecord("Bob", 25),
                 new MockAdHocRecord("Charlie", 35),
                 new MockAdHocRecord("Diana", 28));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         Criteria criteria = Criteria.where().key("age")
@@ -137,7 +137,7 @@ public class AdHocDatabaseTest {
         Collection<MockAdHocRecord> data = Arrays.asList(
                 new MockAdHocRecord("Alice", 30),
                 new MockAdHocRecord("Bob", 25));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         Criteria criteria = Criteria.where().key("name")
@@ -152,7 +152,7 @@ public class AdHocDatabaseTest {
     public void testFindUniqueNotFound() {
         Collection<MockAdHocRecord> data = Arrays
                 .asList(new MockAdHocRecord("Alice", 30));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         Criteria criteria = Criteria.where().key("name")
@@ -167,7 +167,7 @@ public class AdHocDatabaseTest {
         Collection<MockAdHocRecord> data = Arrays.asList(
                 new MockAdHocRecord("Alice", 30),
                 new MockAdHocRecord("Alice", 25));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         Criteria criteria = Criteria.where().key("name")
@@ -179,7 +179,7 @@ public class AdHocDatabaseTest {
     public void testUnregisteredClassReturnsEmpty() {
         Collection<MockAdHocRecord> data = Arrays
                 .asList(new MockAdHocRecord("Alice", 30));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         Set<OtherAdHocRecord> results = db.load(OtherAdHocRecord.class);
@@ -192,7 +192,7 @@ public class AdHocDatabaseTest {
         Collection<MockAdHocRecord> data = Arrays.asList(
                 new MockAdHocRecord("Alice", 30),
                 new MockAdHocRecord("Bob", 25));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         Set<AdHocRecord> results = db.loadAny(AdHocRecord.class);
@@ -203,7 +203,7 @@ public class AdHocDatabaseTest {
     @Test
     public void testSupplierIsEvaluatedOnEachQuery() {
         AtomicInteger counter = new AtomicInteger(0);
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> {
                     counter.incrementAndGet();
                     return Arrays.asList(new MockAdHocRecord("Alice", 30));
@@ -222,7 +222,7 @@ public class AdHocDatabaseTest {
                 new MockAdHocRecord("Alice", 30),
                 new MockAdHocRecord("Bob", 25),
                 new MockAdHocRecord("Charlie", 35));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         int count = db.count(MockAdHocRecord.class);
@@ -236,7 +236,7 @@ public class AdHocDatabaseTest {
                 new MockAdHocRecord("Alice", 30),
                 new MockAdHocRecord("Bob", 25),
                 new MockAdHocRecord("Charlie", 35));
-        AdHocDatabase<MockAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
                 MockAdHocRecord.class, () -> data);
 
         Criteria criteria = Criteria.where().key("age")
@@ -256,6 +256,14 @@ public class AdHocDatabaseTest {
     public void testAdHocRecordCannotBeModified() {
         MockAdHocRecord record = new MockAdHocRecord("Alice", 30);
         record.set("name", "Bob");
+    }
+
+    @Test
+    public void testGetRecordClass() {
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
+                MockAdHocRecord.class, () -> Arrays.asList());
+
+        Assert.assertEquals(MockAdHocRecord.class, db.type());
     }
 
     /**
@@ -281,3 +289,4 @@ public class AdHocDatabaseTest {
     }
 
 }
+

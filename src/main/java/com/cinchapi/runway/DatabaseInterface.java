@@ -684,7 +684,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order) {
-        return findAny(clazz, criteria, Realms.any());
+        return findAny(clazz, criteria, order, Realms.any());
     }
 
     /**

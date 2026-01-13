@@ -57,7 +57,7 @@ public class AdHocRecordCompositionTest {
         AccessControlledAdHocRecord privateDoc = new AccessControlledAdHocRecord(
                 "PrivateDoc", false, true);
 
-        AdHocDatabase<AccessControlledAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<AccessControlledAdHocRecord> db = new AdHocDataSource<>(
                 AccessControlledAdHocRecord.class,
                 () -> Arrays.asList(publicDoc, privateDoc));
 
@@ -89,7 +89,7 @@ public class AdHocRecordCompositionTest {
         AccessControlledAdHocRecord doc3 = new AccessControlledAdHocRecord(
                 "Gamma", false, true);
 
-        AdHocDatabase<AccessControlledAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<AccessControlledAdHocRecord> db = new AdHocDataSource<>(
                 AccessControlledAdHocRecord.class,
                 () -> Arrays.asList(doc1, doc2, doc3));
 
@@ -210,7 +210,7 @@ public class AdHocRecordCompositionTest {
         AccessControlledAdHocRecord privateDoc = new AccessControlledAdHocRecord(
                 "Private", false, true);
 
-        AdHocDatabase<AccessControlledAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<AccessControlledAdHocRecord> db = new AdHocDataSource<>(
                 AccessControlledAdHocRecord.class,
                 () -> Arrays.asList(publicDoc, privateDoc));
 
@@ -233,7 +233,7 @@ public class AdHocRecordCompositionTest {
         DualRoleAdHocRecord user1 = new DualRoleAdHocRecord("Alice", "admin");
         DualRoleAdHocRecord user2 = new DualRoleAdHocRecord("Bob", "viewer");
 
-        AdHocDatabase<DualRoleAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<DualRoleAdHocRecord> db = new AdHocDataSource<>(
                 DualRoleAdHocRecord.class, () -> Arrays.asList(user1, user2));
 
         // user1 (admin) should see both users
@@ -261,7 +261,7 @@ public class AdHocRecordCompositionTest {
         AccessControlledAdHocRecord doc3 = new AccessControlledAdHocRecord(
                 "Public2", true, false);
 
-        AdHocDatabase<AccessControlledAdHocRecord> db = new AdHocDatabase<>(
+        AdHocDataSource<AccessControlledAdHocRecord> db = new AdHocDataSource<>(
                 AccessControlledAdHocRecord.class,
                 () -> Arrays.asList(doc1, doc2, doc3));
 

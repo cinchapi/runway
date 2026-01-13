@@ -41,7 +41,7 @@ import com.google.common.collect.Lists;
  * A {@link DatabaseInterface} that serves a single {@link AdHocRecord} type
  * from an in-memory data source.
  * <p>
- * An {@link AdHocDatabase} bridges programmatic data sources with Runway's
+ * An {@link AdHocDataSource} bridges programmatic data sources with Runway's
  * query interface. Data is supplied via a {@link Supplier} that is evaluated
  * on each query, allowing for dynamic or computed data.
  * </p>
@@ -51,17 +51,53 @@ import com.google.common.collect.Lists;
  * results.
  * </p>
  * <p>
- * To combine multiple {@link AdHocDatabase AdHocDatabases} or integrate with
- * a persistent database, use {@link FederatedRunway}.
+ * <strong>Note on Realms:</strong> {@link AdHocRecord AdHocRecords} do not
+ * have realm associations. While query methods accept {@link Realms}
+ * parameters for API compatibility, the realm constraints are not applied
+ * to ad-hoc data. All records from the supplier are considered visible
+ * regardless of the specified realms.
+ * </p>
+ * <p>
+ * To use this source with a {@link Runway} instance, attach it using
+ * {@link Runway#attach(AdHocDataSource...)}:
  * </p>
  *
- * @param <T> the type of {@link AdHocRecord} served by this database
+ * <pre>
+ * {@code
+ * AdHocDataSource<ReportRecord> reports = new AdHocDataSource<>(
+ *         ReportRecord.class, () -> generateReports());
+ *
+ * try (DatabaseInterface db = runway.attach(reports)) {
+ *     db.load(ReportRecord.class); // Served from reports source
+ * }
+ * }
+ * </pre>
+ *
+ * @param <T> the type of {@link AdHocRecord} served by this source
  * @author Jeff Nelson
  */
-public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
+public class AdHocDataSource<T extends AdHocRecord> implements
+        DatabaseInterface {
 
     /**
-     * The class of {@link AdHocRecord} served by this database.
+     * Convert an {@link Order} to a list-based order specification.
+     *
+     * @param order the order
+     * @return the list-based order specification
+     */
+    private static List<String> toOrderSpec(Order order) {
+        List<String> components = Lists.newArrayList();
+        for (OrderComponent component : order.spec()) {
+            String prefix = component.direction() == Direction.ASCENDING
+                    ? Record.SORT_DIRECTION_ASCENDING_PREFIX
+                    : Record.SORT_DIRECTION_DESCENDING_PREFIX;
+            components.add(prefix + component.key());
+        }
+        return components;
+    }
+
+    /**
+     * The class of {@link AdHocRecord} served by this source.
      */
     private final Class<T> clazz;
 
@@ -73,10 +109,10 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
     /**
      * Construct a new instance.
      *
-     * @param clazz the {@link AdHocRecord} class this database serves
+     * @param clazz the {@link AdHocRecord} class this source serves
      * @param supplier the data source; invoked on each query
      */
-    public AdHocDatabase(Class<T> clazz, Supplier<Collection<T>> supplier) {
+    public AdHocDataSource(Class<T> clazz, Supplier<Collection<T>> supplier) {
         this.clazz = clazz;
         this.supplier = supplier;
     }
@@ -292,86 +328,12 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
     }
 
     /**
-     * Return the class of {@link AdHocRecord} served by this database.
+     * Return the {@link AdHocRecord} {@link Class} served by this data source.
      *
-     * @return the registered class
+     * @return the {@link AdHocRecord} class this source serves
      */
-    public Class<T> registeredClass() {
+    public Class<T> type() {
         return clazz;
-    }
-
-    /**
-     * Find all records matching the given criteria.
-     *
-     * @param criteria the filter criteria
-     * @return matching records
-     */
-    @SuppressWarnings("unchecked")
-    private <R extends Record> Set<R> doFind(Criteria criteria) {
-        Predicate<T> filter = createFilter(criteria);
-        return supplier.get().stream()
-                .filter(filter)
-                .map(record -> (R) record)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-    }
-
-    /**
-     * Find all records in the class hierarchy matching the given criteria.
-     *
-     * @param requestedClass the requested class (may be a supertype)
-     * @param criteria the filter criteria
-     * @return matching records
-     */
-    @SuppressWarnings("unchecked")
-    private <R extends Record> Set<R> doFindAny(Class<R> requestedClass,
-            Criteria criteria) {
-        Predicate<T> filter = createFilter(criteria);
-        return supplier.get().stream()
-                .filter(record -> requestedClass.isInstance(record))
-                .filter(filter)
-                .map(record -> (R) record)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-    }
-
-    /**
-     * Load all records from the supplier.
-     *
-     * @return all records
-     */
-    @SuppressWarnings("unchecked")
-    private <R extends Record> Set<R> doLoad() {
-        return supplier.get().stream()
-                .map(record -> (R) record)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-    }
-
-    /**
-     * Load a specific record by id.
-     *
-     * @param id the record id
-     * @return the record, or {@code null} if not found
-     */
-    @SuppressWarnings("unchecked")
-    private <R extends Record> R doLoad(long id) {
-        return supplier.get().stream()
-                .filter(record -> record.id() == id)
-                .map(record -> (R) record)
-                .findFirst()
-                .orElse(null);
-    }
-
-    /**
-     * Load all records assignable to the requested class.
-     *
-     * @param requestedClass the requested class (may be a supertype)
-     * @return matching records
-     */
-    @SuppressWarnings("unchecked")
-    private <R extends Record> Set<R> doLoadAny(Class<R> requestedClass) {
-        return supplier.get().stream()
-                .filter(record -> requestedClass.isInstance(record))
-                .map(record -> (R) record)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     /**
@@ -389,20 +351,87 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
     }
 
     /**
-     * Return {@code true} if this database handles the exact class.
+     * Find all records matching the given criteria.
+     *
+     * @param criteria the filter criteria
+     * @return matching records
+     */
+    @SuppressWarnings("unchecked")
+    private <R extends Record> Set<R> doFind(Criteria criteria) {
+        Predicate<T> filter = createFilter(criteria);
+        return supplier.get().stream().filter(filter).map(record -> (R) record)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * Find all records in the class hierarchy matching the given criteria.
+     *
+     * @param requestedClass the requested class (may be a supertype)
+     * @param criteria the filter criteria
+     * @return matching records
+     */
+    @SuppressWarnings("unchecked")
+    private <R extends Record> Set<R> doFindAny(Class<R> requestedClass,
+            Criteria criteria) {
+        Predicate<T> filter = createFilter(criteria);
+        return supplier.get().stream()
+                .filter(record -> requestedClass.isInstance(record))
+                .filter(filter).map(record -> (R) record)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * Load all records from the supplier.
+     *
+     * @return all records
+     */
+    @SuppressWarnings("unchecked")
+    private <R extends Record> Set<R> doLoad() {
+        return supplier.get().stream().map(record -> (R) record)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * Load a specific record by id.
+     *
+     * @param id the record id
+     * @return the record, or {@code null} if not found
+     */
+    @SuppressWarnings("unchecked")
+    private <R extends Record> R doLoad(long id) {
+        return supplier.get().stream().filter(record -> record.id() == id)
+                .map(record -> (R) record).findFirst().orElse(null);
+    }
+
+    /**
+     * Load all records assignable to the requested class.
+     *
+     * @param requestedClass the requested class (may be a supertype)
+     * @return matching records
+     */
+    @SuppressWarnings("unchecked")
+    private <R extends Record> Set<R> doLoadAny(Class<R> requestedClass) {
+        return supplier.get().stream()
+                .filter(record -> requestedClass.isInstance(record))
+                .map(record -> (R) record)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * Return {@code true} if this source handles the exact class.
      *
      * @param requestedClass the class being queried
-     * @return {@code true} if this database serves the class
+     * @return {@code true} if this source serves the class
      */
     private boolean handles(Class<?> requestedClass) {
         return clazz.equals(requestedClass);
     }
 
     /**
-     * Return {@code true} if this database handles the class hierarchy.
+     * Return {@code true} if this source handles the class hierarchy.
      *
      * @param requestedClass the class being queried
-     * @return {@code true} if this database serves the class or a subclass
+     * @return {@code true} if this source serves the class or a subclass
      */
     private boolean handlesHierarchy(Class<?> requestedClass) {
         return requestedClass.isAssignableFrom(clazz);
@@ -420,9 +449,7 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
         if(page == null) {
             return records;
         }
-        return records.stream()
-                .skip(page.skip())
-                .limit(page.limit())
+        return records.stream().skip(page.skip()).limit(page.limit())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
@@ -440,23 +467,6 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
         }
         List<String> orderSpec = toOrderSpec(order);
         return DatabaseInterface.sort(records, orderSpec);
-    }
-
-    /**
-     * Convert an {@link Order} to a list-based order specification.
-     *
-     * @param order the order
-     * @return the list-based order specification
-     */
-    private static List<String> toOrderSpec(Order order) {
-        List<String> components = Lists.newArrayList();
-        for (OrderComponent component : order.spec()) {
-            String prefix = component.direction() == Direction.ASCENDING
-                    ? Record.SORT_DIRECTION_ASCENDING_PREFIX
-                    : Record.SORT_DIRECTION_DESCENDING_PREFIX;
-            components.add(prefix + component.key());
-        }
-        return components;
     }
 
     /**
@@ -485,4 +495,3 @@ public class AdHocDatabase<T extends AdHocRecord> implements DatabaseInterface {
     }
 
 }
-
