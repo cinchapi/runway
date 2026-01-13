@@ -184,6 +184,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return components;
     }
 
+    /**
+     * Return {@code true} if the given {@link Order} and {@link Page} indicate
+     * that no sorting or pagination is requested, meaning the query can be
+     * handled without client-side stream manipulation.
+     *
+     * @param order
+     * @param page
+     * @return {@code true} if neither sorting nor pagination is required
+     */
     private static boolean doesNotRequireSortingOrPagination(Order order,
             Page page) {
         return order == null && page == null;
@@ -244,6 +253,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Placeholder for a {@code null} {@link Page} parameter.
      */
     private static Page NO_PAGINATION = null;
+
+    /**
+     * Placeholder for a {@code null} {@link Criteria} parameter.
+     */
+    private static Criteria NO_CRITERIA = null;
 
     static {
         // Perform static analysis on initialization.
@@ -468,8 +482,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             return count;
         }
+        else if(criteria == null) {
+            // No criteria means count all records of this class
+            return $count(
+                    $Criteria.amongRealms(realms, $Criteria.forClass(clazz)));
+        }
         else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            return count($Criteria.amongRealms(realms,
+            return $count($Criteria.amongRealms(realms,
                     $Criteria.withinClass(clazz, criteria)));
         }
         else {
@@ -480,18 +499,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     @Override
     public <T extends Record> int count(Class<T> clazz, Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
-        if(!sources.isEmpty()) {
-            int count = 0;
-            for (AdHocDataSource<?> source : sources) {
-                count += source.count(clazz, realms);
-            }
-            return count;
-        }
-        else {
-            return count(
-                    $Criteria.amongRealms(realms, $Criteria.forClass(clazz)));
-        }
+        return count(clazz, NO_CRITERIA, realms);
     }
 
     @Override
@@ -505,8 +513,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             return count;
         }
+        else if(criteria == null) {
+            // No criteria means count all records in the class hierarchy
+            return $count($Criteria.amongRealms(realms,
+                    $Criteria.forClassHierarchy(clazz)));
+        }
         else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            return count($Criteria.amongRealms(realms,
+            return $count($Criteria.amongRealms(realms,
                     $Criteria.accrossClassHierachy(clazz, criteria)));
         }
         else {
@@ -517,18 +530,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     @Override
     public <T extends Record> int countAny(Class<T> clazz, Realms realms) {
-        Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
-        if(!sources.isEmpty()) {
-            int count = 0;
-            for (AdHocDataSource<?> source : sources) {
-                count += source.countAny(clazz, realms);
-            }
-            return count;
-        }
-        else {
-            return count($Criteria.amongRealms(realms,
-                    $Criteria.forClassHierarchy(clazz)));
-        }
+        return countAny(clazz, NO_CRITERIA, realms);
     }
 
     /**
@@ -1177,6 +1179,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Return the number of {@link Record records} that match the
+     * {@code criteria}.
+     *
+     * @param criteria
+     * @return the number of matching records
+     */
+    private int $count(Criteria criteria) {
+        Concourse concourse = connections.request();
+        try {
+            return concourse.find(criteria).size();
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Perform the find operation using the {@code concourse} handler.
      *
      * @param concourse
@@ -1303,23 +1322,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return Arrays.stream(keys).map(key -> concourse.search(key, query))
                 .flatMap(Set::stream).filter(filter)
                 .collect(Collectors.toSet());
-    }
-
-    /**
-     * Return the number of {@link Record records} that match the
-     * {@code criteria}.
-     *
-     * @param criteria
-     * @return the number of matching records
-     */
-    private int count(Criteria criteria) {
-        Concourse concourse = connections.request();
-        try {
-            return concourse.find(criteria).size();
-        }
-        finally {
-            connections.release(concourse);
-        }
     }
 
     /**
