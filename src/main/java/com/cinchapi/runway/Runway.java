@@ -712,22 +712,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             return results;
         }
-        else {
+        else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
             Concourse concourse = connections.request();
             try {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    Map<Long, Map<String, Set<Object>>> data = $find(concourse,
-                            clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
-                    return instantiateAll(clazz, data);
-                }
-                else {
-                    return filter(clazz, criteria, NO_ORDER, NO_PAGINATION,
-                            realms);
-                }
+                Map<Long, Map<String, Set<Object>>> data = $find(concourse,
+                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
+                return instantiateAll(clazz, data);
             }
             finally {
                 connections.release(concourse);
             }
+        }
+        else {
+            return filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
         }
     }
 
