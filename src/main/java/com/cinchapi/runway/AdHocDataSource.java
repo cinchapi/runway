@@ -76,8 +76,25 @@ import com.google.common.collect.Lists;
  * @param <T> the type of {@link AdHocRecord} served by this source
  * @author Jeff Nelson
  */
-public class AdHocDataSource<T extends AdHocRecord>
-        implements DatabaseInterface {
+public class AdHocDataSource<T extends AdHocRecord> implements
+        DatabaseInterface {
+
+    /**
+     * Convert an {@link Order} to a list-based order specification.
+     *
+     * @param order the order
+     * @return the list-based order specification
+     */
+    private static List<String> toOrderSpec(Order order) {
+        List<String> components = Lists.newArrayList();
+        for (OrderComponent component : order.spec()) {
+            String prefix = component.direction() == Direction.ASCENDING
+                    ? Record.SORT_DIRECTION_ASCENDING_PREFIX
+                    : Record.SORT_DIRECTION_DESCENDING_PREFIX;
+            components.add(prefix + component.key());
+        }
+        return components;
+    }
 
     /**
      * The class of {@link AdHocRecord} served by this source.
@@ -210,15 +227,6 @@ public class AdHocDataSource<T extends AdHocRecord>
         return unique(results, clazz, criteria);
     }
 
-    /**
-     * Return the {@link AdHocRecord} {@link Class} served by this data source.
-     *
-     * @return the {@link AdHocRecord} class this source serves
-     */
-    public Class<T> type() {
-        return clazz;
-    }
-
     @Override
     public <R extends Record> R load(Class<R> clazz, long id, Realms realms) {
         if(handles(clazz)) {
@@ -317,6 +325,15 @@ public class AdHocDataSource<T extends AdHocRecord>
         else {
             return ImmutableSet.of();
         }
+    }
+
+    /**
+     * Return the {@link AdHocRecord} {@link Class} served by this data source.
+     *
+     * @return the {@link AdHocRecord} class this source serves
+     */
+    public Class<T> type() {
+        return clazz;
     }
 
     /**
@@ -450,23 +467,6 @@ public class AdHocDataSource<T extends AdHocRecord>
         }
         List<String> orderSpec = toOrderSpec(order);
         return DatabaseInterface.sort(records, orderSpec);
-    }
-
-    /**
-     * Convert an {@link Order} to a list-based order specification.
-     *
-     * @param order the order
-     * @return the list-based order specification
-     */
-    private static List<String> toOrderSpec(Order order) {
-        List<String> components = Lists.newArrayList();
-        for (OrderComponent component : order.spec()) {
-            String prefix = component.direction() == Direction.ASCENDING
-                    ? Record.SORT_DIRECTION_ASCENDING_PREFIX
-                    : Record.SORT_DIRECTION_DESCENDING_PREFIX;
-            components.add(prefix + component.key());
-        }
-        return components;
     }
 
     /**
