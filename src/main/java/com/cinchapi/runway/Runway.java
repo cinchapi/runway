@@ -889,8 +889,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             return results;
         }
+        else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+            Concourse concourse = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
+                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
+                return instantiateAll(data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
         else {
-            return findAnyFromDatabase(clazz, criteria, realms);
+            return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
         }
     }
 
@@ -1358,7 +1369,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return results;
         }
         else {
-            return loadAnyFromDatabase(clazz, realms);
+            Concourse concourse = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
+                        clazz, NO_ORDER, NO_PAGINATION, realms);
+                return instantiateAll(data);
+            }
+            finally {
+                connections.release(concourse);
+            }
         }
     }
 
@@ -1544,55 +1563,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     <T extends Record> T load(long id) {
         return instantiate(id, null);
-    }
-
-    /**
-     * Find records across the hierarchy of {@code clazz} that match
-     * {@code criteria} from the database only (ignoring attached sources).
-     *
-     * @param clazz the class hierarchy to search
-     * @param criteria the filter criteria
-     * @param realms the realms filter
-     * @return the matching records from the database
-     */
-    private <T extends Record> Set<T> findAnyFromDatabase(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        Concourse concourse = connections.request();
-        try {
-            if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                Map<Long, Map<String, Set<Object>>> data = $findAny(concourse,
-                        clazz, criteria, NO_ORDER, NO_PAGINATION, realms);
-                return instantiateAll(data);
-            }
-            else {
-                return filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION,
-                        realms);
-            }
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
-     * Load all records across the hierarchy of {@code clazz} from the database
-     * only (ignoring attached sources).
-     *
-     * @param clazz the class hierarchy to load
-     * @param realms the realms filter
-     * @return all records from the database in the class hierarchy
-     */
-    private <T extends Record> Set<T> loadAnyFromDatabase(Class<T> clazz,
-            Realms realms) {
-        Concourse concourse = connections.request();
-        try {
-            Map<Long, Map<String, Set<Object>>> data = $loadAny(concourse,
-                    clazz, NO_ORDER, NO_PAGINATION, realms);
-            return instantiateAll(data);
-        }
-        finally {
-            connections.release(concourse);
-        }
     }
 
     /**
