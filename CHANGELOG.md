@@ -55,6 +55,12 @@ Runway now provides a `Gateway` class that offers intelligent routing between da
 
 * **Method Variants**: The `Gateway` provides both `retrieve` and `retrieveAny` methods that correspond to the underlying `find`/`load` and `findAny`/`loadAny` operations respectively, with full support for filtering, sorting, pagination, and realm-based access control.
 
+##### Load Behavior Change
+The `load(Class, long)` method in `DatabaseInterface` now returns `null` instead of throwing an `IllegalStateException` when attempting to load a Record with a non-existing ID.
+
+* **New Behavior**: `load` returns `null` when the Record does not exist, allowing callers to handle missing records gracefully without exception handling
+* **Backwards Compatibility**: The new `loadNullSafe(Class, long)` method preserves the previous fail-fast behavior by throwing an `IllegalStateException` when the Record does not exist
+
 ##### Data Priority Consistency Fix
 Fixed a bug where there was inconsistent priorities in the order of data returned from `get()` vs `map()` operations.
 

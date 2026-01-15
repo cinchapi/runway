@@ -77,13 +77,8 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 record.overrideCalled);
 
         // Verify the record was not actually persisted
-        try {
-            runway.load(OverrideSaveRecord.class, record.id());
-            Assert.fail("Record should not exist in the database");
-        }
-        catch (IllegalStateException e) {
-            // Expected exception
-        }
+        Assert.assertNull("Record should not exist in the database",
+                runway.load(OverrideSaveRecord.class, record.id()));
     }
 
     @Test
@@ -120,13 +115,8 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 "Normal Record 2 (Modified)", loaded3.name);
 
         // Verify the overridden record was not persisted
-        try {
-            runway.load(OverrideSaveRecord.class, record2.id());
-            Assert.fail("Overridden record should not exist in the database");
-        }
-        catch (IllegalStateException e) {
-            // Expected exception
-        }
+        Assert.assertNull("Overridden record should not exist in the database",
+                runway.load(OverrideSaveRecord.class, record2.id()));
     }
 
     @Test
@@ -145,13 +135,8 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 record.overrideCalled);
 
         // Verify the record was not persisted
-        try {
-            runway.load(OverrideSaveRecord.class, record.id());
-            Assert.fail("Record should not exist in the database");
-        }
-        catch (IllegalStateException e) {
-            // Expected exception
-        }
+        Assert.assertNull("Record should not exist in the database",
+                runway.load(OverrideSaveRecord.class, record.id()));
     }
 
     @Test
@@ -294,14 +279,9 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         // Verify no records were persisted
         for (Record record : new Record[] { record1, record2, exceptionRecord,
                 record3 }) {
-            try {
-                runway.load(record.getClass(), record.id());
-                Assert.fail("Record with ID " + record.id()
-                        + " should not exist in the database");
-            }
-            catch (IllegalStateException e) {
-                // Expected exception
-            }
+            Assert.assertNull("Record with ID " + record.id()
+                    + " should not exist in the database",
+                    runway.load(record.getClass(), record.id()));
         }
     }
 
@@ -320,13 +300,8 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 saved);
 
         // Verify the record was not persisted
-        try {
-            runway.load(PreSaveExceptionRecord.class, record.id());
-            Assert.fail("Record should not exist in the database");
-        }
-        catch (IllegalStateException e) {
-            // Expected exception
-        }
+        Assert.assertNull("Record should not exist in the database",
+                runway.load(PreSaveExceptionRecord.class, record.id()));
     }
 
     @Test
@@ -350,29 +325,12 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 saved);
 
         // Verify no records were persisted
-        try {
-            runway.load(PreSaveHookRecord.class, record1.id());
-            Assert.fail("Record1 should not exist in the database");
-        }
-        catch (IllegalStateException e) {
-            // Expected exception
-        }
-
-        try {
-            runway.load(PreSaveExceptionRecord.class, record2.id());
-            Assert.fail("Record2 should not exist in the database");
-        }
-        catch (IllegalStateException e) {
-            // Expected exception
-        }
-
-        try {
-            runway.load(PreSaveHookRecord.class, record3.id());
-            Assert.fail("Record3 should not exist in the database");
-        }
-        catch (IllegalStateException e) {
-            // Expected exception
-        }
+        Assert.assertNull("Record1 should not exist in the database",
+                runway.load(PreSaveHookRecord.class, record1.id()));
+        Assert.assertNull("Record2 should not exist in the database",
+                runway.load(PreSaveExceptionRecord.class, record2.id()));
+        Assert.assertNull("Record3 should not exist in the database",
+                runway.load(PreSaveHookRecord.class, record3.id()));
     }
 
     @Test

@@ -1124,6 +1124,71 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Load the {@link Record} that is contained within the specified
+     * {@code clazz} and has the specified {@code id}, throwing an
+     * {@link IllegalStateException} if no such {@link Record} exists.
+     * <p>
+     * This method provides a fail-fast alternative to
+     * {@link #load(Class, long)} for cases where the caller expects the
+     * {@link Record} to exist and considers its absence to be an error
+     * condition.
+     * </p>
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not
+     * cached). This is done deliberately so different threads/clients can
+     * make changes to a {@link Record} in isolation.
+     * </p>
+     *
+     * @param clazz the {@link Record} type
+     * @param id the {@link Record} id
+     * @param <T> the {@link Record} type
+     * @return the existing {@link Record}
+     * @throws IllegalStateException if no {@link Record} with the specified
+     *             {@code id} exists
+     */
+    public default <T extends Record> T loadNullSafe(Class<T> clazz, long id) {
+        return loadNullSafe(clazz, id, Realms.any());
+    }
+
+    /**
+     * Load the {@link Record} that is contained within the specified
+     * {@code clazz} and has the specified {@code id} if it exists in any of
+     * the {@code realms}, throwing an {@link IllegalStateException} if no
+     * such {@link Record} exists.
+     * <p>
+     * This method provides a fail-fast alternative to
+     * {@link #load(Class, long, Realms)} for cases where the caller expects
+     * the {@link Record} to exist and considers its absence to be an error
+     * condition.
+     * </p>
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not
+     * cached). This is done deliberately so different threads/clients can
+     * make changes to a {@link Record} in isolation.
+     * </p>
+     *
+     * @param clazz the {@link Record} type
+     * @param id the {@link Record} id
+     * @param realms the {@link Realms} to search
+     * @param <T> the {@link Record} type
+     * @return the existing {@link Record}
+     * @throws IllegalStateException if no {@link Record} with the specified
+     *             {@code id} exists in any of the {@code realms}
+     */
+    public default <T extends Record> T loadNullSafe(Class<T> clazz, long id,
+            Realms realms) {
+        T record = load(clazz, id, realms);
+        if(record != null) {
+            return record;
+        }
+        else {
+            throw new IllegalStateException();
+        }
+    }
+
+    /**
      * Load the Record that is contained within the specified {@code clazz} and
      * has the specified {@code id} if it exist in any of the {@code realms}.
      * <p>
