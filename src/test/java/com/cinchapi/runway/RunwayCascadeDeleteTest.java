@@ -56,14 +56,9 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         List<Record> records = ImmutableList.of(parent1, parent2, child1,
                 child2);
         records.forEach(record -> {
-            try {
-                runway.load(record.getClass(), record.id());
-                Assert.fail(record.getClass().getSimpleName()
-                        + " should have been deleted.");
-            }
-            catch (IllegalStateException e) {
-                Assert.assertTrue("Record not found as expected", true);
-            }
+            Assert.assertNull(record.getClass().getSimpleName()
+                    + " should have been deleted",
+                    runway.load(record.getClass(), record.id()));
         });
     }
 
@@ -190,14 +185,9 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         records.put(ChildRecord.class, child2.id());
 
         records.entries().forEach(entry -> {
-            try {
-                runway.load(entry.getKey(), entry.getValue());
-                Assert.fail("Record should have been deleted " + entry.getKey()
-                        + " = " + entry.getValue());
-            }
-            catch (IllegalStateException e) {
-                Assert.assertTrue("Record not found as expected", true);
-            }
+            Assert.assertNull("Record should have been deleted " + entry.getKey()
+                    + " = " + entry.getValue(),
+                    runway.load(entry.getKey(), entry.getValue()));
         });
     }
 
@@ -211,13 +201,8 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         parent.deleteOnSave();
         parent.save();
 
-        try {
-            runway.load(ParentRecord.class, parent.id());
-            Assert.fail("ParentRecord should have been deleted.");
-        }
-        catch (IllegalStateException e) {
-            Assert.assertTrue("Record not found as expected", true);
-        }
+        Assert.assertNull("ParentRecord should have been deleted",
+                runway.load(ParentRecord.class, parent.id()));
     }
 
     @Test
@@ -247,13 +232,8 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
                 AdditionalRecord.class, additional.id());
 
         records.forEach((clazz, id) -> {
-            try {
-                runway.load(clazz, id);
-                Assert.fail("Record should have been deleted");
-            }
-            catch (IllegalStateException e) {
-                Assert.assertTrue("Record not found as expected", true);
-            }
+            Assert.assertNull("Record should have been deleted",
+                    runway.load(clazz, id));
         });
     }
 
@@ -267,13 +247,8 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
                 ParentRecord.class, parent.id(), ChildRecord.class,
                 parent.child.id());
         records.forEach((clazz, id) -> {
-            try {
-                runway.load(clazz, id);
-                Assert.fail();
-            }
-            catch (IllegalStateException e) {
-                Assert.assertTrue(true);
-            }
+            Assert.assertNull("Record should have been deleted",
+                    runway.load(clazz, id));
         });
     }
 
@@ -291,14 +266,9 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
 
         List<Record> records = ImmutableList.of(parent, child);
         records.forEach(record -> {
-            try {
-                runway.load(record.getClass(), record.id());
-                Assert.fail(record.getClass().getSimpleName()
-                        + " should have been deleted.");
-            }
-            catch (IllegalStateException e) {
-                Assert.assertTrue("Record not found as expected", true);
-            }
+            Assert.assertNull(record.getClass().getSimpleName()
+                    + " should have been deleted",
+                    runway.load(record.getClass(), record.id()));
         });
     }
 
@@ -317,14 +287,9 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
 
         List<Record> records = ImmutableList.of(parent, child1, child2);
         records.forEach(record -> {
-            try {
-                runway.load(record.getClass(), record.id());
-                Assert.fail(record.getClass().getSimpleName()
-                        + " should have been deleted.");
-            }
-            catch (IllegalStateException e) {
-                Assert.assertTrue("Record not found as expected", true);
-            }
+            Assert.assertNull(record.getClass().getSimpleName()
+                    + " should have been deleted",
+                    runway.load(record.getClass(), record.id()));
         });
     }
 
@@ -345,14 +310,8 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         List<Class<? extends Record>> records = ImmutableList
                 .of(ParentRecord.class, ChildRecord.class, InnerRecord.class);
         records.forEach(clazz -> {
-            try {
-                runway.load(clazz, parent.id());
-                Assert.fail(
-                        clazz.getSimpleName() + " should have been deleted.");
-            }
-            catch (IllegalStateException e) {
-                Assert.assertTrue("Record not found as expected", true);
-            }
+            Assert.assertNull(clazz.getSimpleName() + " should have been deleted",
+                    runway.load(clazz, parent.id()));
         });
     }
 
@@ -378,22 +337,14 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
 
         // Try to load each ChildRecord; they should still exist since they were
         // not annotated
-        try {
-            runway.load(ChildRecord.class, child1.id());
-            runway.load(ChildRecord.class, child2.id());
-        }
-        catch (IllegalStateException e) {
-            Assert.fail("Child records should not have been deleted.");
-        }
+        Assert.assertNotNull("Child records should not have been deleted",
+                runway.load(ChildRecord.class, child1.id()));
+        Assert.assertNotNull("Child records should not have been deleted",
+                runway.load(ChildRecord.class, child2.id()));
 
         // Confirm the ParentRecord has been deleted
-        try {
-            runway.load(ParentRecord.class, parent.id());
-            Assert.fail("Parent record should have been deleted.");
-        }
-        catch (IllegalStateException e) {
-            Assert.assertTrue("Parent not found as expected", true);
-        }
+        Assert.assertNull("Parent record should have been deleted",
+                runway.load(ParentRecord.class, parent.id()));
     }
 
     /**

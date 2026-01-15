@@ -27,11 +27,26 @@ import org.junit.Test;
  */
 public class RunwayInvariantsTest extends RunwayBaseClientServerTest {
 
-    @Test(expected = IllegalStateException.class)
+    @Test
     public void testLoadNonExistingRecord() {
-        runway.load(Player.class, 1);
+        Assert.assertNull(runway.load(Player.class, 1));
     }
-    
+
+    @Test(expected = IllegalStateException.class)
+    public void testLoadNullSafeThrowsForNonExistingRecord() {
+        runway.loadNullSafe(Player.class, 1);
+    }
+
+    @Test
+    public void testLoadNullSafeReturnsRecordWhenExists() {
+        Player player = new Player("Test Player", 25);
+        runway.save(player);
+
+        Player loaded = runway.loadNullSafe(Player.class, player.id());
+        Assert.assertNotNull(loaded);
+        Assert.assertEquals("Test Player", loaded.name);
+    }
+
     @Test
     public void testDeleteMultipleRecordsAtOnce() {
         Player p1 = new Player("LeBron James", 32);

@@ -68,21 +68,21 @@ public class AudienceLoadInvalidIdTest extends AudienceAccessControlBaseTest {
         anotherCandidate.name = "Bob Smith";
         anotherCandidate.email = "bob@email.com";
         anotherCandidate.save();
-        
+
         Employer employer = new Employer();
         employer.name = "Employer";
-        
+
         Job job = new Job();
         job.employer = employer;
         job.title = "Job";
-        
+
         Application application = new Application();
         application.candidate = candidate;
         application.job = job;
-        
+
         Assert.assertTrue(application.save());
         long applicationId = application.id();
-        
+
         Application loadedA = candidate.load(Application.class, applicationId);
         Application loadedB = anotherCandidate.load(Application.class, applicationId);
 

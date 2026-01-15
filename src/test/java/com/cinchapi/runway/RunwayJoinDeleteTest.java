@@ -25,7 +25,7 @@ import com.google.common.collect.ImmutableList;
  * classes. These tests verify that records with fields annotated with
  * {@link @JoinDelete} delete their containing records when the linked record is
  * deleted.
- * 
+ *
  * author Jeff Nelson
  */
 public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
@@ -235,7 +235,7 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     /**
      * Asserts that a {@link Record} of {@code clazz} with {@code id} exists in
      * the database.
-     * 
+     *
      * @param clazz
      * @param id
      */
@@ -245,13 +245,13 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
 
     /**
      * Asserts that {@code record} exists in the database.
-     * 
+     *
      * @param record
      */
     private void assertExists(Record record) {
         assertExists(record.getClass(), record.id());
     }
-    
+
     /**
      * Asserts that a record of the specified class and ID does not exist in the
      * database. Attempts to load the record and fails the test if the record
@@ -262,13 +262,8 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
      * @param id the ID of the record to check
      */
     private void assertNotExists(Class<? extends Record> clazz, long id) {
-        try {
-            runway.load(clazz, id);
-            Assert.fail(clazz.getSimpleName() + " should have been deleted.");
-        }
-        catch (IllegalStateException e) {
-            Assert.assertTrue("Record not found as expected", true);
-        }
+        Assert.assertNull(clazz.getSimpleName() + " should have been deleted",
+                runway.load(clazz, id));
         Assert.assertTrue("The database still has data for the deleted Record",
                 client.select(id).isEmpty());
     }
@@ -285,14 +280,14 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents the child record in a nested hierarchy, which is 
+     * Represents the child record in a nested hierarchy, which is
      * deleted when {@link Grandchild} is deleted due to {@link JoinDelete}.
      */
     class Child extends Record {
-        
+
         /** The name of the child record, used for identification in tests. */
         String name;
-        
+
         /** The linked grandchild record, deleted when removed due to JoinDelete. */
         @JoinDelete
         public Grandchild grandchild;
@@ -351,11 +346,11 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents the grandchild record in a nested hierarchy, which 
+     * Represents the grandchild record in a nested hierarchy, which
      * triggers deletions up the chain when removed.
      */
     class Grandchild extends Record {
-        
+
         /** The name of the grandchild record, used for identification in tests. */
         String name;
 
@@ -365,22 +360,22 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents the grandparent record in a nested hierarchy, which 
+     * Represents the grandparent record in a nested hierarchy, which
      * is deleted when {@link Parent} is deleted due to {@link JoinDelete}.
      */
     class Grandparent extends Record {
-        
+
         /** The linked parent record, deleted when removed due to JoinDelete. */
         @JoinDelete
         public Parent parent;
     }
 
     /**
-     * Represents the parent record in a nested hierarchy, which is 
+     * Represents the parent record in a nested hierarchy, which is
      * deleted when {@link Child} is deleted due to {@link JoinDelete}.
      */
     class Parent extends Record {
-        
+
         /** The linked child record, deleted when removed due to JoinDelete. */
         @JoinDelete
         public Child child;
@@ -428,15 +423,15 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents a self-referencing person class, where one person is 
-     * linked to another via a "friend" field, enabling a chain of 
+     * Represents a self-referencing person class, where one person is
+     * linked to another via a "friend" field, enabling a chain of
      * deletions with {@link JoinDelete}.
      */
     class Person extends Record {
-        
+
         /** The name of the person record, used for identification in tests. */
         String name;
-        
+
         /** The friend record linked with JoinDelete, triggering deletion up the chain. */
         @JoinDelete
         public Person friend;

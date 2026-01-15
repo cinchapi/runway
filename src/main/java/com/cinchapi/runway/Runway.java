@@ -1011,6 +1011,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return loadAny(clazz, NO_ORDER, NO_PAGINATION, realms);
     }
 
+    @Override
+    public <T extends Record> T loadNullSafe(Class<T> clazz, long id,
+            Realms realms) {
+        try {
+            return DatabaseInterface.super.loadNullSafe(clazz, id, realms);
+        }
+        catch (Exception e) {
+            onLoadFailureHandler.accept(clazz, id, e);
+            throw e;
+        }
+    }
+
     /**
      * {@link Concourse#ping() Ping} the database and return {@code true} if it
      * is accessible.

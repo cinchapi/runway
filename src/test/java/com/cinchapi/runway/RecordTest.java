@@ -162,9 +162,9 @@ public class RecordTest extends ClientServerTest {
         Assert.assertNull(mock.get("foo"));
     }
 
-    @Test(expected = Exception.class)
+    @Test
     public void testLoadNonExistingRecord() {
-        System.out.println(runway.load(Mock.class, -2));
+        Assert.assertNull(runway.load(Mock.class, -2));
     }
 
     @Test
