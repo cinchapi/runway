@@ -1931,8 +1931,7 @@ public abstract class Record implements Comparable<Record> {
      * @param concourse
      * @param existing
      * @param data data that is pre-loaded from {@code concourse}; this
-     *            should
-     *            only be provided from a trusted source
+     *            should only be provided from a trusted source
      */
     /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
     final void load(Concourse concourse, ConcurrentMap<Long, Record> existing,
@@ -2394,14 +2393,14 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Check to ensure that this Record does not violate any constraints. If
-     * so,
-     * throw an {@link IllegalStateException}.
+     * so, throw an {@link IllegalStateException}.
      *
      * @param concourse
-     * @throws IllegalStateException
+     * @throws ConstraintViolationException
      */
     private void checkConstraints(Concourse concourse,
-            @Nullable Map<String, Set<Object>> data, String prefix) {
+            @Nullable Map<String, Set<Object>> data, String prefix)
+            throws ConstraintViolationException {
         try {
             String section = null;
             if(data == null) {
@@ -2414,15 +2413,22 @@ public abstract class Record implements Comparable<Record> {
                     section = (String) Iterables.getLast($$);
                 }
             }
-            Verify.that(section != null);
-            Verify.that(
-                    section.equals(__) || Class.forName(__)
-                            .isAssignableFrom(Class.forName(section)),
-                    "Cannot load a record from section {} "
-                            + "into a Record of type {}",
-                    section, __);
+            if(section == null) {
+                inViolation = true;
+                String message = "Record " + id
+                        + " is not a valid Runway record";
+                throw new InvalidRecordException(message);
+            }
+            if(!(section.equals(__) || Class.forName(__)
+                    .isAssignableFrom(Class.forName(section)))) {
+                inViolation = true;
+                String message = AnyStrings
+                        .format("Cannot load a record from section {} "
+                                + "into a Record of type {}", section, __);
+                throw new InvalidSectionException(message);
+            }
         }
-        catch (ReflectiveOperationException | IllegalStateException e) {
+        catch (ReflectiveOperationException e) {
             inViolation = true;
             throw CheckedExceptions.wrapAsRuntimeException(e);
         }
@@ -4820,6 +4826,68 @@ public abstract class Record implements Comparable<Record> {
         public Collection<V> values() {
             return data.values().stream().flatMap(values -> values.stream())
                     .collect(Collectors.toList());
+        }
+
+    }
+
+    /**
+     * Throw when a {@link #checkConstrains()} is violated.
+     *
+     * @author Jeff Nelson
+     */
+    class ConstraintViolationException extends RunwayException {
+
+        private static final long serialVersionUID = 1L;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param message
+         */
+        public ConstraintViolationException(String message) {
+            super(message);
+        }
+
+    }
+
+    /**
+     * A {@link RunwayException} that is thrown when an attempt is made to
+     * access a
+     * record that does not exist.
+     *
+     * @author Jeff Nelson
+     */
+    class InvalidRecordException extends ConstraintViolationException {
+
+        private static final long serialVersionUID = 1L;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param message
+         */
+        public InvalidRecordException(String message) {
+            super(message);
+        }
+
+    }
+
+    /**
+     * Throw when an attempt is made to assigned a record to an invalid type.
+     *
+     * @author Jeff Nelson
+     */
+    class InvalidSectionException extends ConstraintViolationException {
+
+        private static final long serialVersionUID = 1L;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param message
+         */
+        public InvalidSectionException(String message) {
+            super(message);
         }
 
     }

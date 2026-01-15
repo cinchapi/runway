@@ -62,6 +62,8 @@ import com.cinchapi.concourse.lang.sort.OrderComponent;
 import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
+import com.cinchapi.runway.Record.ConstraintViolationException;
+import com.cinchapi.runway.Record.InvalidRecordException;
 import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.cinchapi.runway.util.Pagination;
@@ -221,8 +223,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return Record.load(clazz, id, loaded, connections, runway, data);
         }
         catch (Exception e) {
-            runway.onLoadFailureHandler.accept(clazz, id, e);
-            throw e;
+            if(e instanceof InvalidRecordException) {
+                // For consistency with Audience framework, return "null" for
+                // invalid records so that they are indistinguishable from valid
+                // Records that are not visible to an Audience.
+                return null;
+            }
+            else {
+                if(e instanceof ConstraintViolationException) {
+                    // Backwards compatibility for when constraint violations
+                    // were noted via an IllegalStateException.
+                    e = new IllegalStateException(e.getMessage());
+                }
+                runway.onLoadFailureHandler.accept(clazz, id, e);
+                throw CheckedExceptions.throwAsRuntimeException(e);
+            }
         }
     }
 
