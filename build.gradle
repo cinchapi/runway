@@ -48,8 +48,8 @@ repositories {
 
 
 // Set the version for all Concourse dependencies
-ext.concourseVersion = '0.11.10'
-ext.accent4jVersion = '1.16.0-SNAPSHOT'
+ext.concourseVersion = '0.12.0'
+ext.accent4jVersion = '1.16.0'
 
 configurations.all {
     resolutionStrategy {
