@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 1.11.0 (TBD)
+#### Version 1.11.0 (February 14, 2026)
 
 ##### Access Control Framework
 Runway now provides a comprehensive access control framework that enables fine-grained, role-based access management for Record operations. This framework allows developers to define granular access rules that are automatically enforced across all database operations, ensuring data security and privacy at the application level.
