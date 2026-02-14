@@ -1271,18 +1271,14 @@ public abstract class Record implements Comparable<Record> {
      * Return the "readable" intrinsic (e.g. not {@link #derived() or
      * {@link #computed()}) data from this {@link Record} as a {@link Map}.
      * <p>
-     * This method be used over {@link #map()} when it is necessary to
-     * ensure
-     * that {@link #computed() computed} values aren't processed and it
-     * isn't
-     * feasible to explicitly filter them all out.
+     * This method should be used over {@link #map()} when it is necessary to
+     * ensure that {@link #computed() computed} values aren't processed and it
+     * isn't feasible to explicitly filter them all out.
      * </p>
      * <p>
      * This method also supports <strong>negative filtering</strong>. You
-     * can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is
-     * returned.
+     * can prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
      * </p>
      *
      * @return the intrinsic data record
@@ -1295,18 +1291,14 @@ public abstract class Record implements Comparable<Record> {
      * Return the "readable" intrinsic (e.g. not {@link #derived() or
      * {@link #computed()}) data from this {@link Record} as a {@link Map}.
      * <p>
-     * This method be used over {@link #map()} when it is necessary to
-     * ensure
-     * that {@link #computed() computed} values aren't processed and it
-     * isn't
-     * feasible to explicitly filter them all out.
+     * This method should be used over {@link #map()} when it is necessary to
+     * ensure that {@link #computed() computed} values aren't processed and it
+     * isn't feasible to explicitly filter them all out.
      * </p>
      * <p>
      * This method also supports <strong>negative filtering</strong>. You
-     * can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is
-     * returned.
+     * can prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
      * </p>
      *
      * @param keys
@@ -1436,10 +1428,8 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      * <p>
      * This method also supports <strong>negative filtering</strong>. You
-     * can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is
-     * returned.
+     * can prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
+     * indicate that the key should be excluded from the data that is returned.
      * </p>
      *
      * @return the data in this record
