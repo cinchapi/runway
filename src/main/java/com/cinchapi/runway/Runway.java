@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import java.util.AbstractMap;
+import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -24,7 +25,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -1160,6 +1160,54 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Register a listener that will be called <strong>after</strong> any
+     * {@link Record} of the specified {@code type} (or a subclass) is
+     * successfully saved.
+     * <p>
+     * Unlike the {@link Builder#onSave(Class, Consumer) builder method}, this
+     * can be called after the {@link Runway} instance has been constructed. The
+     * new listener is chained with any previously registered listeners &mdash;
+     * it does not replace them.
+     * </p>
+     *
+     * @param type the {@link Record} type (or superclass) to listen for
+     * @param listener a consumer that processes saved {@link Record Records} of
+     *            the specified type
+     */
+    @SuppressWarnings("unchecked")
+    public <T extends Record> void onSave(Class<T> type, Consumer<T> listener) {
+        ensureSaveNotificationInfrastructure();
+        Consumer<Record> previous = saveListener;
+        saveListener = record -> {
+            if(type.isAssignableFrom(record.getClass())) {
+                try {
+                    ((Consumer<Record>) (Consumer<?>) listener).accept(record);
+                }
+                catch (Exception e) {
+                    // Swallow to match builder behavior
+                }
+            }
+            if(previous != null) {
+                previous.accept(record);
+            }
+        };
+    }
+
+    /**
+     * Register a listener that will be called <strong>after</strong> any
+     * {@link Record} is successfully saved.
+     * <p>
+     * This is equivalent to calling {@link #onSave(Class, Consumer)
+     * onSave(Record.class, listener)}.
+     * </p>
+     *
+     * @param listener a consumer that processes saved {@link Record Records}
+     */
+    public void onSave(Consumer<Record> listener) {
+        onSave(Record.class, listener);
+    }
+
+    /**
      * Queue up a record for save notification processing.
      *
      * @param record the record that was saved
@@ -1208,6 +1256,42 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     <T extends Record> T load(long id) {
         return instantiate(id, null);
+    }
+
+    /**
+     * Lazily initialize the save notification infrastructure (queue and
+     * executor) if it has not already been set up. This allows {@link #onSave}
+     * listeners to be registered after the {@link Runway} instance is built.
+     */
+    private synchronized void ensureSaveNotificationInfrastructure() {
+        if(saveNotificationQueue == null) {
+            saveNotificationQueue = new LinkedBlockingQueue<>();
+            ThreadFactory threadFactory = r -> {
+                Thread thread = new Thread(r,
+                        "runway-save-notification-worker");
+                thread.setDaemon(true);
+                return thread;
+            };
+            saveNotificationExecutor = Executors
+                    .newSingleThreadExecutor(threadFactory);
+            saveNotificationExecutor.submit(() -> {
+                while (!Thread.currentThread().isInterrupted()) {
+                    try {
+                        Record record = saveNotificationQueue.take();
+                        try {
+                            saveListener.accept(record);
+                        }
+                        catch (Exception e) {
+                            // Silently swallow exceptions
+                        }
+                    }
+                    catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            });
+        }
     }
 
     /**
@@ -2090,8 +2174,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * Provide a listener that will be called <strong>after</strong> any
          * record is successfully saved.
          * <p>
-         * This is equivalent to calling
-         * {@link #onSave(Class, Consumer) onSave(Record.class, listener)}.
+         * This is equivalent to calling {@link #onSave(Class, Consumer)
+         * onSave(Record.class, listener)}.
          * </p>
          * <p>
          * This method is <strong>compositional</strong>: calling it multiple
