@@ -16,12 +16,15 @@
 package com.cinchapi.runway;
 
 import java.util.AbstractMap;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -1887,13 +1890,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private int streamingReadBufferSize = 100;
         private String username = "admin";
         private boolean disablePreSelectLinkedRecords = false;
-        private Consumer<Record> saveListener = null;
+        private List<Map.Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
 
         /**
          * Build the configured {@link Runway} and return the instance.
          *
          * @return a {@link Runway} instance
          */
+        @SuppressWarnings("unchecked")
         public Runway build() {
             ConnectionPool connections = cache == null
                     ? ConnectionPool.newCachedConnectionPool(host, port,
@@ -1912,8 +1916,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
 
             // Initialize save notification components if a listener is provided
-            if(saveListener != null) {
-                db.saveListener = saveListener;
+            if(!saveListeners.isEmpty()) {
+                List<Entry<Class<? extends Record>, Consumer<? extends Record>>> listeners = new ArrayList<>(
+                        saveListeners);
+                db.saveListener = record -> {
+                    for (Entry<Class<? extends Record>, Consumer<? extends Record>> entry : listeners) {
+                        if(entry.getKey().isAssignableFrom(record.getClass())) {
+                            try {
+                                Consumer<Record> consumer = (Consumer<Record>) entry
+                                        .getValue();
+                                consumer.accept(record);
+                            }
+                            catch (Exception e) {
+                                // Swallow and continue to next matching
+                                // listener
+                            }
+                        }
+                    }
+                };
                 db.saveNotificationQueue = new LinkedBlockingQueue<>();
                 ThreadFactory threadFactory = r -> {
                     Thread thread = new Thread(r,
@@ -1931,7 +1951,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 db.saveListener.accept(record);
                             }
                             catch (Exception e) {
-                                // Silently swallow exceptions from the listener
+                                // Silently swallow exceptions from the
+                                // composed listener
                             }
                         }
                         catch (InterruptedException e) {
@@ -2014,7 +2035,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Provide a listener that will be called <strong>after</strong> a
-         * record is successfully saved.
+         * record of the specified {@code type} (or any subclass) is
+         * successfully saved.
          * <p>
          * Save listening is designed for implementing side-effects that occur
          * after a record
@@ -2029,10 +2051,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * </ul>
          * </p>
          * <p>
+         * The {@code listener} is only invoked for records that are instances
+         * of {@code type} (including subclasses). For example, registering a
+         * listener for {@code Player.class} will fire for {@code Player}
+         * records and any subclass of {@code Player}, but not for unrelated
+         * {@link Record} types.
+         * </p>
+         * <p>
+         * This method is <strong>compositional</strong>: calling it multiple
+         * times adds additional listeners rather than replacing previous ones.
+         * All matching listeners fire in registration order. If a listener
+         * throws an exception, it is caught and suppressed, and subsequent
+         * matching listeners still fire.
+         * </p>
+         * <p>
          * The listener is executed asynchronously in a dedicated thread to
-         * prevent blocking the main application flow. Any exceptions thrown by
-         * the listener are caught and suppressed to maintain application
-         * stability.
+         * prevent blocking the main application flow.
          * </p>
          * <p>
          * <strong>Important:</strong> Save listeners should not modify the
@@ -2040,19 +2074,36 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * save process, use the {@link Record#beforeSave} hook instead, which
          * is called before the record is persisted.
          * </p>
+         *
+         * @param type the {@link Record} type (or superclass) to listen for
+         * @param listener a consumer that processes saved records of the
+         *            specified type
+         * @return this builder
+         */
+        public <T extends Record> Builder onSave(Class<T> type,
+                Consumer<T> listener) {
+            saveListeners.add(new SimpleImmutableEntry<>(type, listener));
+            return this;
+        }
+
+        /**
+         * Provide a listener that will be called <strong>after</strong> any
+         * record is successfully saved.
          * <p>
-         * <strong>NOTE:</strong>The {@code listener} will receive
-         * <em>every</em> saved record, so it should perform the necessary
-         * internal checks (e.g., checking the record type or specific
-         * properties) before taking action.
+         * This is equivalent to calling
+         * {@link #onSave(Class, Consumer) onSave(Record.class, listener)}.
+         * </p>
+         * <p>
+         * This method is <strong>compositional</strong>: calling it multiple
+         * times adds additional listeners rather than replacing previous ones.
+         * All matching listeners fire in registration order.
          * </p>
          *
          * @param listener a consumer that processes saved records
          * @return this builder
          */
         public Builder onSave(Consumer<Record> listener) {
-            this.saveListener = listener;
-            return this;
+            return onSave(Record.class, listener);
         }
 
         /**

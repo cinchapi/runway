@@ -683,6 +683,154 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(player2.score, loaded2.score);
     }
 
+    @Test
+    public void testTypedSaveListenerOnlyFiresForMatchingType()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> playerSaves = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(Player.class, player -> {
+                    playerSaves.add(player);
+                    latch.countDown();
+                }).build();
+
+        // Save a non-Player record first
+        PreSaveHookRecord hook = new PreSaveHookRecord();
+        hook.name = "Not a Player";
+        hook.save();
+
+        // Save a Player record
+        Player player = new Player("Typed Player", 99);
+        player.save();
+
+        Assert.assertTrue("Typed listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, playerSaves.size());
+        Assert.assertTrue(playerSaves.contains(player));
+    }
+
+    @Test
+    public void testMultipleTypedListeners() throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> playerSaves = Sets.newConcurrentHashSet();
+        Set<Record> hookSaves = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(Player.class, player -> {
+                    playerSaves.add(player);
+                    latch.countDown();
+                })
+                .onSave(PreSaveHookRecord.class, record -> {
+                    hookSaves.add(record);
+                    latch.countDown();
+                }).build();
+
+        Player player = new Player("Typed Player", 50);
+        player.save();
+
+        PreSaveHookRecord hook = new PreSaveHookRecord();
+        hook.name = "Hook Record";
+        hook.save();
+
+        Assert.assertTrue("Not all listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, playerSaves.size());
+        Assert.assertTrue(playerSaves.contains(player));
+        Assert.assertEquals(1, hookSaves.size());
+        Assert.assertTrue(hookSaves.contains(hook));
+    }
+
+    @Test
+    public void testCompositionMultipleListenersForSameType()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        AtomicInteger firstCount = new AtomicInteger(0);
+        AtomicInteger secondCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(Record.class, record -> {
+                    firstCount.incrementAndGet();
+                    latch.countDown();
+                })
+                .onSave(Record.class, record -> {
+                    secondCount.incrementAndGet();
+                    latch.countDown();
+                }).build();
+
+        Player player = new Player("Composed", 10);
+        player.save();
+
+        Assert.assertTrue("Not all listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, firstCount.get());
+        Assert.assertEquals(1, secondCount.get());
+    }
+
+    @Test
+    public void testMixedTypedAndUntypedListeners() throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> typedSaves = Sets.newConcurrentHashSet();
+        Set<Record> untypedSaves = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(Player.class, player -> {
+                    typedSaves.add(player);
+                    latch.countDown();
+                })
+                .onSave(record -> {
+                    untypedSaves.add(record);
+                    latch.countDown();
+                }).build();
+
+        Player player = new Player("Mixed", 77);
+        player.save();
+
+        Assert.assertTrue("Not all listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        // Both should fire for a Player save
+        Assert.assertEquals(1, typedSaves.size());
+        Assert.assertTrue(typedSaves.contains(player));
+        Assert.assertEquals(1, untypedSaves.size());
+        Assert.assertTrue(untypedSaves.contains(player));
+    }
+
+    @Test
+    public void testListenerErrorIsolation() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicInteger secondCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(Record.class, record -> {
+                    throw new RuntimeException(
+                            "Intentional exception from first listener");
+                })
+                .onSave(Record.class, record -> {
+                    secondCount.incrementAndGet();
+                    latch.countDown();
+                }).build();
+
+        Player player = new Player("Error Isolation", 33);
+        player.save();
+
+        Assert.assertTrue(
+                "Second listener was not called despite first throwing",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(
+                "Second listener should still fire after first throws", 1,
+                secondCount.get());
+    }
+
     /**
      * A test record class that modifies multiple fields in preSave.
      */
