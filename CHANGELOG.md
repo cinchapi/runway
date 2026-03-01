@@ -1,5 +1,10 @@
 # Changelog
 
+#### Version 1.11.1 (TBD)
+* **Type-Specific Save Listeners**: The `onSave` method on `Runway.Builder` now supports type-specific listeners via a new `onSave(Class<T>, Consumer<T>)` overload. A listener registered for a type only fires for records that are instances of that type (including subclasses), eliminating the need for `instanceof` checks. The existing `onSave(Consumer<Record>)` method is now equivalent to `onSave(Record.class, listener)` and matches all records.
+  * **Compositional**: Multiple `onSave` calls add listeners rather than replacing previous ones. All matching listeners fire in registration order.
+  * **Error Isolation**: If a listener throws an exception, it is caught and suppressed, and subsequent matching listeners still fire.
+
 #### Version 1.11.0 (February 14, 2026)
 
 ##### Access Control Framework
