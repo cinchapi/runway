@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -42,8 +42,8 @@ import com.google.common.collect.Lists;
  * from an in-memory data source.
  * <p>
  * An {@link AdHocDataSource} bridges programmatic data sources with Runway's
- * query interface. Data is supplied via a {@link Supplier} that is evaluated
- * on each query, allowing for dynamic or computed data.
+ * query interface. Data is supplied via a {@link Supplier} that is evaluated on
+ * each query, allowing for dynamic or computed data.
  * </p>
  * <p>
  * Queries for the registered {@link AdHocRecord} type are resolved in-memory
@@ -51,11 +51,11 @@ import com.google.common.collect.Lists;
  * results.
  * </p>
  * <p>
- * <strong>Note on Realms:</strong> {@link AdHocRecord AdHocRecords} do not
- * have realm associations. While query methods accept {@link Realms}
- * parameters for API compatibility, the realm constraints are not applied
- * to ad-hoc data. All records from the supplier are considered visible
- * regardless of the specified realms.
+ * <strong>Note on Realms:</strong> {@link AdHocRecord AdHocRecords} do not have
+ * realm associations. While query methods accept {@link Realms} parameters for
+ * API compatibility, the realm constraints are not applied to ad-hoc data. All
+ * records from the supplier are considered visible regardless of the specified
+ * realms.
  * </p>
  * <p>
  * To use this source with a {@link Runway} instance, attach it using
@@ -63,13 +63,13 @@ import com.google.common.collect.Lists;
  * </p>
  *
  * <pre>
- * {@code
- * AdHocDataSource<ReportRecord> reports = new AdHocDataSource<>(
- *         ReportRecord.class, () -> generateReports());
+ * {
+ *     &#64;code AdHocDataSource<ReportRecord> reports = new AdHocDataSource<>(
+ *             ReportRecord.class, () -> generateReports());
  *
- * try (DatabaseInterface db = runway.attach(reports)) {
- *     db.load(ReportRecord.class); // Served from reports source
- * }
+ *     try (DatabaseInterface db = runway.attach(reports)) {
+ *         db.load(ReportRecord.class); // Served from reports source
+ *     }
  * }
  * </pre>
  *

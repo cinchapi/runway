@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.access;
 
@@ -30,14 +30,15 @@ import com.google.common.collect.ImmutableSet;
  * Base test class for access control tests using the {@link Audience}
  * construct.
  * <p>
- * This class defines the domain model for a job application system with
- * various user types and access control rules to demonstrate the framework's
+ * This class defines the domain model for a job application system with various
+ * user types and access control rules to demonstrate the framework's
  * capabilities.
  * </p>
  *
  * @author Jeff Nelson
  */
-public abstract class AudienceAccessControlBaseTest extends RunwayBaseClientServerTest {
+public abstract class AudienceAccessControlBaseTest
+        extends RunwayBaseClientServerTest {
 
     // ========================================================================
     // USER HIERARCHY
@@ -73,8 +74,7 @@ public abstract class AudienceAccessControlBaseTest extends RunwayBaseClientServ
         public boolean $isDiscoverableBy(@Nonnull Audience audience) {
             // Candidates can be discovered by admins and employer users, but
             // not by other candidates
-            return audience instanceof Admin
-                    || audience instanceof EmployerUser
+            return audience instanceof Admin || audience instanceof EmployerUser
                     || audience.equals(this);
         }
 
@@ -140,11 +140,12 @@ public abstract class AudienceAccessControlBaseTest extends RunwayBaseClientServ
     }
 
     /**
-     * Base user class that implements both AccessControl and Audience.
-     * All users can perform operations and have access controls applied to
-     * them.
+     * Base user class that implements both AccessControl and Audience. All
+     * users can perform operations and have access controls applied to them.
      */
-    protected static abstract class User extends Record implements AccessControl, Audience {
+    protected static abstract class User extends Record implements
+            AccessControl,
+            Audience {
 
         @Required
         @Unique
@@ -174,8 +175,7 @@ public abstract class AudienceAccessControlBaseTest extends RunwayBaseClientServ
 
         @Override
         public boolean $isDiscoverableBy(@Nonnull Audience audience) {
-            return audience instanceof Admin
-                    || audience instanceof EmployerUser
+            return audience instanceof Admin || audience instanceof EmployerUser
                     || audience.equals(this);
         }
 
@@ -374,7 +374,8 @@ public abstract class AudienceAccessControlBaseTest extends RunwayBaseClientServ
 
         @Override
         public boolean $isCreatableBy(@Nonnull Audience audience) {
-            return audience instanceof Admin || audience instanceof EmployerUser;
+            return audience instanceof Admin
+                    || audience instanceof EmployerUser;
         }
 
         @Override
@@ -420,8 +421,8 @@ public abstract class AudienceAccessControlBaseTest extends RunwayBaseClientServ
 
         @Override
         public Set<String> $readableByAnonymous() {
-            return ImmutableSet.of("name", "description", "website",
-                    "industry", "location");
+            return ImmutableSet.of("name", "description", "website", "industry",
+                    "location");
         }
 
         @Override
@@ -476,7 +477,8 @@ public abstract class AudienceAccessControlBaseTest extends RunwayBaseClientServ
 
         @Override
         public boolean $isCreatableBy(@Nonnull Audience audience) {
-            return audience instanceof Admin || audience instanceof EmployerUser;
+            return audience instanceof Admin
+                    || audience instanceof EmployerUser;
         }
 
         @Override
@@ -624,7 +626,8 @@ public abstract class AudienceAccessControlBaseTest extends RunwayBaseClientServ
 
         @Override
         public boolean $isCreatableBy(@Nonnull Audience audience) {
-            return audience instanceof Admin || audience instanceof EmployerUser;
+            return audience instanceof Admin
+                    || audience instanceof EmployerUser;
         }
 
         @Override

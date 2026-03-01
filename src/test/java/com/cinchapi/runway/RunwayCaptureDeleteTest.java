@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2024 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -24,8 +24,8 @@ import org.junit.Test;
 
 /**
  * Unit test for verifying {@link CaptureDelete} functionality in various
- * scenarios. Tests confirm that annotated fields are nullified or removed
- * from collections when the linked record is deleted.
+ * scenarios. Tests confirm that annotated fields are nullified or removed from
+ * collections when the linked record is deleted.
  *
  * author Jeff Nelson
  */
@@ -45,14 +45,16 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
 
         // Verify that the reference in ParentRecord is set to null
         parent = runway.load(ParentRecord.class, parent.id());
-        Assert.assertNull("Child reference should be null after deletion", parent.child);
+        Assert.assertNull("Child reference should be null after deletion",
+                parent.child);
         Assert.assertEquals("Parent1", parent.name);
     }
 
     @Test
     public void testCollectionFieldWithCaptureDelete() {
         // Create a parent record with a collection of children
-        ParentWithChildrenCollection parent = new ParentWithChildrenCollection("CollectionParent");
+        ParentWithChildrenCollection parent = new ParentWithChildrenCollection(
+                "CollectionParent");
         ChildRecord child1 = new ChildRecord("Child1");
         ChildRecord child2 = new ChildRecord("Child2");
         parent.children = new ArrayList<>(Arrays.asList(child1, child2));
@@ -64,8 +66,10 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
 
         // Verify that the deleted child is removed from the collection
         parent = runway.load(ParentWithChildrenCollection.class, parent.id());
-        Assert.assertEquals("Collection should contain only one child", 1, parent.children.size());
-        Assert.assertEquals("Remaining child should be child1", child1.id(), parent.children.get(0).id());
+        Assert.assertEquals("Collection should contain only one child", 1,
+                parent.children.size());
+        Assert.assertEquals("Remaining child should be child1", child1.id(),
+                parent.children.get(0).id());
         Assert.assertEquals("CollectionParent", parent.name);
     }
 
@@ -86,7 +90,8 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
         // Verify that only child1 reference is null and child2 is intact
         parent = runway.load(MultiChildRecord.class, parent.id());
         Assert.assertNull("child1 reference should be null", parent.child1);
-        Assert.assertNotNull("child2 reference should remain intact", parent.child2);
+        Assert.assertNotNull("child2 reference should remain intact",
+                parent.child2);
         Assert.assertEquals("MultiParent", parent.name);
     }
 
@@ -104,10 +109,13 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
         child1.deleteOnSave();
         child1.save();
 
-        // Verify that the captureChild reference is null and cascadeChild remains intact
+        // Verify that the captureChild reference is null and cascadeChild
+        // remains intact
         parent = runway.load(MixedDeletionRecord.class, parent.id());
-        Assert.assertNull("captureChild should be null after deletion", parent.captureChild);
-        Assert.assertNotNull("cascadeChild should remain intact", parent.cascadeChild);
+        Assert.assertNull("captureChild should be null after deletion",
+                parent.captureChild);
+        Assert.assertNotNull("cascadeChild should remain intact",
+                parent.cascadeChild);
         Assert.assertEquals("MixedParent", parent.name);
     }
 
@@ -124,9 +132,11 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
         recordB.deleteOnSave();
         recordB.save();
 
-        // Verify that recordA's reference to recordB is nullified but recordA is intact
+        // Verify that recordA's reference to recordB is nullified but recordA
+        // is intact
         recordA = runway.load(CircularRecordA.class, recordA.id());
-        Assert.assertNull("recordB reference should be null in recordA", recordA.recordB);
+        Assert.assertNull("recordB reference should be null in recordA",
+                recordA.recordB);
     }
 
     @Test
@@ -160,8 +170,8 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
 
     /**
      * Represents a record with two child records, both linked with
-     * {@link CaptureDelete}, where each child can be independently nullified
-     * if deleted.
+     * {@link CaptureDelete}, where each child can be independently nullified if
+     * deleted.
      */
     class MultiChildRecord extends Record {
         String name;
@@ -252,8 +262,9 @@ public class RunwayCaptureDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents a record with a circular reference back to {@link CircularRecordA}
-     * via {@link CaptureDelete} for testing circular reference nullification.
+     * Represents a record with a circular reference back to
+     * {@link CircularRecordA} via {@link CaptureDelete} for testing circular
+     * reference nullification.
      */
     class CircularRecordB extends Record {
         String name;

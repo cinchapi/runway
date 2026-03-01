@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -93,9 +93,9 @@ public final class Gateway {
      * {@code criteria}, possibly sorted by {@code order}, and possibly
      * paginated by {@code page}, within the specified {@code realms}. This
      * method intelligently routes to the appropriate database operation
-     * ({@link DatabaseInterface#find} or {@link DatabaseInterface#load})
-     * based on the parameters provided. When any of these elements are null,
-     * they are ignored in the fetch process.
+     * ({@link DatabaseInterface#find} or {@link DatabaseInterface#load}) based
+     * on the parameters provided. When any of these elements are null, they are
+     * ignored in the fetch process.
      *
      * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
@@ -135,9 +135,9 @@ public final class Gateway {
      * {@code criteria}, possibly sorted by {@code order}, and possibly
      * paginated by {@code page}, within the specified {@code realms}. This
      * method intelligently routes to the appropriate database operation
-     * ({@link DatabaseInterface#find} or {@link DatabaseInterface#load})
-     * based on the parameters provided. When any of these elements are null,
-     * they are ignored in the fetch process.
+     * ({@link DatabaseInterface#find} or {@link DatabaseInterface#load}) based
+     * on the parameters provided. When any of these elements are null, they are
+     * ignored in the fetch process.
      *
      * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
@@ -156,10 +156,9 @@ public final class Gateway {
      * Fetch records from the specified class or its descendants, possibly
      * filtered by {@code criteria}, possibly sorted by {@code order}, and
      * possibly paginated by {@code page}. This method intelligently routes to
-     * the appropriate database operation ({@link DatabaseInterface#findAny}
-     * or {@link DatabaseInterface#loadAny}) based on the parameters provided.
-     * When any of these elements are null, they are ignored in the fetch
-     * process.
+     * the appropriate database operation ({@link DatabaseInterface#findAny} or
+     * {@link DatabaseInterface#loadAny}) based on the parameters provided. When
+     * any of these elements are null, they are ignored in the fetch process.
      *
      * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
@@ -176,12 +175,11 @@ public final class Gateway {
     /**
      * Fetch records from the specified class or its descendants, possibly
      * filtered by {@code criteria}, possibly sorted by {@code order}, and
-     * possibly paginated by {@code page}, within the specified
-     * {@code realms}. This method intelligently routes to the appropriate
-     * database operation ({@link DatabaseInterface#findAny} or
-     * {@link DatabaseInterface#loadAny}) based on the parameters provided.
-     * When any of these elements are null, they are ignored in the fetch
-     * process.
+     * possibly paginated by {@code page}, within the specified {@code realms}.
+     * This method intelligently routes to the appropriate database operation
+     * ({@link DatabaseInterface#findAny} or {@link DatabaseInterface#loadAny})
+     * based on the parameters provided. When any of these elements are null,
+     * they are ignored in the fetch process.
      *
      * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
@@ -200,10 +198,9 @@ public final class Gateway {
      * Fetch records from the specified class or its descendants, possibly
      * filtered by {@code criteria}, possibly sorted by {@code order}, and
      * possibly paginated by {@code page}. This method intelligently routes to
-     * the appropriate database operation ({@link DatabaseInterface#findAny}
-     * or {@link DatabaseInterface#loadAny}) based on the parameters provided.
-     * When any of these elements are null, they are ignored in the fetch
-     * process.
+     * the appropriate database operation ({@link DatabaseInterface#findAny} or
+     * {@link DatabaseInterface#loadAny}) based on the parameters provided. When
+     * any of these elements are null, they are ignored in the fetch process.
      *
      * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
@@ -220,12 +217,11 @@ public final class Gateway {
     /**
      * Fetch records from the specified class or its descendants, possibly
      * filtered by {@code criteria}, possibly sorted by {@code order}, and
-     * possibly paginated by {@code page}, within the specified
-     * {@code realms}. This method intelligently routes to the appropriate
-     * database operation ({@link DatabaseInterface#findAny} or
-     * {@link DatabaseInterface#loadAny}) based on the parameters provided.
-     * When any of these elements are null, they are ignored in the fetch
-     * process.
+     * possibly paginated by {@code page}, within the specified {@code realms}.
+     * This method intelligently routes to the appropriate database operation
+     * ({@link DatabaseInterface#findAny} or {@link DatabaseInterface#loadAny})
+     * based on the parameters provided. When any of these elements are null,
+     * they are ignored in the fetch process.
      *
      * @param clazz the class of records to fetch
      * @param criteria the selection criteria, possibly null
@@ -243,8 +239,9 @@ public final class Gateway {
     /**
      * Route the database fetch calls based on the provided parameters.
      * Different combinations of non-null parameters route to different database
-     * operations ({@link DatabaseInterface#find}/{@link DatabaseInterface#findAny}
-     * or {@link DatabaseInterface#load}/{@link DatabaseInterface#loadAny}).
+     * operations
+     * ({@link DatabaseInterface#find}/{@link DatabaseInterface#findAny} or
+     * {@link DatabaseInterface#load}/{@link DatabaseInterface#loadAny}).
      *
      * @param <T> the type of the records to fetch
      * @param clazz the class of the records

@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2019 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -350,8 +350,7 @@ public interface DatabaseInterface {
     /**
      * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} and pass the {@code filter}, sorted by the specified
-     * {@code order} and limited to the
-     * specified {@code page}.
+     * {@code order} and limited to the specified {@code page}.
      *
      * @param clazz
      * @param criteria
@@ -368,8 +367,8 @@ public interface DatabaseInterface {
     /**
      * Find and return all the records of type {@code clazz} that match the
      * {@code criteria} and pass the {@code filter}, sorted by the specified
-     * {@code order} and limited to the
-     * specified {@code page} among the provided {@code realms}.
+     * {@code order} and limited to the specified {@code page} among the
+     * provided {@code realms}.
      *
      * @param clazz
      * @param criteria
@@ -657,8 +656,8 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order}.
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants sorted by the specified {@code order}.
      *
      * @param clazz
      * @param criteria
@@ -674,8 +673,8 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order}.
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants sorted by the specified {@code order}.
      *
      * @param clazz
      * @param criteria
@@ -688,9 +687,9 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order} and
-     * limited to the specified {@code page}.
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants sorted by the specified {@code order} and limited
+     * to the specified {@code page}.
      *
      * @param clazz
      * @param criteria
@@ -704,8 +703,8 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants that pass the {@code filter}, sorted by the
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order} and limited to the specified {@code page}.
      *
      * @param clazz
@@ -721,8 +720,8 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants that pass the {@code filter}, sorted by the
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order} and limited to the specified {@code page} among
      * the provided {@code realms}.
      *
@@ -743,9 +742,9 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order} and
-     * limited to the specified {@code page} among the provided {@code realms}.
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants sorted by the specified {@code order} and limited
+     * to the specified {@code page} among the provided {@code realms}.
      *
      * @param clazz
      * @param criteria
@@ -758,8 +757,8 @@ public interface DatabaseInterface {
             Order order, Page page, Realms realms);
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants that pass the {@code filter}, sorted by the
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order}.
      *
      * @param clazz
@@ -774,8 +773,8 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants that pass the {@code filter}, sorted by the
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order} among the provided {@code realms}.
      *
      * @param clazz
@@ -793,9 +792,9 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order} among
-     * the provided {@code realms}.
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants sorted by the specified {@code order} among the
+     * provided {@code realms}.
      *
      * @param clazz
      * @param criteria
@@ -807,8 +806,8 @@ public interface DatabaseInterface {
             Order order, Realms realms);
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants limited to the specified {@code page}.
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants limited to the specified {@code page}.
      *
      * @param clazz
      * @param criteria
@@ -821,9 +820,9 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order} and
-     * limited to the specified {@code page}.
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants sorted by the specified {@code order} and limited
+     * to the specified {@code page}.
      *
      * @param clazz
      * @param criteria
@@ -837,8 +836,8 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants that pass the {@code filter}, sorted by the
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order} and limited to the specified {@code page}.
      *
      * @param clazz
@@ -854,8 +853,8 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants that pass the {@code filter}, sorted by the
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants that pass the {@code filter}, sorted by the
      * specified {@code order} and limited to the specified {@code page} among
      * the provided {@code realms}.
      *
@@ -874,9 +873,9 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order} and
-     * limited to the specified {@code page} among the provided {@code realms}.
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants sorted by the specified {@code order} and limited
+     * to the specified {@code page} among the provided {@code realms}.
      *
      * @param clazz
      * @param criteria
@@ -891,8 +890,8 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants that pass the {@code filter}, limited to the
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants that pass the {@code filter}, limited to the
      * specified {@code page}.
      *
      * @param clazz
@@ -907,8 +906,8 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants that pass the {@code filter}, limited to the
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants that pass the {@code filter}, limited to the
      * specified {@code page} among the provided {@code realms}
      *
      * @param clazz
@@ -926,9 +925,9 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants limited to the specified {@code page} among
-     * the provided {@code realms}.
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants limited to the specified {@code page} among the
+     * provided {@code realms}.
      *
      * @param clazz
      * @param criteria
@@ -983,8 +982,8 @@ public interface DatabaseInterface {
             Realms realms);
 
     /**
-     * Execute the {@link #find(Class, Criteria)} query for {@code clazz}
-     * and all of its descendants sorted by the specified {@code order}.
+     * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
+     * all of its descendants sorted by the specified {@code order}.
      *
      * @param clazz
      * @param criteria
@@ -1055,8 +1054,8 @@ public interface DatabaseInterface {
 
     /**
      * Create a {@link Gateway} instance that provides intelligent routing to
-     * the appropriate database operations based on the parameters provided.
-     * The gateway simplifies database access by automatically choosing between
+     * the appropriate database operations based on the parameters provided. The
+     * gateway simplifies database access by automatically choosing between
      * {@link #find} and {@link #load} operations.
      *
      * @return a new gateway instance for this database interface
@@ -1135,9 +1134,9 @@ public interface DatabaseInterface {
      * </p>
      * <p>
      * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not
-     * cached). This is done deliberately so different threads/clients can
-     * make changes to a {@link Record} in isolation.
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a {@link Record} in isolation.
      * </p>
      *
      * @param clazz the {@link Record} type
@@ -1153,20 +1152,20 @@ public interface DatabaseInterface {
 
     /**
      * Load the {@link Record} that is contained within the specified
-     * {@code clazz} and has the specified {@code id} if it exists in any of
-     * the {@code realms}, throwing an {@link IllegalStateException} if no
-     * such {@link Record} exists.
+     * {@code clazz} and has the specified {@code id} if it exists in any of the
+     * {@code realms}, throwing an {@link IllegalStateException} if no such
+     * {@link Record} exists.
      * <p>
      * This method provides a fail-fast alternative to
-     * {@link #load(Class, long, Realms)} for cases where the caller expects
-     * the {@link Record} to exist and considers its absence to be an error
+     * {@link #load(Class, long, Realms)} for cases where the caller expects the
+     * {@link Record} to exist and considers its absence to be an error
      * condition.
      * </p>
      * <p>
      * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not
-     * cached). This is done deliberately so different threads/clients can
-     * make changes to a {@link Record} in isolation.
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a {@link Record} in isolation.
      * </p>
      *
      * @param clazz the {@link Record} type

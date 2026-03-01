@@ -1,17 +1,17 @@
 /*
  * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -28,9 +28,9 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.Operator;
 
 /**
- * Tests that verify pagination correctly applies both skip and limit across
- * all query methods. This addresses a normalization fix where some legacy
- * code paths were missing the skip operation.
+ * Tests that verify pagination correctly applies both skip and limit across all
+ * query methods. This addresses a normalization fix where some legacy code
+ * paths were missing the skip operation.
  *
  * @author Jeff Nelson
  */
@@ -49,8 +49,7 @@ public class PaginationNormalizationTest extends RunwayBaseClientServerTest {
         Page page = Page.of(2, 3);
 
         Set<Player> expected = runway.find(Player.class, criteria, order)
-                .stream()
-                .skip(page.skip()).limit(page.limit())
+                .stream().skip(page.skip()).limit(page.limit())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
         Set<Player> actual = runway.find(Player.class, criteria, order, page);
@@ -68,8 +67,7 @@ public class PaginationNormalizationTest extends RunwayBaseClientServerTest {
         Order order = Order.by("score").ascending();
         Page page = Page.of(2, 3);
 
-        Set<Player> expected = runway.load(Player.class, order)
-                .stream()
+        Set<Player> expected = runway.load(Player.class, order).stream()
                 .skip(page.skip()).limit(page.limit())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
@@ -92,8 +90,7 @@ public class PaginationNormalizationTest extends RunwayBaseClientServerTest {
         Order order = Order.by("score").ascending();
         Page page = Page.of(2, 3);
 
-        Set<Player> expected = runway.loadAny(Player.class, order)
-                .stream()
+        Set<Player> expected = runway.loadAny(Player.class, order).stream()
                 .skip(page.skip()).limit(page.limit())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
@@ -119,11 +116,11 @@ public class PaginationNormalizationTest extends RunwayBaseClientServerTest {
         Page page = Page.of(2, 3);
 
         Set<Player> expected = runway.findAny(Player.class, criteria, order)
-                .stream()
-                .skip(page.skip()).limit(page.limit())
+                .stream().skip(page.skip()).limit(page.limit())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        Set<Player> actual = runway.findAny(Player.class, criteria, order, page);
+        Set<Player> actual = runway.findAny(Player.class, criteria, order,
+                page);
 
         Assert.assertEquals(expected, actual);
     }

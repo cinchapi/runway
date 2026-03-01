@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -32,8 +32,8 @@ import com.cinchapi.concourse.thrift.Operator;
 
 /**
  * Unit tests for {@link Runway#attach(AdHocDataSource...)} and
- * {@link Runway#detach(AdHocDataSource)} functionality, including
- * thread isolation guarantees.
+ * {@link Runway#detach(AdHocDataSource)} functionality, including thread
+ * isolation guarantees.
  *
  * @author Jeff Nelson
  */
@@ -85,10 +85,10 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
                 .operator(Operator.GREATER_THAN).value(28).build();
 
         try (AttachmentScope scope = runway.attach(source)) {
-            Set<TestAdHocRecord> scopeResults = scope.find(
-                    TestAdHocRecord.class, criteria);
-            Set<TestAdHocRecord> runwayResults = runway.find(
-                    TestAdHocRecord.class, criteria);
+            Set<TestAdHocRecord> scopeResults = scope
+                    .find(TestAdHocRecord.class, criteria);
+            Set<TestAdHocRecord> runwayResults = runway
+                    .find(TestAdHocRecord.class, criteria);
 
             Assert.assertEquals(scopeResults.size(), runwayResults.size());
             Assert.assertEquals(2, scopeResults.size());
@@ -97,8 +97,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testAutoDetachOnClose() {
-        Collection<TestAdHocRecord> data = Arrays.asList(
-                new TestAdHocRecord("Alice", 30));
+        Collection<TestAdHocRecord> data = Arrays
+                .asList(new TestAdHocRecord("Alice", 30));
         AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> data);
 
@@ -114,8 +114,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testManualDetach() {
-        Collection<TestAdHocRecord> data = Arrays.asList(
-                new TestAdHocRecord("Alice", 30));
+        Collection<TestAdHocRecord> data = Arrays
+                .asList(new TestAdHocRecord("Alice", 30));
         AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> data);
 
@@ -135,8 +135,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testDetachByClass() {
-        Collection<TestAdHocRecord> data = Arrays.asList(
-                new TestAdHocRecord("Alice", 30));
+        Collection<TestAdHocRecord> data = Arrays
+                .asList(new TestAdHocRecord("Alice", 30));
         AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> data);
 
@@ -153,10 +153,10 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testMultipleSources() {
-        Collection<TestAdHocRecord> data1 = Arrays.asList(
-                new TestAdHocRecord("Alice", 30));
-        Collection<OtherAdHocRecord> data2 = Arrays.asList(
-                new OtherAdHocRecord("Report1"));
+        Collection<TestAdHocRecord> data1 = Arrays
+                .asList(new TestAdHocRecord("Alice", 30));
+        Collection<OtherAdHocRecord> data2 = Arrays
+                .asList(new OtherAdHocRecord("Report1"));
 
         AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> data1);
@@ -186,8 +186,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         person.save();
 
         // Attach ad-hoc source
-        Collection<TestAdHocRecord> adhocData = Arrays.asList(
-                new TestAdHocRecord("AdHoc", 99));
+        Collection<TestAdHocRecord> adhocData = Arrays
+                .asList(new TestAdHocRecord("AdHoc", 99));
         AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> adhocData);
 
@@ -208,8 +208,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testAttachedSourceIsThreadLocal() throws Exception {
-        Collection<TestAdHocRecord> data = Arrays.asList(
-                new TestAdHocRecord("Alice", 30));
+        Collection<TestAdHocRecord> data = Arrays
+                .asList(new TestAdHocRecord("Alice", 30));
         AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> data);
 
@@ -240,8 +240,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testDifferentThreadsCanHaveDifferentSources() throws Exception {
-        Collection<TestAdHocRecord> data1 = Arrays.asList(
-                new TestAdHocRecord("Main", 1));
+        Collection<TestAdHocRecord> data1 = Arrays
+                .asList(new TestAdHocRecord("Main", 1));
         Collection<TestAdHocRecord> data2 = Arrays.asList(
                 new TestAdHocRecord("Other1", 2),
                 new TestAdHocRecord("Other2", 3));
@@ -261,7 +261,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
                 threadReady.countDown();
                 // Wait for main thread to verify
                 mainDone.await(5, TimeUnit.SECONDS);
-                otherThreadResult.set(runway.load(TestAdHocRecord.class).size());
+                otherThreadResult
+                        .set(runway.load(TestAdHocRecord.class).size());
             }
             catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -288,8 +289,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testDetachOnOneThreadDoesNotAffectAnother() throws Exception {
-        Collection<TestAdHocRecord> data = Arrays.asList(
-                new TestAdHocRecord("Alice", 30));
+        Collection<TestAdHocRecord> data = Arrays
+                .asList(new TestAdHocRecord("Alice", 30));
         AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> data);
 
@@ -304,8 +305,10 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
                 attached.countDown();
                 // Wait for main thread to verify, then detach its own source
                 detached.await(5, TimeUnit.SECONDS);
-                // After main thread detached its copy, verify our copy still works
-                afterDetachResult.set(runway.load(TestAdHocRecord.class).size());
+                // After main thread detached its copy, verify our copy still
+                // works
+                afterDetachResult
+                        .set(runway.load(TestAdHocRecord.class).size());
                 checkDone.countDown();
             }
             catch (InterruptedException e) {
@@ -353,8 +356,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         try (AttachmentScope scope = runway.attach(source)) {
             Criteria criteria = Criteria.where().key("age")
                     .operator(Operator.GREATER_THAN).value(28).build();
-            Set<TestAdHocRecord> results = scope.find(
-                    TestAdHocRecord.class, criteria);
+            Set<TestAdHocRecord> results = scope.find(TestAdHocRecord.class,
+                    criteria);
             Assert.assertEquals(2, results.size());
         }
     }
@@ -370,8 +373,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         try (AttachmentScope scope = runway.attach(source)) {
             Criteria criteria = Criteria.where().key("name")
                     .operator(Operator.EQUALS).value("Alice").build();
-            TestAdHocRecord result = runway.findUnique(
-                    TestAdHocRecord.class, criteria);
+            TestAdHocRecord result = runway.findUnique(TestAdHocRecord.class,
+                    criteria);
             Assert.assertNotNull(result);
             Assert.assertEquals("Alice", result.name);
         }
@@ -442,7 +445,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
         // Attach both sources
         try (AttachmentScope scope = runway.attach(source1, source2)) {
-            // loadAny(AdHocRecord.class) should return records from BOTH sources
+            // loadAny(AdHocRecord.class) should return records from BOTH
+            // sources
             Set<AdHocRecord> results = runway.loadAny(AdHocRecord.class);
             Assert.assertEquals(5, results.size());
         }
@@ -454,8 +458,7 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
                 new TestAdHocRecord("Alice", 30),
                 new TestAdHocRecord("Bob", 25));
         Collection<OtherAdHocRecord> otherData = Arrays.asList(
-                new OtherAdHocRecord("Alpha"),
-                new OtherAdHocRecord("Beta"));
+                new OtherAdHocRecord("Alpha"), new OtherAdHocRecord("Beta"));
 
         AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> testData);
@@ -498,8 +501,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
     @Test
     public void testLoadAnyWithSingleSourceStillWorks() {
         // Regression test: single source in hierarchy should still work
-        Collection<TestAdHocRecord> data = Arrays.asList(
-                new TestAdHocRecord("Alice", 30));
+        Collection<TestAdHocRecord> data = Arrays
+                .asList(new TestAdHocRecord("Alice", 30));
         AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> data);
 
@@ -574,8 +577,8 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         Collection<TestAdHocRecord> data1 = Arrays.asList(
                 new TestAdHocRecord("Alice", 30),
                 new TestAdHocRecord("Bob", 25));
-        Collection<TestAdHocRecord> data2 = Arrays.asList(
-                new TestAdHocRecord("Charlie", 35));
+        Collection<TestAdHocRecord> data2 = Arrays
+                .asList(new TestAdHocRecord("Charlie", 35));
 
         AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> data1);
@@ -645,10 +648,10 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testFindAnyUniqueWithMultipleSourcesInHierarchy() {
-        Collection<TestAdHocRecord> testData = Arrays.asList(
-                new TestAdHocRecord("Alice", 30));
-        Collection<OtherAdHocRecord> otherData = Arrays.asList(
-                new OtherAdHocRecord("Report1"));
+        Collection<TestAdHocRecord> testData = Arrays
+                .asList(new TestAdHocRecord("Alice", 30));
+        Collection<OtherAdHocRecord> otherData = Arrays
+                .asList(new OtherAdHocRecord("Report1"));
 
         AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> testData);
@@ -694,7 +697,7 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
                 new TestAdHocRecord("Alice", 30),
                 new TestAdHocRecord("Bob", 20));
         Collection<OtherAdHocRecord> otherData = Arrays.asList(
-                new OtherAdHocRecord("Charlie"),  // no age field
+                new OtherAdHocRecord("Charlie"), // no age field
                 new OtherAdHocRecord("Dave"));
 
         AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
@@ -709,7 +712,7 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(4, results.size());
 
             // Verify order: Alice, Bob, Charlie, Dave
-            String[] expectedOrder = {"Alice", "Bob", "Charlie", "Dave"};
+            String[] expectedOrder = { "Alice", "Bob", "Charlie", "Dave" };
             int i = 0;
             for (AdHocRecord record : results) {
                 String name = record instanceof TestAdHocRecord
@@ -751,8 +754,7 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
                 new TestAdHocRecord("Bob", 25),
                 new TestAdHocRecord("Charlie", 35));
         Collection<OtherAdHocRecord> otherData = Arrays.asList(
-                new OtherAdHocRecord("Dave"),
-                new OtherAdHocRecord("Eve"));
+                new OtherAdHocRecord("Dave"), new OtherAdHocRecord("Eve"));
 
         AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
                 TestAdHocRecord.class, () -> testData);
@@ -772,8 +774,7 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
             // Page 1 with size 2: Alice, Bob
             Assert.assertEquals(2, results.size());
 
-            String[] names = results.stream()
-                    .map(r -> r.name)
+            String[] names = results.stream().map(r -> r.name)
                     .toArray(String[]::new);
             Assert.assertEquals("Alice", names[0]);
             Assert.assertEquals("Bob", names[1]);
@@ -797,14 +798,13 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
             Order order = Order.by("name").ascending().build();
 
             // Use the 3-arg overload: findAny(Class, Criteria, Order)
-            Set<TestAdHocRecord> results = runway.findAny(
-                    TestAdHocRecord.class, criteria, order);
+            Set<TestAdHocRecord> results = runway.findAny(TestAdHocRecord.class,
+                    criteria, order);
 
             Assert.assertEquals(3, results.size());
 
             // Verify results are sorted by name: Alice, Bob, Charlie
-            String[] names = results.stream()
-                    .map(r -> r.name)
+            String[] names = results.stream().map(r -> r.name)
                     .toArray(String[]::new);
             Assert.assertEquals("Alice", names[0]);
             Assert.assertEquals("Bob", names[1]);
@@ -852,4 +852,3 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
     }
 
 }
-

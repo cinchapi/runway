@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2019 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -31,12 +32,16 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
@@ -80,11 +85,6 @@ import com.google.common.collect.Sets;
 
 import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
-
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.function.Consumer;
-import java.util.concurrent.ThreadFactory;
 
 /**
  * {@link Runway} is the ORM controller for Concourse.
@@ -310,15 +310,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean hasNativeSortingAndPagination;
 
     /**
-     * Whenever an exception is thrown during a {@link Runway#load(long)
-     * load} operation, the provided {@code onLoadFailureHandler} receives
-     * the record's class, id and error for processing.
+     * Whenever an exception is thrown during a {@link Runway#load(long) load}
+     * operation, the provided {@code onLoadFailureHandler} receives the
+     * record's class, id and error for processing.
      */
     private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = DEFAULT_ON_LOAD_FAILURE_HANDLER;
 
     /**
-     * The strategy for {@link #read(Concourse, Criteria, Order, Page)
-     * loading} data from the database.
+     * The strategy for {@link #read(Concourse, Criteria, Order, Page) loading}
+     * data from the database.
      */
     private ReadStrategy readStrategy = ReadStrategy.AUTO;
 
@@ -351,8 +351,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean supportsPreSelectLinkedRecords;
 
     /**
-     * A queue of records that have been successfully saved and are waiting
-     * for save notification processing.
+     * A queue of records that have been successfully saved and are waiting for
+     * save notification processing.
      */
     private BlockingQueue<Record> saveNotificationQueue;
 
@@ -374,9 +374,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Gateway gateway = null;
 
     /**
-     * Thread-local storage for attached {@link AdHocDataSource} instances.
-     * Each thread maintains its own set of attached sources, enabling
-     * request-scoped or context-scoped attachment.
+     * Thread-local storage for attached {@link AdHocDataSource} instances. Each
+     * thread maintains its own set of attached sources, enabling request-scoped
+     * or context-scoped attachment.
      * <p>
      * The set is lazily initialized only when {@link #attach} is called to
      * avoid unnecessary allocations for threads that never use attachment.
@@ -419,8 +419,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Attach one or more {@link AdHocDataSource AdHocDataSources} to
-     * this {@link Runway} instance for the current thread.
+     * Attach one or more {@link AdHocDataSource AdHocDataSources} to this
+     * {@link Runway} instance for the current thread.
      * <p>
      * When a source is attached, queries for its {@link AdHocDataSource#type()
      * type} are routed to the source instead of Runway's underlying database.
@@ -429,10 +429,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * </p>
      * <p>
      * The returned {@link DatabaseInterface} delegates to this {@link Runway}
-     * instance and implements {@link AutoCloseable} to automatically detach
-     * all sources when closed. Both the returned handle and this
-     * {@link Runway} instance can be used for queries while sources are
-     * attached.
+     * instance and implements {@link AutoCloseable} to automatically detach all
+     * sources when closed. Both the returned handle and this {@link Runway}
+     * instance can be used for queries while sources are attached.
      * </p>
      * <p>
      * <strong>Note:</strong> Full-text {@link #search} operations are not
@@ -452,8 +451,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * }
      * </pre>
      *
-     * @param sources the {@link AdHocDataSource AdHocDataSources} to
-     *            attach
+     * @param sources the {@link AdHocDataSource AdHocDataSources} to attach
      * @return a {@link DatabaseInterface} that auto-detaches on close
      */
     public AttachmentScope attach(AdHocDataSource<?>... sources) {
@@ -551,8 +549,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Detach an {@link AdHocDataSource} from this {@link Runway} instance
-     * for the current thread.
+     * Detach an {@link AdHocDataSource} from this {@link Runway} instance for
+     * the current thread.
      *
      * @param source the source to detach
      */
@@ -1450,12 +1448,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return all {@link AdHocDataSource AdHocDataSources} attached for
-     * classes in the hierarchy of {@code clazz}.
+     * Return all {@link AdHocDataSource AdHocDataSources} attached for classes
+     * in the hierarchy of {@code clazz}.
      * <p>
-     * This method finds all attached sources whose class is assignable from
-     * the requested class (i.e., sources that handle subclasses of the
-     * requested class).
+     * This method finds all attached sources whose class is assignable from the
+     * requested class (i.e., sources that handle subclasses of the requested
+     * class).
      * </p>
      *
      * @param clazz the class to check
@@ -1481,8 +1479,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
-     * that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
+     * that is contained within the specified {@code clazz} and has the
+     * specified {@code id}.
      * <p>
      * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
      * used), multiple calls to this method with the same parameters will return
@@ -1510,8 +1508,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
-     * that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
+     * that is contained within the specified {@code clazz} and has the
+     * specified {@code id}.
      * <p>
      * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
      * used), multiple calls to this method with the same parameters will return
@@ -1536,12 +1534,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
-     * that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
+     * that is contained within the specified {@code clazz} and has the
+     * specified {@code id}.
      * <p>
      * Unlike {@link #instantiate(Class, long, TLongObjectHashMap, Map)} this
-     * method
-     * does not need to know the desired {@link Class} of the loaded
+     * method does not need to know the desired {@link Class} of the loaded
      * {@link Record}.
      * </p>
      * <p>
@@ -1584,12 +1581,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
-     * that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
+     * that is contained within the specified {@code clazz} and has the
+     * specified {@code id}.
      * <p>
      * Unlike {@link #instantiate(Class, long, TLongObjectHashMap, Map)} this
-     * method
-     * does not need to know the desired {@link Class} of the loaded
+     * method does not need to know the desired {@link Class} of the loaded
      * {@link Record}.
      * </p>
      * <p>
@@ -1801,9 +1797,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Set<Entry<Long, Map<String, Set<Object>>>> entrySet = null;
 
             /**
-             * The data that has been loaded from the data into memory. For
-             * the items that have been pulled from the {@link #pending}
-             * queue.
+             * The data that has been loaded from the data into memory. For the
+             * items that have been pulled from the {@link #pending} queue.
              */
             Map<Long, Map<String, Set<Object>>> loaded = Maps
                     .newHashMapWithExpectedSize(ids.size()); // TODO: create
@@ -1816,10 +1811,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                                              // right value
 
             /**
-             * A FIFO list of record ids that are pending database
-             * selection. Items from this queue are popped off in increments
-             * of {@value #BULK_SELECT_BUFFER_SIZE} and selected from
-             * Concourse.
+             * A FIFO list of record ids that are pending database selection.
+             * Items from this queue are popped off in increments of
+             * {@value #BULK_SELECT_BUFFER_SIZE} and selected from Concourse.
              */
             Queue<Long> pending = Queues.newArrayDeque(ids);
 
@@ -2017,9 +2011,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * record is successfully saved.
          * <p>
          * Save listening is designed for implementing side-effects that occur
-         * after a record
-         * is successfully persisted to the database. This is ideal for
-         * operations such as:
+         * after a record is successfully persisted to the database. This is
+         * ideal for operations such as:
          * <ul>
          * <li>Triggering notifications or events</li>
          * <li>Updating external systems</li>

@@ -1,23 +1,25 @@
 /*
- * Copyright (c) 2013-2024 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
+import java.util.List;
+
 import org.junit.Assert;
 import org.junit.Test;
-import java.util.List;
+
 import com.google.common.collect.ImmutableList;
 
 /**
@@ -194,7 +196,8 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
         grandchild.save();
 
         // Verify that all records in the hierarchy have been deleted
-        List<Record> records = ImmutableList.of(grandparent, parent, child, grandchild);
+        List<Record> records = ImmutableList.of(grandparent, parent, child,
+                grandchild);
         records.forEach(this::assertNotExists);
     }
 
@@ -219,7 +222,8 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
         person4.save();
 
         // Verify that all Person records in the chain have been deleted
-        List<Record> people = ImmutableList.of(person1, person2, person3, person4);
+        List<Record> people = ImmutableList.of(person1, person2, person3,
+                person4);
         people.forEach(this::assertNotExists);
     }
 
@@ -254,8 +258,8 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
 
     /**
      * Asserts that a record of the specified class and ID does not exist in the
-     * database. Attempts to load the record and fails the test if the record
-     * is found. Additionally verifies that the database has no remaining data
+     * database. Attempts to load the record and fails the test if the record is
+     * found. Additionally verifies that the database has no remaining data
      * associated with the specified record ID.
      *
      * @param clazz the class of the record to check
@@ -280,15 +284,17 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents the child record in a nested hierarchy, which is
-     * deleted when {@link Grandchild} is deleted due to {@link JoinDelete}.
+     * Represents the child record in a nested hierarchy, which is deleted when
+     * {@link Grandchild} is deleted due to {@link JoinDelete}.
      */
     class Child extends Record {
 
         /** The name of the child record, used for identification in tests. */
         String name;
 
-        /** The linked grandchild record, deleted when removed due to JoinDelete. */
+        /**
+         * The linked grandchild record, deleted when removed due to JoinDelete.
+         */
         @JoinDelete
         public Grandchild grandchild;
 
@@ -312,8 +318,7 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
 
     /**
      * Represents a child record with a unique field, demonstrating unique
-     * constraint
-     * handling within a parent-child relationship.
+     * constraint handling within a parent-child relationship.
      */
     class ChildWithUniqueParent extends Record {
 
@@ -325,8 +330,8 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
 
     /**
      * Represents a record that links to {@link CircularRecordB} via
-     * {@link JoinDelete},
-     * forming part of a circular reference to test cascading deletion.
+     * {@link JoinDelete}, forming part of a circular reference to test
+     * cascading deletion.
      */
     class CircularRecordA extends Record {
 
@@ -336,8 +341,8 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
 
     /**
      * Represents a record that links to {@link CircularRecordA} via
-     * {@link CascadeDelete},
-     * forming part of a circular reference to test cascading deletion.
+     * {@link CascadeDelete}, forming part of a circular reference to test
+     * cascading deletion.
      */
     class CircularRecordB extends Record {
 
@@ -346,12 +351,14 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents the grandchild record in a nested hierarchy, which
-     * triggers deletions up the chain when removed.
+     * Represents the grandchild record in a nested hierarchy, which triggers
+     * deletions up the chain when removed.
      */
     class Grandchild extends Record {
 
-        /** The name of the grandchild record, used for identification in tests. */
+        /**
+         * The name of the grandchild record, used for identification in tests.
+         */
         String name;
 
         public Grandchild(String name) {
@@ -360,8 +367,8 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents the grandparent record in a nested hierarchy, which
-     * is deleted when {@link Parent} is deleted due to {@link JoinDelete}.
+     * Represents the grandparent record in a nested hierarchy, which is deleted
+     * when {@link Parent} is deleted due to {@link JoinDelete}.
      */
     class Grandparent extends Record {
 
@@ -371,8 +378,8 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents the parent record in a nested hierarchy, which is
-     * deleted when {@link Child} is deleted due to {@link JoinDelete}.
+     * Represents the parent record in a nested hierarchy, which is deleted when
+     * {@link Child} is deleted due to {@link JoinDelete}.
      */
     class Parent extends Record {
 
@@ -423,16 +430,19 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents a self-referencing person class, where one person is
-     * linked to another via a "friend" field, enabling a chain of
-     * deletions with {@link JoinDelete}.
+     * Represents a self-referencing person class, where one person is linked to
+     * another via a "friend" field, enabling a chain of deletions with
+     * {@link JoinDelete}.
      */
     class Person extends Record {
 
         /** The name of the person record, used for identification in tests. */
         String name;
 
-        /** The friend record linked with JoinDelete, triggering deletion up the chain. */
+        /**
+         * The friend record linked with JoinDelete, triggering deletion up the
+         * chain.
+         */
         @JoinDelete
         public Person friend;
 

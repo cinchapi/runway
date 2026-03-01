@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.access;
 
@@ -28,7 +28,8 @@ import org.junit.Test;
  *
  * @author Jeff Nelson
  */
-public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTest {
+public class AudienceAccessControlCreateTest
+        extends AudienceAccessControlBaseTest {
 
     @Test
     public void testCreateOperationUserRegistration() {
@@ -36,14 +37,18 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
 
         // Anonymous users should be able to create user accounts (registration)
         Candidate newCandidate = anonymous.create(Candidate.class);
-        Assert.assertNotNull("Anonymous should successfully create candidate", newCandidate);
+        Assert.assertNotNull("Anonymous should successfully create candidate",
+                newCandidate);
 
         EmployerUser newEmployerUser = anonymous.create(EmployerUser.class);
-        Assert.assertNotNull("Anonymous should successfully create employer user", newEmployerUser);
+        Assert.assertNotNull(
+                "Anonymous should successfully create employer user",
+                newEmployerUser);
 
         // Anonymous should be able to create admin accounts too (registration)
         Admin newAdmin = anonymous.create(Admin.class);
-        Assert.assertNotNull("Anonymous should successfully create admin", newAdmin);
+        Assert.assertNotNull("Anonymous should successfully create admin",
+                newAdmin);
     }
 
     @Test
@@ -69,13 +74,15 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
 
         // EmployerUser should successfully create jobs
         Job employerJob = employerUser.create(Job.class);
-        Assert.assertNotNull("EmployerUser should successfully create job", employerJob);
+        Assert.assertNotNull("EmployerUser should successfully create job",
+                employerJob);
 
         // Candidate should not be able to create jobs
         try {
             candidate.create(Job.class);
             Assert.fail("Candidate should not be able to create jobs");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
@@ -83,7 +90,8 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
         try {
             anonymous.create(Job.class);
             Assert.fail("Anonymous should not be able to create jobs");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -103,17 +111,21 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
 
         // Admin should successfully create applications
         Application adminApplication = admin.create(Application.class);
-        Assert.assertNotNull("Admin should successfully create application", adminApplication);
+        Assert.assertNotNull("Admin should successfully create application",
+                adminApplication);
 
         // Candidate should successfully create applications
         Application candidateApplication = candidate.create(Application.class);
-        Assert.assertNotNull("Candidate should successfully create application", candidateApplication);
+        Assert.assertNotNull("Candidate should successfully create application",
+                candidateApplication);
 
         // EmployerUser should not be able to create applications
         try {
             employerUser.create(Application.class);
-            Assert.fail("EmployerUser should not be able to create applications");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "EmployerUser should not be able to create applications");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
@@ -121,7 +133,8 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
         try {
             anonymous.create(Application.class);
             Assert.fail("Anonymous should not be able to create applications");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -141,17 +154,20 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
 
         // Admin should successfully create employers
         Employer adminEmployer = admin.create(Employer.class);
-        Assert.assertNotNull("Admin should successfully create employer", adminEmployer);
+        Assert.assertNotNull("Admin should successfully create employer",
+                adminEmployer);
 
         // EmployerUser should successfully create employers
         Employer userEmployer = employerUser.create(Employer.class);
-        Assert.assertNotNull("EmployerUser should successfully create employer", userEmployer);
+        Assert.assertNotNull("EmployerUser should successfully create employer",
+                userEmployer);
 
         // Candidate should not be able to create employers
         try {
             candidate.create(Employer.class);
             Assert.fail("Candidate should not be able to create employers");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
@@ -159,7 +175,8 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
         try {
             anonymous.create(Employer.class);
             Assert.fail("Anonymous should not be able to create employers");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -179,17 +196,20 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
 
         // Admin should successfully create offers
         Offer adminOffer = admin.create(Offer.class);
-        Assert.assertNotNull("Admin should successfully create offer", adminOffer);
+        Assert.assertNotNull("Admin should successfully create offer",
+                adminOffer);
 
         // EmployerUser should successfully create offers
         Offer employerOffer = employerUser.create(Offer.class);
-        Assert.assertNotNull("EmployerUser should successfully create offer", employerOffer);
+        Assert.assertNotNull("EmployerUser should successfully create offer",
+                employerOffer);
 
         // Candidate should not be able to create offers
         try {
             candidate.create(Offer.class);
             Assert.fail("Candidate should not be able to create offers");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
@@ -197,7 +217,8 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
         try {
             anonymous.create(Offer.class);
             Assert.fail("Anonymous should not be able to create offers");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -239,7 +260,8 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
         application.candidate = candidate;
         application.job = job;
         application.coverLetter = "I'm interested in this position";
-        Assert.assertNotNull("Candidate should create application", application);
+        Assert.assertNotNull("Candidate should create application",
+                application);
 
         // 6. EmployerUser creates offer
         Offer offer = employerUser.create(Offer.class);
@@ -254,7 +276,8 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
         Assert.assertEquals("TechCorp", company.name);
         Assert.assertEquals("HR Manager", employerUser.name);
         Assert.assertEquals("Backend Developer", job.title);
-        Assert.assertEquals("I'm interested in this position", application.coverLetter);
+        Assert.assertEquals("I'm interested in this position",
+                application.coverLetter);
         Assert.assertEquals(100000.0, offer.salary, 0.01);
     }
 
@@ -265,41 +288,56 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
 
         // Test create with no constructor arguments
         Candidate candidate = admin.create(Candidate.class);
-        Assert.assertNotNull("Should create candidate with no constructor args", candidate);
+        Assert.assertNotNull("Should create candidate with no constructor args",
+                candidate);
 
         Job job = admin.create(Job.class);
         Assert.assertNotNull("Should create job with no constructor args", job);
 
         Application application = admin.create(Application.class);
-        Assert.assertNotNull("Should create application with no constructor args", application);
+        Assert.assertNotNull(
+                "Should create application with no constructor args",
+                application);
 
-        // Test create with constructor arguments (if the classes had constructors that took args)
+        // Test create with constructor arguments (if the classes had
+        // constructors that took args)
         // For now, testing that the varargs signature works with no args
         Employer employer = admin.create(Employer.class, new Object[0]);
-        Assert.assertNotNull("Should create employer with explicit empty args array", employer);
+        Assert.assertNotNull(
+                "Should create employer with explicit empty args array",
+                employer);
     }
 
     @Test
     public void testCreateOperationReturnedInstancesAreValid() {
         Admin admin = new Admin();
 
-        // Verify that created instances are actually instances of the expected type
+        // Verify that created instances are actually instances of the expected
+        // type
         Candidate candidate = admin.create(Candidate.class);
-        Assert.assertTrue("Created instance should be a Candidate", candidate instanceof Candidate);
-        Assert.assertTrue("Created instance should be a User", candidate instanceof User);
-        Assert.assertTrue("Created instance should implement AccessControl", candidate instanceof AccessControl);
-        Assert.assertTrue("Created instance should implement Audience", candidate instanceof Audience);
+        Assert.assertTrue("Created instance should be a Candidate",
+                candidate instanceof Candidate);
+        Assert.assertTrue("Created instance should be a User",
+                candidate instanceof User);
+        Assert.assertTrue("Created instance should implement AccessControl",
+                candidate instanceof AccessControl);
+        Assert.assertTrue("Created instance should implement Audience",
+                candidate instanceof Audience);
 
         Job job = admin.create(Job.class);
-        Assert.assertTrue("Created instance should be a Job", job instanceof Job);
-        Assert.assertTrue("Created instance should implement AccessControl", job instanceof AccessControl);
+        Assert.assertTrue("Created instance should be a Job",
+                job instanceof Job);
+        Assert.assertTrue("Created instance should implement AccessControl",
+                job instanceof AccessControl);
 
         // Verify the instances can be used immediately
         candidate.name = "Test Candidate";
-        Assert.assertEquals("Should be able to set and get fields", "Test Candidate", candidate.name);
+        Assert.assertEquals("Should be able to set and get fields",
+                "Test Candidate", candidate.name);
 
         job.title = "Test Job";
-        Assert.assertEquals("Should be able to set and get fields", "Test Job", job.title);
+        Assert.assertEquals("Should be able to set and get fields", "Test Job",
+                job.title);
     }
 
     @Test
@@ -315,26 +353,33 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
         Assert.assertNotNull("Admin should successfully create job", adminJob);
 
         Job employerJob = employerUser.create(Job.class);
-        Assert.assertNotNull("EmployerUser should successfully create job", employerJob);
+        Assert.assertNotNull("EmployerUser should successfully create job",
+                employerJob);
 
         try {
             candidate.create(Job.class);
             Assert.fail("Candidate should not be able to create jobs");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
-        // Application creation - should work for admin and candidate, fail for employer
+        // Application creation - should work for admin and candidate, fail for
+        // employer
         Application adminApplication = admin.create(Application.class);
-        Assert.assertNotNull("Admin should successfully create application", adminApplication);
+        Assert.assertNotNull("Admin should successfully create application",
+                adminApplication);
 
         Application candidateApplication = candidate.create(Application.class);
-        Assert.assertNotNull("Candidate should successfully create application", candidateApplication);
+        Assert.assertNotNull("Candidate should successfully create application",
+                candidateApplication);
 
         try {
             employerUser.create(Application.class);
-            Assert.fail("EmployerUser should not be able to create applications");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "EmployerUser should not be able to create applications");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -348,34 +393,39 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
         Assert.assertNotNull("Anonymous should create candidate", candidate);
 
         EmployerUser employerUser = anonymous.create(EmployerUser.class);
-        Assert.assertNotNull("Anonymous should create employer user", employerUser);
+        Assert.assertNotNull("Anonymous should create employer user",
+                employerUser);
 
         // Anonymous should not be able to create business entities
         try {
             anonymous.create(Job.class);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
         try {
             anonymous.create(Employer.class);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
         try {
             anonymous.create(Application.class);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
         try {
             anonymous.create(Offer.class);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -392,33 +442,38 @@ public class AudienceAccessControlCreateTest extends AudienceAccessControlBaseTe
         try {
             candidate.create(Job.class);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
         try {
             candidate.create(Employer.class);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
         try {
             candidate.create(Offer.class);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
         // But candidates should be able to create applications
         Application application = candidate.create(Application.class);
-        Assert.assertNotNull("Candidate should create application", application);
+        Assert.assertNotNull("Candidate should create application",
+                application);
 
         // EmployerUsers should not be able to create applications
         try {
             employerUser.create(Application.class);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 

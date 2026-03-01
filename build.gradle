@@ -3,6 +3,7 @@ plugins {
     id 'eclipse'
     id 'maven-publish'
     id 'signing'
+    id 'com.diffplug.spotless' version '6.13.0'
 }
 
 if (JavaVersion.current().isJava8Compatible()) {
@@ -148,5 +149,16 @@ publishing {
 test {
     testLogging {
         showStandardStreams = true
+    }
+}
+
+spotless {
+    java {
+        target 'src/*/java/**/*.java'
+        licenseHeaderFile rootProject.file('spotless.java.license')
+        importOrderFile rootProject.file('spotless.java.importerorder')
+        removeUnusedImports()
+        eclipse().configFile rootProject.file(
+                'spotless.java.eclipseformat.xml')
     }
 }

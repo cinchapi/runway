@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.access;
 
@@ -19,12 +19,12 @@ import static com.cinchapi.runway.access.AccessControl.ALL_KEYS;
 import static com.cinchapi.runway.access.AccessControl.NO_KEYS;
 import static com.cinchapi.runway.access.AccessControlSupport.*;
 
+import java.util.AbstractMap.SimpleEntry;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.AbstractMap.SimpleEntry;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -49,9 +49,9 @@ import com.google.common.collect.Multiset;
 /**
  * A {@link Record} that can "perform" database operations on other records
  * (e.g., a user) and is therefore subject to permissions and rules with respect
- * to {@link AccessControl access controlled} records. {@link Framing} are a
- * key component of the access control paradigm within the framework where
- * granular access rules for various operations can be defined.
+ * to {@link AccessControl access controlled} records. {@link Framing} are a key
+ * component of the access control paradigm within the framework where granular
+ * access rules for various operations can be defined.
  * <p>
  * This interface extends {@link DatabaseInterface}, enabling idiomatic and
  * semantic database operations that are being "performed" by the
@@ -62,14 +62,13 @@ import com.google.common.collect.Multiset;
  * </p>
  * <p>
  * For example, instead of using {@code runway.load(Movie.class, 1)}, which
- * bypasses access controls, one would use
- * {@code user.load(Movie.class, 1)} where {@code user} is an
- * {@link Audience}. This ensures that the framework only returns the movie if
- * the {@code user} is permitted to see it.
+ * bypasses access controls, one would use {@code user.load(Movie.class, 1)}
+ * where {@code user} is an {@link Audience}. This ensures that the framework
+ * only returns the movie if the {@code user} is permitted to see it.
  * </p>
- * <h2>Specialized CRUD Methods</h2>
- * As part of the access control framework, {@link Audience} defines specialized
- * CRUD methods that enforce access controls:
+ * <h2>Specialized CRUD Methods</h2> As part of the access control framework,
+ * {@link Audience} defines specialized CRUD methods that enforce access
+ * controls:
  * <ul>
  * <li>{@link #create(Class, Object...)} &mdash; vs. using a constructor
  * directly</li>
@@ -85,8 +84,8 @@ import com.google.common.collect.Multiset;
  * <p>
  * In contexts where the current {@link Audience} is unknown (e.g., an API
  * request without a logged-in user), the {@link #anonymous()} method provides a
- * default {@link Audience} that can be used to interact with the access
- * control system consistently.
+ * default {@link Audience} that can be used to interact with the access control
+ * system consistently.
  * </p>
  *
  * @author Jeff Nelson

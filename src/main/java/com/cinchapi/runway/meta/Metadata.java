@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.meta;
 
@@ -52,12 +52,11 @@ public interface Metadata {
      * Return the timestamp when this {@link Record} was first saved to the
      * database.
      *
-     * @return the creation timestamp, or {@code null} if the {@link Record}
-     *         has no audit history
-     * @throws IllegalStateException if the {@link Record} has never been
-     *             saved
-     * @throws UnsupportedOperationException if this interface is implemented
-     *             by a non-{@link Record} class
+     * @return the creation timestamp, or {@code null} if the {@link Record} has
+     *         no audit history
+     * @throws IllegalStateException if the {@link Record} has never been saved
+     * @throws UnsupportedOperationException if this interface is implemented by
+     *             a non-{@link Record} class
      */
     @Computed
     @Nullable
@@ -96,10 +95,9 @@ public interface Metadata {
      * {@link Record}.
      *
      * @return the last update timestamp
-     * @throws IllegalStateException if the {@link Record} has never been
-     *             saved
-     * @throws UnsupportedOperationException if this interface is implemented
-     *             by a non-{@link Record} class
+     * @throws IllegalStateException if the {@link Record} has never been saved
+     * @throws UnsupportedOperationException if this interface is implemented by
+     *             a non-{@link Record} class
      */
     @Computed
     public default Timestamp lastUpdatedAt() {
@@ -113,10 +111,9 @@ public interface Metadata {
      * @param keys the field names to check for updates
      * @return the timestamp of the most recent update among the specified
      *         fields, or {@code null} if no updates were found
-     * @throws IllegalStateException if the {@link Record} has never been
-     *             saved
-     * @throws UnsupportedOperationException if this interface is implemented
-     *             by a non-{@link Record} class
+     * @throws IllegalStateException if the {@link Record} has never been saved
+     * @throws UnsupportedOperationException if this interface is implemented by
+     *             a non-{@link Record} class
      */
     @Nullable
     public default Timestamp lastUpdatedAt(String... keys) {

@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.access;
 
@@ -35,7 +35,8 @@ import com.google.common.collect.ImmutableSet;
  * @author Jeff Nelson
  */
 @SuppressWarnings("unchecked")
-public class AudienceAccessControlFrameTest extends AudienceAccessControlBaseTest {
+public class AudienceAccessControlFrameTest
+        extends AudienceAccessControlBaseTest {
 
     @Test
     public void testAdminCanAccessAllCandidateFields() {
@@ -743,7 +744,7 @@ public class AudienceAccessControlFrameTest extends AudienceAccessControlBaseTes
         // frame() should return empty map for denied access
         Map<String, Object> frameResult = candidate1.frame(deniedFields,
                 candidate2);
-        for(String field : deniedFields) {
+        for (String field : deniedFields) {
             Assert.assertFalse(frameResult.containsKey(field));
         }
 
@@ -1015,8 +1016,8 @@ public class AudienceAccessControlFrameTest extends AudienceAccessControlBaseTes
                 draftJob.$isDiscoverableBy(candidate));
         Map<String, Object> draftResult = candidate
                 .frame(ImmutableSet.of("title", "description"), draftJob);
-        Assert.assertEquals("Candidate should not access draft job",
-                null, draftResult);
+        Assert.assertEquals("Candidate should not access draft job", null,
+                draftResult);
 
         // Employer user should see all their company's jobs regardless of state
         EmployerUser employerUser = new EmployerUser();

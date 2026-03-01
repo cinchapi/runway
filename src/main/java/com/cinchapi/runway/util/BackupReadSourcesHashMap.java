@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2019 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.util;
 
@@ -26,7 +26,8 @@ import com.google.common.collect.Sets;
 
 /**
  * A {@link BackupReadSourcesHashMap} is a {@link HashMap} that is configured to
- * fetch data from other {@link Map}s if a requested key was not explicitly added.
+ * fetch data from other {@link Map}s if a requested key was not explicitly
+ * added.
  * <p>
  * NOTE: This map only reads through to the other sources and never modifies
  * them.
@@ -46,8 +47,7 @@ public class BackupReadSourcesHashMap<K, V> extends HashMap<K, V> {
      *            increasing priority (e.g. the value for a non-native key is
      *            sought starting with the last source provided)
      * @return the {@link BackupReadSourcesHashMap} configured to use the
-     *         additional
-     *         {@code sources}.
+     *         additional {@code sources}.
      */
     @SafeVarargs
     public static <K, V> BackupReadSourcesHashMap<K, V> create(
