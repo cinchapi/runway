@@ -739,8 +739,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 .onSave(Player.class, player -> {
                     playerSaves.add(player);
                     latch.countDown();
-                })
-                .onSave(PreSaveHookRecord.class, record -> {
+                }).onSave(PreSaveHookRecord.class, record -> {
                     hookSaves.add(record);
                     latch.countDown();
                 }).build();
@@ -762,8 +761,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     @Test
-    public void testCompositionMultipleListenersForSameType()
-            throws Exception {
+    public void testCompositionMultipleListenersForSameType() throws Exception {
         CountDownLatch latch = new CountDownLatch(2);
         AtomicInteger firstCount = new AtomicInteger(0);
         AtomicInteger secondCount = new AtomicInteger(0);
@@ -773,8 +771,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 .onSave(Record.class, record -> {
                     firstCount.incrementAndGet();
                     latch.countDown();
-                })
-                .onSave(Record.class, record -> {
+                }).onSave(Record.class, record -> {
                     secondCount.incrementAndGet();
                     latch.countDown();
                 }).build();
@@ -800,8 +797,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 .onSave(Player.class, player -> {
                     typedSaves.add(player);
                     latch.countDown();
-                })
-                .onSave(record -> {
+                }).onSave(record -> {
                     untypedSaves.add(record);
                     latch.countDown();
                 }).build();
@@ -829,8 +825,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 .onSave(Record.class, record -> {
                     throw new RuntimeException(
                             "Intentional exception from first listener");
-                })
-                .onSave(Record.class, record -> {
+                }).onSave(Record.class, record -> {
                     secondCount.incrementAndGet();
                     latch.countDown();
                 }).build();
@@ -845,6 +840,128 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(
                 "Second listener should still fire after first throws", 1,
                 secondCount.get());
+    }
+
+    @Test
+    public void testOnSaveAfterBuildWithNoBuilderListeners() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> savedRecords = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort()).build();
+
+        // Register a listener after build
+        runway.onSave(record -> {
+            savedRecords.add(record);
+            latch.countDown();
+        });
+
+        Player player = new Player("Post-Build Listener", 42);
+        player.save();
+
+        Assert.assertTrue("Post-build listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, savedRecords.size());
+        Assert.assertTrue(savedRecords.contains(player));
+    }
+
+    @Test
+    public void testOnSaveAfterBuildChainsWithBuilderListeners()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        AtomicInteger builderCount = new AtomicInteger(0);
+        AtomicInteger postBuildCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    builderCount.incrementAndGet();
+                    latch.countDown();
+                }).build();
+
+        // Register an additional listener after build
+        runway.onSave(record -> {
+            postBuildCount.incrementAndGet();
+            latch.countDown();
+        });
+
+        Player player = new Player("Chained Listener", 99);
+        player.save();
+
+        Assert.assertTrue("Not all listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals("Builder listener should have fired", 1,
+                builderCount.get());
+        Assert.assertEquals("Post-build listener should have fired", 1,
+                postBuildCount.get());
+    }
+
+    @Test
+    public void testTypedOnSaveAfterBuild() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> playerSaves = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort()).build();
+
+        // Register a typed listener after build
+        runway.onSave(Player.class, player -> {
+            playerSaves.add(player);
+            latch.countDown();
+        });
+
+        // Save a non-Player record first
+        PreSaveHookRecord hook = new PreSaveHookRecord();
+        hook.name = "Not a Player";
+        hook.save();
+
+        // Save a Player record
+        Player player = new Player("Typed Post-Build", 88);
+        player.save();
+
+        Assert.assertTrue(
+                "Typed post-build listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, playerSaves.size());
+        Assert.assertTrue(playerSaves.contains(player));
+    }
+
+    @Test
+    public void testMultiplePostBuildOnSave() throws Exception {
+        CountDownLatch latch = new CountDownLatch(3);
+        AtomicInteger firstCount = new AtomicInteger(0);
+        AtomicInteger secondCount = new AtomicInteger(0);
+        AtomicInteger thirdCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort()).build();
+
+        runway.onSave(record -> {
+            firstCount.incrementAndGet();
+            latch.countDown();
+        });
+        runway.onSave(record -> {
+            secondCount.incrementAndGet();
+            latch.countDown();
+        });
+        runway.onSave(record -> {
+            thirdCount.incrementAndGet();
+            latch.countDown();
+        });
+
+        Player player = new Player("Multiple Post-Build", 55);
+        player.save();
+
+        Assert.assertTrue(
+                "Not all post-build listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, firstCount.get());
+        Assert.assertEquals(1, secondCount.get());
+        Assert.assertEquals(1, thirdCount.get());
     }
 
     /**
