@@ -506,7 +506,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * If {@code value} is a {@link Record}, {@link DeferredReference} or a
      * {@link Sequences#isSequence(Object) Sequence} that contains either, try
-     * to {@link #saveWithinTransaction(Concourse, Set) save} it, in case it has
+     * to {@link #saveWithinTransaction(Concourse, Map) save} it, in case it has
      * {@link #hasUnsavedChanges() unsaved} changes.
      *
      * @param value
@@ -515,7 +515,7 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("rawtypes")
     private static void saveModifiedReferenceWithinTransaction(Object value,
-            Concourse concourse, Set<Record> seen) {
+            Concourse concourse, Map<Record, Boolean> seen) {
         if(Sequences.isSequence(value)) {
             Sequences.forEach(value,
                     item -> saveModifiedReferenceWithinTransaction(item,
@@ -531,7 +531,7 @@ public abstract class Record implements Comparable<Record> {
                 record = deferred.$ref();
             }
 
-            if(record != null && !seen.contains(record)) {
+            if(record != null && !seen.containsKey(record)) {
                 record.saveWithinTransaction(concourse, seen);
             }
         }
@@ -1635,7 +1635,7 @@ public abstract class Record implements Comparable<Record> {
                 "Cannot perform an implicit save because this Record isn't pinned to a Concourse instance");
         Concourse concourse = connections.request();
         try {
-            return save(concourse, Sets.newHashSet(), runway);
+            return save(concourse, new HashMap<>(), runway);
         }
         finally {
             connections.release(concourse);
@@ -2114,8 +2114,8 @@ public abstract class Record implements Comparable<Record> {
      *
      * @return {@code true} if all the changes have been atomically saved.
      */
-    /* package */ final boolean save(Concourse concourse, Set<Record> seen,
-            Runway runway) {
+    /* package */ final boolean save(Concourse concourse,
+            Map<Record, Boolean> seen, Runway runway) {
         Supplier<Boolean> override = overrideSave();
         if(override != null) {
             return override.get();
@@ -2128,7 +2128,9 @@ public abstract class Record implements Comparable<Record> {
             saveWithinTransaction(concourse, seen);
             boolean success = concourse.commit();
             if(success && runway != null) {
-                runway.enqueueSaveNotification(this);
+                seen.entrySet().stream().filter(e -> e.getValue())
+                        .map(e -> e.getKey())
+                        .forEach(runway::enqueueSaveNotification);
             }
             return success;
         }
@@ -2172,17 +2174,18 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * @param concourse The Concourse instance to execute the operation.
-     * @param seen Set of records already saved, to prevent infinite
-     *            recursion.
-     * @throws IllegalStateException If required fields are missing, values
-     *             are not unique across all records in the class, or validation
+     * @param seen map of records already processed to whether they had unsaved
+     *            changes, used to prevent infinite recursion and track which
+     *            records need post-commit save notifications
+     * @throws IllegalStateException If required fields are missing, values are
+     *             not unique across all records in the class, or validation
      *             fails.
      * @throws ReflectiveOperationException If reflection-related errors
      *             occur during processing.
      */
     /* package */ void saveWithinTransaction(final Concourse concourse,
-            Set<Record> seen) {
-        seen.add(this);
+            Map<Record, Boolean> seen) {
+        seen.put(this, true);
         if(_hasModifiedRealms) {
             concourse.reconcile(REALMS_KEY, id, _realms);
             _hasModifiedRealms = false;
@@ -2205,6 +2208,7 @@ public abstract class Record implements Comparable<Record> {
             // This Record hasn't been modified, so simply go through each
             // field and try to save any outgoing Record references that contain
             // modifications.
+            seen.replace(this, true, false);
             for (Field field : fields()) {
                 Object value = getFieldValue(field, this);
                 saveModifiedReferenceWithinTransaction(value, concourse, seen);
@@ -2772,7 +2776,7 @@ public abstract class Record implements Comparable<Record> {
                         throw CheckedExceptions.wrapAsRuntimeException(e);
                     }
                 }
-                record.saveWithinTransaction(concourse, new HashSet<>());
+                record.saveWithinTransaction(concourse, new HashMap<>());
             }
         }
 
@@ -3094,7 +3098,7 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("rawtypes")
     private Object transform(@Nonnull Object value, Concourse concourse,
-            Set<Record> seen) {
+            Map<Record, Boolean> seen) {
         if(Sequences.isSequence(value)) {
             ArrayBuilder<Object> array = ArrayBuilder.builder();
             Sequences.forEach(value, item -> {
@@ -3118,8 +3122,7 @@ public abstract class Record implements Comparable<Record> {
 
             // Ensure that Record references are saved within the current
             // transaction
-            if(record != null && !seen.contains(record)) {
-                seen.add(record);
+            if(record != null && !seen.containsKey(record)) {
                 record.saveWithinTransaction(concourse, seen);
             }
 

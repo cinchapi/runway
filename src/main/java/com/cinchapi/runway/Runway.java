@@ -20,6 +20,7 @@ import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -1068,12 +1069,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(records.length == 1) {
             Concourse concourse = connections.request();
             try {
-                boolean success = records[0].save(concourse, Sets.newHashSet(),
-                        this);
-                if(success) {
-                    enqueueSaveNotification(records[0]);
-                }
-                return success;
+                // NOTE: The save notification is enqueud in Record#save
+                return records[0].save(concourse, new HashMap<>(), this);
             }
             finally {
                 connections.release(concourse);
@@ -1087,7 +1084,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 concourse.stage();
                 concourse.set("transaction_id", transactionId, METADATA_RECORD);
                 Set<Record> waiting = Sets.newHashSet(records);
-                Set<Record> seen = Sets.newHashSet();
+                Map<Record, Boolean> seen = new HashMap<>();
                 waitingToBeSaved.put(transactionId, waiting);
                 for (Record record : records) {
                     current = record;
@@ -1096,10 +1093,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 concourse.clear("transaction_id", METADATA_RECORD);
                 boolean success = concourse.commit();
                 if(success) {
-                    // Queue save notifications for all records
-                    for (Record record : records) {
-                        enqueueSaveNotification(record);
-                    }
+                    seen.entrySet().stream().filter(e -> e.getValue())
+                            .map(e -> e.getKey())
+                            .forEach(this::enqueueSaveNotification);
                 }
                 return success;
             }
