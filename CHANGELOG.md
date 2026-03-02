@@ -1,6 +1,10 @@
 # Changelog
 
-#### Version 1.11.1 (TBD)
+#### Version 1.12.0 (TBD)
+* **Spurious Save Failure Retry**: Added a `SpuriousSaveFailureStrategy` configuration that controls how `Runway` handles `TransactionException` during save operations. When set to `RETRY`, `Runway` automatically retries a failed save if none of the root records have stale data, indicating the failure was caused by a spurious MVCC conflict (e.g., overlapping `@Unique` constraint reads in concurrent transactions) rather than a genuine data conflict. The default strategy is `FAIL_FAST`, which preserves the existing behavior.
+  * Configure via `Runway.builder().spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)`.
+  * Stale data detection uses Concourse's `review` audit to check whether any external writes occurred after the record was last loaded or saved.
+* **Centralized Save Logic**: All save paths (`Record#save()` and `Runway#save(Record...)`) now flow through a single implementation in `Runway#save`, eliminating duplicated transaction management and ensuring consistent behavior for single-record and multi-record saves.
 * **Type-Specific Save Listeners**: The `onSave` method on `Runway.Builder` now supports type-specific listeners via a new `onSave(Class<T>, Consumer<T>)` overload. A listener registered for a type only fires for records that are instances of that type (including subclasses), eliminating the need for `instanceof` checks. The existing `onSave(Consumer<Record>)` method is now equivalent to `onSave(Record.class, listener)` and matches all records.
   * **Compositional**: Multiple `onSave` calls add listeners rather than replacing previous ones. All matching listeners fire in registration order.
   * **Error Isolation**: If a listener throws an exception, it is caught and suppressed, and subsequent matching listeners still fire.

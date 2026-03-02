@@ -506,8 +506,8 @@ public abstract class Record implements Comparable<Record> {
     /**
      * If {@code value} is a {@link Record}, {@link DeferredReference} or a
      * {@link Sequences#isSequence(Object) Sequence} that contains either, try
-     * to {@link #saveWithinTransaction(Concourse, Map) save} it, in case it has
-     * {@link #hasUnsavedChanges() unsaved} changes.
+     * to {@link #saveWithinTransaction(Concourse, Map, Map) save} it, in case
+     * it has {@link #hasUnsavedChanges() unsaved} changes.
      *
      * @param value
      * @param concourse
@@ -515,11 +515,12 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("rawtypes")
     private static void saveModifiedReferenceWithinTransaction(Object value,
-            Concourse concourse, Map<Record, Boolean> seen) {
+            Concourse concourse, Map<Record, Boolean> seen,
+            @Nullable Map<Record, Snapshot> snapshots) {
         if(Sequences.isSequence(value)) {
             Sequences.forEach(value,
                     item -> saveModifiedReferenceWithinTransaction(item,
-                            concourse, seen));
+                            concourse, seen, snapshots));
         }
         else {
             Record record = null;
@@ -532,7 +533,7 @@ public abstract class Record implements Comparable<Record> {
             }
 
             if(record != null && !seen.containsKey(record)) {
-                record.saveWithinTransaction(concourse, seen);
+                record.saveWithinTransaction(concourse, seen, snapshots);
             }
         }
     }
@@ -658,25 +659,25 @@ public abstract class Record implements Comparable<Record> {
      * applications.
      * </p>
      */
-    /* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
+    static Runway PINNED_RUNWAY_INSTANCE = null;
 
     /**
      * The key used to hold the {@link #_realms} metadata.
      */
-    /* package */ static final String REALMS_KEY = "_realms";
+    static final String REALMS_KEY = "_realms";
 
     /**
      * The key used to hold the section metadata.
      */
-    /* package */ static final String SECTION_KEY = "_"; // just want a
-                                                         // simple/short key
-                                                         // name that is likely
-                                                         // to avoid collisions
+    static final String SECTION_KEY = "_"; // just want a
+                                           // simple/short key
+                                           // name that is likely
+                                           // to avoid collisions
 
     /**
      * The key used to hold the {@link #_author} metadata.
      */
-    /* package */ static final String AUTHOR_KEY = "_author";
+    static final String AUTHOR_KEY = "_author";
 
     /**
      * The key that references a records id in Concourse.
@@ -769,7 +770,7 @@ public abstract class Record implements Comparable<Record> {
      * these errors can be thrown at anytime from the
      * {@link #throwSupressedExceptions()} method.
      */
-    /* package */ transient List<Throwable> errors = Lists.newArrayList();
+    transient List<Throwable> errors = Lists.newArrayList();
 
     /**
      * The variable that holds the name of the section in the database where
@@ -780,9 +781,9 @@ public abstract class Record implements Comparable<Record> {
     /**
      * An internal flag that tracks whether {@link #_realms} have been
      * {@link #addRealm(String) added} or {@link #removeRealm(String) removed}.
-     * This flag is necessary so that this Record's data cache isn't
-     * unnecessarily invalidated when reconciling the realms on
-     * {@link #saveWithinTransaction(Concourse, Set)}.
+     * This flag is necessary so that this {@link Record Record's} data cache
+     * isn't unnecessarily invalidated when reconciling the realms on
+     * {@link #saveWithinTransaction(Concourse, Map, Map)}.
      */
     private transient boolean _hasModifiedRealms = false;
 
@@ -858,7 +859,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * The {@link Record}'s checksum that is generated and cached on
      * {@link #load(Concourse, ConcurrentMap, Map, String) load} and
-     * {@link #saveWithinTransaction(Concourse, Set) save} events.
+     * {@link #saveWithinTransaction(Concourse, Map, Map) save} events.
      * <p>
      * This value is <strong>NOT</strong> returned from {@link #checksum()}, but
      * is instead compared against the value returned from that method to
@@ -867,6 +868,12 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      */
     private String __checksum = null;
+
+    /**
+     * The timestamp (in microseconds) when this {@link Record} was last loaded
+     * from or successfully saved to the database.
+     */
+    private transient long checkpointTs = 0;
 
     /**
      * Cached copy of audit data used by some {@link Metadata} operations.
@@ -904,6 +911,7 @@ public abstract class Record implements Comparable<Record> {
             this.connections = PINNED_RUNWAY_INSTANCE.connections;
             this.runway = PINNED_RUNWAY_INSTANCE;
         }
+        checkpoint();
     }
 
     /**
@@ -1600,15 +1608,9 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      */
     public final boolean save() {
-        Verify.that(connections != null,
-                "Cannot perform an implicit save because this Record isn't pinned to a Concourse instance");
-        Concourse concourse = connections.request();
-        try {
-            return save(concourse, new HashMap<>(), runway);
-        }
-        finally {
-            connections.release(concourse);
-        }
+        Verify.that(runway != null, "Cannot perform an implicit save because"
+                + " this Record isn't pinned to a Runway instance");
+        return runway.save(this);
     }
 
     /**
@@ -1826,11 +1828,41 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Mark this {@link Record} as synchronized with the database.
+     */
+    final void checkpoint() {
+        checkpointTs = Time.now();
+    }
+
+    /**
+     * Return {@code true} if this {@link Record Record's} data in the database
+     * has been modified by since this {@link Record} is known to have been
+     * loaded or instantiated.
+     *
+     * @param concourse the {@link Concourse} connection to use
+     * @return {@code true} if the data is stale
+     */
+    boolean hasStaleData(Concourse concourse) {
+        if(checkpointTs == 0) {
+            return false;
+        }
+        else {
+            Map<Timestamp, List<String>> history = concourse.review(id);
+            for (Timestamp ts : history.keySet()) {
+                if(ts.getMicros() > checkpointTs) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /**
      * Return {@code true} if this {@link Record} has any unsaved changes.
      *
      * @return {@code true} if there are changes that need to be saved.
      */
-    /* package */ boolean hasUnsavedChanges() {
+    boolean hasUnsavedChanges() {
         if(__checksum == null) {
             return true;
         }
@@ -1840,14 +1872,24 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if this record is in a "zombie" state meaning it
+     * exists in the database without any actual data.
+     *
+     * @param concourse
+     * @return {@code true} if this record is a zombie
+     */
+    final boolean inZombieState(Concourse concourse) {
+        return inZombieState(id, concourse, null);
+    }
+
+    /**
      * Load an existing record from the database and add all of it to this
      * instance in memory.
      *
      * @param concourse
      * @param existing
      */
-    /* package */ final void load(Concourse concourse,
-            ConcurrentMap<Long, Record> existing) {
+    final void load(Concourse concourse, ConcurrentMap<Long, Record> existing) {
         load(concourse, existing, null);
     }
 
@@ -1859,8 +1901,7 @@ public abstract class Record implements Comparable<Record> {
      * @param existing
      * @param data
      */
-    /* package */ final void load(Concourse concourse,
-            ConcurrentMap<Long, Record> existing,
+    final void load(Concourse concourse, ConcurrentMap<Long, Record> existing,
             @Nullable Map<String, Set<Object>> data) {
         load(concourse, existing, data, null);
     }
@@ -1874,7 +1915,7 @@ public abstract class Record implements Comparable<Record> {
      * @param data data that is pre-loaded from {@code concourse}; this should
      *            only be provided from a trusted source
      */
-    /* package */ @SuppressWarnings({ "rawtypes", "unchecked" })
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     final void load(Concourse concourse, ConcurrentMap<Long, Record> existing,
             @Nullable Map<String, Set<Object>> data, @Nullable String prefix) {
         Preconditions.checkState(id != NULL_ID);
@@ -2011,6 +2052,7 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         __checksum = checksum();
+        checkpoint();
     }
 
     /**
@@ -2018,7 +2060,7 @@ public abstract class Record implements Comparable<Record> {
      *
      * @return the data {@link Multimap}
      */
-    /* package */ Multimap<String, Object> mmap() {
+    Multimap<String, Object> mmap() {
         return mmap(Array.containing());
     }
 
@@ -2029,7 +2071,7 @@ public abstract class Record implements Comparable<Record> {
      * @param keys
      * @return the data {@link Multimap}
      */
-    /* package */ Multimap<String, Object> mmap(SerializationOptions options,
+    Multimap<String, Object> mmap(SerializationOptions options,
             String... keys) {
         Map<String, Object> data = map(options, keys);
         Map<String, Collection<Object>> wrapper = new CollectionValueWrapperMap<>(
@@ -2043,50 +2085,20 @@ public abstract class Record implements Comparable<Record> {
      * @param keys
      * @return the data {@link Multimap}
      */
-    /* package */ Multimap<String, Object> mmap(String... keys) {
+    Multimap<String, Object> mmap(String... keys) {
         return mmap(SerializationOptions.defaults(), keys);
     }
 
     /**
-     * Save all changes that have been made to this record using an ACID
-     * transaction with the provided {@code runway} instance.
-     * <p>
-     * Use {@link Runway#save(Record...)} to save changes in multiple records
-     * within a single ACID transaction. Even if saving a single record, prefer
-     * to use the save method in the {@link Runway} class instead of this for
-     * consistent semantics.
-     * </p>
+     * Restore this {@link Record Record's} state from a previously captured
+     * {@link Snapshot}.
      *
-     * @return {@code true} if all the changes have been atomically saved.
+     * @param snapshot the {@link Snapshot} to restore
      */
-    /* package */ final boolean save(Concourse concourse,
-            Map<Record, Boolean> seen, Runway runway) {
-        Supplier<Boolean> override = overrideSave();
-        if(override != null) {
-            return override.get();
-        }
-        assign(runway);
-        try {
-            Preconditions.checkState(!inViolation);
-            errors.clear();
-            concourse.stage();
-            saveWithinTransaction(concourse, seen);
-            boolean success = concourse.commit();
-            if(success && runway != null) {
-                seen.entrySet().stream().filter(e -> e.getValue())
-                        .map(e -> e.getKey())
-                        .forEach(runway::enqueueSaveNotification);
-            }
-            return success;
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            if(inZombieState(concourse)) {
-                concourse.clear(id);
-            }
-            errors.add(t);
-            return false;
-        }
+    void restore(Snapshot snapshot) {
+        _hasModifiedRealms = snapshot.hasModifiedRealms;
+        __checksum = snapshot.checksum;
+        _author = snapshot.author;
     }
 
     /**
@@ -2118,14 +2130,22 @@ public abstract class Record implements Comparable<Record> {
      * @param seen map of records already processed to whether they had unsaved
      *            changes, used to prevent infinite recursion and track which
      *            records need post-commit save notifications
+     * @param snapshots if non-{@code null}, each {@link Record} self-snapshots
+     *            its metadata before mutation for retry support
      * @throws IllegalStateException If required fields are missing, values are
      *             not unique across all records in the class, or validation
      *             fails.
      * @throws ReflectiveOperationException If reflection-related errors occur
      *             during processing.
      */
-    /* package */ void saveWithinTransaction(final Concourse concourse,
-            Map<Record, Boolean> seen) {
+    void saveWithinTransaction(final Concourse concourse,
+            Map<Record, Boolean> seen,
+            @Nullable Map<Record, Snapshot> snapshots) {
+        if(snapshots != null) {
+            snapshots.putIfAbsent(this, snapshot());
+        }
+        Preconditions.checkState(!inViolation);
+        errors.clear();
         seen.put(this, true);
         if(_hasModifiedRealms) {
             concourse.reconcile(REALMS_KEY, id, _realms);
@@ -2152,7 +2172,8 @@ public abstract class Record implements Comparable<Record> {
             seen.replace(this, true, false);
             for (Field field : fields()) {
                 Object value = getFieldValue(field, this);
-                saveModifiedReferenceWithinTransaction(value, concourse, seen);
+                saveModifiedReferenceWithinTransaction(value, concourse, seen,
+                        snapshots);
             }
         }
         else if(overrideSave() != null) {
@@ -2208,7 +2229,7 @@ public abstract class Record implements Comparable<Record> {
 
                             }
                         }
-                        value = transform(value, concourse, seen);
+                        value = transform(value, concourse, seen, snapshots);
                         if(value.getClass().isArray()) {
                             concourse.reconcile(key, id, (Object[]) value);
                         }
@@ -2224,6 +2245,15 @@ public abstract class Record implements Comparable<Record> {
             _audit = null;
             __checksum = checksum();
         }
+    }
+
+    /**
+     * Capture a snapshot of this {@link Record}
+     *
+     * @return a {@link Snapshot} of the current state
+     */
+    Snapshot snapshot() {
+        return new Snapshot();
     }
 
     /**
@@ -2710,7 +2740,8 @@ public abstract class Record implements Comparable<Record> {
                         throw CheckedExceptions.wrapAsRuntimeException(e);
                     }
                 }
-                record.saveWithinTransaction(concourse, new HashMap<>());
+                record.saveWithinTransaction(concourse, new HashMap<>(),
+                        new HashMap<>());
             }
         }
 
@@ -2773,17 +2804,6 @@ public abstract class Record implements Comparable<Record> {
      */
     private Collection<Field> fields() {
         return StaticAnalysis.instance().getFields(this);
-    }
-
-    /**
-     * Return {@code true} if this record is in a "zombie" state meaning it
-     * exists in the database without any actual data.
-     *
-     * @param concourse
-     * @return {@code true} if this record is a zombie
-     */
-    private final boolean inZombieState(Concourse concourse) {
-        return inZombieState(id, concourse, null);
     }
 
     /**
@@ -3017,11 +3037,12 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("rawtypes")
     private Object transform(@Nonnull Object value, Concourse concourse,
-            Map<Record, Boolean> seen) {
+            Map<Record, Boolean> seen,
+            @Nullable Map<Record, Snapshot> snapshots) {
         if(Sequences.isSequence(value)) {
             ArrayBuilder<Object> array = ArrayBuilder.builder();
             Sequences.forEach(value, item -> {
-                array.add(transform(item, concourse, seen));
+                array.add(transform(item, concourse, seen, snapshots));
             });
             return array.length() > 0 ? array.build() : Array.containing();
         }
@@ -3042,7 +3063,7 @@ public abstract class Record implements Comparable<Record> {
             // Ensure that Record references are saved within the current
             // transaction
             if(record != null && !seen.containsKey(record)) {
-                record.saveWithinTransaction(concourse, seen);
+                record.saveWithinTransaction(concourse, seen, snapshots);
             }
 
             return primitive;
@@ -3962,6 +3983,108 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Throw when a {@link #checkConstrains()} is violated.
+     *
+     * @author Jeff Nelson
+     */
+    class ConstraintViolationException extends RunwayException {
+
+        private static final long serialVersionUID = 1L;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param message
+         */
+        public ConstraintViolationException(String message) {
+            super(message);
+        }
+
+    }
+
+    /**
+     * A {@link RunwayException} that is thrown when an attempt is made to
+     * access a record that does not exist.
+     *
+     * @author Jeff Nelson
+     */
+    class InvalidRecordException extends ConstraintViolationException {
+
+        private static final long serialVersionUID = 1L;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param message
+         */
+        public InvalidRecordException(String message) {
+            super(message);
+        }
+
+    };
+
+    /**
+     * Throw when an attempt is made to assigned a record to an invalid type.
+     *
+     * @author Jeff Nelson
+     */
+    class InvalidSectionException extends ConstraintViolationException {
+
+        private static final long serialVersionUID = 1L;
+
+        /**
+         * Construct a new instance.
+         * 
+         * @param message
+         */
+        public InvalidSectionException(String message) {
+            super(message);
+        }
+
+    }
+
+    /**
+     * An immutable snapshot of a {@link Record}
+     *
+     * @author Jeff Nelson
+     */
+    final class Snapshot {
+
+        // NOTE: The current implementation only captures so metadata, but it is
+        // expandable to capture other data in the future
+
+        /**
+         * The snapshotted value of {@link Record#_hasModifiedRealms}.
+         */
+        final boolean hasModifiedRealms;
+
+        /**
+         * The snapshotted value of {@link Record#__checksum}.
+         */
+        final String checksum;
+
+        /**
+         * The snapshotted value of {@link Record#_author}.
+         */
+        final Record author;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param hasModifiedRealms the current value of
+         *            {@link Record#_hasModifiedRealms}
+         * @param checksum the current value of {@link Record#__checksum}
+         * @param author the current value of {@link Record#_author}
+         */
+        Snapshot() {
+            this.hasModifiedRealms = Record.this._hasModifiedRealms;
+            this.checksum = Record.this.__checksum;
+            this.author = Record.this._author;
+        }
+
+    }
+
+    /**
      * A read-only {@link Map} that ensures that the values of another
      * {@link Map} are wrapped in a {@link Collection}.
      * <p>
@@ -4044,7 +4167,7 @@ public abstract class Record implements Comparable<Record> {
             return data.size();
         }
 
-    };
+    }
 
     /**
      * A {@link DatabaseInterface} that reacts to the state of the
@@ -4681,67 +4804,6 @@ public abstract class Record implements Comparable<Record> {
         public Collection<V> values() {
             return data.values().stream().flatMap(values -> values.stream())
                     .collect(Collectors.toList());
-        }
-
-    }
-
-    /**
-     * Throw when a {@link #checkConstrains()} is violated.
-     *
-     * @author Jeff Nelson
-     */
-    class ConstraintViolationException extends RunwayException {
-
-        private static final long serialVersionUID = 1L;
-
-        /**
-         * Construct a new instance.
-         * 
-         * @param message
-         */
-        public ConstraintViolationException(String message) {
-            super(message);
-        }
-
-    }
-
-    /**
-     * A {@link RunwayException} that is thrown when an attempt is made to
-     * access a record that does not exist.
-     *
-     * @author Jeff Nelson
-     */
-    class InvalidRecordException extends ConstraintViolationException {
-
-        private static final long serialVersionUID = 1L;
-
-        /**
-         * Construct a new instance.
-         * 
-         * @param message
-         */
-        public InvalidRecordException(String message) {
-            super(message);
-        }
-
-    }
-
-    /**
-     * Throw when an attempt is made to assigned a record to an invalid type.
-     *
-     * @author Jeff Nelson
-     */
-    class InvalidSectionException extends ConstraintViolationException {
-
-        private static final long serialVersionUID = 1L;
-
-        /**
-         * Construct a new instance.
-         * 
-         * @param message
-         */
-        public InvalidSectionException(String message) {
-            super(message);
         }
 
     }

@@ -60,6 +60,7 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
+import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
@@ -73,6 +74,7 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.Record.InvalidRecordException;
+import com.cinchapi.runway.Record.Snapshot;
 import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.cinchapi.runway.util.Pagination;
@@ -205,6 +207,25 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Restore the mutable metadata on each {@link Record} from a previously
+     * captured snapshot.
+     * <p>
+     * This is used during spurious save failure retry to undo the side effects
+     * that {@link Record#saveWithinTransaction(Concourse, Map)} performs on
+     * metadata fields (checksum, realm flags, author), since the transaction
+     * was aborted and none of those mutations should persist.
+     * </p>
+     *
+     * @param snapshot a mapping from {@link Record} to its captured
+     *            {@link Record.Snapshot}
+     */
+    private static void restore(Map<Record, Record.Snapshot> snapshot) {
+        for (Entry<Record, Record.Snapshot> entry : snapshot.entrySet()) {
+            entry.getKey().restore(entry.getValue());
+        }
+    }
+
+    /**
      * Call
      * {@link Record#load(Class, long, TLongObjectMap, ConnectionPool, Runway, Map)}
      * and handle any errors with the {@link #onLoadFailureHandler}.
@@ -325,6 +346,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * data from the database.
      */
     private ReadStrategy readStrategy = ReadStrategy.AUTO;
+
+    /**
+     * The strategy for handling spurious {@link TransactionException
+     * TransactionExceptions} during {@link #save(Record...) save} operations.
+     */
+    private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
     /**
      * The maximum number of records to buffer in memory when selecting data
@@ -1052,62 +1079,87 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Save all the changes in all of the {@code records} using a single ACID
-     * transaction, which means that all the changes must be save or none of
-     * them will.
+     * Save all changes in the provided {@code records} using a single ACID
+     * transaction.
      * <p>
-     * <strong>NOTE:</strong> If there is only one record provided, this method
-     * has the same effect as {@link Record#save(Runway)}.
+     * All changes are committed atomically &mdash; either every {@link Record}
+     * is persisted or none are. When the {@link SpuriousSaveFailureStrategy} is
+     * {@link SpuriousSaveFailureStrategy#RETRY RETRY}, a
+     * {@link TransactionException} that is not caused by actual data staleness
+     * is automatically retried in a new transaction.
      * </p>
      *
-     * @param records one or more records to be saved
-     * @return {@code true} if all the changes are atomically saved
+     * @param records one or more {@link Record Records} to save
+     * @return {@code true} if all changes are atomically saved
      */
     public boolean save(Record... records) {
-        if(records.length == 1) {
-            Concourse concourse = connections.request();
-            try {
-                // NOTE: The save notification is enqueud in Record#save
-                return records[0].save(concourse, new HashMap<>(), this);
-            }
-            finally {
-                connections.release(concourse);
+        Concourse concourse = connections.request();
+        long transactionId = Time.now();
+        Record current = null;
+        try {
+            boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
+            Map<Record, Snapshot> snapshots = retrySpuriousSaveFailure
+                    ? new HashMap<>()
+                    : null;
+            Map<Record, Boolean> seen = new HashMap<>();
+            Set<Record> waiting = Sets.newHashSet(records);
+            waitingToBeSaved.put(transactionId, waiting);
+            while (true) {
+                try {
+                    seen.clear();
+                    concourse.stage();
+                    concourse.set("transaction_id", transactionId,
+                            METADATA_RECORD);
+                    for (Record record : records) {
+                        current = record;
+                        record.assign(this);
+                        record.saveWithinTransaction(concourse, seen,
+                                snapshots);
+                    }
+                    concourse.clear("transaction_id", METADATA_RECORD);
+                    if(concourse.commit()) {
+                        seen.entrySet().stream().filter(e -> e.getValue())
+                                .map(e -> e.getKey()).forEach(record -> {
+                                    enqueueSaveNotification(record);
+                                    record.checkpoint();
+                                });
+                        return true;
+                    }
+                    else {
+                        // Trigger possibly restore and retry in catch block
+                        throw new TransactionException();
+                    }
+                }
+                catch (Throwable t) {
+                    concourse.abort();
+                    if(t instanceof TransactionException
+                            && retrySpuriousSaveFailure
+                            && Arrays.stream(records).noneMatch(
+                                    r -> r.hasStaleData(concourse))) {
+                        // NOTE: Only root records are checked for stale data
+                        // because linked records that are recursively saved may
+                        // show false positives when concurrent saves share the
+                        // same linked record.
+                        restore(snapshots);
+                        continue;
+                    }
+                    else {
+                        for (Record record : seen.keySet()) {
+                            if(record.inZombieState(concourse)) {
+                                concourse.clear(record.id());
+                            }
+                        }
+                        if(current != null) {
+                            current.errors.add(t);
+                        }
+                        return false;
+                    }
+                }
             }
         }
-        else {
-            Concourse concourse = connections.request();
-            long transactionId = Time.now();
-            Record current = null;
-            try {
-                concourse.stage();
-                concourse.set("transaction_id", transactionId, METADATA_RECORD);
-                Set<Record> waiting = Sets.newHashSet(records);
-                Map<Record, Boolean> seen = new HashMap<>();
-                waitingToBeSaved.put(transactionId, waiting);
-                for (Record record : records) {
-                    current = record;
-                    record.saveWithinTransaction(concourse, seen);
-                }
-                concourse.clear("transaction_id", METADATA_RECORD);
-                boolean success = concourse.commit();
-                if(success) {
-                    seen.entrySet().stream().filter(e -> e.getValue())
-                            .map(e -> e.getKey())
-                            .forEach(this::enqueueSaveNotification);
-                }
-                return success;
-            }
-            catch (Throwable t) {
-                concourse.abort();
-                if(current != null) {
-                    current.errors.add(t);
-                }
-                return false;
-            }
-            finally {
-                waitingToBeSaved.remove(transactionId);
-                connections.release(concourse);
-            }
+        finally {
+            waitingToBeSaved.remove(transactionId);
+            connections.release(concourse);
         }
     }
 
@@ -1965,6 +2017,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private String username = "admin";
         private boolean disablePreSelectLinkedRecords = false;
         private List<Map.Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
+        private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
         /**
          * Build the configured {@link Runway} and return the instance.
@@ -1982,6 +2035,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             db.streamingReadBufferSize = streamingReadBufferSize;
             db.readStrategy = MoreObjects.firstNonNull(readStrategy,
                     cache != null ? ReadStrategy.STREAM : ReadStrategy.AUTO);
+            db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
             }
@@ -2213,6 +2267,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         public Builder readStrategy(ReadStrategy readStrategy) {
             this.readStrategy = readStrategy;
+            return this;
+        }
+
+        /**
+         * Set the {@link SpuriousSaveFailureStrategy} for the {@link Runway}
+         * instance.
+         * <p>
+         * The default is {@link SpuriousSaveFailureStrategy#FAIL_FAST}, which
+         * immediately propagates any {@code TransactionException} during a
+         * {@link Runway#save(Record...) save}.
+         * </p>
+         * <p>
+         * Setting this to {@link SpuriousSaveFailureStrategy#RETRY} causes
+         * {@link Runway} to automatically retry a failed save when none of the
+         * involved {@link Record Records} have stale data, which indicates that
+         * the {@code TransactionException} was spurious.
+         * </p>
+         *
+         * @param strategy the {@link SpuriousSaveFailureStrategy} to use
+         * @return this builder
+         */
+        public Builder spuriousSaveFailureStrategy(
+                SpuriousSaveFailureStrategy strategy) {
+            this.spuriousSaveFailureStrategy = strategy;
             return this;
         }
 
