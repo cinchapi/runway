@@ -5,6 +5,7 @@
   * **Compositional**: Multiple `onSave` calls add listeners rather than replacing previous ones. All matching listeners fire in registration order.
   * **Error Isolation**: If a listener throws an exception, it is caught and suppressed, and subsequent matching listeners still fire.
 * **Post-Build Save Listeners**: The `Runway` instance now exposes `onSave(Class<T>, Consumer<T>)` and `onSave(Consumer<Record>)` methods that allow registering save listeners after the instance has been built. New listeners are chained with any previously registered listeners. The notification infrastructure (queue and worker thread) is lazily initialized on the first post-build registration if no listeners were configured at build time.
+* Fixed a bug where save notifications were only fired for top-level records and not for linked records that were recursively saved within the same transaction. All records that actually persist changes during a save operation now receive notifications. Also fixed an issue where `Runway#save` with a single record would fire the save listener twice for the same record.
 
 #### Version 1.11.0 (February 14, 2026)
 

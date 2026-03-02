@@ -965,6 +965,265 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that saving a {@link Record} with a linked
+     * {@link Record} fires save notifications for both the parent and the
+     * child.
+     * <p>
+     * <strong>Start state:</strong> A freshly created {@link ParentRecord} with
+     * a linked {@link ChildRecord}, neither previously saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener that tracks notified {@link Record
+     * Records}.</li>
+     * <li>Create a {@link ParentRecord} with a linked {@link ChildRecord}.</li>
+     * <li>Call {@code parent.save()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save listener fires for both the parent
+     * and child {@link Record Records}.
+     */
+    @Test
+    public void testSaveListenerFiredForLinkedRecordViaSave() throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    savedRecords.add(record);
+                    latch.countDown();
+                }).build();
+
+        ChildRecord child = new ChildRecord();
+        child.label = "Child1";
+        ParentRecord parent = new ParentRecord();
+        parent.name = "Parent1";
+        parent.child = child;
+
+        boolean saved = parent.save();
+
+        Assert.assertTrue(saved);
+        Assert.assertTrue("Save listener should fire for both records",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(2, savedRecords.size());
+        Assert.assertTrue(savedRecords.contains(parent));
+        Assert.assertTrue(savedRecords.contains(child));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#save(Record...)} with a
+     * single {@link Record} that has a linked {@link Record} fires save
+     * notifications for both.
+     * <p>
+     * <strong>Start state:</strong> A freshly created {@link ParentRecord} with
+     * a linked {@link ChildRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener.</li>
+     * <li>Create a {@link ParentRecord} with a linked {@link ChildRecord}.</li>
+     * <li>Call {@code runway.save(parent)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save listener fires for both the parent
+     * and child {@link Record Records}.
+     */
+    @Test
+    public void testSaveListenerFiredForLinkedRecordViaRunwaySave()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    savedRecords.add(record);
+                    latch.countDown();
+                }).build();
+
+        ChildRecord child = new ChildRecord();
+        child.label = "Child1";
+        ParentRecord parent = new ParentRecord();
+        parent.name = "Parent1";
+        parent.child = child;
+
+        boolean saved = runway.save(parent);
+
+        Assert.assertTrue(saved);
+        Assert.assertTrue("Save listener should fire for both records",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(2, savedRecords.size());
+        Assert.assertTrue(savedRecords.contains(parent));
+        Assert.assertTrue(savedRecords.contains(child));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that bulk {@link Runway#save(Record...)}
+     * fires save notifications for all {@link Record Records}, including linked
+     * children.
+     * <p>
+     * <strong>Start state:</strong> Two freshly created {@link ParentRecord
+     * ParentRecords}, each with a linked {@link ChildRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener.</li>
+     * <li>Create two parent-child pairs.</li>
+     * <li>Call {@code runway.save(parent1, parent2)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save listener fires for all four
+     * {@link Record Records}.
+     */
+    @Test
+    public void testSaveListenerFiredForLinkedRecordsViaBulkSave()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(4);
+        Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    savedRecords.add(record);
+                    latch.countDown();
+                }).build();
+
+        ChildRecord child1 = new ChildRecord();
+        child1.label = "Child1";
+        ParentRecord parent1 = new ParentRecord();
+        parent1.name = "Parent1";
+        parent1.child = child1;
+
+        ChildRecord child2 = new ChildRecord();
+        child2.label = "Child2";
+        ParentRecord parent2 = new ParentRecord();
+        parent2.name = "Parent2";
+        parent2.child = child2;
+
+        boolean saved = runway.save(parent1, parent2);
+
+        Assert.assertTrue(saved);
+        Assert.assertTrue("Save listener should fire for all four records",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(4, savedRecords.size());
+        Assert.assertTrue(savedRecords.contains(parent1));
+        Assert.assertTrue(savedRecords.contains(child1));
+        Assert.assertTrue(savedRecords.contains(parent2));
+        Assert.assertTrue(savedRecords.contains(child2));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a linked {@link Record} with no
+     * unsaved changes does not trigger a save notification when the parent is
+     * saved.
+     * <p>
+     * <strong>Start state:</strong> A {@link ChildRecord} that has already been
+     * saved and has no modifications.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener with a call counter.</li>
+     * <li>Save a {@link ChildRecord} and record the notification count.</li>
+     * <li>Create a {@link ParentRecord} that links to the already-saved child
+     * and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Only the {@link ParentRecord} triggers a
+     * notification; the unchanged {@link ChildRecord} does not.
+     */
+    @Test
+    public void testSaveListenerNotFiredForUnchangedLinkedRecord()
+            throws Exception {
+        AtomicInteger callCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    callCount.incrementAndGet();
+                }).build();
+
+        // Save the child first so it has no unsaved changes
+        ChildRecord child = new ChildRecord();
+        child.label = "Already Saved";
+        runway.save(child);
+
+        // Wait for initial notification
+        Thread.sleep(2000);
+        int countAfterChildSave = callCount.get();
+
+        // Now create and save a parent that links to the
+        // already-saved child
+        ParentRecord parent = new ParentRecord();
+        parent.name = "Parent";
+        parent.child = child;
+        runway.save(parent);
+
+        // Wait for notification
+        Thread.sleep(2000);
+
+        // Only the parent should trigger a notification (the
+        // child had no unsaved changes)
+        Assert.assertEquals(countAfterChildSave + 1, callCount.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#save(Record...)} with a
+     * single {@link Record} fires the save listener exactly once, not twice.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener with a call counter.</li>
+     * <li>Save a single {@link Record} via {@code runway.save(record)}.</li>
+     * <li>Wait to confirm no additional notifications arrive.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call count is exactly {@code 1}.
+     */
+    @Test
+    public void testNoDoubleNotificationForSingleRecord() throws Exception {
+        AtomicInteger callCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    callCount.incrementAndGet();
+                }).build();
+
+        Player player = new Player("Test", 10);
+        runway.save(player);
+
+        // Wait to ensure no extra notification arrives
+        Thread.sleep(2000);
+
+        Assert.assertEquals("Save listener should be called exactly once", 1,
+                callCount.get());
+    }
+
+    /**
+     * A test {@link Record} that holds a link to a {@link ChildRecord}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class ParentRecord extends Record {
+
+        public String name;
+        public ChildRecord child;
+    }
+
+    /**
+     * A test {@link Record} used as a linked child in notification tests.
+     *
+     * @author Jeff Nelson
+     */
+    public static class ChildRecord extends Record {
+
+        public String label;
+    }
+
+    /**
      * A test record class that modifies multiple fields in preSave.
      */
     public static class ComplexPreSaveRecord extends Record {
