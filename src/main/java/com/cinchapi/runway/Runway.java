@@ -1093,6 +1093,43 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return {@code true} if all changes are atomically saved
      */
     public boolean save(Record... records) {
+        return save(false, records);
+    }
+
+    /**
+     * Save all changes in the provided {@code records} using a single ACID
+     * transaction.
+     * <p>
+     * All changes are committed atomically &mdash; either every {@link Record}
+     * is persisted or none are. When the {@link SpuriousSaveFailureStrategy} is
+     * {@link SpuriousSaveFailureStrategy#RETRY RETRY}, a
+     * {@link TransactionException} that is not caused by actual data staleness
+     * is automatically retried in a new transaction.
+     * <p>
+     * When {@code preventStaleWrites} is {@code true}, each {@link Record} in
+     * the object graph is checked for staleness inside the transaction before
+     * its data is written. If any {@link Record} has been externally modified
+     * since it was last loaded or saved, a {@link StaleDataException} is thrown
+     * and no data is persisted. This guarantees that a save will never silently
+     * overwrite data that was changed by another process or transaction after
+     * the {@link Record} was last synchronized. This is especially useful in
+     * multi-writer environments where concurrent updates to the same
+     * {@link Record Records} are possible.
+     * <p>
+     * <strong>NOTE:</strong> Enabling {@code preventStaleWrites} adds latency
+     * because an audit query is issued for every {@link Record} in the object
+     * graph before each write. For save operations that touch large object
+     * graphs, this overhead may be significant. When disabled, saves are faster
+     * but external modifications may be silently overwritten.
+     *
+     * @param preventStaleWrites if {@code true}, reject the save when any
+     *            {@link Record} in the object graph has stale data
+     * @param records one or more {@link Record Records} to save
+     * @return {@code true} if all changes are atomically saved
+     * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
+     *             and any {@link Record} has been externally modified
+     */
+    public boolean save(boolean preventStaleWrites, Record... records) {
         Concourse concourse = connections.request();
         long transactionId = Time.now();
         Record current = null;
@@ -1113,8 +1150,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     for (Record record : records) {
                         current = record;
                         record.assign(this);
-                        record.saveWithinTransaction(concourse, seen,
-                                snapshots);
+                        record.saveWithinTransaction(concourse, seen, snapshots,
+                                preventStaleWrites);
                     }
                     concourse.clear("transaction_id", METADATA_RECORD);
                     if(concourse.commit()) {
@@ -1142,6 +1179,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         // same linked record.
                         restore(snapshots);
                         continue;
+                    }
+                    else if(t instanceof StaleDataException) {
+                        throw (StaleDataException) t;
                     }
                     else {
                         for (Record record : seen.keySet()) {

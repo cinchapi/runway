@@ -301,8 +301,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Record#hasStaleData(Concourse)
+     * <strong>Goal:</strong> Verify that {@link Record#hasStaleData(Concourse)
      * hasStaleData} returns {@code true} when a {@link Record Record's}
      * database state has been modified by an external transaction since the
      * {@link Record} was last loaded or saved.
@@ -313,8 +312,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save a {@link TUser}.</li>
      * <li>Externally modify the {@link TUser TUser's} name directly in the
-     * database via a separate {@link Concourse}
-     * connection.</li>
+     * database via a separate {@link Concourse} connection.</li>
      * <li>Call {@code hasStaleData} on the in-memory {@link TUser}.</li>
      * </ul>
      * <p>
@@ -358,8 +356,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Record#hasStaleData(Concourse)
+     * <strong>Goal:</strong> Verify that {@link Record#hasStaleData(Concourse)
      * hasStaleData} returns {@code false} when no external transaction has
      * modified the {@link Record Record's} database state since it was last
      * saved.
@@ -396,63 +393,6 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
             finally {
                 retryRunway.connections.release(check);
             }
-        }
-        finally {
-            retryRunway.close();
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that the
-     * {@link SpuriousSaveFailureStrategy#RETRY} strategy does not retry when a
-     * root {@link Record Record's} database state has been externally modified,
-     * because the failure is a real conflict rather than a spurious one.
-     * <p>
-     * <strong>Start state:</strong> A {@link Runway} instance configured with
-     * {@link SpuriousSaveFailureStrategy#RETRY}. A {@link TUser} that has been
-     * saved and then externally modified in the database.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link TUser}.</li>
-     * <li>Externally modify the {@link TUser TUser's} name directly in the
-     * database.</li>
-     * <li>Modify the in-memory {@link TUser TUser's} name to a different value,
-     * creating an unsaved change.</li>
-     * <li>Save the {@link TUser} again.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The save returns {@code false} because
-     * {@code hasStaleData} detects the external modification and prevents
-     * retry.
-     */
-    @Test
-    public void testRetryStrategyRejectsRealConflict() throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
-                .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
-                .build();
-        try {
-            TUser user = new TUser("hank");
-            Assert.assertTrue(retryRunway.save(user));
-
-            // Externally modify the user in the database
-            Concourse concourse = retryRunway.connections.request();
-            try {
-                concourse.set("name", "external_change", user.id());
-            }
-            finally {
-                retryRunway.connections.release(concourse);
-            }
-
-            // Modify the in-memory record so it has unsaved
-            // changes that will conflict
-            user.name = "local_change";
-
-            // The save should fail because the root record
-            // has stale data (a real conflict, not spurious)
-            Assert.assertFalse(
-                    "Save should fail when root record has" + " stale data",
-                    retryRunway.save(user));
         }
         finally {
             retryRunway.close();
@@ -530,8 +470,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Record#hasStaleData(Concourse)
+     * <strong>Goal:</strong> Verify that {@link Record#hasStaleData(Concourse)
      * hasStaleData} returns {@code false} after loading a {@link Record} from
      * the database, since the loaded state is in sync with the database.
      * <p>

@@ -40,6 +40,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -506,21 +507,27 @@ public abstract class Record implements Comparable<Record> {
     /**
      * If {@code value} is a {@link Record}, {@link DeferredReference} or a
      * {@link Sequences#isSequence(Object) Sequence} that contains either, try
-     * to {@link #saveWithinTransaction(Concourse, Map, Map) save} it, in case
-     * it has {@link #hasUnsavedChanges() unsaved} changes.
+     * to {@link #saveWithinTransaction(Concourse, Map, Map, boolean) save} it,
+     * in case it has {@link #hasUnsavedChanges() unsaved} changes.
      *
-     * @param value
-     * @param concourse
-     * @param seen
+     * @param value the value to inspect for {@link Record} references
+     * @param concourse the {@link Concourse} connection for the active
+     *            transaction
+     * @param seen {@link Record Records} already processed in this save
+     * @param snapshots if non-{@code null}, each {@link Record} self-snapshots
+     *            its metadata before mutation for retry support
+     * @param preventStaleWrite if {@code true}, reject the save of any
+     *            {@link Record} that has been externally modified
      */
     @SuppressWarnings("rawtypes")
     private static void saveModifiedReferenceWithinTransaction(Object value,
             Concourse concourse, Map<Record, Boolean> seen,
-            @Nullable Map<Record, Snapshot> snapshots) {
+            @Nullable Map<Record, Snapshot> snapshots,
+            boolean preventStaleWrite) {
         if(Sequences.isSequence(value)) {
             Sequences.forEach(value,
                     item -> saveModifiedReferenceWithinTransaction(item,
-                            concourse, seen, snapshots));
+                            concourse, seen, snapshots, preventStaleWrite));
         }
         else {
             Record record = null;
@@ -533,7 +540,8 @@ public abstract class Record implements Comparable<Record> {
             }
 
             if(record != null && !seen.containsKey(record)) {
-                record.saveWithinTransaction(concourse, seen, snapshots);
+                record.saveWithinTransaction(concourse, seen, snapshots,
+                        preventStaleWrite);
             }
         }
     }
@@ -1550,6 +1558,24 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Reload this {@link Record Record's} state from the database, replacing
+     * any in-memory values with the latest persisted data.
+     */
+    public final void refresh() {
+        Verify.that(runway != null, "Cannot refresh because this Record isn't"
+                + " pinned to a Runway instance");
+        Concourse concourse = connections.request();
+        try {
+            ConcurrentMap<Long, Record> existing = new ConcurrentHashMap<>();
+            load(concourse, existing);
+            onLoad();
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Remove this {@link Record} from {@code realm}.
      *
      * @param realm
@@ -1606,11 +1632,27 @@ public abstract class Record implements Comparable<Record> {
      * <strong>NOTE:</strong> This method recursively saves any linked
      * {@link Record records}.
      * </p>
+     * 
+     * @return {@code true} if this {@link Record} is successfully saved
      */
     public final boolean save() {
+        return save(false);
+    }
+
+    /**
+     * Save any changes made to this {@link Record}.
+     * <p>
+     * <strong>NOTE:</strong> This method recursively saves any linked
+     * {@link Record records}.
+     * </p>
+     * 
+     * @param preventStaleWrite
+     * @return {@code true} if this {@link Record} is successfully saved
+     */
+    public final boolean save(boolean preventStaleWrite) {
         Verify.that(runway != null, "Cannot perform an implicit save because"
                 + " this Record isn't pinned to a Runway instance");
-        return runway.save(this);
+        return runway.save(preventStaleWrite, this);
     }
 
     /**
@@ -1847,8 +1889,8 @@ public abstract class Record implements Comparable<Record> {
             return false;
         }
         else {
-            Map<Timestamp, List<String>> history = concourse.review(id);
-            for (Timestamp ts : history.keySet()) {
+            _audit = concourse.review(id);
+            for (Timestamp ts : _audit.keySet()) {
                 if(ts.getMicros() > checkpointTs) {
                     return true;
                 }
@@ -2102,49 +2144,32 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Save the data within this record using the specified {@code concourse}
-     * connection, adhering to constraints specified by the record's field
-     * annotations. This method assumes that the caller has already started a
-     * transaction and will execute within the same transaction context.
-     * <p>
-     * It iterates over the fields of the record and performs different
-     * operations based on field annotations:
-     * </p>
-     * <ul>
-     * <li>{@link Required @Required} enforces that a value is non-empty or
-     * contains at least one non-empty item if a sequence.</li>
-     * <li>{@link ValidatedBy @ValidatedBy} applies a custom validation defined
-     * by the validator class specified in the annotation to each element.</li>
-     * <li>{@link Unique @Unique} ensures that each element in a field must be
-     * unique across all records in the class, failing to save if duplicate
-     * values are found.</li>
-     * </ul>
-     * <p>
-     * If the record has modified realms, it reconciles them with the existing
-     * ones. Values are transformed into storable form using the
-     * {@link #transform(Object, Concourse, Set)} method before saving. In case
-     * of violations of constraints, an {@code IllegalStateException} is thrown.
-     * </p>
+     * Persist this {@link Record Record's} data within an active transaction,
+     * enforcing field constraints and recursively saving linked {@link Record
+     * Records}.
      *
-     * @param concourse The Concourse instance to execute the operation.
-     * @param seen map of records already processed to whether they had unsaved
-     *            changes, used to prevent infinite recursion and track which
-     *            records need post-commit save notifications
+     * @param concourse the {@link Concourse} connection for the active
+     *            transaction
+     * @param seen {@link Record Records} already processed in this save
      * @param snapshots if non-{@code null}, each {@link Record} self-snapshots
      *            its metadata before mutation for retry support
-     * @throws IllegalStateException If required fields are missing, values are
-     *             not unique across all records in the class, or validation
-     *             fails.
-     * @throws ReflectiveOperationException If reflection-related errors occur
-     *             during processing.
+     * @param preventStaleWrite if {@code true}, reject the save when this
+     *            {@link Record} has been externally modified
+     * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
+     *             and this {@link Record} has stale data
+     * @throws IllegalStateException if field constraints are violated
      */
     void saveWithinTransaction(final Concourse concourse,
             Map<Record, Boolean> seen,
-            @Nullable Map<Record, Snapshot> snapshots) {
+            @Nullable Map<Record, Snapshot> snapshots,
+            boolean preventStaleWrite) {
         if(snapshots != null) {
             snapshots.putIfAbsent(this, snapshot());
         }
         Preconditions.checkState(!inViolation);
+        if(preventStaleWrite && hasStaleData(concourse)) {
+            throw new StaleDataException(id);
+        }
         errors.clear();
         seen.put(this, true);
         if(_hasModifiedRealms) {
@@ -2163,7 +2188,7 @@ public abstract class Record implements Comparable<Record> {
             concourse.clear(AUTHOR_KEY, id);
         }
         if(deleted) {
-            deleteWithinTransaction(concourse);
+            deleteWithinTransaction(concourse, preventStaleWrite);
         }
         else if(!hasUnsavedChanges()) {
             // This Record hasn't been modified, so simply go through each
@@ -2173,7 +2198,7 @@ public abstract class Record implements Comparable<Record> {
             for (Field field : fields()) {
                 Object value = getFieldValue(field, this);
                 saveModifiedReferenceWithinTransaction(value, concourse, seen,
-                        snapshots);
+                        snapshots, preventStaleWrite);
             }
         }
         else if(overrideSave() != null) {
@@ -2229,7 +2254,8 @@ public abstract class Record implements Comparable<Record> {
 
                             }
                         }
-                        value = transform(value, concourse, seen, snapshots);
+                        value = transform(value, concourse, seen, snapshots,
+                                preventStaleWrite);
                         if(value.getClass().isArray()) {
                             concourse.reconcile(key, id, (Object[]) value);
                         }
@@ -2650,11 +2676,18 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Perform an actual "deletion" of this record from the database.
+     * Perform an actual "deletion" of this {@link Record} from the database.
      *
-     * @param concourse
+     * @param concourse the {@link Concourse} connection for the active
+     *            transaction
+     * @param preventStaleWrite if {@code true}, reject the deletion when this
+     *            {@link Record} has been externally modified
      */
-    private void deleteWithinTransaction(Concourse concourse) {
+    private void deleteWithinTransaction(Concourse concourse,
+            boolean preventStaleWrite) {
+        if(preventStaleWrite && hasStaleData(concourse)) {
+            throw new StaleDataException(id);
+        }
         // Ensure any fields to which this Record must @CascadeDelete are
         // deleted within this transaction
         Set<Field> dependents = StaticAnalysis.instance()
@@ -2741,14 +2774,14 @@ public abstract class Record implements Comparable<Record> {
                     }
                 }
                 record.saveWithinTransaction(concourse, new HashMap<>(),
-                        new HashMap<>());
+                        new HashMap<>(), preventStaleWrite);
             }
         }
 
         // Perform the deletion(s)
         concourse.clear(id);
         for (Record record : waitingToBeDeleted) {
-            record.deleteWithinTransaction(concourse);
+            record.deleteWithinTransaction(concourse, preventStaleWrite);
         }
     }
 
@@ -3028,21 +3061,27 @@ public abstract class Record implements Comparable<Record> {
      * transformed into arrays.
      * </p>
      *
-     * @param value The value to be transformed.
-     * @param concourse The Concourse instance managing the transaction.
-     * @param seen the records that have already been {@link #save() saved} (to
-     *            prevent infinite recursion)
+     * @param value the value to be transformed
+     * @param concourse the {@link Concourse} connection for the active
+     *            transaction
+     * @param seen {@link Record Records} already processed in this save
+     * @param snapshots if non-{@code null}, each {@link Record} self-snapshots
+     *            its metadata before mutation for retry support
+     * @param preventStaleWrite if {@code true}, reject the save of any
+     *            {@link Record} that has been externally modified
      * @return a {@link Concourse} primitive or an array of {@link Concourse}
-     *         primitives.
+     *         primitives
      */
     @SuppressWarnings("rawtypes")
     private Object transform(@Nonnull Object value, Concourse concourse,
             Map<Record, Boolean> seen,
-            @Nullable Map<Record, Snapshot> snapshots) {
+            @Nullable Map<Record, Snapshot> snapshots,
+            boolean preventStaleWrite) {
         if(Sequences.isSequence(value)) {
             ArrayBuilder<Object> array = ArrayBuilder.builder();
             Sequences.forEach(value, item -> {
-                array.add(transform(item, concourse, seen, snapshots));
+                array.add(transform(item, concourse, seen, snapshots,
+                        preventStaleWrite));
             });
             return array.length() > 0 ? array.build() : Array.containing();
         }
@@ -3063,7 +3102,8 @@ public abstract class Record implements Comparable<Record> {
             // Ensure that Record references are saved within the current
             // transaction
             if(record != null && !seen.containsKey(record)) {
-                record.saveWithinTransaction(concourse, seen, snapshots);
+                record.saveWithinTransaction(concourse, seen, snapshots,
+                        preventStaleWrite);
             }
 
             return primitive;
