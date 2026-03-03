@@ -1173,6 +1173,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             concourse.abort();
                             return false;
                         }
+                        else if(override != null) {
+                            continue;
+                        }
                         else {
                             current = record;
                             record.assign(this);

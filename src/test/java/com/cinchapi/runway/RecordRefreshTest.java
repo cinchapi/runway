@@ -19,6 +19,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.runway.Record.InvalidRecordException;
 
 /**
  * Tests for {@link Record#refresh()}.
@@ -108,7 +109,7 @@ public class RecordRefreshTest extends RunwayBaseClientServerTest {
      * because the {@link Record} has no associated {@link Runway} instance to
      * refresh from.
      */
-    @Test(expected = IllegalStateException.class)
+    @Test(expected = InvalidRecordException.class)
     public void testRefreshThrowsWhenNotPinnedToRunway() {
         TUser user = new TUser("unpinned");
         user.refresh();
