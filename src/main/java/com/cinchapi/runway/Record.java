@@ -1560,6 +1560,15 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Reload this {@link Record Record's} state from the database, replacing
      * any in-memory values with the latest persisted data.
+     * <p>
+     * After refreshing, this {@link Record} is considered in sync with the
+     * database &mdash; {@link #hasStaleDataWithinTransaction(Concourse)
+     * hasStaleDataWithinTransaction} will return {@code false} until the next
+     * external modification occurs.
+     * </p>
+     *
+     * @throws IllegalStateException if this {@link Record} is not pinned to a
+     *             {@link Runway} instance
      */
     public final void refresh() {
         Verify.that(runway != null, "Cannot refresh because this Record isn't"
@@ -1643,11 +1652,17 @@ public abstract class Record implements Comparable<Record> {
      * Save any changes made to this {@link Record}.
      * <p>
      * <strong>NOTE:</strong> This method recursively saves any linked
-     * {@link Record records}.
+     * {@link Record Records}.
      * </p>
-     * 
-     * @param preventStaleWrite
+     *
+     * @param preventStaleWrite if {@code true}, reject the save when this
+     *            {@link Record} (or any linked {@link Record}) has been
+     *            externally modified since it was last loaded or saved
      * @return {@code true} if this {@link Record} is successfully saved
+     * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
+     *             and stale data is detected
+     * @throws IllegalStateException if this {@link Record} is not pinned to a
+     *             {@link Runway} instance
      */
     public final boolean save(boolean preventStaleWrite) {
         Verify.that(runway != null, "Cannot perform an implicit save because"
@@ -1878,19 +1893,17 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return {@code true} if this {@link Record Record's} data in the database
-     * has been modified by since this {@link Record} is known to have been
-     * loaded or instantiated.
+     * has been modified since this {@link Record} was last loaded or saved.
      *
      * @param concourse the {@link Concourse} connection to use
      * @return {@code true} if the data is stale
      */
-    boolean hasStaleData(Concourse concourse) {
+    boolean hasStaleDataWithinTransaction(Concourse concourse) {
         if(checkpointTs == 0) {
             return false;
         }
         else {
-            _audit = concourse.review(id);
-            for (Timestamp ts : _audit.keySet()) {
+            for (Timestamp ts : concourse.review(id).keySet()) {
                 if(ts.getMicros() > checkpointTs) {
                     return true;
                 }
@@ -2167,7 +2180,7 @@ public abstract class Record implements Comparable<Record> {
             snapshots.putIfAbsent(this, snapshot());
         }
         Preconditions.checkState(!inViolation);
-        if(preventStaleWrite && hasStaleData(concourse)) {
+        if(preventStaleWrite && hasStaleDataWithinTransaction(concourse)) {
             throw new StaleDataException(id);
         }
         errors.clear();
@@ -2200,9 +2213,6 @@ public abstract class Record implements Comparable<Record> {
                 saveModifiedReferenceWithinTransaction(value, concourse, seen,
                         snapshots, preventStaleWrite);
             }
-        }
-        else if(overrideSave() != null) {
-            overrideSave().get();
         }
         else {
             beforeSave();
@@ -2274,7 +2284,7 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Capture a snapshot of this {@link Record}
+     * Capture a snapshot of this {@link Record}.
      *
      * @return a {@link Snapshot} of the current state
      */
@@ -2685,9 +2695,6 @@ public abstract class Record implements Comparable<Record> {
      */
     private void deleteWithinTransaction(Concourse concourse,
             boolean preventStaleWrite) {
-        if(preventStaleWrite && hasStaleData(concourse)) {
-            throw new StaleDataException(id);
-        }
         // Ensure any fields to which this Record must @CascadeDelete are
         // deleted within this transaction
         Set<Field> dependents = StaticAnalysis.instance()
@@ -4084,14 +4091,16 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * An immutable snapshot of a {@link Record}
+     * An immutable snapshot of a {@link Record Record's} mutable metadata, used
+     * to restore state after a failed save retry.
      *
      * @author Jeff Nelson
      */
     final class Snapshot {
 
-        // NOTE: The current implementation only captures so metadata, but it is
-        // expandable to capture other data in the future
+        // NOTE: The current implementation only captures some
+        // metadata, but it is expandable to capture other data
+        // in the future
 
         /**
          * The snapshotted value of {@link Record#_hasModifiedRealms}.

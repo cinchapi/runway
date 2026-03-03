@@ -301,10 +301,11 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link Record#hasStaleData(Concourse)
-     * hasStaleData} returns {@code true} when a {@link Record Record's}
-     * database state has been modified by an external transaction since the
-     * {@link Record} was last loaded or saved.
+     * <strong>Goal:</strong> Verify that
+     * {@link Record#hasStaleDataWithinTransaction(Concourse) hasStaleData}
+     * returns {@code true} when a {@link Record Record's} database state has
+     * been modified by an external transaction since the {@link Record} was
+     * last loaded or saved.
      * <p>
      * <strong>Start state:</strong> A freshly saved {@link TUser}.
      * <p>
@@ -342,9 +343,10 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
             // hasStaleData should detect the external write
             Concourse check = retryRunway.connections.request();
             try {
-                Assert.assertTrue("hasStaleData should return true"
-                        + " after external" + " modification",
-                        user.hasStaleData(check));
+                Assert.assertTrue(
+                        "hasStaleData should return true" + " after external"
+                                + " modification",
+                        user.hasStaleDataWithinTransaction(check));
             }
             finally {
                 retryRunway.connections.release(check);
@@ -356,10 +358,10 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link Record#hasStaleData(Concourse)
-     * hasStaleData} returns {@code false} when no external transaction has
-     * modified the {@link Record Record's} database state since it was last
-     * saved.
+     * <strong>Goal:</strong> Verify that
+     * {@link Record#hasStaleDataWithinTransaction(Concourse) hasStaleData}
+     * returns {@code false} when no external transaction has modified the
+     * {@link Record Record's} database state since it was last saved.
      * <p>
      * <strong>Start state:</strong> A freshly saved {@link TUser}.
      * <p>
@@ -388,7 +390,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
                 Assert.assertFalse(
                         "hasStaleData should return false" + " when no external"
                                 + " modification occurred",
-                        user.hasStaleData(check));
+                        user.hasStaleDataWithinTransaction(check));
             }
             finally {
                 retryRunway.connections.release(check);
@@ -470,9 +472,10 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link Record#hasStaleData(Concourse)
-     * hasStaleData} returns {@code false} after loading a {@link Record} from
-     * the database, since the loaded state is in sync with the database.
+     * <strong>Goal:</strong> Verify that
+     * {@link Record#hasStaleDataWithinTransaction(Concourse) hasStaleData}
+     * returns {@code false} after loading a {@link Record} from the database,
+     * since the loaded state is in sync with the database.
      * <p>
      * <strong>Start state:</strong> A {@link TUser} that has been saved and
      * then loaded fresh from the database.
@@ -504,7 +507,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
                 Assert.assertFalse(
                         "hasStaleData should return false"
                                 + " for a freshly loaded record",
-                        loaded.hasStaleData(check));
+                        loaded.hasStaleDataWithinTransaction(check));
             }
             finally {
                 retryRunway.connections.release(check);

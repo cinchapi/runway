@@ -43,6 +43,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -71,7 +72,6 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.lang.sort.OrderComponent;
 import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
-import com.cinchapi.concourse.time.Time;
 import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.Record.InvalidRecordException;
 import com.cinchapi.runway.Record.Snapshot;
@@ -207,25 +207,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Restore the mutable metadata on each {@link Record} from a previously
-     * captured snapshot.
-     * <p>
-     * This is used during spurious save failure retry to undo the side effects
-     * that {@link Record#saveWithinTransaction(Concourse, Map)} performs on
-     * metadata fields (checksum, realm flags, author), since the transaction
-     * was aborted and none of those mutations should persist.
-     * </p>
-     *
-     * @param snapshot a mapping from {@link Record} to its captured
-     *            {@link Record.Snapshot}
-     */
-    private static void restore(Map<Record, Record.Snapshot> snapshot) {
-        for (Entry<Record, Record.Snapshot> entry : snapshot.entrySet()) {
-            entry.getKey().restore(entry.getValue());
-        }
-    }
-
-    /**
      * Call
      * {@link Record#load(Class, long, TLongObjectMap, ConnectionPool, Runway, Map)}
      * and handle any errors with the {@link #onLoadFailureHandler}.
@@ -267,6 +248,32 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Restore the mutable metadata on each {@link Record} from a previously
+     * captured snapshot.
+     * <p>
+     * This is used during spurious save failure retry to undo the side effects
+     * that {@link Record#saveWithinTransaction(Concourse, Map, Map, boolean)
+     * saveWithinTransaction} performs on metadata fields (checksum, realm
+     * flags, author), since the transaction was aborted and none of those
+     * mutations should persist.
+     * </p>
+     *
+     * @param snapshot a mapping from {@link Record} to its captured
+     *            {@link Record.Snapshot}
+     */
+    private static void restore(Map<Record, Record.Snapshot> snapshot) {
+        for (Entry<Record, Record.Snapshot> entry : snapshot.entrySet()) {
+            entry.getKey().restore(entry.getValue());
+        }
+    }
+
+    /**
+     * The maximum number of times a spurious save failure is retried before
+     * giving up.
+     */
+    private static final int MAX_SPURIOUS_SAVE_RETRIES = 5;
+
+    /**
      * The default {@link #onLoadFailureHandler}.
      */
     private static TriConsumer<Class<? extends Record>, Long, Throwable> DEFAULT_ON_LOAD_FAILURE_HANDLER = (
@@ -276,13 +283,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * A collection of all the active {@link Runway} instances.
      */
     private static Set<Runway> instances = Sets.newHashSet();
-
-    /**
-     * The record where metadata is stored. We typically store some transient
-     * metadata for transaction routing within this record (so its only visible
-     * within the specific transaction) and we clear it before commit time.
-     */
-    private static long METADATA_RECORD = -1;
 
     /**
      * Placeholder for a {@code null} {@link Order} parameter.
@@ -359,14 +359,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * is not {@link ReadStrategy#BULK}.
      */
     private int streamingReadBufferSize = 1000;
-
-    /**
-     * A mapping from a transaction id to the set of records that are waiting to
-     * be saved within that transaction. We use this collection to ensure that a
-     * record being saved only links to an existing record in the database or a
-     * record that will later exist (e.g. waiting to be saved).
-     */
-    private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
 
     /**
      * A flag that indicates if the connected server has enough functionality to
@@ -1053,199 +1045,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * {@link Concourse#ping() Ping} the database and return {@code true} if it
-     * is accessible.
-     *
-     * @return the database ping status
-     */
-    public boolean ping() {
-        Concourse concourse = connections.request();
-        try {
-            return concourse.ping();
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
-     * Return the interface that exposes the properties of this {@link Runway}
-     * instance.
-     *
-     * @return the {@link Properties}
-     */
-    public Properties properties() {
-        return new Properties();
-    }
-
-    /**
-     * Save all changes in the provided {@code records} using a single ACID
-     * transaction.
-     * <p>
-     * All changes are committed atomically &mdash; either every {@link Record}
-     * is persisted or none are. When the {@link SpuriousSaveFailureStrategy} is
-     * {@link SpuriousSaveFailureStrategy#RETRY RETRY}, a
-     * {@link TransactionException} that is not caused by actual data staleness
-     * is automatically retried in a new transaction.
-     * </p>
-     *
-     * @param records one or more {@link Record Records} to save
-     * @return {@code true} if all changes are atomically saved
-     */
-    public boolean save(Record... records) {
-        return save(false, records);
-    }
-
-    /**
-     * Save all changes in the provided {@code records} using a single ACID
-     * transaction.
-     * <p>
-     * All changes are committed atomically &mdash; either every {@link Record}
-     * is persisted or none are. When the {@link SpuriousSaveFailureStrategy} is
-     * {@link SpuriousSaveFailureStrategy#RETRY RETRY}, a
-     * {@link TransactionException} that is not caused by actual data staleness
-     * is automatically retried in a new transaction.
-     * <p>
-     * When {@code preventStaleWrites} is {@code true}, each {@link Record} in
-     * the object graph is checked for staleness inside the transaction before
-     * its data is written. If any {@link Record} has been externally modified
-     * since it was last loaded or saved, a {@link StaleDataException} is thrown
-     * and no data is persisted. This guarantees that a save will never silently
-     * overwrite data that was changed by another process or transaction after
-     * the {@link Record} was last synchronized. This is especially useful in
-     * multi-writer environments where concurrent updates to the same
-     * {@link Record Records} are possible.
-     * <p>
-     * <strong>NOTE:</strong> Enabling {@code preventStaleWrites} adds latency
-     * because an audit query is issued for every {@link Record} in the object
-     * graph before each write. For save operations that touch large object
-     * graphs, this overhead may be significant. When disabled, saves are faster
-     * but external modifications may be silently overwritten.
-     *
-     * @param preventStaleWrites if {@code true}, reject the save when any
-     *            {@link Record} in the object graph has stale data
-     * @param records one or more {@link Record Records} to save
-     * @return {@code true} if all changes are atomically saved
-     * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
-     *             and any {@link Record} has been externally modified
-     */
-    public boolean save(boolean preventStaleWrites, Record... records) {
-        Concourse concourse = connections.request();
-        long transactionId = Time.now();
-        Record current = null;
-        try {
-            boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
-            Map<Record, Snapshot> snapshots = retrySpuriousSaveFailure
-                    ? new HashMap<>()
-                    : null;
-            Map<Record, Boolean> seen = new HashMap<>();
-            Set<Record> waiting = Sets.newHashSet(records);
-            waitingToBeSaved.put(transactionId, waiting);
-            while (true) {
-                try {
-                    seen.clear();
-                    concourse.stage();
-                    concourse.set("transaction_id", transactionId,
-                            METADATA_RECORD);
-                    for (Record record : records) {
-                        current = record;
-                        record.assign(this);
-                        record.saveWithinTransaction(concourse, seen, snapshots,
-                                preventStaleWrites);
-                    }
-                    concourse.clear("transaction_id", METADATA_RECORD);
-                    if(concourse.commit()) {
-                        seen.entrySet().stream().filter(e -> e.getValue())
-                                .map(e -> e.getKey()).forEach(record -> {
-                                    enqueueSaveNotification(record);
-                                    record.checkpoint();
-                                });
-                        return true;
-                    }
-                    else {
-                        // Trigger possibly restore and retry in catch block
-                        throw new TransactionException();
-                    }
-                }
-                catch (Throwable t) {
-                    concourse.abort();
-                    if(t instanceof TransactionException
-                            && retrySpuriousSaveFailure
-                            && Arrays.stream(records).noneMatch(
-                                    r -> r.hasStaleData(concourse))) {
-                        // NOTE: Only root records are checked for stale data
-                        // because linked records that are recursively saved may
-                        // show false positives when concurrent saves share the
-                        // same linked record.
-                        restore(snapshots);
-                        continue;
-                    }
-                    else if(t instanceof StaleDataException) {
-                        throw (StaleDataException) t;
-                    }
-                    else {
-                        for (Record record : seen.keySet()) {
-                            if(record.inZombieState(concourse)) {
-                                concourse.clear(record.id());
-                            }
-                        }
-                        if(current != null) {
-                            current.errors.add(t);
-                        }
-                        return false;
-                    }
-                }
-            }
-        }
-        finally {
-            waitingToBeSaved.remove(transactionId);
-            connections.release(concourse);
-        }
-    }
-
-    /**
-     * Search for records in {@code clazz} that match the search {@query} across
-     * any of the provided {@code keys}.
-     *
-     * @param clazz
-     * @param query
-     * @param keys
-     * @return the matching search results
-     */
-    public <T extends Record> Set<T> search(Class<T> clazz, String query,
-            String... keys) {
-        Concourse concourse = connections.request();
-        try {
-            Set<Long> ids = $search(concourse, clazz, query, keys);
-            return instantiateAll(clazz, ids);
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
-     * Search for records across the hierarchy of {@code clazz} that match the
-     * search {@query} across any of the provided {@code keys}.
-     *
-     * @param clazz
-     * @param query
-     * @param keys
-     * @return the matching search results
-     */
-    public <T extends Record> Set<T> searchAny(Class<T> clazz, String query,
-            String... keys) {
-        Concourse concourse = connections.request();
-        try {
-            Set<Long> ids = $searchAny(concourse, clazz, query, keys);
-            return instantiateAll(ids);
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
      * Register a listener that will be called <strong>after</strong> any
      * {@link Record} of the specified {@code type} (or a subclass) is
      * successfully saved.
@@ -1291,6 +1090,205 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public void onSave(Consumer<Record> listener) {
         onSave(Record.class, listener);
+    }
+
+    /**
+     * {@link Concourse#ping() Ping} the database and return {@code true} if it
+     * is accessible.
+     *
+     * @return the database ping status
+     */
+    public boolean ping() {
+        Concourse concourse = connections.request();
+        try {
+            return concourse.ping();
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * Return the interface that exposes the properties of this {@link Runway}
+     * instance.
+     *
+     * @return the {@link Properties}
+     */
+    public Properties properties() {
+        return new Properties();
+    }
+
+    /**
+     * Save all changes in the provided {@code records} using a single ACID
+     * transaction.
+     * <p>
+     * All changes are committed atomically &mdash; either every {@link Record}
+     * is persisted or none are. When the {@link SpuriousSaveFailureStrategy} is
+     * {@link SpuriousSaveFailureStrategy#RETRY RETRY}, a
+     * {@link TransactionException} that is not caused by actual data staleness
+     * is automatically retried in a new transaction.
+     * <p>
+     * When {@code preventStaleWrites} is {@code true}, each {@link Record} in
+     * the object graph is checked for staleness inside the transaction before
+     * its data is written. If any {@link Record} has been externally modified
+     * since it was last loaded or saved, a {@link StaleDataException} is thrown
+     * and no data is persisted. This guarantees that a save will never silently
+     * overwrite data that was changed by another process or transaction after
+     * the {@link Record} was last synchronized. This is especially useful in
+     * multi-writer environments where concurrent updates to the same
+     * {@link Record Records} are possible.
+     * <p>
+     * <strong>NOTE:</strong> Enabling {@code preventStaleWrites} adds latency
+     * because an audit query is issued for every {@link Record} in the object
+     * graph before each write. For save operations that touch large object
+     * graphs, this overhead may be significant. When disabled, saves are faster
+     * but external modifications may be silently overwritten.
+     *
+     * @param preventStaleWrites if {@code true}, reject the save when any
+     *            {@link Record} in the object graph has stale data
+     * @param records one or more {@link Record Records} to save
+     * @return {@code true} if all changes are atomically saved
+     * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
+     *             and any {@link Record} has been externally modified
+     */
+    public boolean save(boolean preventStaleWrites, Record... records) {
+        Concourse concourse = connections.request();
+        Record current = null;
+        try {
+            boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
+            Map<Record, Snapshot> snapshots = retrySpuriousSaveFailure
+                    ? new HashMap<>()
+                    : null;
+            Map<Record, Boolean> seen = new HashMap<>();
+            int attempts = 0;
+            while (true) {
+                try {
+                    seen.clear();
+                    concourse.stage();
+                    for (Record record : records) {
+                        Supplier<Boolean> override = record.overrideSave();
+                        if(override != null && !override.get()) {
+                            // Early exit the entire transaction because an
+                            // overriden save has failed.
+                            concourse.abort();
+                            return false;
+                        }
+                        else {
+                            current = record;
+                            record.assign(this);
+                            record.saveWithinTransaction(concourse, seen,
+                                    snapshots, preventStaleWrites);
+                        }
+                    }
+                    boolean success = concourse.commit();
+                    if(success) {
+                        seen.entrySet().stream().filter(e -> e.getValue())
+                                .map(e -> e.getKey()).forEach(record -> {
+                                    enqueueSaveNotification(record);
+                                    record.checkpoint();
+                                });
+                    }
+                    return success;
+                }
+                catch (Throwable t) {
+                    concourse.abort();
+                    if(t instanceof TransactionException
+                            && retrySpuriousSaveFailure
+                            && ++attempts <= MAX_SPURIOUS_SAVE_RETRIES
+                            && Arrays.stream(records).noneMatch(
+                                    r -> r.hasStaleDataWithinTransaction(
+                                            concourse))) {
+                        // NOTE: Only root records are checked for stale data
+                        // because linked records that are recursively saved may
+                        // show false positives when concurrent saves share the
+                        // same linked record.
+                        restore(snapshots);
+                        continue;
+                    }
+                    else if(t instanceof StaleDataException) {
+                        throw (StaleDataException) t;
+                    }
+                    else {
+                        for (Record record : seen.keySet()) {
+                            if(record.inZombieState(concourse)) {
+                                // TODO: this is currently disabled because
+                                // zombie detection throughout the codebase is
+                                // inconsistent and we may need to delete it all
+                                // together
+                                // concourse.clear(record.id());
+                            }
+                        }
+                        if(current != null) {
+                            current.errors.add(t);
+                        }
+                        return false;
+                    }
+                }
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * Save all changes in the provided {@code records} using a single ACID
+     * transaction.
+     * <p>
+     * All changes are committed atomically &mdash; either every {@link Record}
+     * is persisted or none are. When the {@link SpuriousSaveFailureStrategy} is
+     * {@link SpuriousSaveFailureStrategy#RETRY RETRY}, a
+     * {@link TransactionException} that is not caused by actual data staleness
+     * is automatically retried in a new transaction.
+     * </p>
+     *
+     * @param records one or more {@link Record Records} to save
+     * @return {@code true} if all changes are atomically saved
+     */
+    public boolean save(Record... records) {
+        return save(false, records);
+    }
+
+    /**
+     * Search for records in {@code clazz} that match the search {@query} across
+     * any of the provided {@code keys}.
+     *
+     * @param clazz
+     * @param query
+     * @param keys
+     * @return the matching search results
+     */
+    public <T extends Record> Set<T> search(Class<T> clazz, String query,
+            String... keys) {
+        Concourse concourse = connections.request();
+        try {
+            Set<Long> ids = $search(concourse, clazz, query, keys);
+            return instantiateAll(clazz, ids);
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * Search for records across the hierarchy of {@code clazz} that match the
+     * search {@query} across any of the provided {@code keys}.
+     *
+     * @param clazz
+     * @param query
+     * @param keys
+     * @return the matching search results
+     */
+    public <T extends Record> Set<T> searchAny(Class<T> clazz, String query,
+            String... keys) {
+        Concourse concourse = connections.request();
+        try {
+            Set<Long> ids = $searchAny(concourse, clazz, query, keys);
+            return instantiateAll(ids);
+        }
+        finally {
+            connections.release(concourse);
+        }
     }
 
     /**
@@ -1342,42 +1340,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     <T extends Record> T load(long id) {
         return instantiate(id, null);
-    }
-
-    /**
-     * Lazily initialize the save notification infrastructure (queue and
-     * executor) if it has not already been set up. This allows {@link #onSave}
-     * listeners to be registered after the {@link Runway} instance is built.
-     */
-    private synchronized void ensureSaveNotificationInfrastructure() {
-        if(saveNotificationQueue == null) {
-            saveNotificationQueue = new LinkedBlockingQueue<>();
-            ThreadFactory threadFactory = r -> {
-                Thread thread = new Thread(r,
-                        "runway-save-notification-worker");
-                thread.setDaemon(true);
-                return thread;
-            };
-            saveNotificationExecutor = Executors
-                    .newSingleThreadExecutor(threadFactory);
-            saveNotificationExecutor.submit(() -> {
-                while (!Thread.currentThread().isInterrupted()) {
-                    try {
-                        Record record = saveNotificationQueue.take();
-                        try {
-                            saveListener.accept(record);
-                        }
-                        catch (Exception e) {
-                            // Silently swallow exceptions
-                        }
-                    }
-                    catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
-            });
-        }
     }
 
     /**
@@ -1524,6 +1486,42 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return Arrays.stream(keys).map(key -> concourse.search(key, query))
                 .flatMap(Set::stream).filter(filter)
                 .collect(Collectors.toSet());
+    }
+
+    /**
+     * Lazily initialize the save notification infrastructure (queue and
+     * executor) if it has not already been set up. This allows {@link #onSave}
+     * listeners to be registered after the {@link Runway} instance is built.
+     */
+    private synchronized void ensureSaveNotificationInfrastructure() {
+        if(saveNotificationQueue == null) {
+            saveNotificationQueue = new LinkedBlockingQueue<>();
+            ThreadFactory threadFactory = r -> {
+                Thread thread = new Thread(r,
+                        "runway-save-notification-worker");
+                thread.setDaemon(true);
+                return thread;
+            };
+            saveNotificationExecutor = Executors
+                    .newSingleThreadExecutor(threadFactory);
+            saveNotificationExecutor.submit(() -> {
+                while (!Thread.currentThread().isInterrupted()) {
+                    try {
+                        Record record = saveNotificationQueue.take();
+                        try {
+                            saveListener.accept(record);
+                        }
+                        catch (Exception e) {
+                            // Silently swallow exceptions
+                        }
+                    }
+                    catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            });
+        }
     }
 
     /**
@@ -2311,6 +2309,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
         /**
+         * Set the maximum number of records that should be buffered in memory
+         * when streaming data from the database. This is only relevant if the
+         * {@link #readStrategy(ReadStrategy) read strategy} is not
+         * {@link ReadStrategy#BULK}.
+         *
+         * @param max
+         * @return this builder
+         * @deprecated use {@link #streamingReadBufferSize(int)} instead
+         */
+        @Deprecated
+        public Builder recordsPerSelectBufferSize(int max) {
+            return streamingReadBufferSize(max);
+        }
+
+        /**
          * Set the {@link SpuriousSaveFailureStrategy} for the {@link Runway}
          * instance.
          * <p>
@@ -2332,21 +2345,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 SpuriousSaveFailureStrategy strategy) {
             this.spuriousSaveFailureStrategy = strategy;
             return this;
-        }
-
-        /**
-         * Set the maximum number of records that should be buffered in memory
-         * when streaming data from the database. This is only relevant if the
-         * {@link #readStrategy(ReadStrategy) read strategy} is not
-         * {@link ReadStrategy#BULK}.
-         *
-         * @param max
-         * @return this builder
-         * @deprecated use {@link #streamingReadBufferSize(int)} instead
-         */
-        @Deprecated
-        public Builder recordsPerSelectBufferSize(int max) {
-            return streamingReadBufferSize(max);
         }
 
         /**

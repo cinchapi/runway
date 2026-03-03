@@ -383,6 +383,206 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
+     * save(true, ...)} throws a {@link StaleDataException} identifying the
+     * stale {@link Record} when saving multiple root {@link Record Records} and
+     * only one of them is stale.
+     * <p>
+     * <strong>Start state:</strong> Two {@link TUser TUsers} that have been
+     * saved. One is then externally modified in the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link TUser TUsers}: "jack" and "jill".</li>
+     * <li>Externally modify "jack" in the database.</li>
+     * <li>Modify both {@link TUser TUsers} in memory.</li>
+     * <li>Call {@code runway.save(true, jack, jill)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown whose
+     * {@link StaleDataException#id() id()} matches "jack". Neither
+     * {@link Record} is persisted with the in-memory changes.
+     */
+    @Test
+    public void testPreventStaleWriteThrowsWhenOneOfMultipleRootsIsStale() {
+        TUser jack = new TUser("jack");
+        TUser jill = new TUser("jill");
+        Assert.assertTrue(runway.save(jack, jill));
+
+        Concourse concourse = runway.connections.request();
+        try {
+            concourse.set("name", "external_jack", jack.id());
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
+
+        jack.name = "local_jack";
+        jill.name = "local_jill";
+        try {
+            runway.save(true, jack, jill);
+            Assert.fail("Expected StaleDataException");
+        }
+        catch (StaleDataException e) {
+            Assert.assertEquals(jack.id(), e.id());
+        }
+
+        TUser loadedJill = runway.load(TUser.class, jill.id());
+        Assert.assertEquals("jill", loadedJill.name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
+     * save(true, ...)} succeeds for a brand-new {@link Record} that has never
+     * been saved before, since a new {@link Record} cannot have stale data.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link TUser} that
+     * has never been saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create a new {@link TUser} with name "newbie".</li>
+     * <li>Call {@code runway.save(true, user)}.</li>
+     * <li>Load the {@link TUser} from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and the loaded
+     * {@link TUser TUser's} name equals "newbie".
+     */
+    @Test
+    public void testPreventStaleWriteSucceedsForNewRecord() {
+        TUser user = new TUser("newbie");
+        Assert.assertTrue(runway.save(true, user));
+
+        TUser loaded = runway.load(TUser.class, user.id());
+        Assert.assertNotNull(loaded);
+        Assert.assertEquals("newbie", loaded.name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#save(boolean)
+     * save(true)} on a pinned {@link Record} correctly delegates to
+     * {@link Runway#save(boolean, Record...)} and throws a
+     * {@link StaleDataException} when the {@link Record} is stale.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved via {@link Runway}
+     * and then externally modified in the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with name "pinned".</li>
+     * <li>Externally modify the name in the database.</li>
+     * <li>Modify the in-memory name and call {@code user.save(true)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown because
+     * the pinned {@link Record Record's} {@link Record#save(boolean)} delegates
+     * to {@link Runway#save(boolean, Record...)} with
+     * {@code preventStaleWrite = true}.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testRecordSaveWithPreventStaleWriteOnPinnedRecord() {
+        TUser user = new TUser("pinned");
+        Assert.assertTrue(runway.save(user));
+
+        Concourse concourse = runway.connections.request();
+        try {
+            concourse.set("name", "external", user.id());
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
+
+        user.name = "local";
+        user.save(true);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
+     * save(true, ...)} throws a {@link StaleDataException} when a
+     * {@link Record} that has been marked for deletion via
+     * {@link Record#deleteOnSave()} is also stale.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} that has been saved and
+     * then externally modified in the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with name "doomed".</li>
+     * <li>Externally modify the name in the database.</li>
+     * <li>Mark the {@link TUser} for deletion via
+     * {@link Record#deleteOnSave()}.</li>
+     * <li>Call {@code runway.save(true, user)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown because
+     * the stale check occurs before the deletion is processed. The
+     * {@link Record} should still exist in the database.
+     */
+    @Test
+    public void testPreventStaleWriteThrowsWhenDeletingStaleRecord() {
+        TUser user = new TUser("doomed");
+        Assert.assertTrue(runway.save(user));
+
+        Concourse concourse = runway.connections.request();
+        try {
+            concourse.set("name", "external", user.id());
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
+
+        user.deleteOnSave();
+        try {
+            runway.save(true, user);
+            Assert.fail("Expected StaleDataException");
+        }
+        catch (StaleDataException e) {
+            Assert.assertEquals(user.id(), e.id());
+        }
+
+        TUser loaded = runway.load(TUser.class, user.id());
+        Assert.assertNotNull("Record should still exist after failed delete",
+                loaded);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#save(boolean)
+     * save(false)} on a pinned {@link Record} does not throw a
+     * {@link StaleDataException} even when the {@link Record} is stale, because
+     * the stale check is disabled.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved via {@link Runway}
+     * and then externally modified in the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with name "pinned_no_check".</li>
+     * <li>Externally modify the name in the database.</li>
+     * <li>Modify the in-memory name and call {@code user.save(false)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} because the
+     * stale check is disabled.
+     */
+    @Test
+    public void testRecordSaveWithoutPreventStaleWriteOnPinnedRecord() {
+        TUser user = new TUser("pinned_no_check");
+        Assert.assertTrue(runway.save(user));
+
+        Concourse concourse = runway.connections.request();
+        try {
+            concourse.set("name", "external", user.id());
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
+
+        user.name = "overwrite";
+        Assert.assertTrue(user.save(false));
+    }
+
+    /**
      * A test user record.
      *
      * @author Jeff Nelson
