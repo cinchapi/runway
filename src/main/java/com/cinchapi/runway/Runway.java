@@ -1180,15 +1180,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                     snapshots, preventStaleWrites);
                         }
                     }
-                    boolean success = concourse.commit();
-                    if(success) {
+                    if(concourse.commit()) {
                         seen.entrySet().stream().filter(e -> e.getValue())
                                 .map(e -> e.getKey()).forEach(record -> {
                                     enqueueSaveNotification(record);
                                     record.checkpoint();
                                 });
+                        return true;
                     }
-                    return success;
+                    else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {
+                        return false;
+                    }
+                    else {
+                        // Trigger catch block below for potential retry
+                        throw new TransactionException();
+                    }
                 }
                 catch (Throwable t) {
                     concourse.abort();
