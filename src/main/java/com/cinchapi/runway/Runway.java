@@ -1058,9 +1058,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param type the {@link Record} type (or superclass) to listen for
      * @param listener a consumer that processes saved {@link Record Records} of
      *            the specified type
+     * @return this for chaining
      */
     @SuppressWarnings("unchecked")
-    public <T extends Record> void onSave(Class<T> type, Consumer<T> listener) {
+    public <T extends Record> Runway onSave(Class<T> type,
+            Consumer<T> listener) {
         ensureSaveNotificationInfrastructure();
         Consumer<Record> previous = saveListener;
         saveListener = record -> {
@@ -1076,6 +1078,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 previous.accept(record);
             }
         };
+        return this;
     }
 
     /**
@@ -1087,9 +1090,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * </p>
      *
      * @param listener a consumer that processes saved {@link Record Records}
+     * @return this for chaining
      */
-    public void onSave(Consumer<Record> listener) {
-        onSave(Record.class, listener);
+    public Runway onSave(Consumer<Record> listener) {
+        return onSave(Record.class, listener);
     }
 
     /**
