@@ -1,3 +1,18 @@
+/*
+ * Copyright (c) 2013-2026 Cinchapi Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ */
 package com.cinchapi.runway;
 
 import java.util.Set;
@@ -279,8 +294,9 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         // Verify no records were persisted
         for (Record record : new Record[] { record1, record2, exceptionRecord,
                 record3 }) {
-            Assert.assertNull("Record with ID " + record.id()
-                    + " should not exist in the database",
+            Assert.assertNull(
+                    "Record with ID " + record.id()
+                            + " should not exist in the database",
                     runway.load(record.getClass(), record.id()));
         }
     }
@@ -681,6 +697,530 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(player1.score, loaded1.score);
         Assert.assertEquals(player2.name, loaded2.name);
         Assert.assertEquals(player2.score, loaded2.score);
+    }
+
+    @Test
+    public void testTypedSaveListenerOnlyFiresForMatchingType()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> playerSaves = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(Player.class, player -> {
+                    playerSaves.add(player);
+                    latch.countDown();
+                }).build();
+
+        // Save a non-Player record first
+        PreSaveHookRecord hook = new PreSaveHookRecord();
+        hook.name = "Not a Player";
+        hook.save();
+
+        // Save a Player record
+        Player player = new Player("Typed Player", 99);
+        player.save();
+
+        Assert.assertTrue("Typed listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, playerSaves.size());
+        Assert.assertTrue(playerSaves.contains(player));
+    }
+
+    @Test
+    public void testMultipleTypedListeners() throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> playerSaves = Sets.newConcurrentHashSet();
+        Set<Record> hookSaves = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(Player.class, player -> {
+                    playerSaves.add(player);
+                    latch.countDown();
+                }).onSave(PreSaveHookRecord.class, record -> {
+                    hookSaves.add(record);
+                    latch.countDown();
+                }).build();
+
+        Player player = new Player("Typed Player", 50);
+        player.save();
+
+        PreSaveHookRecord hook = new PreSaveHookRecord();
+        hook.name = "Hook Record";
+        hook.save();
+
+        Assert.assertTrue("Not all listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, playerSaves.size());
+        Assert.assertTrue(playerSaves.contains(player));
+        Assert.assertEquals(1, hookSaves.size());
+        Assert.assertTrue(hookSaves.contains(hook));
+    }
+
+    @Test
+    public void testCompositionMultipleListenersForSameType() throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        AtomicInteger firstCount = new AtomicInteger(0);
+        AtomicInteger secondCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(Record.class, record -> {
+                    firstCount.incrementAndGet();
+                    latch.countDown();
+                }).onSave(Record.class, record -> {
+                    secondCount.incrementAndGet();
+                    latch.countDown();
+                }).build();
+
+        Player player = new Player("Composed", 10);
+        player.save();
+
+        Assert.assertTrue("Not all listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, firstCount.get());
+        Assert.assertEquals(1, secondCount.get());
+    }
+
+    @Test
+    public void testMixedTypedAndUntypedListeners() throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> typedSaves = Sets.newConcurrentHashSet();
+        Set<Record> untypedSaves = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(Player.class, player -> {
+                    typedSaves.add(player);
+                    latch.countDown();
+                }).onSave(record -> {
+                    untypedSaves.add(record);
+                    latch.countDown();
+                }).build();
+
+        Player player = new Player("Mixed", 77);
+        player.save();
+
+        Assert.assertTrue("Not all listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        // Both should fire for a Player save
+        Assert.assertEquals(1, typedSaves.size());
+        Assert.assertTrue(typedSaves.contains(player));
+        Assert.assertEquals(1, untypedSaves.size());
+        Assert.assertTrue(untypedSaves.contains(player));
+    }
+
+    @Test
+    public void testListenerErrorIsolation() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicInteger secondCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(Record.class, record -> {
+                    throw new RuntimeException(
+                            "Intentional exception from first listener");
+                }).onSave(Record.class, record -> {
+                    secondCount.incrementAndGet();
+                    latch.countDown();
+                }).build();
+
+        Player player = new Player("Error Isolation", 33);
+        player.save();
+
+        Assert.assertTrue(
+                "Second listener was not called despite first throwing",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(
+                "Second listener should still fire after first throws", 1,
+                secondCount.get());
+    }
+
+    @Test
+    public void testOnSaveAfterBuildWithNoBuilderListeners() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> savedRecords = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort()).build();
+
+        // Register a listener after build
+        runway.onSave(record -> {
+            savedRecords.add(record);
+            latch.countDown();
+        });
+
+        Player player = new Player("Post-Build Listener", 42);
+        player.save();
+
+        Assert.assertTrue("Post-build listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, savedRecords.size());
+        Assert.assertTrue(savedRecords.contains(player));
+    }
+
+    @Test
+    public void testOnSaveAfterBuildChainsWithBuilderListeners()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        AtomicInteger builderCount = new AtomicInteger(0);
+        AtomicInteger postBuildCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    builderCount.incrementAndGet();
+                    latch.countDown();
+                }).build();
+
+        // Register an additional listener after build
+        runway.onSave(record -> {
+            postBuildCount.incrementAndGet();
+            latch.countDown();
+        });
+
+        Player player = new Player("Chained Listener", 99);
+        player.save();
+
+        Assert.assertTrue("Not all listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals("Builder listener should have fired", 1,
+                builderCount.get());
+        Assert.assertEquals("Post-build listener should have fired", 1,
+                postBuildCount.get());
+    }
+
+    @Test
+    public void testTypedOnSaveAfterBuild() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> playerSaves = Sets.newConcurrentHashSet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort()).build();
+
+        // Register a typed listener after build
+        runway.onSave(Player.class, player -> {
+            playerSaves.add(player);
+            latch.countDown();
+        });
+
+        // Save a non-Player record first
+        PreSaveHookRecord hook = new PreSaveHookRecord();
+        hook.name = "Not a Player";
+        hook.save();
+
+        // Save a Player record
+        Player player = new Player("Typed Post-Build", 88);
+        player.save();
+
+        Assert.assertTrue(
+                "Typed post-build listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, playerSaves.size());
+        Assert.assertTrue(playerSaves.contains(player));
+    }
+
+    @Test
+    public void testMultiplePostBuildOnSave() throws Exception {
+        CountDownLatch latch = new CountDownLatch(3);
+        AtomicInteger firstCount = new AtomicInteger(0);
+        AtomicInteger secondCount = new AtomicInteger(0);
+        AtomicInteger thirdCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort()).build();
+
+        runway.onSave(record -> {
+            firstCount.incrementAndGet();
+            latch.countDown();
+        });
+        runway.onSave(record -> {
+            secondCount.incrementAndGet();
+            latch.countDown();
+        });
+        runway.onSave(record -> {
+            thirdCount.incrementAndGet();
+            latch.countDown();
+        });
+
+        Player player = new Player("Multiple Post-Build", 55);
+        player.save();
+
+        Assert.assertTrue(
+                "Not all post-build listeners were called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertEquals(1, firstCount.get());
+        Assert.assertEquals(1, secondCount.get());
+        Assert.assertEquals(1, thirdCount.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that saving a {@link Record} with a linked
+     * {@link Record} fires save notifications for both the parent and the
+     * child.
+     * <p>
+     * <strong>Start state:</strong> A freshly created {@link ParentRecord} with
+     * a linked {@link ChildRecord}, neither previously saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener that tracks notified {@link Record
+     * Records}.</li>
+     * <li>Create a {@link ParentRecord} with a linked {@link ChildRecord}.</li>
+     * <li>Call {@code parent.save()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save listener fires for both the parent
+     * and child {@link Record Records}.
+     */
+    @Test
+    public void testSaveListenerFiredForLinkedRecordViaSave() throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    savedRecords.add(record);
+                    latch.countDown();
+                }).build();
+
+        ChildRecord child = new ChildRecord();
+        child.label = "Child1";
+        ParentRecord parent = new ParentRecord();
+        parent.name = "Parent1";
+        parent.child = child;
+
+        boolean saved = parent.save();
+
+        Assert.assertTrue(saved);
+        Assert.assertTrue("Save listener should fire for both records",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(2, savedRecords.size());
+        Assert.assertTrue(savedRecords.contains(parent));
+        Assert.assertTrue(savedRecords.contains(child));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#save(Record...)} with a
+     * single {@link Record} that has a linked {@link Record} fires save
+     * notifications for both.
+     * <p>
+     * <strong>Start state:</strong> A freshly created {@link ParentRecord} with
+     * a linked {@link ChildRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener.</li>
+     * <li>Create a {@link ParentRecord} with a linked {@link ChildRecord}.</li>
+     * <li>Call {@code runway.save(parent)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save listener fires for both the parent
+     * and child {@link Record Records}.
+     */
+    @Test
+    public void testSaveListenerFiredForLinkedRecordViaRunwaySave()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    savedRecords.add(record);
+                    latch.countDown();
+                }).build();
+
+        ChildRecord child = new ChildRecord();
+        child.label = "Child1";
+        ParentRecord parent = new ParentRecord();
+        parent.name = "Parent1";
+        parent.child = child;
+
+        boolean saved = runway.save(parent);
+
+        Assert.assertTrue(saved);
+        Assert.assertTrue("Save listener should fire for both records",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(2, savedRecords.size());
+        Assert.assertTrue(savedRecords.contains(parent));
+        Assert.assertTrue(savedRecords.contains(child));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that bulk {@link Runway#save(Record...)}
+     * fires save notifications for all {@link Record Records}, including linked
+     * children.
+     * <p>
+     * <strong>Start state:</strong> Two freshly created {@link ParentRecord
+     * ParentRecords}, each with a linked {@link ChildRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener.</li>
+     * <li>Create two parent-child pairs.</li>
+     * <li>Call {@code runway.save(parent1, parent2)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save listener fires for all four
+     * {@link Record Records}.
+     */
+    @Test
+    public void testSaveListenerFiredForLinkedRecordsViaBulkSave()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(4);
+        Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    savedRecords.add(record);
+                    latch.countDown();
+                }).build();
+
+        ChildRecord child1 = new ChildRecord();
+        child1.label = "Child1";
+        ParentRecord parent1 = new ParentRecord();
+        parent1.name = "Parent1";
+        parent1.child = child1;
+
+        ChildRecord child2 = new ChildRecord();
+        child2.label = "Child2";
+        ParentRecord parent2 = new ParentRecord();
+        parent2.name = "Parent2";
+        parent2.child = child2;
+
+        boolean saved = runway.save(parent1, parent2);
+
+        Assert.assertTrue(saved);
+        Assert.assertTrue("Save listener should fire for all four records",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(4, savedRecords.size());
+        Assert.assertTrue(savedRecords.contains(parent1));
+        Assert.assertTrue(savedRecords.contains(child1));
+        Assert.assertTrue(savedRecords.contains(parent2));
+        Assert.assertTrue(savedRecords.contains(child2));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a linked {@link Record} with no
+     * unsaved changes does not trigger a save notification when the parent is
+     * saved.
+     * <p>
+     * <strong>Start state:</strong> A {@link ChildRecord} that has already been
+     * saved and has no modifications.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener with a call counter.</li>
+     * <li>Save a {@link ChildRecord} and record the notification count.</li>
+     * <li>Create a {@link ParentRecord} that links to the already-saved child
+     * and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Only the {@link ParentRecord} triggers a
+     * notification; the unchanged {@link ChildRecord} does not.
+     */
+    @Test
+    public void testSaveListenerNotFiredForUnchangedLinkedRecord()
+            throws Exception {
+        AtomicInteger callCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    callCount.incrementAndGet();
+                }).build();
+
+        // Save the child first so it has no unsaved changes
+        ChildRecord child = new ChildRecord();
+        child.label = "Already Saved";
+        runway.save(child);
+
+        // Wait for initial notification
+        Thread.sleep(2000);
+        int countAfterChildSave = callCount.get();
+
+        // Now create and save a parent that links to the
+        // already-saved child
+        ParentRecord parent = new ParentRecord();
+        parent.name = "Parent";
+        parent.child = child;
+        runway.save(parent);
+
+        // Wait for notification
+        Thread.sleep(2000);
+
+        // Only the parent should trigger a notification (the
+        // child had no unsaved changes)
+        Assert.assertEquals(countAfterChildSave + 1, callCount.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#save(Record...)} with a
+     * single {@link Record} fires the save listener exactly once, not twice.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener with a call counter.</li>
+     * <li>Save a single {@link Record} via {@code runway.save(record)}.</li>
+     * <li>Wait to confirm no additional notifications arrive.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call count is exactly {@code 1}.
+     */
+    @Test
+    public void testNoDoubleNotificationForSingleRecord() throws Exception {
+        AtomicInteger callCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = Runway.builder().port(server.getClientPort())
+                .onSave(record -> {
+                    callCount.incrementAndGet();
+                }).build();
+
+        Player player = new Player("Test", 10);
+        runway.save(player);
+
+        // Wait to ensure no extra notification arrives
+        Thread.sleep(2000);
+
+        Assert.assertEquals("Save listener should be called exactly once", 1,
+                callCount.get());
+    }
+
+    /**
+     * A test {@link Record} that holds a link to a {@link ChildRecord}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class ParentRecord extends Record {
+
+        public String name;
+        public ChildRecord child;
+    }
+
+    /**
+     * A test {@link Record} used as a linked child in notification tests.
+     *
+     * @author Jeff Nelson
+     */
+    public static class ChildRecord extends Record {
+
+        public String label;
     }
 
     /**

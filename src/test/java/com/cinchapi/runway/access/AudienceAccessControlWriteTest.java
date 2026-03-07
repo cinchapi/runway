@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.access;
 
@@ -33,7 +33,8 @@ import com.google.common.collect.ImmutableMap;
  *
  * @author Jeff Nelson
  */
-public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTest {
+public class AudienceAccessControlWriteTest
+        extends AudienceAccessControlBaseTest {
 
     @Test
     public void testWriteOperationAllowedFields() {
@@ -43,10 +44,8 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         candidate.phone = "555-1234";
 
         // Candidate should be able to write to their own allowed fields
-        Map<String, Object> updates = ImmutableMap.of(
-                "name", "Jane Senior Developer",
-                "phone", "555-5678"
-        );
+        Map<String, Object> updates = ImmutableMap.of("name",
+                "Jane Senior Developer", "phone", "555-5678");
 
         candidate.write(updates, candidate);
 
@@ -71,7 +70,8 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         try {
             candidate1.write(updates, candidate2);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -89,16 +89,20 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         job.title = "Backend Developer";
         job.employer = company;
 
-        Map<String, Object> updates = ImmutableMap.of(
-                "title", "Senior Backend Developer",
-                "createdAt", Timestamp.now() // Not writable by employer
+        Map<String, Object> updates = ImmutableMap.of("title",
+                "Senior Backend Developer", "createdAt", Timestamp.now() // Not
+                                                                         // writable
+                                                                         // by
+                                                                         // employer
         );
 
         // Should throw exception if any field is not writable
         try {
             employerUser.write(updates, job);
-            Assert.fail("Should have thrown RestrictedAccessException for mixed write access");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for mixed write access");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -125,10 +129,8 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         application.status = "submitted";
 
         // Employer should be able to update application status and notes
-        Map<String, Object> employerUpdates = ImmutableMap.of(
-                "status", "under_review",
-                "notes", "Promising candidate"
-        );
+        Map<String, Object> employerUpdates = ImmutableMap.of("status",
+                "under_review", "notes", "Promising candidate");
 
         employerUser.write(employerUpdates, application);
 
@@ -136,9 +138,8 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         Assert.assertEquals("Promising candidate", application.notes);
 
         // Candidate should be able to update their cover letter
-        Map<String, Object> candidateUpdates = ImmutableMap.of(
-                "coverLetter", "Updated cover letter"
-        );
+        Map<String, Object> candidateUpdates = ImmutableMap.of("coverLetter",
+                "Updated cover letter");
 
         candidate.write(candidateUpdates, application);
         Assert.assertEquals("Updated cover letter", application.coverLetter);
@@ -154,11 +155,9 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         candidate.email = "jane@email.com";
 
         // Admin should be able to write to any field
-        Map<String, Object> adminUpdates = ImmutableMap.of(
-                "name", "Jane Senior Developer",
-                "email", "jane.senior@email.com",
-                "lastLogin", Timestamp.now()
-        );
+        Map<String, Object> adminUpdates = ImmutableMap.of("name",
+                "Jane Senior Developer", "email", "jane.senior@email.com",
+                "lastLogin", Timestamp.now());
 
         admin.write(adminUpdates, candidate);
 
@@ -190,7 +189,8 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         candidate.write("phone", "555-9999", candidate);
 
         Assert.assertEquals("555-9999", candidate.phone);
-        Assert.assertEquals("Jane Developer", candidate.name); // Should remain unchanged
+        Assert.assertEquals("Jane Developer", candidate.name); // Should remain
+                                                               // unchanged
     }
 
     @Test
@@ -205,7 +205,8 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         try {
             candidate1.write("name", "Modified Name", candidate2);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -226,11 +227,9 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         job.salary = 80000.0;
 
         // Employer should be able to update job details
-        Map<String, Object> updates = ImmutableMap.of(
-                "title", "Senior Backend Developer",
-                "published", true,
-                "salary", 100000.0
-        );
+        Map<String, Object> updates = ImmutableMap.of("title",
+                "Senior Backend Developer", "published", true, "salary",
+                100000.0);
 
         employerUser.write(updates, job);
 
@@ -266,11 +265,9 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         offer.status = "pending";
 
         // Employer should be able to update offer details
-        Map<String, Object> employerUpdates = ImmutableMap.of(
-                "salary", 120000.0,
-                "benefits", "Health, Dental, 401k",
-                "status", "extended"
-        );
+        Map<String, Object> employerUpdates = ImmutableMap.of("salary",
+                120000.0, "benefits", "Health, Dental, 401k", "status",
+                "extended");
 
         employerUser.write(employerUpdates, offer);
 
@@ -296,11 +293,9 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         employerUser.employer = company;
 
         // Employer user should be able to update allowed company fields
-        Map<String, Object> updates = ImmutableMap.of(
-                "description", "Leading technology company",
-                "website", "techcorp.com",
-                "size", 100
-        );
+        Map<String, Object> updates = ImmutableMap.of("description",
+                "Leading technology company", "website", "techcorp.com", "size",
+                100);
 
         employerUser.write(updates, company);
 
@@ -311,8 +306,10 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         // Should not be able to update restricted fields like name
         try {
             employerUser.write("name", "NewTechCorp", company);
-            Assert.fail("Should have thrown RestrictedAccessException for company name");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for company name");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -327,8 +324,10 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         // Anonymous should not be able to write to any fields
         try {
             anonymous.write("name", "Modified Name", candidate);
-            Assert.fail("Should have thrown RestrictedAccessException for anonymous write");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for anonymous write");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
@@ -337,8 +336,10 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
 
         try {
             anonymous.write("title", "Modified Title", job);
-            Assert.fail("Should have thrown RestrictedAccessException for anonymous write");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for anonymous write");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -370,8 +371,10 @@ public class AudienceAccessControlWriteTest extends AudienceAccessControlBaseTes
         // HR1 should not be able to update other company's job
         try {
             hr1.write("title", "Hacked Startup Position", job2);
-            Assert.fail("Should have thrown RestrictedAccessException for cross-company write");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for cross-company write");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }

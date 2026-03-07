@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.access;
 
@@ -28,7 +28,8 @@ import org.junit.Test;
  *
  * @author Jeff Nelson
  */
-public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTest {
+public class AudienceAccessControlDeleteTest
+        extends AudienceAccessControlBaseTest {
 
     @Test
     public void testDeleteOperationOwnershipPermission() {
@@ -56,13 +57,15 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         candidate2.email = "bob@email.com";
 
         // One candidate should not be able to delete another
-        Assert.assertFalse("Candidate should not be able to delete other candidates",
+        Assert.assertFalse(
+                "Candidate should not be able to delete other candidates",
                 candidate2.$isDeletableBy(candidate1));
 
         try {
             candidate1.delete(candidate2);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -89,18 +92,21 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         application2.job = job;
 
         // Candidate should be able to delete their own application
-        Assert.assertTrue("Candidate should be able to delete their own application",
+        Assert.assertTrue(
+                "Candidate should be able to delete their own application",
                 application1.$isDeletableBy(candidate1));
         candidate1.delete(application1);
 
         // Candidate should not be able to delete another's application
-        Assert.assertFalse("Candidate should not be able to delete other's application",
+        Assert.assertFalse(
+                "Candidate should not be able to delete other's application",
                 application2.$isDeletableBy(candidate1));
 
         try {
             candidate1.delete(application2);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -119,7 +125,8 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         job.employer = company;
 
         // Employer user should be able to delete their company's jobs
-        Assert.assertTrue("Employer should be able to delete their company's jobs",
+        Assert.assertTrue(
+                "Employer should be able to delete their company's jobs",
                 job.$isDeletableBy(employerUser));
         employerUser.delete(job);
 
@@ -131,13 +138,15 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         otherJob.title = "Frontend Developer";
         otherJob.employer = otherCompany;
 
-        Assert.assertFalse("Employer should not be able to delete other company's jobs",
+        Assert.assertFalse(
+                "Employer should not be able to delete other company's jobs",
                 otherJob.$isDeletableBy(employerUser));
 
         try {
             employerUser.delete(otherJob);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -204,11 +213,13 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         offer.application = application;
 
         // Employer should be able to delete offers for their jobs
-        Assert.assertTrue("Employer should be able to delete offers for their jobs",
+        Assert.assertTrue(
+                "Employer should be able to delete offers for their jobs",
                 offer.$isDeletableBy(employerUser));
         employerUser.delete(offer);
 
-        // Candidate should not be able to delete offers (they can only update status)
+        // Candidate should not be able to delete offers (they can only update
+        // status)
         Offer newOffer = new Offer();
         newOffer.candidate = candidate;
         newOffer.job = job;
@@ -220,7 +231,8 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         try {
             candidate.delete(newOffer);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -242,22 +254,28 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         // Anonymous should not be able to delete anything
         try {
             anonymous.delete(candidate);
-            Assert.fail("Should have thrown RestrictedAccessException for anonymous delete");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for anonymous delete");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
         try {
             anonymous.delete(job);
-            Assert.fail("Should have thrown RestrictedAccessException for anonymous delete");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for anonymous delete");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
         try {
             anonymous.delete(application);
-            Assert.fail("Should have thrown RestrictedAccessException for anonymous delete");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for anonymous delete");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -272,13 +290,15 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         employerUser.employer = company;
 
         // Employer user should not be able to delete the employer entity itself
-        Assert.assertFalse("EmployerUser should not be able to delete employers",
+        Assert.assertFalse(
+                "EmployerUser should not be able to delete employers",
                 company.$isDeletableBy(employerUser));
 
         try {
             employerUser.delete(company);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -302,7 +322,8 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         offer.application = application;
 
         // Candidate should be able to delete their own application and offer
-        Assert.assertTrue("Candidate should be able to delete their own application",
+        Assert.assertTrue(
+                "Candidate should be able to delete their own application",
                 application.$isDeletableBy(candidate));
         Assert.assertFalse("Candidate should not be able to delete offers",
                 offer.$isDeletableBy(candidate));
@@ -310,14 +331,16 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         candidate.delete(application);
         // Application deleted successfully
 
-        // Candidate should not be able to delete the job even if they applied to it
+        // Candidate should not be able to delete the job even if they applied
+        // to it
         Assert.assertFalse("Candidate should not be able to delete jobs",
                 job.$isDeletableBy(candidate));
 
         try {
             candidate.delete(job);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -358,10 +381,12 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         app2.candidate = candidate;
         app2.job = job2;
 
-        // HR1 should be able to delete their own company's job but not the other's
+        // HR1 should be able to delete their own company's job but not the
+        // other's
         Assert.assertTrue("HR1 should be able to delete their company's job",
                 job1.$isDeletableBy(hr1));
-        Assert.assertFalse("HR1 should not be able to delete other company's job",
+        Assert.assertFalse(
+                "HR1 should not be able to delete other company's job",
                 job2.$isDeletableBy(hr1));
 
         hr1.delete(job1);
@@ -369,7 +394,8 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         try {
             hr1.delete(job2);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
@@ -397,7 +423,8 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
                 candidate.$isDeletableBy(admin));
         Assert.assertTrue("User should have delete permission on themselves",
                 candidate.$isDeletableBy(candidate));
-        Assert.assertFalse("EmployerUser should not have delete permission on candidates",
+        Assert.assertFalse(
+                "EmployerUser should not have delete permission on candidates",
                 candidate.$isDeletableBy(employerUser));
 
         // Verify the permissions are consistent with the delete operations
@@ -409,7 +436,8 @@ public class AudienceAccessControlDeleteTest extends AudienceAccessControlBaseTe
         try {
             employerUser.delete(newCandidate);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected - consistent with permission check
         }
     }

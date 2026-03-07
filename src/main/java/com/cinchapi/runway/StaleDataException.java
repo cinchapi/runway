@@ -16,22 +16,36 @@
 package com.cinchapi.runway;
 
 /**
- * A {@link SuppressedRunwayException} is thrown when
- * {@link Record#throwSuppressedExceptions()} is called and there are suppressed
- * exceptions that need to be raised.
+ * A {@link StaleDataException} is thrown when a save is rejected because the
+ * {@link Record} has stale data relative to the database.
  *
  * @author Jeff Nelson
  */
 @SuppressWarnings("serial")
-public class SuppressedRunwayException extends RunwayException {
+public class StaleDataException extends RunwayException {
+
+    /**
+     * The primary key of the stale {@link Record}.
+     */
+    private final long id;
 
     /**
      * Construct a new instance.
      *
-     * @param message the error message
+     * @param id the primary key of the stale {@link Record}
      */
-    public SuppressedRunwayException(String message) {
-        super(message);
+    public StaleDataException(long id) {
+        super("Record " + id + " has stale data");
+        this.id = id;
+    }
+
+    /**
+     * Return the primary key of the stale {@link Record}.
+     *
+     * @return the stale {@link Record Record's} primary key
+     */
+    public long id() {
+        return id;
     }
 
 }

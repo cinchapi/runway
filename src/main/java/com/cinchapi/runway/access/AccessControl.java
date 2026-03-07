@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.access;
 
@@ -28,8 +28,7 @@ import com.google.common.collect.ImmutableSet;
 /**
  * A marker interface for {@link Record} types that support access control
  * rules. When a {@link Record} implements {@link AccessControl}, it is possible
- * to
- * enforce permissions and access restrictions that govern how different
+ * to enforce permissions and access restrictions that govern how different
  * {@link Audience audiences} can interact with it.
  * <p>
  * The {@link AccessControl} interface defines the contract for specifying
@@ -55,8 +54,8 @@ import com.google.common.collect.ImmutableSet;
  * <h2>Framework Integration</h2>
  * <p>
  * Records implementing {@link AccessControl} gain additional data access
- * methods that accept an {@link Audience} parameter and automatically apply
- * the defined access rules. This enables the framework to manage data access
+ * methods that accept an {@link Audience} parameter and automatically apply the
+ * defined access rules. This enables the framework to manage data access
  * permissions internally rather than requiring external permission management
  * systems.
  * </p>
@@ -69,9 +68,8 @@ import com.google.common.collect.ImmutableSet;
  * {@code audience.read(key, record)} &mdash; The {@link Audience} performs the
  * operation</li>
  * <li><strong>Through the {@link AccessControl access controlled}
- * record</strong>:
- * {@code record.readAs(audience, key)} &mdash; The {@link Record} performs the
- * operation on behalf of the {@link Audience}</li>
+ * record</strong>: {@code record.readAs(audience, key)} &mdash; The
+ * {@link Record} performs the operation on behalf of the {@link Audience}</li>
  * </ol>
  * <h2>Visibility Rule Scope</h2>
  * <p>
@@ -261,8 +259,8 @@ public interface AccessControl {
     }
 
     /**
-     * Read the values from the specified {@code keys} in this {@link Record}
-     * on behalf of the specified {@link Audience}.
+     * Read the values from the specified {@code keys} in this {@link Record} on
+     * behalf of the specified {@link Audience}.
      * <p>
      * This is a convenience method that delegates to
      * {@link Audience#read(Collection, Record)}.

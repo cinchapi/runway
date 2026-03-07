@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -64,18 +64,17 @@ public class AdHocRecordCompositionTest {
         // Admin should see both documents
         Predicate<AccessControlledAdHocRecord> adminFilter = adminViewer
                 .$checkIfVisible();
-        Set<AccessControlledAdHocRecord> adminResults = db.load(
-                AccessControlledAdHocRecord.class, adminFilter);
+        Set<AccessControlledAdHocRecord> adminResults = db
+                .load(AccessControlledAdHocRecord.class, adminFilter);
         Assert.assertEquals(2, adminResults.size());
 
         // Guest should only see public document
         Predicate<AccessControlledAdHocRecord> guestFilter = guestViewer
                 .$checkIfVisible();
-        Set<AccessControlledAdHocRecord> guestResults = db.load(
-                AccessControlledAdHocRecord.class, guestFilter);
+        Set<AccessControlledAdHocRecord> guestResults = db
+                .load(AccessControlledAdHocRecord.class, guestFilter);
         Assert.assertEquals(1, guestResults.size());
-        Assert.assertEquals("PublicDoc",
-                guestResults.iterator().next().title);
+        Assert.assertEquals("PublicDoc", guestResults.iterator().next().title);
     }
 
     @Test
@@ -99,8 +98,8 @@ public class AdHocRecordCompositionTest {
         // Viewer (guest) with criteria should only see doc1 (public and active)
         Predicate<AccessControlledAdHocRecord> filter = viewer
                 .$checkIfVisible();
-        Set<AccessControlledAdHocRecord> results = db.find(
-                AccessControlledAdHocRecord.class, criteria, filter);
+        Set<AccessControlledAdHocRecord> results = db
+                .find(AccessControlledAdHocRecord.class, criteria, filter);
         Assert.assertEquals(1, results.size());
         Assert.assertEquals("Alpha", results.iterator().next().title);
     }
@@ -176,7 +175,8 @@ public class AdHocRecordCompositionTest {
                 "Document", "summary", "secret");
 
         // Guest trying to read confidential field should get null
-        // (the single-key readAs filters data, the Collection-based read throws)
+        // (the single-key readAs filters data, the Collection-based read
+        // throws)
         Object result = doc.readAs(guest, "confidential");
         Assert.assertNull(result);
     }
@@ -188,7 +188,8 @@ public class AdHocRecordCompositionTest {
         FieldLevelAccessAdHocRecord doc = new FieldLevelAccessAdHocRecord(
                 "Document", "summary", "secret");
 
-        // Using Collection-based read should throw when accessing restricted key
+        // Using Collection-based read should throw when accessing restricted
+        // key
         guest.read(ImmutableSet.of("confidential"), doc);
     }
 
@@ -218,8 +219,8 @@ public class AdHocRecordCompositionTest {
         Audience anonymous = Audience.anonymous();
         Predicate<AccessControlledAdHocRecord> filter = anonymous
                 .$checkIfVisible();
-        Set<AccessControlledAdHocRecord> results = db.load(
-                AccessControlledAdHocRecord.class, filter);
+        Set<AccessControlledAdHocRecord> results = db
+                .load(AccessControlledAdHocRecord.class, filter);
         Assert.assertEquals(1, results.size());
         Assert.assertEquals("Public", results.iterator().next().title);
     }
@@ -238,14 +239,14 @@ public class AdHocRecordCompositionTest {
 
         // user1 (admin) should see both users
         Predicate<DualRoleAdHocRecord> adminFilter = user1.$checkIfVisible();
-        Set<DualRoleAdHocRecord> adminResults = db.load(
-                DualRoleAdHocRecord.class, adminFilter);
+        Set<DualRoleAdHocRecord> adminResults = db
+                .load(DualRoleAdHocRecord.class, adminFilter);
         Assert.assertEquals(2, adminResults.size());
 
         // user2 (viewer) should only see themselves
         Predicate<DualRoleAdHocRecord> viewerFilter = user2.$checkIfVisible();
-        Set<DualRoleAdHocRecord> viewerResults = db.load(
-                DualRoleAdHocRecord.class, viewerFilter);
+        Set<DualRoleAdHocRecord> viewerResults = db
+                .load(DualRoleAdHocRecord.class, viewerFilter);
         Assert.assertEquals(1, viewerResults.size());
         Assert.assertEquals("Bob", viewerResults.iterator().next().name);
     }
@@ -268,8 +269,8 @@ public class AdHocRecordCompositionTest {
         // Guest viewer with filter should only see public documents
         Predicate<AccessControlledAdHocRecord> filter = viewer
                 .$checkIfVisible();
-        Set<AccessControlledAdHocRecord> results = db.load(
-                AccessControlledAdHocRecord.class, filter);
+        Set<AccessControlledAdHocRecord> results = db
+                .load(AccessControlledAdHocRecord.class, filter);
         Assert.assertEquals(2, results.size());
 
         // With additional criteria for active only
@@ -342,8 +343,8 @@ public class AdHocRecordCompositionTest {
     /**
      * An {@link AdHocRecord} that implements {@link AccessControl}.
      */
-    static class AccessControlledAdHocRecord extends AdHocRecord
-            implements AccessControl {
+    static class AccessControlledAdHocRecord extends AdHocRecord implements
+            AccessControl {
 
         String title;
         boolean isPublic;
@@ -415,8 +416,8 @@ public class AdHocRecordCompositionTest {
     /**
      * An {@link AdHocRecord} with field-level access control.
      */
-    static class FieldLevelAccessAdHocRecord extends AdHocRecord
-            implements AccessControl {
+    static class FieldLevelAccessAdHocRecord extends AdHocRecord implements
+            AccessControl {
 
         String title;
         String summary;
@@ -490,8 +491,9 @@ public class AdHocRecordCompositionTest {
      * An {@link AdHocRecord} that implements both {@link Audience} and
      * {@link AccessControl}.
      */
-    static class DualRoleAdHocRecord extends AdHocRecord
-            implements Audience, AccessControl {
+    static class DualRoleAdHocRecord extends AdHocRecord implements
+            Audience,
+            AccessControl {
 
         String name;
         String role;

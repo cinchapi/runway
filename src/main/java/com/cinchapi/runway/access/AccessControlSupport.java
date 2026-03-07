@@ -1,23 +1,24 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.access;
 
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
+
 import javax.annotation.Nullable;
 
 import com.cinchapi.runway.Record;
@@ -29,11 +30,10 @@ import com.google.common.collect.Multiset;
  * access control framework.
  * <p>
  * {@link AccessControlSupport} provides static methods for processing access
- * rule sets
- * that define which fields an {@link Audience} can access in
- * {@link AccessControl access controlled} records. Rules support both
- * allowlist (positive) and denylist (negative) patterns, where negative rules
- * are prefixed with a dash character ({@code -}).
+ * rule sets that define which fields an {@link Audience} can access in
+ * {@link AccessControl access controlled} records. Rules support both allowlist
+ * (positive) and denylist (negative) patterns, where negative rules are
+ * prefixed with a dash character ({@code -}).
  * </p>
  * <h2>Rule Syntax</h2>
  * <ul>
@@ -67,13 +67,13 @@ class AccessControlSupport {
      * requests are permitted</li>
      * <li>If {@code rules} is {@link AccessControl#ALL_KEYS}, all requests are
      * permitted</li>
-     * <li>Otherwise, keys must match allowlist rules (if any) and not match
-     * any denylist rules</li>
+     * <li>Otherwise, keys must match allowlist rules (if any) and not match any
+     * denylist rules</li>
      * </ul>
      *
      * @param requested the collection of field keys being requested
-     * @param rules the set of access rules to evaluate against, or
-     *            {@code null} for no access
+     * @param rules the set of access rules to evaluate against, or {@code null}
+     *            for no access
      * @return {@code true} if all requested keys are permitted by the rules,
      *         {@code false} otherwise
      */

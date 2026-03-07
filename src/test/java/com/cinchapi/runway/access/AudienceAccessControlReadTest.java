@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.access;
 
@@ -34,7 +34,8 @@ import com.google.common.collect.ImmutableSet;
  * @author Jeff Nelson
  */
 @SuppressWarnings("unchecked")
-public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest {
+public class AudienceAccessControlReadTest
+        extends AudienceAccessControlBaseTest {
 
     @Test
     public void testReadOperationAllowedFields() {
@@ -50,7 +51,8 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
 
         // Admin should be able to read all fields
         Map<String, Object> result = admin.read(
-                ImmutableSet.of("name", "email", "resume", "skills"), candidate);
+                ImmutableSet.of("name", "email", "resume", "skills"),
+                candidate);
 
         Assert.assertNotNull(result);
         Assert.assertTrue(result.containsKey("name"));
@@ -73,11 +75,14 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         candidate2.resume = "Bob's private resume";
         candidate2.skills = "JavaScript, React";
 
-        // Candidate trying to read another candidate's private fields should throw exception
+        // Candidate trying to read another candidate's private fields should
+        // throw exception
         try {
-            candidate1.read(ImmutableSet.of("resume", "skills", "email"), candidate2);
+            candidate1.read(ImmutableSet.of("resume", "skills", "email"),
+                    candidate2);
             Assert.fail("Should have thrown RestrictedAccessException");
-        } catch (RestrictedAccessException e) {
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -94,11 +99,15 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         candidate.resume = "Jane's private resume";
         candidate.skills = "Java, Python";
 
-        // Even if some fields are accessible, read() should throw exception if any field is denied
+        // Even if some fields are accessible, read() should throw exception if
+        // any field is denied
         try {
-            employerUser.read(ImmutableSet.of("skills", "email", "resume"), candidate);
-            Assert.fail("Should have thrown RestrictedAccessException for mixed access");
-        } catch (RestrictedAccessException e) {
+            employerUser.read(ImmutableSet.of("skills", "email", "resume"),
+                    candidate);
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for mixed access");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception - resume is not accessible to employer users
         }
     }
@@ -129,14 +138,16 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         application.coverLetter = "Cover letter content";
 
         // Employer should be able to read accessible fields through navigation
-        Map<String, Object> result = employerUser.read(
-                ImmutableSet.of("candidate.skills", "candidate.email", "job.salary"), application);
+        Map<String, Object> result = employerUser.read(ImmutableSet
+                .of("candidate.skills", "candidate.email", "job.salary"),
+                application);
 
         Assert.assertNotNull(result);
         Assert.assertTrue(result.containsKey("candidate"));
         Assert.assertTrue(result.containsKey("job"));
 
-        Map<String, Object> candidateData = (Map<String, Object>) result.get("candidate");
+        Map<String, Object> candidateData = (Map<String, Object>) result
+                .get("candidate");
         Assert.assertTrue(candidateData.containsKey("skills"));
         Assert.assertTrue(candidateData.containsKey("email"));
 
@@ -163,11 +174,15 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         application.job = job;
         application.coverLetter = "Bob's cover letter";
 
-        // Should throw exception when trying to read through undiscoverable records
+        // Should throw exception when trying to read through undiscoverable
+        // records
         try {
-            candidate1.read(ImmutableSet.of("coverLetter", "candidate.name"), application);
-            Assert.fail("Should have thrown RestrictedAccessException for undiscoverable record");
-        } catch (RestrictedAccessException e) {}
+            candidate1.read(ImmutableSet.of("coverLetter", "candidate.name"),
+                    application);
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for undiscoverable record");
+        }
+        catch (RestrictedAccessException e) {}
     }
 
     @Test
@@ -187,13 +202,17 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
 
         // Test that read() throws exception while frame() filters results
         try {
-            employerUser.read(ImmutableSet.of("skills", "resume", "email"), candidate2);
-            Assert.fail("read() should have thrown RestrictedAccessException for mixed access");
-        } catch (RestrictedAccessException e) {
+            employerUser.read(ImmutableSet.of("skills", "resume", "email"),
+                    candidate2);
+            Assert.fail(
+                    "read() should have thrown RestrictedAccessException for mixed access");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
 
-        // Verify frame() works differently - should return only accessible fields
+        // Verify frame() works differently - should return only accessible
+        // fields
         Map<String, Object> frameResult = employerUser.frame(
                 ImmutableSet.of("skills", "resume", "email"), candidate2);
         Assert.assertNotNull(frameResult);
@@ -230,22 +249,25 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         application.job = job;
         application.coverLetter = "Cover letter content";
 
-        // Should throw exception if any navigated field is denied, even if others are accessible
+        // Should throw exception if any navigated field is denied, even if
+        // others are accessible
         try {
-            employerUser.read(ImmutableSet.of(
-                    "candidate.skills",   // Accessible
-                    "candidate.resume",   // NOT accessible for employer
-                    "job.salary"         // Accessible
+            employerUser.read(ImmutableSet.of("candidate.skills", // Accessible
+                    "candidate.resume", // NOT accessible for employer
+                    "job.salary" // Accessible
             ), application);
-            Assert.fail("Should have thrown RestrictedAccessException for mixed navigation access");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for mixed navigation access");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
 
     @Test
     public void testReadOperationAccessibleTopLevelInaccessibleNavigation() {
-        // Set up scenario where top-level record is accessible but navigation target is not
+        // Set up scenario where top-level record is accessible but navigation
+        // target is not
         Employer company1 = new Employer();
         company1.name = "TechCorp";
         company1.description = "A tech company";
@@ -274,32 +296,42 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
                 job.$isDiscoverableBy(candidate));
 
         // But candidate cannot read private employer fields like 'size'
-        Set<String> candidateReadableEmployerFields = company2.$readableBy(candidate);
+        Set<String> candidateReadableEmployerFields = company2
+                .$readableBy(candidate);
         Assert.assertFalse("Company size should not be readable by candidate",
                 candidateReadableEmployerFields.contains("size"));
 
-        // This should throw exception: job is accessible, but employer.size is not
+        // This should throw exception: job is accessible, but employer.size is
+        // not
         try {
             candidate.read(ImmutableSet.of("title", "employer.size"), job);
-            Assert.fail("Should have thrown RestrictedAccessException - job accessible but employer.size denied");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException - job accessible but employer.size denied");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception - even though job is accessible to candidate,
             // employer.size is not readable by candidates
         }
 
         // Verify that the accessible parts work on their own
-        Map<String, Object> jobOnlyResult = candidate.read(ImmutableSet.of("title"), job);
-        Assert.assertNotNull("Should be able to read just the job title", jobOnlyResult);
+        Map<String, Object> jobOnlyResult = candidate
+                .read(ImmutableSet.of("title"), job);
+        Assert.assertNotNull("Should be able to read just the job title",
+                jobOnlyResult);
         Assert.assertEquals("Backend Developer", jobOnlyResult.get("title"));
 
         // And verify that employer public fields work
-        Map<String, Object> employerPublicResult = candidate.read(ImmutableSet.of("title", "employer.name"), job);
-        Assert.assertNotNull("Should be able to read job title and employer name", employerPublicResult);
+        Map<String, Object> employerPublicResult = candidate
+                .read(ImmutableSet.of("title", "employer.name"), job);
+        Assert.assertNotNull(
+                "Should be able to read job title and employer name",
+                employerPublicResult);
         Assert.assertTrue(employerPublicResult.containsKey("title"));
         Assert.assertTrue(employerPublicResult.containsKey("employer"));
 
         System.out.println(employerPublicResult);
-        Map<String, Object> employerData = (Map<String, Object>) employerPublicResult.get("employer");
+        Map<String, Object> employerData = (Map<String, Object>) employerPublicResult
+                .get("employer");
         Assert.assertEquals("PrivateCorp", employerData.get("name"));
     }
 
@@ -313,9 +345,8 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         candidate.yearsExperience = 5;
 
         // Candidate should be able to read all their own fields
-        Map<String, Object> result = candidate.read(
-                ImmutableSet.of("name", "email", "resume", "skills", "yearsExperience"),
-                candidate);
+        Map<String, Object> result = candidate.read(ImmutableSet.of("name",
+                "email", "resume", "skills", "yearsExperience"), candidate);
 
         Assert.assertNotNull(result);
         Assert.assertTrue(result.containsKey("name"));
@@ -341,8 +372,8 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         job.salary = 100000.0;
 
         // Anonymous should be able to read public job fields
-        Map<String, Object> result = anonymous.read(
-                ImmutableSet.of("title", "description"), job);
+        Map<String, Object> result = anonymous
+                .read(ImmutableSet.of("title", "description"), job);
 
         Assert.assertNotNull(result);
         Assert.assertTrue(result.containsKey("title"));
@@ -353,8 +384,10 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         // Anonymous should not be able to read private fields like salary
         try {
             anonymous.read(ImmutableSet.of("title", "salary"), job);
-            Assert.fail("Should have thrown RestrictedAccessException for salary field");
-        } catch (RestrictedAccessException e) {
+            Assert.fail(
+                    "Should have thrown RestrictedAccessException for salary field");
+        }
+        catch (RestrictedAccessException e) {
             // Expected exception
         }
     }
@@ -369,11 +402,13 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         candidate.email = "jane@email.com";
 
         // Should succeed and return existing fields, ignoring non-existent ones
-        Map<String, Object> result = admin.read(
-                ImmutableSet.of("name", "nonExistentField"), candidate);
+        Map<String, Object> result = admin
+                .read(ImmutableSet.of("name", "nonExistentField"), candidate);
 
-        Assert.assertNotNull("Should return result without throwing exception", result);
-        Assert.assertTrue("Should contain existing field", result.containsKey("name"));
+        Assert.assertNotNull("Should return result without throwing exception",
+                result);
+        Assert.assertTrue("Should contain existing field",
+                result.containsKey("name"));
         Assert.assertEquals("Jane Developer", result.get("name"));
         Assert.assertFalse("Should not contain non-existent field",
                 result.containsKey("nonExistentField"));
@@ -383,11 +418,14 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         job.title = "Software Engineer";
         job.published = true;
 
-        Map<String, Object> navResult = admin.read(
-                ImmutableSet.of("title", "nonExistent.field"), job);
+        Map<String, Object> navResult = admin
+                .read(ImmutableSet.of("title", "nonExistent.field"), job);
 
-        Assert.assertNotNull("Should return result for navigation with non-existent paths", navResult);
-        Assert.assertTrue("Should contain existing field", navResult.containsKey("title"));
+        Assert.assertNotNull(
+                "Should return result for navigation with non-existent paths",
+                navResult);
+        Assert.assertTrue("Should contain existing field",
+                navResult.containsKey("title"));
         Assert.assertEquals("Software Engineer", navResult.get("title"));
         Assert.assertFalse("Should not contain non-existent navigation path",
                 navResult.containsKey("nonExistent"));
@@ -423,31 +461,33 @@ public class AudienceAccessControlReadTest extends AudienceAccessControlBaseTest
         admin.name = "System Admin";
 
         // Admin should be able to read through deep navigation
-        Map<String, Object> result = admin.read(ImmutableSet.of(
-                "application.job.employer.name",
-                "application.job.employer.location",
-                "application.candidate.skills",
-                "salary"
-        ), offer);
+        Map<String, Object> result = admin
+                .read(ImmutableSet.of("application.job.employer.name",
+                        "application.job.employer.location",
+                        "application.candidate.skills", "salary"), offer);
 
         Assert.assertNotNull(result);
         Assert.assertTrue(result.containsKey("application"));
         Assert.assertTrue(result.containsKey("salary"));
 
-        Map<String, Object> applicationData = (Map<String, Object>) result.get("application");
+        Map<String, Object> applicationData = (Map<String, Object>) result
+                .get("application");
         Assert.assertTrue(applicationData.containsKey("job"));
         Assert.assertTrue(applicationData.containsKey("candidate"));
 
-        Map<String, Object> jobData = (Map<String, Object>) applicationData.get("job");
+        Map<String, Object> jobData = (Map<String, Object>) applicationData
+                .get("job");
         Assert.assertTrue(jobData.containsKey("employer"));
 
-        Map<String, Object> employerData = (Map<String, Object>) jobData.get("employer");
+        Map<String, Object> employerData = (Map<String, Object>) jobData
+                .get("employer");
         Assert.assertTrue(employerData.containsKey("name"));
         Assert.assertTrue(employerData.containsKey("location"));
         Assert.assertEquals("TechCorp", employerData.get("name"));
         Assert.assertEquals("San Francisco", employerData.get("location"));
 
-        Map<String, Object> candidateData = (Map<String, Object>) applicationData.get("candidate");
+        Map<String, Object> candidateData = (Map<String, Object>) applicationData
+                .get("candidate");
         Assert.assertTrue(candidateData.containsKey("skills"));
         Assert.assertEquals("Java, Python", candidateData.get("skills"));
 

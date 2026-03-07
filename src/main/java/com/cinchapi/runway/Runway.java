@@ -1,29 +1,34 @@
 /*
- * Copyright (c) 2013-2019 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
 import java.util.AbstractMap;
+import java.util.AbstractMap.SimpleImmutableEntry;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -31,12 +36,17 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
@@ -51,6 +61,7 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
+import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
@@ -61,9 +72,9 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.lang.sort.OrderComponent;
 import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
-import com.cinchapi.concourse.time.Time;
 import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.Record.InvalidRecordException;
+import com.cinchapi.runway.Record.Snapshot;
 import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.cinchapi.runway.util.Pagination;
@@ -80,11 +91,6 @@ import com.google.common.collect.Sets;
 
 import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
-
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.function.Consumer;
-import java.util.concurrent.ThreadFactory;
 
 /**
  * {@link Runway} is the ORM controller for Concourse.
@@ -242,6 +248,32 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Restore the mutable metadata on each {@link Record} from a previously
+     * captured snapshot.
+     * <p>
+     * This is used during spurious save failure retry to undo the side effects
+     * that {@link Record#saveWithinTransaction(Concourse, Map, Map, boolean)
+     * saveWithinTransaction} performs on metadata fields (checksum, realm
+     * flags, author), since the transaction was aborted and none of those
+     * mutations should persist.
+     * </p>
+     *
+     * @param snapshot a mapping from {@link Record} to its captured
+     *            {@link Record.Snapshot}
+     */
+    private static void restore(Map<Record, Record.Snapshot> snapshot) {
+        for (Entry<Record, Record.Snapshot> entry : snapshot.entrySet()) {
+            entry.getKey().restore(entry.getValue());
+        }
+    }
+
+    /**
+     * The maximum number of times a spurious save failure is retried before
+     * giving up.
+     */
+    private static final int MAX_SPURIOUS_SAVE_RETRIES = 5;
+
+    /**
      * The default {@link #onLoadFailureHandler}.
      */
     private static TriConsumer<Class<? extends Record>, Long, Throwable> DEFAULT_ON_LOAD_FAILURE_HANDLER = (
@@ -251,13 +283,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * A collection of all the active {@link Runway} instances.
      */
     private static Set<Runway> instances = Sets.newHashSet();
-
-    /**
-     * The record where metadata is stored. We typically store some transient
-     * metadata for transaction routing within this record (so its only visible
-     * within the specific transaction) and we clear it before commit time.
-     */
-    private static long METADATA_RECORD = -1;
 
     /**
      * Placeholder for a {@code null} {@link Order} parameter.
@@ -310,17 +335,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean hasNativeSortingAndPagination;
 
     /**
-     * Whenever an exception is thrown during a {@link Runway#load(long)
-     * load} operation, the provided {@code onLoadFailureHandler} receives
-     * the record's class, id and error for processing.
+     * Whenever an exception is thrown during a {@link Runway#load(long) load}
+     * operation, the provided {@code onLoadFailureHandler} receives the
+     * record's class, id and error for processing.
      */
     private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = DEFAULT_ON_LOAD_FAILURE_HANDLER;
 
     /**
-     * The strategy for {@link #read(Concourse, Criteria, Order, Page)
-     * loading} data from the database.
+     * The strategy for {@link #read(Concourse, Criteria, Order, Page) loading}
+     * data from the database.
      */
     private ReadStrategy readStrategy = ReadStrategy.AUTO;
+
+    /**
+     * The strategy for handling spurious {@link TransactionException
+     * TransactionExceptions} during {@link #save(Record...) save} operations.
+     */
+    private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
     /**
      * The maximum number of records to buffer in memory when selecting data
@@ -328,14 +359,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * is not {@link ReadStrategy#BULK}.
      */
     private int streamingReadBufferSize = 1000;
-
-    /**
-     * A mapping from a transaction id to the set of records that are waiting to
-     * be saved within that transaction. We use this collection to ensure that a
-     * record being saved only links to an existing record in the database or a
-     * record that will later exist (e.g. waiting to be saved).
-     */
-    private final TLongObjectMap<Set<Record>> waitingToBeSaved = new TLongObjectHashMap<Set<Record>>();
 
     /**
      * A flag that indicates if the connected server has enough functionality to
@@ -351,8 +374,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean supportsPreSelectLinkedRecords;
 
     /**
-     * A queue of records that have been successfully saved and are waiting
-     * for save notification processing.
+     * A queue of records that have been successfully saved and are waiting for
+     * save notification processing.
      */
     private BlockingQueue<Record> saveNotificationQueue;
 
@@ -374,9 +397,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Gateway gateway = null;
 
     /**
-     * Thread-local storage for attached {@link AdHocDataSource} instances.
-     * Each thread maintains its own set of attached sources, enabling
-     * request-scoped or context-scoped attachment.
+     * Thread-local storage for attached {@link AdHocDataSource} instances. Each
+     * thread maintains its own set of attached sources, enabling request-scoped
+     * or context-scoped attachment.
      * <p>
      * The set is lazily initialized only when {@link #attach} is called to
      * avoid unnecessary allocations for threads that never use attachment.
@@ -419,8 +442,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Attach one or more {@link AdHocDataSource AdHocDataSources} to
-     * this {@link Runway} instance for the current thread.
+     * Attach one or more {@link AdHocDataSource AdHocDataSources} to this
+     * {@link Runway} instance for the current thread.
      * <p>
      * When a source is attached, queries for its {@link AdHocDataSource#type()
      * type} are routed to the source instead of Runway's underlying database.
@@ -429,10 +452,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * </p>
      * <p>
      * The returned {@link DatabaseInterface} delegates to this {@link Runway}
-     * instance and implements {@link AutoCloseable} to automatically detach
-     * all sources when closed. Both the returned handle and this
-     * {@link Runway} instance can be used for queries while sources are
-     * attached.
+     * instance and implements {@link AutoCloseable} to automatically detach all
+     * sources when closed. Both the returned handle and this {@link Runway}
+     * instance can be used for queries while sources are attached.
      * </p>
      * <p>
      * <strong>Note:</strong> Full-text {@link #search} operations are not
@@ -452,8 +474,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * }
      * </pre>
      *
-     * @param sources the {@link AdHocDataSource AdHocDataSources} to
-     *            attach
+     * @param sources the {@link AdHocDataSource AdHocDataSources} to attach
      * @return a {@link DatabaseInterface} that auto-detaches on close
      */
     public AttachmentScope attach(AdHocDataSource<?>... sources) {
@@ -551,8 +572,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Detach an {@link AdHocDataSource} from this {@link Runway} instance
-     * for the current thread.
+     * Detach an {@link AdHocDataSource} from this {@link Runway} instance for
+     * the current thread.
      *
      * @param source the source to detach
      */
@@ -1024,6 +1045,58 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Register a listener that will be called <strong>after</strong> any
+     * {@link Record} of the specified {@code type} (or a subclass) is
+     * successfully saved.
+     * <p>
+     * Unlike the {@link Builder#onSave(Class, Consumer) builder method}, this
+     * can be called after the {@link Runway} instance has been constructed. The
+     * new listener is chained with any previously registered listeners &mdash;
+     * it does not replace them.
+     * </p>
+     *
+     * @param type the {@link Record} type (or superclass) to listen for
+     * @param listener a consumer that processes saved {@link Record Records} of
+     *            the specified type
+     * @return this for chaining
+     */
+    @SuppressWarnings("unchecked")
+    public <T extends Record> Runway onSave(Class<T> type,
+            Consumer<T> listener) {
+        ensureSaveNotificationInfrastructure();
+        Consumer<Record> previous = saveListener;
+        saveListener = record -> {
+            if(type.isAssignableFrom(record.getClass())) {
+                try {
+                    ((Consumer<Record>) (Consumer<?>) listener).accept(record);
+                }
+                catch (Exception e) {
+                    // Swallow to match builder behavior
+                }
+            }
+            if(previous != null) {
+                previous.accept(record);
+            }
+        };
+        return this;
+    }
+
+    /**
+     * Register a listener that will be called <strong>after</strong> any
+     * {@link Record} is successfully saved.
+     * <p>
+     * This is equivalent to calling {@link #onSave(Class, Consumer)
+     * onSave(Record.class, listener)}.
+     * </p>
+     *
+     * @param listener a consumer that processes saved {@link Record Records}
+     * @return this for chaining
+     */
+    public Runway onSave(Consumer<Record> listener) {
+        return onSave(Record.class, listener);
+    }
+
+    /**
      * {@link Concourse#ping() Ping} the database and return {@code true} if it
      * is accessible.
      *
@@ -1050,68 +1123,143 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Save all the changes in all of the {@code records} using a single ACID
-     * transaction, which means that all the changes must be save or none of
-     * them will.
+     * Save all changes in the provided {@code records} using a single ACID
+     * transaction.
      * <p>
-     * <strong>NOTE:</strong> If there is only one record provided, this method
-     * has the same effect as {@link Record#save(Runway)}.
-     * </p>
+     * All changes are committed atomically &mdash; either every {@link Record}
+     * is persisted or none are. When the {@link SpuriousSaveFailureStrategy} is
+     * {@link SpuriousSaveFailureStrategy#RETRY RETRY}, a
+     * {@link TransactionException} that is not caused by actual data staleness
+     * is automatically retried in a new transaction.
+     * <p>
+     * When {@code preventStaleWrites} is {@code true}, each {@link Record} in
+     * the object graph is checked for staleness inside the transaction before
+     * its data is written. If any {@link Record} has been externally modified
+     * since it was last loaded or saved, a {@link StaleDataException} is thrown
+     * and no data is persisted. This guarantees that a save will never silently
+     * overwrite data that was changed by another process or transaction after
+     * the {@link Record} was last synchronized. This is especially useful in
+     * multi-writer environments where concurrent updates to the same
+     * {@link Record Records} are possible.
+     * <p>
+     * <strong>NOTE:</strong> Enabling {@code preventStaleWrites} adds latency
+     * because an audit query is issued for every {@link Record} in the object
+     * graph before each write. For save operations that touch large object
+     * graphs, this overhead may be significant. When disabled, saves are faster
+     * but external modifications may be silently overwritten.
      *
-     * @param records one or more records to be saved
-     * @return {@code true} if all the changes are atomically saved
+     * @param preventStaleWrites if {@code true}, reject the save when any
+     *            {@link Record} in the object graph has stale data
+     * @param records one or more {@link Record Records} to save
+     * @return {@code true} if all changes are atomically saved
+     * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
+     *             and any {@link Record} has been externally modified
      */
-    public boolean save(Record... records) {
-        if(records.length == 1) {
-            Concourse concourse = connections.request();
-            try {
-                boolean success = records[0].save(concourse, Sets.newHashSet(),
-                        this);
-                if(success) {
-                    enqueueSaveNotification(records[0]);
-                }
-                return success;
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            Concourse concourse = connections.request();
-            long transactionId = Time.now();
-            Record current = null;
-            try {
-                concourse.stage();
-                concourse.set("transaction_id", transactionId, METADATA_RECORD);
-                Set<Record> waiting = Sets.newHashSet(records);
-                Set<Record> seen = Sets.newHashSet();
-                waitingToBeSaved.put(transactionId, waiting);
-                for (Record record : records) {
-                    current = record;
-                    record.saveWithinTransaction(concourse, seen);
-                }
-                concourse.clear("transaction_id", METADATA_RECORD);
-                boolean success = concourse.commit();
-                if(success) {
-                    // Queue save notifications for all records
+    public boolean save(boolean preventStaleWrites, Record... records) {
+        Concourse concourse = connections.request();
+        Record current = null;
+        try {
+            boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
+            Map<Record, Snapshot> snapshots = retrySpuriousSaveFailure
+                    ? new HashMap<>()
+                    : null;
+            Map<Record, Boolean> seen = new HashMap<>();
+            int attempts = 0;
+            while (true) {
+                try {
+                    seen.clear();
+                    concourse.stage();
                     for (Record record : records) {
-                        enqueueSaveNotification(record);
+                        Supplier<Boolean> override = record.overrideSave();
+                        if(override != null && !override.get()) {
+                            // Early exit the entire transaction because an
+                            // overriden save has failed.
+                            concourse.abort();
+                            return false;
+                        }
+                        else if(override != null) {
+                            continue;
+                        }
+                        else {
+                            current = record;
+                            record.assign(this);
+                            record.saveWithinTransaction(concourse, seen,
+                                    snapshots, preventStaleWrites);
+                        }
+                    }
+                    if(concourse.commit()) {
+                        seen.entrySet().stream().filter(e -> e.getValue())
+                                .map(e -> e.getKey()).forEach(record -> {
+                                    enqueueSaveNotification(record);
+                                    record.checkpoint();
+                                });
+                        return true;
+                    }
+                    else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {
+                        return false;
+                    }
+                    else {
+                        // Trigger catch block below for potential retry
+                        throw new TransactionException();
                     }
                 }
-                return success;
-            }
-            catch (Throwable t) {
-                concourse.abort();
-                if(current != null) {
-                    current.errors.add(t);
+                catch (Throwable t) {
+                    concourse.abort();
+                    if(t instanceof TransactionException
+                            && retrySpuriousSaveFailure
+                            && ++attempts <= MAX_SPURIOUS_SAVE_RETRIES
+                            && Arrays.stream(records).noneMatch(
+                                    r -> r.hasStaleDataWithinTransaction(
+                                            concourse))) {
+                        // NOTE: Only root records are checked for stale data
+                        // because linked records that are recursively saved may
+                        // show false positives when concurrent saves share the
+                        // same linked record.
+                        restore(snapshots);
+                        continue;
+                    }
+                    else if(t instanceof StaleDataException) {
+                        throw (StaleDataException) t;
+                    }
+                    else {
+                        for (Record record : seen.keySet()) {
+                            if(record.inZombieState(concourse)) {
+                                // TODO: this is currently disabled because
+                                // zombie detection throughout the codebase is
+                                // inconsistent and we may need to delete it all
+                                // together
+                                // concourse.clear(record.id());
+                            }
+                        }
+                        if(current != null) {
+                            current.errors.add(t);
+                        }
+                        return false;
+                    }
                 }
-                return false;
-            }
-            finally {
-                waitingToBeSaved.remove(transactionId);
-                connections.release(concourse);
             }
         }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * Save all changes in the provided {@code records} using a single ACID
+     * transaction.
+     * <p>
+     * All changes are committed atomically &mdash; either every {@link Record}
+     * is persisted or none are. When the {@link SpuriousSaveFailureStrategy} is
+     * {@link SpuriousSaveFailureStrategy#RETRY RETRY}, a
+     * {@link TransactionException} that is not caused by actual data staleness
+     * is automatically retried in a new transaction.
+     * </p>
+     *
+     * @param records one or more {@link Record Records} to save
+     * @return {@code true} if all changes are atomically saved
+     */
+    public boolean save(Record... records) {
+        return save(false, records);
     }
 
     /**
@@ -1354,6 +1502,42 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Lazily initialize the save notification infrastructure (queue and
+     * executor) if it has not already been set up. This allows {@link #onSave}
+     * listeners to be registered after the {@link Runway} instance is built.
+     */
+    private synchronized void ensureSaveNotificationInfrastructure() {
+        if(saveNotificationQueue == null) {
+            saveNotificationQueue = new LinkedBlockingQueue<>();
+            ThreadFactory threadFactory = r -> {
+                Thread thread = new Thread(r,
+                        "runway-save-notification-worker");
+                thread.setDaemon(true);
+                return thread;
+            };
+            saveNotificationExecutor = Executors
+                    .newSingleThreadExecutor(threadFactory);
+            saveNotificationExecutor.submit(() -> {
+                while (!Thread.currentThread().isInterrupted()) {
+                    try {
+                        Record record = saveNotificationQueue.take();
+                        try {
+                            saveListener.accept(record);
+                        }
+                        catch (Exception e) {
+                            // Silently swallow exceptions
+                        }
+                    }
+                    catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            });
+        }
+    }
+
+    /**
      * Perform local {@code criteria} resolution and return all the records in
      * {@code clazz} that match.
      *
@@ -1450,12 +1634,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return all {@link AdHocDataSource AdHocDataSources} attached for
-     * classes in the hierarchy of {@code clazz}.
+     * Return all {@link AdHocDataSource AdHocDataSources} attached for classes
+     * in the hierarchy of {@code clazz}.
      * <p>
-     * This method finds all attached sources whose class is assignable from
-     * the requested class (i.e., sources that handle subclasses of the
-     * requested class).
+     * This method finds all attached sources whose class is assignable from the
+     * requested class (i.e., sources that handle subclasses of the requested
+     * class).
      * </p>
      *
      * @param clazz the class to check
@@ -1481,8 +1665,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
-     * that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
+     * that is contained within the specified {@code clazz} and has the
+     * specified {@code id}.
      * <p>
      * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
      * used), multiple calls to this method with the same parameters will return
@@ -1510,8 +1694,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
-     * that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
+     * that is contained within the specified {@code clazz} and has the
+     * specified {@code id}.
      * <p>
      * If a {@link #cache} is NOT provided (e.g. {@link NopOpCache} is being
      * used), multiple calls to this method with the same parameters will return
@@ -1536,12 +1720,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
-     * that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
+     * that is contained within the specified {@code clazz} and has the
+     * specified {@code id}.
      * <p>
      * Unlike {@link #instantiate(Class, long, TLongObjectHashMap, Map)} this
-     * method
-     * does not need to know the desired {@link Class} of the loaded
+     * method does not need to know the desired {@link Class} of the loaded
      * {@link Record}.
      * </p>
      * <p>
@@ -1584,12 +1767,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Internal method to help recursively load records by keeping tracking of
      * which ones currently exist. Ultimately this method will load the Record
-     * that is contained within the specified {@code clazz} and
-     * has the specified {@code id}.
+     * that is contained within the specified {@code clazz} and has the
+     * specified {@code id}.
      * <p>
      * Unlike {@link #instantiate(Class, long, TLongObjectHashMap, Map)} this
-     * method
-     * does not need to know the desired {@link Class} of the loaded
+     * method does not need to know the desired {@link Class} of the loaded
      * {@link Record}.
      * </p>
      * <p>
@@ -1801,9 +1983,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Set<Entry<Long, Map<String, Set<Object>>>> entrySet = null;
 
             /**
-             * The data that has been loaded from the data into memory. For
-             * the items that have been pulled from the {@link #pending}
-             * queue.
+             * The data that has been loaded from the data into memory. For the
+             * items that have been pulled from the {@link #pending} queue.
              */
             Map<Long, Map<String, Set<Object>>> loaded = Maps
                     .newHashMapWithExpectedSize(ids.size()); // TODO: create
@@ -1816,10 +1997,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                                              // right value
 
             /**
-             * A FIFO list of record ids that are pending database
-             * selection. Items from this queue are popped off in increments
-             * of {@value #BULK_SELECT_BUFFER_SIZE} and selected from
-             * Concourse.
+             * A FIFO list of record ids that are pending database selection.
+             * Items from this queue are popped off in increments of
+             * {@value #BULK_SELECT_BUFFER_SIZE} and selected from Concourse.
              */
             Queue<Long> pending = Queues.newArrayDeque(ids);
 
@@ -1887,13 +2067,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private int streamingReadBufferSize = 100;
         private String username = "admin";
         private boolean disablePreSelectLinkedRecords = false;
-        private Consumer<Record> saveListener = null;
+        private List<Map.Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
+        private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
         /**
          * Build the configured {@link Runway} and return the instance.
          *
          * @return a {@link Runway} instance
          */
+        @SuppressWarnings("unchecked")
         public Runway build() {
             ConnectionPool connections = cache == null
                     ? ConnectionPool.newCachedConnectionPool(host, port,
@@ -1904,6 +2086,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             db.streamingReadBufferSize = streamingReadBufferSize;
             db.readStrategy = MoreObjects.firstNonNull(readStrategy,
                     cache != null ? ReadStrategy.STREAM : ReadStrategy.AUTO);
+            db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
             }
@@ -1912,8 +2095,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
 
             // Initialize save notification components if a listener is provided
-            if(saveListener != null) {
-                db.saveListener = saveListener;
+            if(!saveListeners.isEmpty()) {
+                List<Entry<Class<? extends Record>, Consumer<? extends Record>>> listeners = new ArrayList<>(
+                        saveListeners);
+                db.saveListener = record -> {
+                    for (Entry<Class<? extends Record>, Consumer<? extends Record>> entry : listeners) {
+                        if(entry.getKey().isAssignableFrom(record.getClass())) {
+                            try {
+                                Consumer<Record> consumer = (Consumer<Record>) entry
+                                        .getValue();
+                                consumer.accept(record);
+                            }
+                            catch (Exception e) {
+                                // Swallow and continue to next matching
+                                // listener
+                            }
+                        }
+                    }
+                };
                 db.saveNotificationQueue = new LinkedBlockingQueue<>();
                 ThreadFactory threadFactory = r -> {
                     Thread thread = new Thread(r,
@@ -1931,7 +2130,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 db.saveListener.accept(record);
                             }
                             catch (Exception e) {
-                                // Silently swallow exceptions from the listener
+                                // Silently swallow exceptions from the
+                                // composed listener
                             }
                         }
                         catch (InterruptedException e) {
@@ -2014,12 +2214,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Provide a listener that will be called <strong>after</strong> a
-         * record is successfully saved.
+         * record of the specified {@code type} (or any subclass) is
+         * successfully saved.
          * <p>
          * Save listening is designed for implementing side-effects that occur
-         * after a record
-         * is successfully persisted to the database. This is ideal for
-         * operations such as:
+         * after a record is successfully persisted to the database. This is
+         * ideal for operations such as:
          * <ul>
          * <li>Triggering notifications or events</li>
          * <li>Updating external systems</li>
@@ -2029,10 +2229,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * </ul>
          * </p>
          * <p>
+         * The {@code listener} is only invoked for records that are instances
+         * of {@code type} (including subclasses). For example, registering a
+         * listener for {@code Player.class} will fire for {@code Player}
+         * records and any subclass of {@code Player}, but not for unrelated
+         * {@link Record} types.
+         * </p>
+         * <p>
+         * This method is <strong>compositional</strong>: calling it multiple
+         * times adds additional listeners rather than replacing previous ones.
+         * All matching listeners fire in registration order. If a listener
+         * throws an exception, it is caught and suppressed, and subsequent
+         * matching listeners still fire.
+         * </p>
+         * <p>
          * The listener is executed asynchronously in a dedicated thread to
-         * prevent blocking the main application flow. Any exceptions thrown by
-         * the listener are caught and suppressed to maintain application
-         * stability.
+         * prevent blocking the main application flow.
          * </p>
          * <p>
          * <strong>Important:</strong> Save listeners should not modify the
@@ -2040,19 +2252,36 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * save process, use the {@link Record#beforeSave} hook instead, which
          * is called before the record is persisted.
          * </p>
+         *
+         * @param type the {@link Record} type (or superclass) to listen for
+         * @param listener a consumer that processes saved records of the
+         *            specified type
+         * @return this builder
+         */
+        public <T extends Record> Builder onSave(Class<T> type,
+                Consumer<T> listener) {
+            saveListeners.add(new SimpleImmutableEntry<>(type, listener));
+            return this;
+        }
+
+        /**
+         * Provide a listener that will be called <strong>after</strong> any
+         * record is successfully saved.
          * <p>
-         * <strong>NOTE:</strong>The {@code listener} will receive
-         * <em>every</em> saved record, so it should perform the necessary
-         * internal checks (e.g., checking the record type or specific
-         * properties) before taking action.
+         * This is equivalent to calling {@link #onSave(Class, Consumer)
+         * onSave(Record.class, listener)}.
+         * </p>
+         * <p>
+         * This method is <strong>compositional</strong>: calling it multiple
+         * times adds additional listeners rather than replacing previous ones.
+         * All matching listeners fire in registration order.
          * </p>
          *
          * @param listener a consumer that processes saved records
          * @return this builder
          */
         public Builder onSave(Consumer<Record> listener) {
-            this.saveListener = listener;
-            return this;
+            return onSave(Record.class, listener);
         }
 
         /**
@@ -2105,6 +2334,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         @Deprecated
         public Builder recordsPerSelectBufferSize(int max) {
             return streamingReadBufferSize(max);
+        }
+
+        /**
+         * Set the {@link SpuriousSaveFailureStrategy} for the {@link Runway}
+         * instance.
+         * <p>
+         * The default is {@link SpuriousSaveFailureStrategy#FAIL_FAST}, which
+         * immediately propagates any {@code TransactionException} during a
+         * {@link Runway#save(Record...) save}.
+         * </p>
+         * <p>
+         * Setting this to {@link SpuriousSaveFailureStrategy#RETRY} causes
+         * {@link Runway} to automatically retry a failed save when none of the
+         * involved {@link Record Records} have stale data, which indicates that
+         * the {@code TransactionException} was spurious.
+         * </p>
+         *
+         * @param strategy the {@link SpuriousSaveFailureStrategy} to use
+         * @return this builder
+         */
+        public Builder spuriousSaveFailureStrategy(
+                SpuriousSaveFailureStrategy strategy) {
+            this.spuriousSaveFailureStrategy = strategy;
+            return this;
         }
 
         /**

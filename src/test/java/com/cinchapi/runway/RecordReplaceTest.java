@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2025 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -139,7 +139,8 @@ public class RecordReplaceTest extends RunwayBaseClientServerTest {
 
         // Create structure with array
         Company company = new Company("Startup");
-        company.founders = new Person[]{person1, new Person("Charlie", 40), person1};
+        company.founders = new Person[] { person1, new Person("Charlie", 40),
+                person1 };
 
         // Replace person1 with person2
         company.replace(person1, person2);
@@ -272,7 +273,8 @@ public class RecordReplaceTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(person2, dept.employees.get(0));
         Assert.assertEquals(person2, dept.teams.get(0).lead);
         Assert.assertEquals(person2, dept.teams.get(0).members.get(0));
-        Assert.assertEquals(person2, dept.teams.get(0).projects.get(0).contributors.get(0));
+        Assert.assertEquals(person2,
+                dept.teams.get(0).projects.get(0).contributors.get(0));
     }
 
     /**
@@ -337,7 +339,8 @@ public class RecordReplaceTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Test that replacement with null find parameter works (no exception thrown).
+     * Test that replacement with null find parameter works (no exception
+     * thrown).
      */
     @Test
     public void testReplaceWithNullFind() {
@@ -367,8 +370,10 @@ public class RecordReplaceTest extends RunwayBaseClientServerTest {
 
         @Override
         public boolean equals(Object obj) {
-            if (this == obj) return true;
-            if (obj == null || getClass() != obj.getClass()) return false;
+            if(this == obj)
+                return true;
+            if(obj == null || getClass() != obj.getClass())
+                return false;
             Person person = (Person) obj;
             return age == person.age && name.equals(person.name);
         }

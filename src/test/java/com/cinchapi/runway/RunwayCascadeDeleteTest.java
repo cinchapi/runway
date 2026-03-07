@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2021 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -56,8 +56,9 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         List<Record> records = ImmutableList.of(parent1, parent2, child1,
                 child2);
         records.forEach(record -> {
-            Assert.assertNull(record.getClass().getSimpleName()
-                    + " should have been deleted",
+            Assert.assertNull(
+                    record.getClass().getSimpleName()
+                            + " should have been deleted",
                     runway.load(record.getClass(), record.id()));
         });
     }
@@ -185,8 +186,9 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         records.put(ChildRecord.class, child2.id());
 
         records.entries().forEach(entry -> {
-            Assert.assertNull("Record should have been deleted " + entry.getKey()
-                    + " = " + entry.getValue(),
+            Assert.assertNull(
+                    "Record should have been deleted " + entry.getKey() + " = "
+                            + entry.getValue(),
                     runway.load(entry.getKey(), entry.getValue()));
         });
     }
@@ -266,8 +268,9 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
 
         List<Record> records = ImmutableList.of(parent, child);
         records.forEach(record -> {
-            Assert.assertNull(record.getClass().getSimpleName()
-                    + " should have been deleted",
+            Assert.assertNull(
+                    record.getClass().getSimpleName()
+                            + " should have been deleted",
                     runway.load(record.getClass(), record.id()));
         });
     }
@@ -287,8 +290,9 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
 
         List<Record> records = ImmutableList.of(parent, child1, child2);
         records.forEach(record -> {
-            Assert.assertNull(record.getClass().getSimpleName()
-                    + " should have been deleted",
+            Assert.assertNull(
+                    record.getClass().getSimpleName()
+                            + " should have been deleted",
                     runway.load(record.getClass(), record.id()));
         });
     }
@@ -310,7 +314,8 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         List<Class<? extends Record>> records = ImmutableList
                 .of(ParentRecord.class, ChildRecord.class, InnerRecord.class);
         records.forEach(clazz -> {
-            Assert.assertNull(clazz.getSimpleName() + " should have been deleted",
+            Assert.assertNull(
+                    clazz.getSimpleName() + " should have been deleted",
                     runway.load(clazz, parent.id()));
         });
     }
@@ -355,8 +360,8 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents a child record associated with a parent record and
-     * potentially containing inner records. Supports cascade deletion.
+     * Represents a child record associated with a parent record and potentially
+     * containing inner records. Supports cascade deletion.
      */
     class ChildRecord extends Record {
 
@@ -379,8 +384,8 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Inherits from ParentRecord and adds an additional record
-     * field, supporting cascade deletion.
+     * Inherits from ParentRecord and adds an additional record field,
+     * supporting cascade deletion.
      */
     class InheritedRecord extends ParentRecord {
         @CascadeDelete
@@ -395,8 +400,8 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Represents a parent record that can contain a single child record,
-     * a collection of child records, and an inner record. Supports cascade
+     * Represents a parent record that can contain a single child record, a
+     * collection of child records, and an inner record. Supports cascade
      * deletion.
      */
     class ParentRecord extends Record {

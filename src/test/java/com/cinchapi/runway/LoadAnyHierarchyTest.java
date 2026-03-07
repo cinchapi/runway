@@ -1,17 +1,17 @@
 /*
  * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway;
 
@@ -24,9 +24,9 @@ import com.cinchapi.concourse.lang.sort.Order;
 
 /**
  * Tests that verify {@link Runway#loadAny} correctly loads records from the
- * entire class hierarchy, not just the exact class specified. This addresses
- * a bug where the legacy fallback path incorrectly called {@code load()}
- * instead of {@code loadAny()}, causing only the exact class to be loaded.
+ * entire class hierarchy, not just the exact class specified. This addresses a
+ * bug where the legacy fallback path incorrectly called {@code load()} instead
+ * of {@code loadAny()}, causing only the exact class to be loaded.
  *
  * @author Jeff Nelson
  */
@@ -61,8 +61,7 @@ public class LoadAnyHierarchyTest extends RunwayBaseClientServerTest {
 
         Assert.assertEquals(3, allPlayers.size());
 
-        String[] names = allPlayers.stream()
-                .map(p -> p.name)
+        String[] names = allPlayers.stream().map(p -> p.name)
                 .toArray(String[]::new);
         Assert.assertEquals("Aaron", names[0]);
         Assert.assertEquals("Magic", names[1]);
@@ -78,8 +77,8 @@ public class LoadAnyHierarchyTest extends RunwayBaseClientServerTest {
 
         runway.save(player1, player2, pg1, pg2);
 
-        com.cinchapi.concourse.lang.paginate.Page page =
-                com.cinchapi.concourse.lang.paginate.Page.sized(2);
+        com.cinchapi.concourse.lang.paginate.Page page = com.cinchapi.concourse.lang.paginate.Page
+                .sized(2);
         Set<Player> pagedPlayers = runway.loadAny(Player.class, page);
 
         Assert.assertEquals(2, pagedPlayers.size());
@@ -95,14 +94,13 @@ public class LoadAnyHierarchyTest extends RunwayBaseClientServerTest {
         runway.save(player1, player2, pg1, pg2);
 
         Order order = Order.by("name").ascending();
-        com.cinchapi.concourse.lang.paginate.Page page =
-                com.cinchapi.concourse.lang.paginate.Page.sized(2);
+        com.cinchapi.concourse.lang.paginate.Page page = com.cinchapi.concourse.lang.paginate.Page
+                .sized(2);
         Set<Player> pagedPlayers = runway.loadAny(Player.class, order, page);
 
         Assert.assertEquals(2, pagedPlayers.size());
 
-        String[] names = pagedPlayers.stream()
-                .map(p -> p.name)
+        String[] names = pagedPlayers.stream().map(p -> p.name)
                 .toArray(String[]::new);
         Assert.assertEquals("Aaron", names[0]);
         Assert.assertEquals("Isiah", names[1]);
@@ -131,4 +129,3 @@ public class LoadAnyHierarchyTest extends RunwayBaseClientServerTest {
                 .anyMatch(p -> p.name.equals("Magic Johnson")));
     }
 }
-

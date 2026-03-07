@@ -1,17 +1,17 @@
 /*
- * Copyright (c) 2013-2022 Cinchapi Inc.
+ * Copyright (c) 2013-2026 Cinchapi Inc.
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
  *
  * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
  */
 package com.cinchapi.runway.util;
 
@@ -55,14 +55,15 @@ public class PaginationTest {
         Set<Long> actual;
         do {
             actual = Pagination.applyFilterAndPage(function, filter, page);
-            Set<Long> expected = source.stream().filter(filter).skip(page.skip())
-                    .limit(page.limit()).collect(Collectors.toCollection(LinkedHashSet::new));
+            Set<Long> expected = source.stream().filter(filter)
+                    .skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
             System.out.println("actual = " + actual);
             System.out.println("expected = " + expected);
             Assert.assertEquals(expected, actual);
             page = page.next();
         }
-        while(!actual.isEmpty());
+        while (!actual.isEmpty());
     }
 
 }
