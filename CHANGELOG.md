@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 1.12.0 (TBD)
+#### Version 1.12.0 (March 7, 2026)
 * **Spurious Save Failure Retry**: Added a `SpuriousSaveFailureStrategy` configuration that controls how `Runway` handles `TransactionException` during save operations. When set to `RETRY`, `Runway` automatically retries a failed save if none of the root records have stale data, indicating the failure was caused by a spurious MVCC conflict (e.g., overlapping `@Unique` constraint reads in concurrent transactions) rather than a genuine data conflict. The default strategy is `FAIL_FAST`, which preserves the existing behavior.
   * Configure via `Runway.builder().spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)`.
   * Stale data detection uses Concourse's `review` audit to check whether any external writes occurred after the record was last loaded or saved.
