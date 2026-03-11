@@ -61,6 +61,7 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
+import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.ConcourseCompiler;
@@ -224,9 +225,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private static <T extends Record> T loadWithErrorHandling(Class<T> clazz,
             long id, ConcurrentMap<Long, Record> loaded,
             ConnectionPool connections, Runway runway,
-            @Nullable Map<String, Set<Object>> data) {
+            @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
         try {
-            return Record.load(clazz, id, loaded, connections, runway, data);
+            return Record.load(clazz, id, loaded, connections, runway, data,
+                    destinations);
         }
         catch (Exception e) {
             if(e instanceof InvalidRecordException) {
@@ -374,6 +377,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean supportsPreSelectLinkedRecords;
 
     /**
+     * The strategy for pre-selecting data for {@link Collection
+     * Collection&lt;Record&gt;} fields.
+     */
+    /* package */ CollectionPreSelectStrategy collectionPreSelectStrategy;
+
+    /**
      * A queue of records that have been successfully saved and are waiting for
      * save notification processing.
      */
@@ -435,6 +444,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     .greaterThanOrEqualTo(target)
                     || actual.equals(
                             Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
+            this.collectionPreSelectStrategy = supportsPreSelectLinkedRecords
+                    ? CollectionPreSelectStrategy.NAVIGATE
+                    : CollectionPreSelectStrategy.NONE;
         }
         finally {
             connections.release(concourse);
@@ -880,7 +892,27 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     connections.release(connection);
                 }
             }
-            return instantiate(clazz, id, null);
+            if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
+                Concourse concourse = connections.request();
+                try {
+                    Set<String> paths = getPathsForClassIfSupported(clazz);
+                    Map<String, Set<Object>> data = paths != null
+                            ? concourse.select(paths, id)
+                            : concourse.select(id);
+                    Map<Long, Map<String, Set<Object>>> seed = Maps
+                            .newHashMap();
+                    seed.put(id, data);
+                    Map<Long, Map<String, Set<Object>>> destinations = prefetchLinks(
+                            concourse, seed);
+                    return instantiate(clazz, id, data, destinations);
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            else {
+                return instantiate(clazz, id, null, null);
+            }
         }
     }
 
@@ -1346,13 +1378,50 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * If the {@link #collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NAVIGATE}, return the navigate paths
+     * for {@code clazz}.
+     *
+     * @param clazz
+     * @return the navigate paths, or {@code null} if unsupported or the class
+     *         has no {@link Collection Collection&lt;Record&gt;} fields
+     */
+    final Set<String> getNavigatePathsForClassIfSupported(
+            Class<? extends Record> clazz) {
+        return collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
+                && StaticAnalysis.instance()
+                        .hasCollectionRecordFieldInClass(clazz)
+                                ? StaticAnalysis.instance()
+                                        .getNavigatePaths(clazz)
+                                : null;
+    }
+
+    /**
+     * If the {@link #collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NAVIGATE}, return the navigate paths
+     * for {@code clazz} and all descendants.
+     *
+     * @param clazz
+     * @return the navigate paths, or {@code null} if unsupported
+     */
+    final Set<String> getNavigatePathsForClassHierarchyIfSupported(
+            Class<? extends Record> clazz) {
+        return collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
+                && StaticAnalysis.instance()
+                        .hasCollectionRecordFieldInClassHierarchy(clazz)
+                                ? StaticAnalysis.instance()
+                                        .getNavigatePathsHierarchy(clazz)
+                                : null;
+    }
+
+    /**
      * Load a record by {@code id} without knowing its class.
      *
      * @param id
      * @return the loaded record
      */
     <T extends Record> T load(long id) {
-        return instantiate(id, null);
+        return instantiate(id, null, null);
     }
 
     /**
@@ -1686,9 +1755,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             ConcurrentMap<Long, Record> loaded,
-            @Nullable Map<String, Set<Object>> data) {
-        return loadWithErrorHandling(clazz, id, loaded, connections, this,
-                data);
+            @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
+        return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
+                destinations);
     }
 
     /**
@@ -1713,8 +1783,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the loaded {@link Record} instance
      */
     private <T extends Record> T instantiate(Class<T> clazz, long id,
-            @Nullable Map<String, Set<Object>> data) {
-        return instantiate(clazz, id, new ConcurrentHashMap<>(), data);
+            @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
+        return instantiate(clazz, id, new ConcurrentHashMap<>(), data,
+                destinations);
     }
 
     /**
@@ -1745,7 +1817,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> T instantiate(long id,
             ConcurrentMap<Long, Record> loaded,
-            @Nullable Map<String, Set<Object>> data) {
+            @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
         if(data == null) {
             // Since the desired class isn't specified, we must
             // prematurely select the record's data to determine it.
@@ -1760,8 +1833,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         String section = (String) Iterables
                 .getLast(data.get(Record.SECTION_KEY));
         Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, loaded, connections, this,
-                data);
+        return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
+                destinations);
     }
 
     /**
@@ -1790,8 +1863,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the loaded {@link Record} instance
      */
     private <T extends Record> T instantiate(long id,
-            @Nullable Map<String, Set<Object>> data) {
-        return instantiate(id, new ConcurrentHashMap<>(), data);
+            @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
+        return instantiate(id, new ConcurrentHashMap<>(), data, destinations);
     }
 
     /**
@@ -1805,8 +1879,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Map<Long, Map<String, Set<Object>>> data) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
+        Map<Long, Map<String, Set<Object>>> destinations = resolveLinkCollections(
+                clazz, data);
+        Map<Long, Map<String, Set<Object>>> $destinations = destinations;
         Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
-            return instantiate(clazz, entry.getKey(), loaded, entry.getValue());
+            return instantiate(clazz, entry.getKey(), loaded, entry.getValue(),
+                    $destinations);
         });
         return records;
     }
@@ -1822,13 +1900,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Set<Long> ids) {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        AtomicReference<Map<Long, Map<String, Set<Object>>>> dests = new AtomicReference<>();
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
                 Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
                 data.set(stream(paths, ids));
+                dests.set(resolveLinkCollectionsHierarchy(clazz, data.get(),
+                        ids));
             }
-            return instantiate(clazz, id, loaded, data.get().get(id));
+            return instantiate(clazz, id, loaded, data.get().get(id),
+                    dests.get());
         });
         return records;
     }
@@ -1842,8 +1924,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> instantiateAll(
             Map<Long, Map<String, Set<Object>>> data) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
+        Map<Long, Map<String, Set<Object>>> destinations = resolveLinkCollections(
+                null, data);
+        Map<Long, Map<String, Set<Object>>> $destinations = destinations;
         Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
-            return instantiate(entry.getKey(), loaded, entry.getValue());
+            return instantiate(entry.getKey(), loaded, entry.getValue(),
+                    $destinations);
         });
         return records;
     }
@@ -1860,14 +1946,160 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> instantiateAll(Set<Long> ids) {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        AtomicReference<Map<Long, Map<String, Set<Object>>>> dests = new AtomicReference<>();
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
                 data.set(stream(null, ids));
+                dests.set(resolveLinkCollections(null, data.get()));
             }
-            return instantiate(id, loaded, data.get().get(id));
+            return instantiate(id, loaded, data.get().get(id), dests.get());
         });
         return records;
+    }
+
+    /**
+     * Collect all {@link Record Records} reachable through {@link Link Links}
+     * from the initial {@code data} by iteratively discovering and
+     * batch-fetching targets.
+     *
+     * @param concourse the connection to use
+     * @param data the initial data from the query; not mutated
+     * @return a new map containing {@code data} plus all reachable linked
+     *         record data
+     */
+    private Map<Long, Map<String, Set<Object>>> prefetchLinks(
+            Concourse concourse, Map<Long, Map<String, Set<Object>>> data) {
+        Map<Long, Map<String, Set<Object>>> pool = Maps.newHashMap(data);
+        Set<Long> fetched = Sets.newHashSet(data.keySet());
+        Set<Long> frontier = extractLinkTargets(data, fetched);
+        while (!frontier.isEmpty()) {
+            Map<Long, Map<String, Set<Object>>> batch = concourse
+                    .select(frontier);
+            pool.putAll(batch);
+            fetched.addAll(frontier);
+            frontier = extractLinkTargets(batch, fetched);
+        }
+        return pool;
+    }
+
+    /**
+     * Scan all values in {@code data} for {@link Link} instances whose targets
+     * are not in {@code fetched}.
+     *
+     * @param data the data to scan
+     * @param fetched record IDs already known
+     * @return new target IDs to fetch
+     */
+    private Set<Long> extractLinkTargets(
+            Map<Long, Map<String, Set<Object>>> data, Set<Long> fetched) {
+        Set<Long> targets = Sets.newLinkedHashSet();
+        for (Map<String, Set<Object>> record : data.values()) {
+            for (Set<Object> values : record.values()) {
+                for (Object value : values) {
+                    if(value instanceof Link) {
+                        long target = ((Link) value).longValue();
+                        if(!fetched.contains(target)) {
+                            targets.add(target);
+                        }
+                    }
+                }
+            }
+        }
+        return targets;
+    }
+
+    /**
+     * Resolve destination {@link Record} data for {@link Collection
+     * Collection&lt;Record&gt;} fields based on the configured
+     * {@link #collectionPreSelectStrategy}.
+     *
+     * @param clazz the target class, or {@code null} for untyped loads
+     *            (disqualifies {@link CollectionPreSelectStrategy#NAVIGATE})
+     * @param data the initial query data
+     * @return pre-fetched destinations keyed by record ID, or {@code null} when
+     *         the strategy is {@link CollectionPreSelectStrategy#NONE}
+     */
+    @SuppressWarnings("deprecation")
+    private Map<Long, Map<String, Set<Object>>> resolveLinkCollections(
+            @Nullable Class<? extends Record> clazz,
+            Map<Long, Map<String, Set<Object>>> data) {
+        if(data.isEmpty()) {
+            return null;
+        }
+        if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
+                && clazz != null) {
+            Set<String> navigatePaths = getNavigatePathsForClassIfSupported(
+                    clazz);
+            if(navigatePaths != null) {
+                Concourse concourse = connections.request();
+                try {
+                    return concourse.navigate(navigatePaths, data.keySet());
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            // Fall through — navigate paths not available for this class
+            return null;
+        }
+        else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
+            Concourse concourse = connections.request();
+            try {
+                return prefetchLinks(concourse, data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return null;
+        }
+    }
+
+    /**
+     * Resolve destination {@link Record} data for {@link Collection
+     * Collection&lt;Record&gt;} fields using class hierarchy navigation paths.
+     *
+     * @param clazz the target class, or {@code null} for untyped loads
+     * @param data the initial query data
+     * @param ids the record IDs for navigation
+     * @return pre-fetched destinations keyed by record ID, or {@code null}
+     */
+    @SuppressWarnings("deprecation")
+    private Map<Long, Map<String, Set<Object>>> resolveLinkCollectionsHierarchy(
+            @Nullable Class<? extends Record> clazz,
+            Map<Long, Map<String, Set<Object>>> data, Set<Long> ids) {
+        if(ids.isEmpty()) {
+            return null;
+        }
+        if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
+                && clazz != null) {
+            Set<String> navigatePaths = getNavigatePathsForClassHierarchyIfSupported(
+                    clazz);
+            if(navigatePaths != null) {
+                Concourse concourse = connections.request();
+                try {
+                    return concourse.navigate(navigatePaths, ids);
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            return null;
+        }
+        else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
+            Concourse concourse = connections.request();
+            try {
+                return prefetchLinks(concourse, data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            return null;
+        }
     }
 
     /**
@@ -2069,6 +2301,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private boolean disablePreSelectLinkedRecords = false;
         private List<Map.Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
+        private CollectionPreSelectStrategy collectionPreSelectStrategy = null;
 
         /**
          * Build the configured {@link Runway} and return the instance.
@@ -2087,6 +2320,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             db.readStrategy = MoreObjects.firstNonNull(readStrategy,
                     cache != null ? ReadStrategy.STREAM : ReadStrategy.AUTO);
             db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
+            if(collectionPreSelectStrategy != null) {
+                db.collectionPreSelectStrategy = collectionPreSelectStrategy;
+            }
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
             }
@@ -2357,6 +2593,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder spuriousSaveFailureStrategy(
                 SpuriousSaveFailureStrategy strategy) {
             this.spuriousSaveFailureStrategy = strategy;
+            return this;
+        }
+
+        /**
+         * Set the strategy for pre-selecting data for {@link Collection
+         * Collection&lt;Record&gt;} fields.
+         * <p>
+         * The default is {@link CollectionPreSelectStrategy#NAVIGATE} when the
+         * server supports it, and {@link CollectionPreSelectStrategy#NONE}
+         * otherwise.
+         * </p>
+         *
+         * @param strategy the {@link CollectionPreSelectStrategy} to use
+         * @return this builder
+         */
+        public Builder collectionPreSelectStrategy(
+                CollectionPreSelectStrategy strategy) {
+            this.collectionPreSelectStrategy = strategy;
             return this;
         }
 

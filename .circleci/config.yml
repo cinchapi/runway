@@ -72,7 +72,7 @@ jobs:
 
   test:
     executor: java-executor
-    parallelism: 4
+    parallelism: 6
     steps:
       - attach_workspace:
           at: ~/
