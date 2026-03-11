@@ -886,6 +886,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return null; // TODO: what to do here?
                     }
                 }
+                // NOTE: Only BULK_SELECT is handled here. For
+                // NAVIGATE and NONE, data and destinations stay
+                // null so each linked record is individually
+                // fetched during Record#load.
                 Map<String, Set<Object>> data = null;
                 Map<Long, Map<String, Set<Object>>> destinations = null;
                 if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
@@ -1603,8 +1607,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * if it is non-{@code null} or requesting a fresh one from the pool
      * otherwise.
      *
-     * @param connection the existing connection to reuse, or
-     *            {@code null} if none has been acquired yet
+     * @param connection the existing connection to reuse, or {@code null} if
+     *            none has been acquired yet
      * @return a non-{@code null} {@link Concourse} connection
      */
     private Concourse ensureValidConnection(Concourse connection) {
@@ -2003,6 +2007,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Map<Long, Map<String, Set<Object>>> prefetchLinks(
             Concourse concourse, Map<Long, Map<String, Set<Object>>> data) {
         Map<Long, Map<String, Set<Object>>> pool = Maps.newHashMap(data);
+        // BFS over the link graph: each iteration fetches one
+        // depth level. #fetched tracks visited IDs so cycles in
+        // the link graph terminate naturally.
         Set<Long> fetched = Sets.newHashSet(data.keySet());
         Set<Long> frontier = extractLinkTargets(data, fetched);
         while (!frontier.isEmpty()) {
@@ -2113,41 +2120,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return pre-fetched destinations keyed by record ID, or {@code null} when
      *         the strategy is {@link CollectionPreSelectStrategy#NONE}
      */
-    @SuppressWarnings("deprecation")
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollections(
             @Nullable Class<? extends Record> clazz,
             Map<Long, Map<String, Set<Object>>> data) {
-        if(data.isEmpty()) {
-            return null;
-        }
-        if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
-                && clazz != null) {
-            Set<String> navigatePaths = getNavigatePathsForClassIfSupported(
-                    clazz);
-            if(navigatePaths != null) {
-                Concourse concourse = connections.request();
-                try {
-                    return concourse.navigate(navigatePaths, data.keySet());
-                }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            // Fall through — navigate paths not available for this class
-            return null;
-        }
-        else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
-            Concourse concourse = connections.request();
-            try {
-                return prefetchLinks(concourse, data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            return null;
-        }
+        return resolveLinkCollectionsPossibleHierarchy(clazz, false,
+                data.keySet(), data);
     }
 
     /**
@@ -2159,27 +2136,53 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param ids the record IDs for navigation
      * @return pre-fetched destinations keyed by record ID, or {@code null}
      */
-    @SuppressWarnings("deprecation")
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollectionsHierarchy(
             @Nullable Class<? extends Record> clazz,
             Map<Long, Map<String, Set<Object>>> data, Set<Long> ids) {
-        if(ids.isEmpty()) {
+        return resolveLinkCollectionsPossibleHierarchy(clazz, true, ids, data);
+    }
+
+    /**
+     * Dispatch link collection resolution based on the configured
+     * {@link #collectionPreSelectStrategy}.
+     * <p>
+     * When {@code hierarchy} is {@code true}, navigate paths are resolved for
+     * {@code clazz} and all its descendants; otherwise, only for {@code clazz}
+     * itself.
+     * </p>
+     *
+     * @param clazz the target class, or {@code null} for untyped loads
+     *            (disqualifies {@link CollectionPreSelectStrategy#NAVIGATE})
+     * @param hierarchy if {@code true}, resolve navigate paths across the full
+     *            class hierarchy; if {@code false}, resolve for {@code clazz}
+     *            alone
+     * @param navigateIds the record IDs to pass to {@code navigate()}
+     * @param data the initial query data (used by
+     *            {@link CollectionPreSelectStrategy#BULK_SELECT BULK_SELECT} to
+     *            discover {@link Link} targets)
+     * @return pre-fetched destinations keyed by record ID, or {@code null}
+     */
+    @SuppressWarnings("deprecation")
+    private Map<Long, Map<String, Set<Object>>> resolveLinkCollectionsPossibleHierarchy(
+            @Nullable Class<? extends Record> clazz, boolean hierarchy,
+            Set<Long> navigateIds, Map<Long, Map<String, Set<Object>>> data) {
+        if(data.isEmpty()) {
             return null;
         }
-        if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
-                && clazz != null) {
-            Set<String> navigatePaths = getNavigatePathsForClassHierarchyIfSupported(
-                    clazz);
-            if(navigatePaths != null) {
-                Concourse concourse = connections.request();
-                try {
-                    return concourse.navigate(navigatePaths, ids);
-                }
-                finally {
-                    connections.release(concourse);
-                }
+        Set<String> navigatePaths = null;
+        if(clazz != null) {
+            navigatePaths = hierarchy
+                    ? getNavigatePathsForClassHierarchyIfSupported(clazz)
+                    : getNavigatePathsForClassIfSupported(clazz);
+        }
+        if(navigatePaths != null) {
+            Concourse concourse = connections.request();
+            try {
+                return concourse.navigate(navigatePaths, navigateIds);
             }
-            return null;
+            finally {
+                connections.release(concourse);
+            }
         }
         else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
             Concourse concourse = connections.request();
@@ -2191,6 +2194,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
+            // NONE — each linked record is fetched individually
             return null;
         }
     }
