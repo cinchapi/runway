@@ -864,23 +864,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return null;
         }
         else {
-            if(StaticAnalysis.instance().getClassHierarchy(clazz).size() > 1) {
-                // The provided clazz has descendants, so it is possible that
-                // the Record with the #id is actually a member of a subclass
-                Concourse connection = connections.request();
-                try {
+            Concourse connection = null;
+            try {
+                if(StaticAnalysis.instance().getClassHierarchy(clazz)
+                        .size() > 1) {
+                    // The provided clazz has descendants, so it is possible
+                    // that the Record with the #id is actually a member of a
+                    // subclass
+                    connection = ensureValidConnection(connection);
                     String section = connection.get(Record.SECTION_KEY, id);
                     if(section != null) {
                         clazz = Reflection.getClassCasted(section);
                     }
                 }
-                finally {
-                    connections.release(connection);
-                }
-            }
-            if(!realms.names().isEmpty()) {
-                Concourse connection = connections.request();
-                try {
+                if(!realms.names().isEmpty()) {
+                    connection = ensureValidConnection(connection);
                     Set<String> $realms = MoreObjects.firstNonNull(
                             connection.select(Record.REALMS_KEY, id),
                             ImmutableSet.of());
@@ -888,30 +886,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return null; // TODO: what to do here?
                     }
                 }
-                finally {
-                    connections.release(connection);
-                }
-            }
-            if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
-                Concourse concourse = connections.request();
-                try {
+                Map<String, Set<Object>> data = null;
+                Map<Long, Map<String, Set<Object>>> destinations = null;
+                if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
+                    connection = ensureValidConnection(connection);
                     Set<String> paths = getPathsForClassIfSupported(clazz);
-                    Map<String, Set<Object>> data = paths != null
-                            ? concourse.select(paths, id)
-                            : concourse.select(id);
+                    data = paths != null ? connection.select(paths, id)
+                            : connection.select(id);
                     Map<Long, Map<String, Set<Object>>> seed = Maps
                             .newHashMap();
                     seed.put(id, data);
-                    Map<Long, Map<String, Set<Object>>> destinations = prefetchLinks(
-                            concourse, seed);
-                    return instantiate(clazz, id, data, destinations);
+                    destinations = prefetchLinks(connection, seed);
                 }
-                finally {
-                    connections.release(concourse);
-                }
+                return instantiate(clazz, id, data, destinations);
             }
-            else {
-                return instantiate(clazz, id, null, null);
+            finally {
+                if(connection != null) {
+                    connections.release(connection);
+                }
             }
         }
     }
@@ -1348,6 +1340,43 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * If the {@link #collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NAVIGATE}, return the navigate paths
+     * for {@code clazz} and all descendants.
+     *
+     * @param clazz
+     * @return the navigate paths, or {@code null} if unsupported
+     */
+    final Set<String> getNavigatePathsForClassHierarchyIfSupported(
+            Class<? extends Record> clazz) {
+        return collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
+                && StaticAnalysis.instance()
+                        .hasCollectionRecordFieldInClassHierarchy(clazz)
+                                ? StaticAnalysis.instance()
+                                        .getNavigatePathsHierarchy(clazz)
+                                : null;
+    }
+
+    /**
+     * If the {@link #collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NAVIGATE}, return the navigate paths
+     * for {@code clazz}.
+     *
+     * @param clazz
+     * @return the navigate paths, or {@code null} if unsupported or the class
+     *         has no {@link Collection Collection&lt;Record&gt;} fields
+     */
+    final Set<String> getNavigatePathsForClassIfSupported(
+            Class<? extends Record> clazz) {
+        return collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
+                && StaticAnalysis.instance()
+                        .hasCollectionRecordFieldInClass(clazz)
+                                ? StaticAnalysis.instance()
+                                        .getNavigatePaths(clazz)
+                                : null;
+    }
+
+    /**
      * If this instance {@link #supportsPreSelectLinkedRecords} return the
      * {@link #PATHS_BY_CLASS_HIERARCHY} for {@code clazz}.
      *
@@ -1375,43 +1404,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 && StaticAnalysis.instance().hasFieldOfTypeRecordInClass(clazz)
                         ? StaticAnalysis.instance().getPaths(clazz)
                         : null;
-    }
-
-    /**
-     * If the {@link #collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NAVIGATE}, return the navigate paths
-     * for {@code clazz}.
-     *
-     * @param clazz
-     * @return the navigate paths, or {@code null} if unsupported or the class
-     *         has no {@link Collection Collection&lt;Record&gt;} fields
-     */
-    final Set<String> getNavigatePathsForClassIfSupported(
-            Class<? extends Record> clazz) {
-        return collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
-                && StaticAnalysis.instance()
-                        .hasCollectionRecordFieldInClass(clazz)
-                                ? StaticAnalysis.instance()
-                                        .getNavigatePaths(clazz)
-                                : null;
-    }
-
-    /**
-     * If the {@link #collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NAVIGATE}, return the navigate paths
-     * for {@code clazz} and all descendants.
-     *
-     * @param clazz
-     * @return the navigate paths, or {@code null} if unsupported
-     */
-    final Set<String> getNavigatePathsForClassHierarchyIfSupported(
-            Class<? extends Record> clazz) {
-        return collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
-                && StaticAnalysis.instance()
-                        .hasCollectionRecordFieldInClassHierarchy(clazz)
-                                ? StaticAnalysis.instance()
-                                        .getNavigatePathsHierarchy(clazz)
-                                : null;
     }
 
     /**
@@ -1604,6 +1596,46 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             });
         }
+    }
+
+    /**
+     * Return a valid {@link Concourse} connection, reusing {@code connection}
+     * if it is non-{@code null} or requesting a fresh one from the pool
+     * otherwise.
+     *
+     * @param connection the existing connection to reuse, or
+     *            {@code null} if none has been acquired yet
+     * @return a non-{@code null} {@link Concourse} connection
+     */
+    private Concourse ensureValidConnection(Concourse connection) {
+        return connection = connection == null ? connections.request()
+                : connection;
+    }
+
+    /**
+     * Scan all values in {@code data} for {@link Link} instances whose targets
+     * are not in {@code fetched}.
+     *
+     * @param data the data to scan
+     * @param fetched record IDs already known
+     * @return new target IDs to fetch
+     */
+    private Set<Long> extractLinkTargets(
+            Map<Long, Map<String, Set<Object>>> data, Set<Long> fetched) {
+        Set<Long> targets = Sets.newLinkedHashSet();
+        for (Map<String, Set<Object>> record : data.values()) {
+            for (Set<Object> values : record.values()) {
+                for (Object value : values) {
+                    if(value instanceof Link) {
+                        long target = ((Link) value).longValue();
+                        if(!fetched.contains(target)) {
+                            targets.add(target);
+                        }
+                    }
+                }
+            }
+        }
+        return targets;
     }
 
     /**
@@ -1984,29 +2016,90 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Scan all values in {@code data} for {@link Link} instances whose targets
-     * are not in {@code fetched}.
+     * Internal utility method to dispatch a "select" request" for a
+     * {@code criteria} based on whether the {@code order} and/or {@code page}
+     * params are non-null.
      *
-     * @param data the data to scan
-     * @param fetched record IDs already known
-     * @return new target IDs to fetch
+     * @param concourse
+     * @param criteria
+     * @param order
+     * @param page
+     * @return the data for the matching records
      */
-    private Set<Long> extractLinkTargets(
-            Map<Long, Map<String, Set<Object>>> data, Set<Long> fetched) {
-        Set<Long> targets = Sets.newLinkedHashSet();
-        for (Map<String, Set<Object>> record : data.values()) {
-            for (Set<Object> values : record.values()) {
-                for (Object value : values) {
-                    if(value instanceof Link) {
-                        long target = ((Link) value).longValue();
-                        if(!fetched.contains(target)) {
-                            targets.add(target);
-                        }
-                    }
+    @SuppressWarnings("unchecked")
+    private Map<Long, Map<String, Set<Object>>> read(Concourse concourse,
+            @Nullable Set<String> paths, Criteria criteria,
+            @Nullable Order order, @Nullable Page page) {
+        // Define the execution paths
+        Function<Concourse, Map<Long, Map<String, Set<Object>>>> select;
+        Function<Concourse, Set<Long>> find;
+        if(order != null && page != null) {
+            select = c -> paths != null ? c.select(paths, criteria, order, page)
+                    : c.select(criteria, order, page);
+            find = c -> c.find(criteria, order, page);
+        }
+        else if(order == null && page == null) {
+            select = c -> paths != null ? c.select(paths, criteria)
+                    : c.select(criteria);
+            find = c -> c.find(criteria);
+        }
+        else if(order != null) {
+            select = c -> paths != null ? c.select(paths, criteria, order)
+                    : c.select(criteria, order);
+            find = c -> c.find(criteria, order);
+        }
+        else { // page != null
+            select = c -> paths != null ? c.select(paths, criteria, page)
+                    : c.select(criteria, page);
+            find = c -> c.find(criteria, page);
+        }
+        // Choose the execution path based on the #readStrategy
+        Map<Long, Map<String, Set<Object>>> data;
+        if(readStrategy == ReadStrategy.BULK) {
+            data = select.apply(concourse);
+        }
+        else if(readStrategy == ReadStrategy.STREAM) {
+            Set<Long> ids = find.apply(concourse);
+            data = stream(paths, ids);
+        }
+        else { // ReadStrategy.AUTO
+            Callable<Map<Long, Map<String, Set<Object>>>> bulk = () -> {
+                Concourse backup = Concourse.copyExistingConnection(concourse);
+                try {
+                    return select.apply(backup);
                 }
+                finally {
+                    backup.close();
+                }
+            };
+            Callable<Map<Long, Map<String, Set<Object>>>> stream = () -> {
+                // In case the bulk select takes too long or an error occurs,
+                // fall back to finding the matching ids and incrementally
+                // stream the result set.
+                Concourse backup = Concourse.copyExistingConnection(concourse);
+                try {
+                    Set<Long> ids = find.apply(backup);
+                    return stream(paths, ids);
+                }
+                finally {
+                    backup.close();
+                }
+            };
+            ExecutorRaceService<Map<Long, Map<String, Set<Object>>>> track = new ExecutorRaceService<>(
+                    executor);
+            Future<Map<Long, Map<String, Set<Object>>>> future;
+            try {
+                future = bulkSelectTimeoutMillis > 0
+                        ? track.raceWithHeadStart(bulkSelectTimeoutMillis,
+                                TimeUnit.MILLISECONDS, bulk, stream)
+                        : track.race(bulk, stream);
+                data = future.get();
+            }
+            catch (InterruptedException | ExecutionException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
             }
         }
-        return targets;
+        return data;
     }
 
     /**
@@ -2100,93 +2193,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             return null;
         }
-    }
-
-    /**
-     * Internal utility method to dispatch a "select" request" for a
-     * {@code criteria} based on whether the {@code order} and/or {@code page}
-     * params are non-null.
-     *
-     * @param concourse
-     * @param criteria
-     * @param order
-     * @param page
-     * @return the data for the matching records
-     */
-    @SuppressWarnings("unchecked")
-    private Map<Long, Map<String, Set<Object>>> read(Concourse concourse,
-            @Nullable Set<String> paths, Criteria criteria,
-            @Nullable Order order, @Nullable Page page) {
-        // Define the execution paths
-        Function<Concourse, Map<Long, Map<String, Set<Object>>>> select;
-        Function<Concourse, Set<Long>> find;
-        if(order != null && page != null) {
-            select = c -> paths != null ? c.select(paths, criteria, order, page)
-                    : c.select(criteria, order, page);
-            find = c -> c.find(criteria, order, page);
-        }
-        else if(order == null && page == null) {
-            select = c -> paths != null ? c.select(paths, criteria)
-                    : c.select(criteria);
-            find = c -> c.find(criteria);
-        }
-        else if(order != null) {
-            select = c -> paths != null ? c.select(paths, criteria, order)
-                    : c.select(criteria, order);
-            find = c -> c.find(criteria, order);
-        }
-        else { // page != null
-            select = c -> paths != null ? c.select(paths, criteria, page)
-                    : c.select(criteria, page);
-            find = c -> c.find(criteria, page);
-        }
-        // Choose the execution path based on the #readStrategy
-        Map<Long, Map<String, Set<Object>>> data;
-        if(readStrategy == ReadStrategy.BULK) {
-            data = select.apply(concourse);
-        }
-        else if(readStrategy == ReadStrategy.STREAM) {
-            Set<Long> ids = find.apply(concourse);
-            data = stream(paths, ids);
-        }
-        else { // ReadStrategy.AUTO
-            Callable<Map<Long, Map<String, Set<Object>>>> bulk = () -> {
-                Concourse backup = Concourse.copyExistingConnection(concourse);
-                try {
-                    return select.apply(backup);
-                }
-                finally {
-                    backup.close();
-                }
-            };
-            Callable<Map<Long, Map<String, Set<Object>>>> stream = () -> {
-                // In case the bulk select takes too long or an error occurs,
-                // fall back to finding the matching ids and incrementally
-                // stream the result set.
-                Concourse backup = Concourse.copyExistingConnection(concourse);
-                try {
-                    Set<Long> ids = find.apply(backup);
-                    return stream(paths, ids);
-                }
-                finally {
-                    backup.close();
-                }
-            };
-            ExecutorRaceService<Map<Long, Map<String, Set<Object>>>> track = new ExecutorRaceService<>(
-                    executor);
-            Future<Map<Long, Map<String, Set<Object>>>> future;
-            try {
-                future = bulkSelectTimeoutMillis > 0
-                        ? track.raceWithHeadStart(bulkSelectTimeoutMillis,
-                                TimeUnit.MILLISECONDS, bulk, stream)
-                        : track.race(bulk, stream);
-                data = future.get();
-            }
-            catch (InterruptedException | ExecutionException e) {
-                throw CheckedExceptions.wrapAsRuntimeException(e);
-            }
-        }
-        return data;
     }
 
     /**
@@ -2396,6 +2402,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
         /**
+         * Set the strategy for pre-selecting data for {@link Collection
+         * Collection&lt;Record&gt;} fields.
+         * <p>
+         * The default is {@link CollectionPreSelectStrategy#NAVIGATE} when the
+         * server supports it, and {@link CollectionPreSelectStrategy#NONE}
+         * otherwise.
+         * </p>
+         *
+         * @param strategy the {@link CollectionPreSelectStrategy} to use
+         * @return this builder
+         */
+        public Builder collectionPreSelectStrategy(
+                CollectionPreSelectStrategy strategy) {
+            this.collectionPreSelectStrategy = strategy;
+            return this;
+        }
+
+        /**
          * Disable the "pre-select" feature that improves performance by
          * selecting data for linked records instead of making multiple database
          * roundtrips. Generally speaking, it is never advised to disable
@@ -2593,24 +2617,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder spuriousSaveFailureStrategy(
                 SpuriousSaveFailureStrategy strategy) {
             this.spuriousSaveFailureStrategy = strategy;
-            return this;
-        }
-
-        /**
-         * Set the strategy for pre-selecting data for {@link Collection
-         * Collection&lt;Record&gt;} fields.
-         * <p>
-         * The default is {@link CollectionPreSelectStrategy#NAVIGATE} when the
-         * server supports it, and {@link CollectionPreSelectStrategy#NONE}
-         * otherwise.
-         * </p>
-         *
-         * @param strategy the {@link CollectionPreSelectStrategy} to use
-         * @return this builder
-         */
-        public Builder collectionPreSelectStrategy(
-                CollectionPreSelectStrategy strategy) {
-            this.collectionPreSelectStrategy = strategy;
             return this;
         }
 
