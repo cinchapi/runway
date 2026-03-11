@@ -3346,7 +3346,7 @@ public abstract class Record implements Comparable<Record> {
                 Multimap<Class<? extends Record>, Class<?>> hierarchies,
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass) {
             return computePaths(clazz, hierarchies, fieldsByClass, "",
-                    Sets.newHashSet());
+                    Sets.newHashSet(), false);
         }
 
         /**
@@ -3359,13 +3359,15 @@ public abstract class Record implements Comparable<Record> {
          * @param fieldsByClass
          * @param prefix
          * @param ancestors
+         * @param includeRecordFieldKeys
          * @return the paths
          */
         @SuppressWarnings("unchecked")
         private static Set<String> computePaths(Class<? extends Record> clazz,
                 Multimap<Class<? extends Record>, Class<?>> hierarchies,
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
-                String prefix, Set<Class<? extends Record>> ancestors) {
+                String prefix, Set<Class<? extends Record>> ancestors,
+                boolean includeRecordFieldKeys) {
             ancestors.add(clazz);
             Set<String> paths = new LinkedHashSet<>();
             paths.add(prefix + SECTION_KEY);
@@ -3381,6 +3383,18 @@ public abstract class Record implements Comparable<Record> {
                         && (COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS
                                 || !hasDescendantDefinedFields(type,
                                         hierarchies, fieldsByClass))) {
+                    if(includeRecordFieldKeys) {
+                        // NOTE: For select(), nested navigation
+                        // keys (e.g., company._) fold destination
+                        // data into the source record's result, so
+                        // the raw Link value is unnecessary. For
+                        // navigate(), each hop resolves to a
+                        // separate entry keyed by destination ID,
+                        // so the intermediate record never receives
+                        // the Link value unless we explicitly
+                        // include the bare field name as a path.
+                        paths.add(prefix + field.getName());
+                    }
                     Class<? extends Record> _type = (Class<? extends Record>) type;
                     lineage.add(_type);
                     Collection<Class<?>> hierarchy = hierarchies.get(_type);
@@ -3395,7 +3409,8 @@ public abstract class Record implements Comparable<Record> {
                         nested.addAll(computePaths(
                                 (Class<? extends Record>) descendant,
                                 hierarchies, fieldsByClass,
-                                prefix + field.getName() + ".", lineage));
+                                prefix + field.getName() + ".", lineage,
+                                includeRecordFieldKeys));
                     }
                     paths.addAll(nested);
                 }
@@ -3411,9 +3426,9 @@ public abstract class Record implements Comparable<Record> {
          * pre-fetch destination {@link Record} data for {@link Collection
          * Collection&lt;Record&gt;} fields in {@code clazz}. For each such
          * field, this generates the same nested paths that
-         * {@link #computePaths(Class, Multimap, Map, String, Set)} would
-         * produce for the element type, prefixed with the collection field
-         * name.
+         * {@link #computePaths(Class, Multimap, Map, String, Set, boolean)}
+         * would produce for the element type, prefixed with the collection
+         * field name.
          *
          * @param clazz
          * @param hierarchies
@@ -3480,7 +3495,7 @@ public abstract class Record implements Comparable<Record> {
                                     (Class<? extends Record>) descendant,
                                     hierarchies, fieldsByClass,
                                     prefix + field.getName() + ".",
-                                    new HashSet<>(ancestors)));
+                                    new HashSet<>(ancestors), true));
                         }
                     }
                 }

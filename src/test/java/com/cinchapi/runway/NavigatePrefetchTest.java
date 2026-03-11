@@ -646,6 +646,108 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     // ---------------------------------------------------------------
+    // Builder wiring
+    // ---------------------------------------------------------------
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway.Builder#collectionPreSelectStrategy(CollectionPreSelectStrategy)}
+     * sets the strategy on the constructed {@link Runway}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Runway} with
+     * {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
+     * <li>Assert the field value.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#BULK_SELECT}.
+     */
+    @Test
+    public void testBuilderSetsCollectionPreSelectStrategy() throws Exception {
+        Runway custom = Runway.builder().port(server.getClientPort())
+                .collectionPreSelectStrategy(
+                        CollectionPreSelectStrategy.BULK_SELECT)
+                .build();
+        try {
+            Assert.assertEquals(CollectionPreSelectStrategy.BULK_SELECT,
+                    custom.collectionPreSelectStrategy);
+        }
+        finally {
+            custom.close();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway.Builder#disablePreSelectLinkedRecords()} resets
+     * {@code collectionPreSelectStrategy} to
+     * {@link CollectionPreSelectStrategy#NONE}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Runway} with pre-select disabled.</li>
+     * <li>Assert the strategy is {@code NONE}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NONE}.
+     */
+    @Test
+    public void testDisablePreSelectResetsStrategy() throws Exception {
+        Runway custom = Runway.builder().port(server.getClientPort())
+                .disablePreSelectLinkedRecords().build();
+        try {
+            Assert.assertEquals(CollectionPreSelectStrategy.NONE,
+                    custom.collectionPreSelectStrategy);
+        }
+        finally {
+            custom.close();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway.Builder#disablePreSelectLinkedRecords()} overrides an
+     * explicit {@link CollectionPreSelectStrategy} set earlier in the
+     * {@link Runway.Builder} chain.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Runway} setting
+     * {@link CollectionPreSelectStrategy#NAVIGATE} followed by
+     * {@link Runway.Builder#disablePreSelectLinkedRecords()}.</li>
+     * <li>Assert the strategy is {@code NONE}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NONE} because the disable call takes
+     * precedence.
+     */
+    @Test
+    public void testDisablePreSelectOverridesExplicitStrategy()
+            throws Exception {
+        Runway custom = Runway.builder().port(server.getClientPort())
+                .collectionPreSelectStrategy(
+                        CollectionPreSelectStrategy.NAVIGATE)
+                .disablePreSelectLinkedRecords().build();
+        try {
+            Assert.assertEquals(CollectionPreSelectStrategy.NONE,
+                    custom.collectionPreSelectStrategy);
+        }
+        finally {
+            custom.close();
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Model classes
     // ---------------------------------------------------------------
 

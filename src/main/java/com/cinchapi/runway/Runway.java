@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -380,7 +381,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The strategy for pre-selecting data for {@link Collection
      * Collection&lt;Record&gt;} fields.
      */
-    /* package */ CollectionPreSelectStrategy collectionPreSelectStrategy;
+    @VisibleForTesting
+    CollectionPreSelectStrategy collectionPreSelectStrategy;
 
     /**
      * A queue of records that have been successfully saved and are waiting for
@@ -1612,8 +1614,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return a non-{@code null} {@link Concourse} connection
      */
     private Concourse ensureValidConnection(Concourse connection) {
-        return connection = connection == null ? connections.request()
-                : connection;
+        return connection == null ? connections.request() : connection;
     }
 
     /**
@@ -1626,7 +1627,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private Set<Long> extractLinkTargets(
             Map<Long, Map<String, Set<Object>>> data, Set<Long> fetched) {
-        Set<Long> targets = Sets.newLinkedHashSet();
+        Set<Long> targets = new HashSet<>();
         for (Map<String, Set<Object>> record : data.values()) {
             for (Set<Object> values : record.values()) {
                 for (Object value : values) {
@@ -2338,6 +2339,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             if(disablePreSelectLinkedRecords) {
                 Reflection.set("supportsPreSelectLinkedRecords", false, db); // (authorized)
+                db.collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
             }
 
             // Initialize save notification components if a listener is provided
