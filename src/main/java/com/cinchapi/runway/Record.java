@@ -859,6 +859,12 @@ public abstract class Record implements Comparable<Record> {
     private transient Map<String, Object> derived = null;
 
     /**
+     * Per-instance cache for {@link #computeOnce(String, Supplier)} results.
+     * Transient so it does not participate in persistence or equality.
+     */
+    private transient Map<String, Object> _computeOnceCache;
+
+    /**
      * Tracks dependent {@link Records} that are pending
      * {@link #delete(Concourse) deletion} from {@link Concourse}.
      */
@@ -1767,6 +1773,18 @@ public abstract class Record implements Comparable<Record> {
     protected void beforeSave() {}
 
     /**
+     * Clear the {@link #computeOnce(String, Supplier)} cache so that subsequent
+     * calls recompute their values.
+     * <p>
+     * Use this when the underlying data for cached computations may have
+     * changed (e.g., after a save or reload) and fresh results are needed.
+     * </p>
+     */
+    protected void clearComputeOnceCache() {
+        _computeOnceCache = null;
+    }
+
+    /**
      * Provide additional data about this Record that might not be encapsulated
      * in its native fields and is "computed" on-demand.
      * <p>
@@ -1785,6 +1803,39 @@ public abstract class Record implements Comparable<Record> {
     @Deprecated
     protected Map<String, Supplier<Object>> computed() {
         return Collections.emptyMap();
+    }
+
+    /**
+     * Return the result of {@code supplier}, computing it at most once per
+     * {@link Record} instance for the given {@code key}. Subsequent calls with
+     * the same {@code key} return the cached result.
+     * <p>
+     * Use this inside {@link Computed} or {@link Derived} methods that perform
+     * expensive operations (e.g., database queries) which may be invoked more
+     * than once during serialization. Wrapping the method body with
+     * {@code computeOnce} ensures that all invocation paths &mdash; direct
+     * calls, calls via {@link #get(String)}, and serialization &mdash; share a
+     * single cached result.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> The cache is per-instance and persists for the
+     * lifetime of the {@link Record}. Use {@link #clearComputeOnceCache()} to
+     * invalidate if the underlying data may have changed.
+     * </p>
+     *
+     * @param key a stable identifier for the computation, typically the
+     *            property name (e.g., {@code "licenses"})
+     * @param supplier the computation to execute if the result has not been
+     *            cached
+     * @param <T> the result type
+     * @return the cached or freshly computed result
+     */
+    @SuppressWarnings("unchecked")
+    protected <T> T computeOnce(String key, Supplier<T> supplier) {
+        if(_computeOnceCache == null) {
+            _computeOnceCache = new HashMap<>();
+        }
+        return (T) _computeOnceCache.computeIfAbsent(key, k -> supplier.get());
     }
 
     /**

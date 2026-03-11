@@ -1,5 +1,10 @@
 # Changelog
 
+#### Version 1.12.1 (March 11, 2026)
+* **`computeOnce()` Memoization for `@Computed` Methods**: Added `Record#computeOnce(String, Supplier)`, a protected method that provides opt-in, per-instance memoization for expensive `@Computed` properties. During serialization, a `@Computed` method can be invoked through multiple independent paths — directly from a `@Derived` method, via `get(key)`, and through the serialization supplier — each triggering redundant work. Wrapping the method body with `computeOnce()` ensures all invocation paths share a single cached result, eliminating duplicate computations (e.g., database queries) within a serialization cycle.
+  * `Record#clearComputeOnceCache()` invalidates all cached results, allowing fresh recomputation when the underlying data may have changed.
+  * Opt-in only: existing `@Computed` methods that do not use `computeOnce()` retain their current behavior of recomputing on every access.
+
 #### Version 1.12.0 (March 7, 2026)
 * **Spurious Save Failure Retry**: Added a `SpuriousSaveFailureStrategy` configuration that controls how `Runway` handles `TransactionException` during save operations. When set to `RETRY`, `Runway` automatically retries a failed save if none of the root records have stale data, indicating the failure was caused by a spurious MVCC conflict (e.g., overlapping `@Unique` constraint reads in concurrent transactions) rather than a genuine data conflict. The default strategy is `FAIL_FAST`, which preserves the existing behavior.
   * Configure via `Runway.builder().spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)`.

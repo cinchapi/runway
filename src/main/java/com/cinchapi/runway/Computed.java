@@ -34,8 +34,13 @@ import java.lang.annotation.Target;
  * requested.
  * </p>
  * <p>
- * NOTE: Computed attributes are never cached. Each time one is requested, the
- * computation that generates the value is done anew.
+ * NOTE: Computed attributes are never cached by default. Each time one is
+ * requested, the computation that generates the value is done anew. If a
+ * computed method is expensive and may be invoked multiple times during a
+ * single serialization cycle (e.g., from a {@link Derived} method and again
+ * during {@link Record#map()}), use
+ * {@link Record#computeOnce(String, java.util.function.Supplier)} inside the
+ * method body to opt in to per-instance memoization.
  * </p>
  * 
  * @author Jeff Nelson
