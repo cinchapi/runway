@@ -888,10 +888,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return null; // TODO: what to do here?
                     }
                 }
-                // NOTE: Only BULK_SELECT is handled here. For
-                // NAVIGATE and NONE, data and destinations stay
-                // null so each linked record is individually
-                // fetched during Record#load.
+                // NOTE: Only BULK_SELECT is handled here. For NAVIGATE and
+                // NONE, data and destinations stay null so each linked record
+                // is individually fetched during Record#load.
                 Map<String, Set<Object>> data = null;
                 Map<Long, Map<String, Set<Object>>> destinations = null;
                 if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
@@ -2008,9 +2007,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Map<Long, Map<String, Set<Object>>> prefetchLinks(
             Concourse concourse, Map<Long, Map<String, Set<Object>>> data) {
         Map<Long, Map<String, Set<Object>>> pool = Maps.newHashMap(data);
-        // BFS over the link graph: each iteration fetches one
-        // depth level. #fetched tracks visited IDs so cycles in
-        // the link graph terminate naturally.
+        // BFS over the link graph: each iteration fetches one depth level.
+        // #fetched tracks visited IDs so cycles in the link graph terminate
+        // naturally.
         Set<Long> fetched = Sets.newHashSet(data.keySet());
         Set<Long> frontier = extractLinkTargets(data, fetched);
         while (!frontier.isEmpty()) {

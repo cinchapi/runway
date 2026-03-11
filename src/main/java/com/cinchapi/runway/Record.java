@@ -2636,10 +2636,7 @@ public abstract class Record implements Comparable<Record> {
                 else {
                     Map<String, Set<Object>> data = destinations != null
                             ? destinations.get(target)
-                            : null;
-                    if(data == null) {
-                        data = concourse.select(target);
-                    }
+                            : concourse.select(target);
                     Set<Object> sections = data.getOrDefault(SECTION_KEY,
                             ImmutableSet.of());
                     String section = (String) Iterables.getLast(sections, null);
@@ -3384,15 +3381,14 @@ public abstract class Record implements Comparable<Record> {
                                 || !hasDescendantDefinedFields(type,
                                         hierarchies, fieldsByClass))) {
                     if(includeRecordFieldKeys) {
-                        // NOTE: For select(), nested navigation
-                        // keys (e.g., company._) fold destination
-                        // data into the source record's result, so
-                        // the raw Link value is unnecessary. For
-                        // navigate(), each hop resolves to a
-                        // separate entry keyed by destination ID,
-                        // so the intermediate record never receives
-                        // the Link value unless we explicitly
-                        // include the bare field name as a path.
+                        // NOTE: For select(), nested navigation keys (e.g.,
+                        // company._) fold destination data into the source
+                        // record's result, so the raw Link value is
+                        // unnecessary. For navigate(), each hop resolves to a
+                        // separate entry keyed by destination ID, so the
+                        // intermediate record never receives the Link value
+                        // unless we explicitly include the bare field name as a
+                        // path.
                         paths.add(prefix + field.getName());
                     }
                     Class<? extends Record> _type = (Class<? extends Record>) type;
@@ -3401,11 +3397,9 @@ public abstract class Record implements Comparable<Record> {
                     Set<String> nested = new HashSet<>();
                     for (Class<?> descendant : hierarchy) {
                         // Account for declared types having descendant
-                        // defined
-                        // fields in child classes by computing the paths
-                        // for
-                        // each descendant type at this junction, in the
-                        // path
+                        // defined fields in child classes by computing the
+                        // paths for each descendant type at this junction, in
+                        // the path
                         nested.addAll(computePaths(
                                 (Class<? extends Record>) descendant,
                                 hierarchies, fieldsByClass,
