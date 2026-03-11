@@ -382,7 +382,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Collection&lt;Record&gt;} fields.
      */
     @VisibleForTesting
-    CollectionPreSelectStrategy collectionPreSelectStrategy;
+    protected CollectionPreSelectStrategy collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
 
     /**
      * A queue of records that have been successfully saved and are waiting for
@@ -446,9 +446,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     .greaterThanOrEqualTo(target)
                     || actual.equals(
                             Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
-            this.collectionPreSelectStrategy = supportsPreSelectLinkedRecords
-                    ? CollectionPreSelectStrategy.NAVIGATE
-                    : CollectionPreSelectStrategy.NONE;
         }
         finally {
             connections.release(concourse);
@@ -888,9 +885,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return null; // TODO: what to do here?
                     }
                 }
-                // NOTE: Only BULK_SELECT is handled here. For NAVIGATE and
-                // NONE, data and destinations stay null so each linked record
-                // is individually fetched during Record#load.
                 Map<String, Set<Object>> data = null;
                 Map<Long, Map<String, Set<Object>>> destinations = null;
                 if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
@@ -2330,15 +2324,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             db.readStrategy = MoreObjects.firstNonNull(readStrategy,
                     cache != null ? ReadStrategy.STREAM : ReadStrategy.AUTO);
             db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
-            if(collectionPreSelectStrategy != null) {
-                db.collectionPreSelectStrategy = collectionPreSelectStrategy;
-            }
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
             }
             if(disablePreSelectLinkedRecords) {
                 Reflection.set("supportsPreSelectLinkedRecords", false, db); // (authorized)
-                db.collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
+                collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
+            }
+            if(collectionPreSelectStrategy != null) {
+                db.collectionPreSelectStrategy = collectionPreSelectStrategy;
             }
 
             // Initialize save notification components if a listener is provided
