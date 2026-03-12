@@ -851,7 +851,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         runway = Runway.builder().port(server.getClientPort()).build();
 
         // Register a listener after build
-        runway.onSave(record -> {
+        runway.properties().onSave(record -> {
             savedRecords.add(record);
             latch.countDown();
         });
@@ -881,7 +881,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 }).build();
 
         // Register an additional listener after build
-        runway.onSave(record -> {
+        runway.properties().onSave(record -> {
             postBuildCount.incrementAndGet();
             latch.countDown();
         });
@@ -907,7 +907,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         runway = Runway.builder().port(server.getClientPort()).build();
 
         // Register a typed listener after build
-        runway.onSave(Player.class, player -> {
+        runway.properties().onSave(Player.class, player -> {
             playerSaves.add(player);
             latch.countDown();
         });
@@ -939,15 +939,15 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         runway.close();
         runway = Runway.builder().port(server.getClientPort()).build();
 
-        runway.onSave(record -> {
+        runway.properties().onSave(record -> {
             firstCount.incrementAndGet();
             latch.countDown();
         });
-        runway.onSave(record -> {
+        runway.properties().onSave(record -> {
             secondCount.incrementAndGet();
             latch.countDown();
         });
-        runway.onSave(record -> {
+        runway.properties().onSave(record -> {
             thirdCount.incrementAndGet();
             latch.countDown();
         });

@@ -1,5 +1,19 @@
 # Changelog
 
+#### Version 1.13.0 (March 12, 2026)
+* **Configurable `CollectionPreSelectStrategy`**: Added `CollectionPreSelectStrategy`, a configurable enum that controls how `Runway` pre-selects data for `Collection<Record>` fields (e.g., `List<Dock>`, `Set<Node>`). Previously, loading a Record with a collection of N linked Records issued N individual `select()` calls — one per element — inside `convert()`. Three strategies are now available:
+  * `NAVIGATE` — uses Concourse's `navigate()` API to batch-prefetch all destination Record data in a single call with snapshot atomicity. Requires `StaticAnalysis` class-aware path computation.
+  * `BULK_SELECT` — scans loaded data for `Link` values and batch-fetches all discovered targets via `concourse.select(Set<Long>)`, repeating per depth level until all reachable Records are collected. Schema-agnostic — works for untyped loads without class-specific path computation.
+  * `NONE` — the legacy N+1 behavior where each linked Record is fetched individually.
+  * Configure via `Runway.builder().collectionPreSelectStrategy(CollectionPreSelectStrategy.BULK_SELECT)`. Default is `NONE`.
+  * Works across all query pipelines: `load()`, `find()`, and bulk `load(Class)`.
+  * Self-referential collections (e.g., `List<Node>` on `Node`) are handled with cycle detection to prevent infinite path expansion.
+  * Mixed field types (single `Record` + `Collection<Record>`) work correctly — collection pre-select covers the collection while the existing pre-select path mechanism covers single fields.
+* **`computeOnce()` Memoization for `@Computed` Methods**: Added `Record#computeOnce(String, Supplier)`, a protected method that provides opt-in, per-instance memoization for expensive `@Computed` properties. During serialization, a `@Computed` method can be invoked through multiple independent paths — directly from a `@Derived` method, via `get(key)`, and through the serialization supplier — each triggering redundant work. Wrapping the method body with `computeOnce()` ensures all invocation paths share a single cached result, eliminating duplicate computations (e.g., database queries) within a serialization cycle.
+  * `Record#clearComputeOnceCache()` invalidates all cached results, allowing fresh recomputation when the underlying data may have changed.
+  * Opt-in only: existing `@Computed` methods that do not use `computeOnce()` retain their current behavior of recomputing on every access.
+* **`Runway.Properties` Post-Build Configuration**: `Runway.Properties` (accessed via `runway.properties()`) is the centralized handle for post-build configuration and inspection of a `Runway` instance. It exposes getters and setters for `collectionPreSelectStrategy` and `onSave` listener registration. The direct `Runway#onSave` methods are deprecated in favor of the `Properties` equivalents.
+
 #### Version 1.12.0 (March 7, 2026)
 * **Spurious Save Failure Retry**: Added a `SpuriousSaveFailureStrategy` configuration that controls how `Runway` handles `TransactionException` during save operations. When set to `RETRY`, `Runway` automatically retries a failed save if none of the root records have stale data, indicating the failure was caused by a spurious MVCC conflict (e.g., overlapping `@Unique` constraint reads in concurrent transactions) rather than a genuine data conflict. The default strategy is `FAIL_FAST`, which preserves the existing behavior.
   * Configure via `Runway.builder().spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)`.

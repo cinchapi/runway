@@ -183,11 +183,12 @@ public abstract class Record implements Comparable<Record> {
      */
     protected static <T extends Record> T load(Class<?> clazz, long id,
             ConcurrentMap<Long, Record> existing, ConnectionPool connections,
-            Runway runway, @Nullable Map<String, Set<Object>> data) {
+            Runway runway, @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Concourse concourse = connections.request();
         try {
             return load(clazz, id, existing, connections, concourse, runway,
-                    data);
+                    data, null, targets);
         }
         finally {
             connections.release(concourse);
@@ -203,8 +204,8 @@ public abstract class Record implements Comparable<Record> {
      *            encountered links
      * @param links a {@link Multimap} that represents encountered links as a
      *            mapping from the <strong>destination</strong> record to any
-     *            source record that links to it (e.g. the destinations are
-     *            indexed to make it easy to look up all the parent nodes in the
+     *            source record that links to it (e.g. the targets are indexed
+     *            to make it easy to look up all the parent nodes in the
      *            document graph)
      * @return the {@link TypeAdapterFactory}
      */
@@ -430,43 +431,34 @@ public abstract class Record implements Comparable<Record> {
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
      *
-     * @param clazz
-     * @param id
-     * @param existing
-     * @param connections
-     * @param concourse
-     * @return the loaded Record
-     */
-    private static <T extends Record> T load(Class<?> clazz, long id,
-            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
-            Concourse concourse, Runway runway,
-            @Nullable Map<String, Set<Object>> data) {
-        return load(clazz, id, existing, connections, concourse, runway, data,
-                null);
-    }
-
-    /**
-     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
-     * {@code id}.
-     *
-     * @param clazz
-     * @param id
-     * @param existing
-     * @param connections
-     * @param concourse
-     * @return the loaded Record
+     * @param clazz the {@link Record} class to instantiate
+     * @param id the record ID
+     * @param existing previously loaded {@link Record Records} used to break
+     *            cycles
+     * @param connections the {@link ConnectionPool} to use
+     * @param concourse the active {@link Concourse} connection
+     * @param runway the owning {@link Runway} instance
+     * @param data pre-loaded data for this record, or {@code null} to fetch
+     *            from the database
+     * @param prefix a key prefix for navigation-style nested keys, or
+     *            {@code null} for top-level loads
+     * @param targets pre-fetched destination data keyed by record ID for
+     *            {@link Collection Collection&lt;Record&gt;} elements, or
+     *            {@code null}
+     * @return the loaded {@link Record}
      */
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
             ConcurrentMap<Long, Record> existing, ConnectionPool connections,
             Concourse concourse, Runway runway,
-            @Nullable Map<String, Set<Object>> data, String prefix) {
+            @Nullable Map<String, Set<Object>> data, String prefix,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         T record = (T) newDefaultInstance(clazz, connections);
         setInternalFieldValue("id", id, record);
         setInternalFieldValue("waitingToBeDeleted", new LinkedHashSet<>(),
                 record);
         record.assign(runway);
-        record.load(concourse, existing, data, prefix);
+        record.load(concourse, existing, data, prefix, targets);
         record.onLoad();
         return record;
     }
@@ -857,6 +849,12 @@ public abstract class Record implements Comparable<Record> {
      * A cache of the {@link #$derived() properties}.
      */
     private transient Map<String, Object> derived = null;
+
+    /**
+     * Per-instance cache for {@link #computeOnce(String, Supplier)} results.
+     * Transient so it does not participate in persistence or equality.
+     */
+    private transient Map<String, Object> _computeOnceCache;
 
     /**
      * Tracks dependent {@link Records} that are pending
@@ -1767,6 +1765,18 @@ public abstract class Record implements Comparable<Record> {
     protected void beforeSave() {}
 
     /**
+     * Clear the {@link #computeOnce(String, Supplier)} cache so that subsequent
+     * calls recompute their values.
+     * <p>
+     * Use this when the underlying data for cached computations may have
+     * changed (e.g., after a save or reload) and fresh results are needed.
+     * </p>
+     */
+    protected void clearComputeOnceCache() {
+        _computeOnceCache = null;
+    }
+
+    /**
      * Provide additional data about this Record that might not be encapsulated
      * in its native fields and is "computed" on-demand.
      * <p>
@@ -1785,6 +1795,39 @@ public abstract class Record implements Comparable<Record> {
     @Deprecated
     protected Map<String, Supplier<Object>> computed() {
         return Collections.emptyMap();
+    }
+
+    /**
+     * Return the result of {@code supplier}, computing it at most once per
+     * {@link Record} instance for the given {@code key}. Subsequent calls with
+     * the same {@code key} return the cached result.
+     * <p>
+     * Use this inside {@link Computed} or {@link Derived} methods that perform
+     * expensive operations (e.g., database queries) which may be invoked more
+     * than once during serialization. Wrapping the method body with
+     * {@code computeOnce} ensures that all invocation paths &mdash; direct
+     * calls, calls via {@link #get(String)}, and serialization &mdash; share a
+     * single cached result.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> The cache is per-instance and persists for the
+     * lifetime of the {@link Record}. Use {@link #clearComputeOnceCache()} to
+     * invalidate if the underlying data may have changed.
+     * </p>
+     *
+     * @param key a stable identifier for the computation, typically the
+     *            property name (e.g., {@code "licenses"})
+     * @param supplier the computation to execute if the result has not been
+     *            cached
+     * @param <T> the result type
+     * @return the cached or freshly computed result
+     */
+    @SuppressWarnings("unchecked")
+    protected <T> T computeOnce(String key, Supplier<T> supplier) {
+        if(_computeOnceCache == null) {
+            _computeOnceCache = new HashMap<>();
+        }
+        return (T) _computeOnceCache.computeIfAbsent(key, k -> supplier.get());
     }
 
     /**
@@ -1958,7 +2001,7 @@ public abstract class Record implements Comparable<Record> {
      */
     final void load(Concourse concourse, ConcurrentMap<Long, Record> existing,
             @Nullable Map<String, Set<Object>> data) {
-        load(concourse, existing, data, null);
+        load(concourse, existing, data, null, null);
     }
 
     /**
@@ -1969,10 +2012,19 @@ public abstract class Record implements Comparable<Record> {
      * @param existing
      * @param data data that is pre-loaded from {@code concourse}; this should
      *            only be provided from a trusted source
+     * @param prefix a key prefix applied when {@code data} contains
+     *            navigation-style nested keys for this {@link Record} (e.g.,
+     *            {@code "company."} when this instance is a nested record
+     *            loaded from a parent's pre-selected data)
+     * @param targets pre-fetched destination {@link Record} data from
+     *            {@code navigate()}, keyed by destination record ID; used to
+     *            avoid individual DB fetches for {@link Collection
+     *            Collection&lt;Record&gt;} elements
      */
     @SuppressWarnings({ "rawtypes", "unchecked" })
     final void load(Concourse concourse, ConcurrentMap<Long, Record> existing,
-            @Nullable Map<String, Set<Object>> data, @Nullable String prefix) {
+            @Nullable Map<String, Set<Object>> data, @Nullable String prefix,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
@@ -2020,7 +2072,7 @@ public abstract class Record implements Comparable<Record> {
                         ArrayBuilder collector = ArrayBuilder.builder();
                         stored.forEach(item -> {
                             Object converted = convert(path, collectedType,
-                                    item, concourse, existing);
+                                    item, concourse, existing, targets);
                             if(converted != null) {
                                 collector.add(converted);
                             }
@@ -2078,13 +2130,13 @@ public abstract class Record implements Comparable<Record> {
                                 value = value == null
                                         ? load(type, id, existing, connections,
                                                 concourse, runway, data,
-                                                prepend)
+                                                prepend, targets)
                                         : value;
                             }
                         }
                         else if(first != null) {
                             value = convert(path, type, first, concourse,
-                                    existing);
+                                    existing, targets);
                         }
                     }
                     if(value != null) {
@@ -2581,7 +2633,8 @@ public abstract class Record implements Comparable<Record> {
     @Nullable
     @SuppressWarnings({ "unchecked", "rawtypes" })
     private Object convert(String key, Class<?> type, Object stored,
-            Concourse concourse, ConcurrentMap<Long, Record> alreadyLoaded) {
+            Concourse concourse, ConcurrentMap<Long, Record> alreadyLoaded,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Object converted = null;
         if(Record.class.isAssignableFrom(type)
                 || type == DeferredReference.class) {
@@ -2593,7 +2646,9 @@ public abstract class Record implements Comparable<Record> {
                     converted = new DeferredReference(target, runway);
                 }
                 else {
-                    Map<String, Set<Object>> data = concourse.select(target);
+                    Map<String, Set<Object>> data = targets != null
+                            ? targets.get(target)
+                            : concourse.select(target);
                     Set<Object> sections = data.getOrDefault(SECTION_KEY,
                             ImmutableSet.of());
                     String section = (String) Iterables.getLast(sections, null);
@@ -2605,7 +2660,8 @@ public abstract class Record implements Comparable<Record> {
                         Class<? extends Record> targetClass = Reflection
                                 .getClassCasted(section);
                         converted = load(targetClass, target, alreadyLoaded,
-                                connections, concourse, runway, data);
+                                connections, concourse, runway, data, null,
+                                targets);
                     }
                 }
             }
@@ -3299,7 +3355,7 @@ public abstract class Record implements Comparable<Record> {
                 Multimap<Class<? extends Record>, Class<?>> hierarchies,
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass) {
             return computePaths(clazz, hierarchies, fieldsByClass, "",
-                    Sets.newHashSet());
+                    Sets.newHashSet(), false);
         }
 
         /**
@@ -3312,13 +3368,15 @@ public abstract class Record implements Comparable<Record> {
          * @param fieldsByClass
          * @param prefix
          * @param ancestors
+         * @param includeRecordFieldKeys
          * @return the paths
          */
         @SuppressWarnings("unchecked")
         private static Set<String> computePaths(Class<? extends Record> clazz,
                 Multimap<Class<? extends Record>, Class<?>> hierarchies,
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
-                String prefix, Set<Class<? extends Record>> ancestors) {
+                String prefix, Set<Class<? extends Record>> ancestors,
+                boolean includeRecordFieldKeys) {
             ancestors.add(clazz);
             Set<String> paths = new LinkedHashSet<>();
             paths.add(prefix + SECTION_KEY);
@@ -3334,27 +3392,146 @@ public abstract class Record implements Comparable<Record> {
                         && (COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS
                                 || !hasDescendantDefinedFields(type,
                                         hierarchies, fieldsByClass))) {
+                    if(includeRecordFieldKeys) {
+                        // NOTE: For select(), nested navigation keys (e.g.,
+                        // company._) fold destination data into the source
+                        // record's result, so the raw Link value is
+                        // unnecessary. For navigate(), each hop resolves to a
+                        // separate entry keyed by destination ID, so the
+                        // intermediate record never receives the Link value
+                        // unless we explicitly include the bare field name as a
+                        // path.
+                        paths.add(prefix + field.getName());
+                    }
                     Class<? extends Record> _type = (Class<? extends Record>) type;
                     lineage.add(_type);
                     Collection<Class<?>> hierarchy = hierarchies.get(_type);
                     Set<String> nested = new HashSet<>();
                     for (Class<?> descendant : hierarchy) {
                         // Account for declared types having descendant
-                        // defined
-                        // fields in child classes by computing the paths
-                        // for
-                        // each descendant type at this junction, in the
-                        // path
+                        // defined fields in child classes by computing the
+                        // paths for each descendant type at this junction, in
+                        // the path
                         nested.addAll(computePaths(
                                 (Class<? extends Record>) descendant,
                                 hierarchies, fieldsByClass,
-                                prefix + field.getName() + ".", lineage));
+                                prefix + field.getName() + ".", lineage,
+                                includeRecordFieldKeys));
                     }
                     paths.addAll(nested);
                 }
                 else {
                     paths.add(prefix + field.getName());
                 }
+            }
+            return paths;
+        }
+
+        /**
+         * Return the paths that should be used with {@code navigate()} to
+         * pre-fetch destination {@link Record} data for {@link Collection
+         * Collection&lt;Record&gt;} fields in {@code clazz}. For each such
+         * field, this generates the same nested paths that
+         * {@link #computePaths(Class, Multimap, Map, String, Set, boolean)}
+         * would produce for the element type, prefixed with the collection
+         * field name.
+         *
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @param fieldTypeArgumentsByClass
+         * @return the navigate paths
+         */
+        private static Set<String> computeNavigatePaths(
+                Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
+                Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass) {
+            return computeNavigatePaths(clazz, hierarchies, fieldsByClass,
+                    fieldTypeArgumentsByClass, "", Sets.newHashSet());
+        }
+
+        /**
+         * Return the paths that should be used with {@code navigate()} to
+         * pre-fetch destination {@link Record} data for {@link Collection
+         * Collection&lt;Record&gt;} fields in {@code clazz}; all prefixed with
+         * {@code prefix} and using {@code ancestors} for cycle detection.
+         *
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @param fieldTypeArgumentsByClass
+         * @param prefix
+         * @param ancestors
+         * @return the navigate paths
+         */
+        @SuppressWarnings("unchecked")
+        private static Set<String> computeNavigatePaths(
+                Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
+                Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass,
+                String prefix, Set<Class<? extends Record>> ancestors) {
+            Set<String> navigatePaths = new LinkedHashSet<>();
+            Collection<Field> fields = fieldsByClass
+                    .getOrDefault(clazz, ImmutableMap.of()).values();
+            for (Field field : fields) {
+                Class<?> type = field.getType();
+                if(Collection.class.isAssignableFrom(type)) {
+                    Class<?> elementType = Iterables
+                            .getFirst(fieldTypeArgumentsByClass
+                                    .getOrDefault(clazz, ImmutableMap.of())
+                                    .getOrDefault(field.getName(),
+                                            ImmutableList.of()),
+                                    null);
+                    if(elementType != null
+                            && Record.class.isAssignableFrom(elementType)) {
+                        // NOTE: navigate() returns data keyed by
+                        // destination record ID, so these nested
+                        // paths tell it to follow the Links in this
+                        // collection field and return each
+                        // destination's data individually.
+                        // The computePaths call handles its own
+                        // cycle detection via the ancestors set.
+                        Class<? extends Record> recordType = (Class<? extends Record>) elementType;
+                        Collection<Class<?>> hierarchy = hierarchies
+                                .get(recordType);
+                        for (Class<?> descendant : hierarchy) {
+                            navigatePaths.addAll(computePaths(
+                                    (Class<? extends Record>) descendant,
+                                    hierarchies, fieldsByClass,
+                                    prefix + field.getName() + ".",
+                                    new HashSet<>(ancestors), true));
+                        }
+                    }
+                }
+            }
+            return navigatePaths;
+        }
+
+        /**
+         * Perform {@link #computeNavigatePaths(Class, Multimap, Map, Map)} for
+         * each {@link Class} in the {@link #hierarchies hierarchy} of
+         * {@code clazz}.
+         *
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @param fieldTypeArgumentsByClass
+         * @return all the navigate paths in the hierarchy
+         */
+        @SuppressWarnings("unchecked")
+        private static Set<String> computeNavigatePathsHierarchy(
+                Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
+                Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass) {
+            Set<String> paths = new LinkedHashSet<>();
+            Collection<Class<?>> hierarchy = hierarchies.get(clazz);
+            for (Class<?> type : hierarchy) {
+                paths.addAll(computeNavigatePaths(
+                        (Class<? extends Record>) type, hierarchies,
+                        fieldsByClass, fieldTypeArgumentsByClass));
             }
             return paths;
         }
@@ -3511,6 +3688,37 @@ public abstract class Record implements Comparable<Record> {
         private Map<Class<? extends Record>, Set<String>> pathsByClassHierarchy;
 
         /**
+         * A mapping from each {@link Record} class to the paths that should be
+         * used with {@code navigate()} to pre-fetch data for {@link Collection
+         * Collection&lt;Record&gt;} fields. These paths follow Links in
+         * collection fields to their destination {@link Record Records} and
+         * include all of the destination's nested paths, enabling bulk
+         * pre-fetching in a single call.
+         */
+        private Map<Class<? extends Record>, Set<String>> navigatePathsByClass;
+
+        /**
+         * A mapping from each {@link Record} class to the navigate paths in its
+         * {@link #hierarchies hierarchy}.
+         */
+        private Map<Class<? extends Record>, Set<String>> navigatePathsByClassHierarchy;
+
+        /**
+         * A collection containing each {@link Record} class that has at least
+         * one field whose type is a {@link Collection} parameterized with a
+         * subclass of {@link Record}.
+         */
+        private final Set<Class<? extends Record>> hasCollectionRecordFieldTypeByClass;
+
+        /**
+         * A collection containing each {@link Record} class that itself or is
+         * the ancestor of a {@link Record} class that has at least one field
+         * whose type is a {@link Collection} parameterized with a subclass of
+         * {@link Record}.
+         */
+        private final Set<Class<? extends Record>> hasCollectionRecordFieldTypeByClassHierarchy;
+
+        /**
          * A mapping from each {@link Record} class to itself and all of its
          * descendants. This facilitates querying across hierarchies.
          */
@@ -3586,10 +3794,14 @@ public abstract class Record implements Comparable<Record> {
             this.hierarchies = HashMultimap.create();
             this.pathsByClass = new HashMap<>();
             this.pathsByClassHierarchy = new HashMap<>();
+            this.navigatePathsByClass = new HashMap<>();
+            this.navigatePathsByClassHierarchy = new HashMap<>();
             this.fieldsByClass = new HashMap<>();
             this.fieldTypeArgumentsByClass = new HashMap<>();
             this.hasRecordFieldTypeByClass = new HashSet<>();
             this.hasRecordFieldTypeByClassHierarchy = new HashSet<>();
+            this.hasCollectionRecordFieldTypeByClass = new HashSet<>();
+            this.hasCollectionRecordFieldTypeByClassHierarchy = new HashSet<>();
             this.fieldAnnotationsByClass = new HashMap<>();
             this.joinDeleteFieldsByClass = new HashMap<>();
             this.captureDeleteFieldsByClass = new HashMap<>();
@@ -3617,6 +3829,16 @@ public abstract class Record implements Comparable<Record> {
                     if(Record.class.isAssignableFrom(field.getType())) {
                         hasRecordFieldTypeByClass.add(type);
                     }
+                    if(Collection.class.isAssignableFrom(field.getType())) {
+                        Collection<Class<?>> typeArgs = Reflection
+                                .getTypeArguments(field);
+                        Class<?> elementType = Iterables.getFirst(typeArgs,
+                                null);
+                        if(elementType != null
+                                && Record.class.isAssignableFrom(elementType)) {
+                            hasCollectionRecordFieldTypeByClass.add(type);
+                        }
+                    }
 
                     // Get annotations associated with each field
                     for (Annotation annotation : field.getAnnotations()) {
@@ -3632,6 +3854,9 @@ public abstract class Record implements Comparable<Record> {
             hierarchies.forEach((type, relative) -> {
                 if(hasRecordFieldTypeByClass.contains(relative)) {
                     hasRecordFieldTypeByClassHierarchy.add(type);
+                }
+                if(hasCollectionRecordFieldTypeByClass.contains(relative)) {
+                    hasCollectionRecordFieldTypeByClassHierarchy.add(type);
                 }
             });
 
@@ -3861,6 +4086,59 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
+         * Return the navigate paths for {@code clazz} &mdash; the paths that
+         * should be used with {@code navigate()} to pre-fetch destination
+         * {@link Record} data for {@link Collection Collection&lt;Record&gt;}
+         * fields.
+         *
+         * @param <T> the type of {@link Record}
+         * @param clazz the {@link Record} class
+         * @return the navigate paths, or {@code null} if none exist
+         */
+        public <T extends Record> Set<String> getNavigatePaths(Class<T> clazz) {
+            return navigatePathsByClass.get(clazz);
+        }
+
+        /**
+         * Return all the navigate paths for {@code clazz} and all of its
+         * descendents.
+         *
+         * @param clazz the {@link Record} class
+         * @return the navigate paths across the hierarchy
+         */
+        public Set<String> getNavigatePathsHierarchy(
+                Class<? extends Record> clazz) {
+            return navigatePathsByClassHierarchy.get(clazz);
+        }
+
+        /**
+         * Return {@code true} if {@code clazz} has any fields whose type is a
+         * {@link Collection} parameterized with a subclass of {@link Record}.
+         *
+         * @param clazz the {@link Record} class
+         * @return {@code true} if the class has {@link Collection
+         *         Collection&lt;Record&gt;} fields
+         */
+        public boolean hasCollectionRecordFieldInClass(
+                Class<? extends Record> clazz) {
+            return hasCollectionRecordFieldTypeByClass.contains(clazz);
+        }
+
+        /**
+         * Return {@code true} if {@code clazz}, or any of its descendants, have
+         * any fields whose type is a {@link Collection} parameterized with a
+         * subclass of {@link Record}.
+         *
+         * @param clazz the {@link Record} class
+         * @return {@code true} if the class or its descendants have
+         *         {@link Collection Collection&lt;Record&gt;} fields
+         */
+        public boolean hasCollectionRecordFieldInClassHierarchy(
+                Class<? extends Record> clazz) {
+            return hasCollectionRecordFieldTypeByClassHierarchy.contains(clazz);
+        }
+
+        /**
          * Return any defined type arguments for the field named {@code key} in
          * {@code clazz}.
          *
@@ -3929,6 +4207,11 @@ public abstract class Record implements Comparable<Record> {
                         computePaths(type, hierarchies, fieldsByClass));
                 pathsByClassHierarchy.put(type, computePathsHierarchy(type,
                         hierarchies, fieldsByClass));
+                navigatePathsByClass.put(type, computeNavigatePaths(type,
+                        hierarchies, fieldsByClass, fieldTypeArgumentsByClass));
+                navigatePathsByClassHierarchy.put(type,
+                        computeNavigatePathsHierarchy(type, hierarchies,
+                                fieldsByClass, fieldTypeArgumentsByClass));
             });
         }
 

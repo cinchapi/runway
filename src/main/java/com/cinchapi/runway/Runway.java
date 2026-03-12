@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -61,6 +62,7 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
+import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.ConcourseCompiler;
@@ -224,9 +226,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private static <T extends Record> T loadWithErrorHandling(Class<T> clazz,
             long id, ConcurrentMap<Long, Record> loaded,
             ConnectionPool connections, Runway runway,
-            @Nullable Map<String, Set<Object>> data) {
+            @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         try {
-            return Record.load(clazz, id, loaded, connections, runway, data);
+            return Record.load(clazz, id, loaded, connections, runway, data,
+                    targets);
         }
         catch (Exception e) {
             if(e instanceof InvalidRecordException) {
@@ -372,6 +376,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * </p>
      */
     private final boolean supportsPreSelectLinkedRecords;
+
+    /**
+     * The strategy for pre-selecting data for {@link Collection
+     * Collection&lt;Record&gt;} fields.
+     */
+    private CollectionPreSelectStrategy collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
 
     /**
      * A queue of records that have been successfully saved and are waiting for
@@ -839,6 +849,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return gateway;
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> T load(Class<T> clazz, long id, Realms realms) {
         Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
@@ -852,23 +863,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return null;
         }
         else {
-            if(StaticAnalysis.instance().getClassHierarchy(clazz).size() > 1) {
-                // The provided clazz has descendants, so it is possible that
-                // the Record with the #id is actually a member of a subclass
-                Concourse connection = connections.request();
-                try {
+            Concourse connection = null;
+            try {
+                if(StaticAnalysis.instance().getClassHierarchy(clazz)
+                        .size() > 1) {
+                    // The provided clazz has descendants, so it is possible
+                    // that the Record with the #id is actually a member of a
+                    // subclass
+                    connection = ensureValidConnection(connection);
                     String section = connection.get(Record.SECTION_KEY, id);
                     if(section != null) {
                         clazz = Reflection.getClassCasted(section);
                     }
                 }
-                finally {
-                    connections.release(connection);
-                }
-            }
-            if(!realms.names().isEmpty()) {
-                Concourse connection = connections.request();
-                try {
+                if(!realms.names().isEmpty()) {
+                    connection = ensureValidConnection(connection);
                     Set<String> $realms = MoreObjects.firstNonNull(
                             connection.select(Record.REALMS_KEY, id),
                             ImmutableSet.of());
@@ -876,11 +885,33 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return null; // TODO: what to do here?
                     }
                 }
-                finally {
+                Map<String, Set<Object>> data = null;
+                Map<Long, Map<String, Set<Object>>> targets = null;
+                if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE) {
+                    Set<String> navigatePaths = getNavigatePathsForClassIfSupported(
+                            clazz);
+                    if(navigatePaths != null) {
+                        connection = ensureValidConnection(connection);
+                        targets = connection.navigate(navigatePaths, id);
+                    }
+                }
+                else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
+                    connection = ensureValidConnection(connection);
+                    Set<String> paths = getPathsForClassIfSupported(clazz);
+                    data = paths != null ? connection.select(paths, id)
+                            : connection.select(id);
+                    Map<Long, Map<String, Set<Object>>> seed = Maps
+                            .newHashMap();
+                    seed.put(id, data);
+                    targets = prefetchLinks(connection, seed);
+                }
+                return instantiate(clazz, id, data, targets);
+            }
+            finally {
+                if(connection != null) {
                     connections.release(connection);
                 }
             }
-            return instantiate(clazz, id, null);
         }
     }
 
@@ -1048,52 +1079,34 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Register a listener that will be called <strong>after</strong> any
      * {@link Record} of the specified {@code type} (or a subclass) is
      * successfully saved.
-     * <p>
-     * Unlike the {@link Builder#onSave(Class, Consumer) builder method}, this
-     * can be called after the {@link Runway} instance has been constructed. The
-     * new listener is chained with any previously registered listeners &mdash;
-     * it does not replace them.
-     * </p>
      *
      * @param type the {@link Record} type (or superclass) to listen for
      * @param listener a consumer that processes saved {@link Record Records} of
      *            the specified type
      * @return this for chaining
+     * @deprecated Use {@link Properties#onSave(Class, Consumer)} via
+     *             {@link #properties()} instead.
      */
-    @SuppressWarnings("unchecked")
+    @Deprecated
     public <T extends Record> Runway onSave(Class<T> type,
             Consumer<T> listener) {
-        ensureSaveNotificationInfrastructure();
-        Consumer<Record> previous = saveListener;
-        saveListener = record -> {
-            if(type.isAssignableFrom(record.getClass())) {
-                try {
-                    ((Consumer<Record>) (Consumer<?>) listener).accept(record);
-                }
-                catch (Exception e) {
-                    // Swallow to match builder behavior
-                }
-            }
-            if(previous != null) {
-                previous.accept(record);
-            }
-        };
+        properties().onSave(type, listener);
         return this;
     }
 
     /**
      * Register a listener that will be called <strong>after</strong> any
      * {@link Record} is successfully saved.
-     * <p>
-     * This is equivalent to calling {@link #onSave(Class, Consumer)
-     * onSave(Record.class, listener)}.
-     * </p>
      *
      * @param listener a consumer that processes saved {@link Record Records}
      * @return this for chaining
+     * @deprecated Use {@link Properties#onSave(Consumer)} via
+     *             {@link #properties()} instead.
      */
+    @Deprecated
     public Runway onSave(Consumer<Record> listener) {
-        return onSave(Record.class, listener);
+        properties().onSave(Record.class, listener);
+        return this;
     }
 
     /**
@@ -1316,6 +1329,43 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * If the {@link #collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NAVIGATE}, return the navigate paths
+     * for {@code clazz} and all descendants.
+     *
+     * @param clazz
+     * @return the navigate paths, or {@code null} if unsupported
+     */
+    final Set<String> getNavigatePathsForClassHierarchyIfSupported(
+            Class<? extends Record> clazz) {
+        return collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
+                && StaticAnalysis.instance()
+                        .hasCollectionRecordFieldInClassHierarchy(clazz)
+                                ? StaticAnalysis.instance()
+                                        .getNavigatePathsHierarchy(clazz)
+                                : null;
+    }
+
+    /**
+     * If the {@link #collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NAVIGATE}, return the navigate paths
+     * for {@code clazz}.
+     *
+     * @param clazz
+     * @return the navigate paths, or {@code null} if unsupported or the class
+     *         has no {@link Collection Collection&lt;Record&gt;} fields
+     */
+    final Set<String> getNavigatePathsForClassIfSupported(
+            Class<? extends Record> clazz) {
+        return collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
+                && StaticAnalysis.instance()
+                        .hasCollectionRecordFieldInClass(clazz)
+                                ? StaticAnalysis.instance()
+                                        .getNavigatePaths(clazz)
+                                : null;
+    }
+
+    /**
      * If this instance {@link #supportsPreSelectLinkedRecords} return the
      * {@link #PATHS_BY_CLASS_HIERARCHY} for {@code clazz}.
      *
@@ -1352,7 +1402,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the loaded record
      */
     <T extends Record> T load(long id) {
-        return instantiate(id, null);
+        return instantiate(id, null, null);
     }
 
     /**
@@ -1538,6 +1588,45 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Return a valid {@link Concourse} connection, reusing {@code connection}
+     * if it is non-{@code null} or requesting a fresh one from the pool
+     * otherwise.
+     *
+     * @param connection the existing connection to reuse, or {@code null} if
+     *            none has been acquired yet
+     * @return a non-{@code null} {@link Concourse} connection
+     */
+    private Concourse ensureValidConnection(Concourse connection) {
+        return connection == null ? connections.request() : connection;
+    }
+
+    /**
+     * Scan all values in {@code data} for {@link Link} instances whose targets
+     * are not in {@code fetched}.
+     *
+     * @param data the data to scan
+     * @param fetched record IDs already known
+     * @return new target IDs to fetch
+     */
+    private Set<Long> extractLinkTargets(
+            Map<Long, Map<String, Set<Object>>> data, Set<Long> fetched) {
+        Set<Long> targets = new HashSet<>();
+        for (Map<String, Set<Object>> record : data.values()) {
+            for (Set<Object> values : record.values()) {
+                for (Object value : values) {
+                    if(value instanceof Link) {
+                        long target = ((Link) value).longValue();
+                        if(!fetched.contains(target)) {
+                            targets.add(target);
+                        }
+                    }
+                }
+            }
+        }
+        return targets;
+    }
+
+    /**
      * Perform local {@code criteria} resolution and return all the records in
      * {@code clazz} that match.
      *
@@ -1686,9 +1775,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             ConcurrentMap<Long, Record> loaded,
-            @Nullable Map<String, Set<Object>> data) {
-        return loadWithErrorHandling(clazz, id, loaded, connections, this,
-                data);
+            @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
+                targets);
     }
 
     /**
@@ -1713,8 +1803,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the loaded {@link Record} instance
      */
     private <T extends Record> T instantiate(Class<T> clazz, long id,
-            @Nullable Map<String, Set<Object>> data) {
-        return instantiate(clazz, id, new ConcurrentHashMap<>(), data);
+            @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        return instantiate(clazz, id, new ConcurrentHashMap<>(), data, targets);
     }
 
     /**
@@ -1745,7 +1836,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> T instantiate(long id,
             ConcurrentMap<Long, Record> loaded,
-            @Nullable Map<String, Set<Object>> data) {
+            @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         if(data == null) {
             // Since the desired class isn't specified, we must
             // prematurely select the record's data to determine it.
@@ -1760,8 +1852,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         String section = (String) Iterables
                 .getLast(data.get(Record.SECTION_KEY));
         Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, loaded, connections, this,
-                data);
+        return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
+                targets);
     }
 
     /**
@@ -1790,8 +1882,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the loaded {@link Record} instance
      */
     private <T extends Record> T instantiate(long id,
-            @Nullable Map<String, Set<Object>> data) {
-        return instantiate(id, new ConcurrentHashMap<>(), data);
+            @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        return instantiate(id, new ConcurrentHashMap<>(), data, targets);
     }
 
     /**
@@ -1805,8 +1898,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Map<Long, Map<String, Set<Object>>> data) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
+        Map<Long, Map<String, Set<Object>>> targets = resolveLinkCollections(
+                clazz, data);
+        Map<Long, Map<String, Set<Object>>> $targets = targets;
         Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
-            return instantiate(clazz, entry.getKey(), loaded, entry.getValue());
+            return instantiate(clazz, entry.getKey(), loaded, entry.getValue(),
+                    $targets);
         });
         return records;
     }
@@ -1822,13 +1919,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Set<Long> ids) {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        AtomicReference<Map<Long, Map<String, Set<Object>>>> dests = new AtomicReference<>();
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
                 Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
                 data.set(stream(paths, ids));
+                dests.set(resolveLinkCollectionsHierarchy(clazz, data.get(),
+                        ids));
             }
-            return instantiate(clazz, id, loaded, data.get().get(id));
+            return instantiate(clazz, id, loaded, data.get().get(id),
+                    dests.get());
         });
         return records;
     }
@@ -1842,8 +1943,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> instantiateAll(
             Map<Long, Map<String, Set<Object>>> data) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
+        Map<Long, Map<String, Set<Object>>> targets = resolveLinkCollections(
+                null, data);
+        Map<Long, Map<String, Set<Object>>> $targets = targets;
         Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
-            return instantiate(entry.getKey(), loaded, entry.getValue());
+            return instantiate(entry.getKey(), loaded, entry.getValue(),
+                    $targets);
         });
         return records;
     }
@@ -1860,14 +1965,44 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> instantiateAll(Set<Long> ids) {
         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
+        AtomicReference<Map<Long, Map<String, Set<Object>>>> dests = new AtomicReference<>();
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         Set<T> records = LazyTransformSet.of(ids, id -> {
             if(data.get() == null) {
                 data.set(stream(null, ids));
+                dests.set(resolveLinkCollections(null, data.get()));
             }
-            return instantiate(id, loaded, data.get().get(id));
+            return instantiate(id, loaded, data.get().get(id), dests.get());
         });
         return records;
+    }
+
+    /**
+     * Collect all {@link Record Records} reachable through {@link Link Links}
+     * from the initial {@code data} by iteratively discovering and
+     * batch-fetching targets.
+     *
+     * @param concourse the connection to use
+     * @param data the initial data from the query; not mutated
+     * @return a new map containing {@code data} plus all reachable linked
+     *         record data
+     */
+    private Map<Long, Map<String, Set<Object>>> prefetchLinks(
+            Concourse concourse, Map<Long, Map<String, Set<Object>>> data) {
+        Map<Long, Map<String, Set<Object>>> pool = Maps.newHashMap(data);
+        // BFS over the link graph: each iteration fetches one depth level.
+        // #fetched tracks visited IDs so cycles in the link graph terminate
+        // naturally.
+        Set<Long> fetched = Sets.newHashSet(data.keySet());
+        Set<Long> frontier = extractLinkTargets(data, fetched);
+        while (!frontier.isEmpty()) {
+            Map<Long, Map<String, Set<Object>>> batch = concourse
+                    .select(frontier);
+            pool.putAll(batch);
+            fetched.addAll(frontier);
+            frontier = extractLinkTargets(batch, fetched);
+        }
+        return pool;
     }
 
     /**
@@ -1955,6 +2090,95 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         return data;
+    }
+
+    /**
+     * Resolve destination {@link Record} data for {@link Collection
+     * Collection&lt;Record&gt;} fields based on the configured
+     * {@link #collectionPreSelectStrategy}.
+     *
+     * @param clazz the target class, or {@code null} for untyped loads
+     *            (disqualifies {@link CollectionPreSelectStrategy#NAVIGATE})
+     * @param data the initial query data
+     * @return pre-fetched targets keyed by record ID, or {@code null} when the
+     *         strategy is {@link CollectionPreSelectStrategy#NONE}
+     */
+    private Map<Long, Map<String, Set<Object>>> resolveLinkCollections(
+            @Nullable Class<? extends Record> clazz,
+            Map<Long, Map<String, Set<Object>>> data) {
+        return resolveLinkedCollections(clazz, false, data.keySet(), data);
+    }
+
+    /**
+     * Resolve destination {@link Record} data for {@link Collection
+     * Collection&lt;Record&gt;} fields using class hierarchy navigation paths.
+     *
+     * @param clazz the target class, or {@code null} for untyped loads
+     * @param data the initial query data
+     * @param ids the record IDs for navigation
+     * @return pre-fetched targets keyed by record ID, or {@code null}
+     */
+    private Map<Long, Map<String, Set<Object>>> resolveLinkCollectionsHierarchy(
+            @Nullable Class<? extends Record> clazz,
+            Map<Long, Map<String, Set<Object>>> data, Set<Long> ids) {
+        return resolveLinkedCollections(clazz, true, ids, data);
+    }
+
+    /**
+     * Dispatch link collection resolution based on the configured
+     * {@link #collectionPreSelectStrategy}.
+     * <p>
+     * When {@code hierarchy} is {@code true}, navigate paths are resolved for
+     * {@code clazz} and all its descendants; otherwise, only for {@code clazz}
+     * itself.
+     * </p>
+     *
+     * @param clazz the target class, or {@code null} for untyped loads
+     *            (disqualifies {@link CollectionPreSelectStrategy#NAVIGATE})
+     * @param hierarchy if {@code true}, resolve navigate paths across the full
+     *            class hierarchy; if {@code false}, resolve for {@code clazz}
+     *            alone
+     * @param navigateIds the record IDs to pass to {@code navigate()}
+     * @param data the initial query data (used by
+     *            {@link CollectionPreSelectStrategy#BULK_SELECT BULK_SELECT} to
+     *            discover {@link Link} targets)
+     * @return pre-fetched targets keyed by record ID, or {@code null}
+     */
+    @SuppressWarnings("deprecation")
+    private Map<Long, Map<String, Set<Object>>> resolveLinkedCollections(
+            @Nullable Class<? extends Record> clazz, boolean hierarchy,
+            Set<Long> navigateIds, Map<Long, Map<String, Set<Object>>> data) {
+        if(data.isEmpty()) {
+            return null;
+        }
+        Set<String> navigatePaths = null;
+        if(clazz != null) {
+            navigatePaths = hierarchy
+                    ? getNavigatePathsForClassHierarchyIfSupported(clazz)
+                    : getNavigatePathsForClassIfSupported(clazz);
+        }
+        if(navigatePaths != null) {
+            Concourse concourse = connections.request();
+            try {
+                return concourse.navigate(navigatePaths, navigateIds);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
+            Concourse concourse = connections.request();
+            try {
+                return prefetchLinks(concourse, data);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        else {
+            // NONE — each linked record is fetched individually
+            return null;
+        }
     }
 
     /**
@@ -2069,6 +2293,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private boolean disablePreSelectLinkedRecords = false;
         private List<Map.Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
+        private CollectionPreSelectStrategy collectionPreSelectStrategy = null;
 
         /**
          * Build the configured {@link Runway} and return the instance.
@@ -2092,6 +2317,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             if(disablePreSelectLinkedRecords) {
                 Reflection.set("supportsPreSelectLinkedRecords", false, db); // (authorized)
+                collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
+            }
+            if(collectionPreSelectStrategy != null) {
+                db.collectionPreSelectStrategy = collectionPreSelectStrategy;
             }
 
             // Initialize save notification components if a listener is provided
@@ -2156,6 +2385,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         @Deprecated
         public Builder cache(Cache<Long, Record> cache) {
+            return this;
+        }
+
+        /**
+         * Set the strategy for pre-selecting data for {@link Collection
+         * Collection&lt;Record&gt;} fields.
+         * <p>
+         * The default is {@link CollectionPreSelectStrategy#NONE}.
+         * </p>
+         *
+         * @param strategy the {@link CollectionPreSelectStrategy} to use
+         * @return this builder
+         */
+        public Builder collectionPreSelectStrategy(
+                CollectionPreSelectStrategy strategy) {
+            this.collectionPreSelectStrategy = strategy;
             return this;
         }
 
@@ -2398,11 +2643,87 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Properties about this {@link Runway} instance.
+     * Properties about this {@link Runway} instance that support post-build
+     * configuration and inspection.
      *
      * @author Jeff Nelson
      */
     public class Properties {
+
+        /**
+         * Return the current {@link CollectionPreSelectStrategy} for this
+         * {@link Runway} instance.
+         *
+         * @return the {@link CollectionPreSelectStrategy}
+         */
+        public CollectionPreSelectStrategy collectionPreSelectStrategy() {
+            return collectionPreSelectStrategy;
+        }
+
+        /**
+         * Set the {@link CollectionPreSelectStrategy} for this {@link Runway}
+         * instance.
+         *
+         * @param strategy the {@link CollectionPreSelectStrategy} to use
+         * @return this {@link Properties} for chaining
+         */
+        public Properties collectionPreSelectStrategy(
+                CollectionPreSelectStrategy strategy) {
+            collectionPreSelectStrategy = strategy;
+            return this;
+        }
+
+        /**
+         * Register a listener that will be called <strong>after</strong> any
+         * {@link Record} of the specified {@code type} (or a subclass) is
+         * successfully saved.
+         * <p>
+         * The new listener is chained with any previously registered listeners
+         * &mdash; it does not replace them.
+         * </p>
+         *
+         * @param type the {@link Record} type (or superclass) to listen for
+         * @param listener a consumer that processes saved {@link Record
+         *            Records} of the specified type
+         * @return this {@link Properties} for chaining
+         */
+        @SuppressWarnings("unchecked")
+        public <T extends Record> Properties onSave(Class<T> type,
+                Consumer<T> listener) {
+            ensureSaveNotificationInfrastructure();
+            Consumer<Record> previous = saveListener;
+            saveListener = record -> {
+                if(type.isAssignableFrom(record.getClass())) {
+                    try {
+                        ((Consumer<Record>) (Consumer<?>) listener)
+                                .accept(record);
+                    }
+                    catch (Exception e) {
+                        // Swallow to match builder behavior
+                    }
+                }
+                if(previous != null) {
+                    previous.accept(record);
+                }
+            };
+            return this;
+        }
+
+        /**
+         * Register a listener that will be called <strong>after</strong> any
+         * {@link Record} is successfully saved.
+         * <p>
+         * This is equivalent to calling {@link #onSave(Class, Consumer)
+         * onSave(Record.class, listener)}.
+         * </p>
+         *
+         * @param listener a consumer that processes saved {@link Record
+         *            Records}
+         * @return this {@link Properties} for chaining
+         */
+        public Properties onSave(Consumer<Record> listener) {
+            return onSave(Record.class, listener);
+        }
 
         /**
          * Return {@code true} if this {@link Runway} client and the underlying
