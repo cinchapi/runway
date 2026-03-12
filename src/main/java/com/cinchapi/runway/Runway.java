@@ -381,7 +381,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The strategy for pre-selecting data for {@link Collection
      * Collection&lt;Record&gt;} fields.
      */
-    CollectionPreSelectStrategy collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
+    private CollectionPreSelectStrategy collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
 
     /**
      * A queue of records that have been successfully saved and are waiting for
@@ -1079,52 +1079,34 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Register a listener that will be called <strong>after</strong> any
      * {@link Record} of the specified {@code type} (or a subclass) is
      * successfully saved.
-     * <p>
-     * Unlike the {@link Builder#onSave(Class, Consumer) builder method}, this
-     * can be called after the {@link Runway} instance has been constructed. The
-     * new listener is chained with any previously registered listeners &mdash;
-     * it does not replace them.
-     * </p>
      *
      * @param type the {@link Record} type (or superclass) to listen for
      * @param listener a consumer that processes saved {@link Record Records} of
      *            the specified type
      * @return this for chaining
+     * @deprecated Use {@link Properties#onSave(Class, Consumer)} via
+     *             {@link #properties()} instead.
      */
-    @SuppressWarnings("unchecked")
+    @Deprecated
     public <T extends Record> Runway onSave(Class<T> type,
             Consumer<T> listener) {
-        ensureSaveNotificationInfrastructure();
-        Consumer<Record> previous = saveListener;
-        saveListener = record -> {
-            if(type.isAssignableFrom(record.getClass())) {
-                try {
-                    ((Consumer<Record>) (Consumer<?>) listener).accept(record);
-                }
-                catch (Exception e) {
-                    // Swallow to match builder behavior
-                }
-            }
-            if(previous != null) {
-                previous.accept(record);
-            }
-        };
+        properties().onSave(type, listener);
         return this;
     }
 
     /**
      * Register a listener that will be called <strong>after</strong> any
      * {@link Record} is successfully saved.
-     * <p>
-     * This is equivalent to calling {@link #onSave(Class, Consumer)
-     * onSave(Record.class, listener)}.
-     * </p>
      *
      * @param listener a consumer that processes saved {@link Record Records}
      * @return this for chaining
+     * @deprecated Use {@link Properties#onSave(Consumer)} via
+     *             {@link #properties()} instead.
      */
+    @Deprecated
     public Runway onSave(Consumer<Record> listener) {
-        return onSave(Record.class, listener);
+        properties().onSave(Record.class, listener);
+        return this;
     }
 
     /**
@@ -2661,11 +2643,87 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Properties about this {@link Runway} instance.
+     * Properties about this {@link Runway} instance that support post-build
+     * configuration and inspection.
      *
      * @author Jeff Nelson
      */
     public class Properties {
+
+        /**
+         * Return the current {@link CollectionPreSelectStrategy} for this
+         * {@link Runway} instance.
+         *
+         * @return the {@link CollectionPreSelectStrategy}
+         */
+        public CollectionPreSelectStrategy collectionPreSelectStrategy() {
+            return collectionPreSelectStrategy;
+        }
+
+        /**
+         * Set the {@link CollectionPreSelectStrategy} for this {@link Runway}
+         * instance.
+         *
+         * @param strategy the {@link CollectionPreSelectStrategy} to use
+         * @return this {@link Properties} for chaining
+         */
+        public Properties collectionPreSelectStrategy(
+                CollectionPreSelectStrategy strategy) {
+            collectionPreSelectStrategy = strategy;
+            return this;
+        }
+
+        /**
+         * Register a listener that will be called <strong>after</strong> any
+         * {@link Record} of the specified {@code type} (or a subclass) is
+         * successfully saved.
+         * <p>
+         * The new listener is chained with any previously registered listeners
+         * &mdash; it does not replace them.
+         * </p>
+         *
+         * @param type the {@link Record} type (or superclass) to listen for
+         * @param listener a consumer that processes saved {@link Record
+         *            Records} of the specified type
+         * @return this {@link Properties} for chaining
+         */
+        @SuppressWarnings("unchecked")
+        public <T extends Record> Properties onSave(Class<T> type,
+                Consumer<T> listener) {
+            ensureSaveNotificationInfrastructure();
+            Consumer<Record> previous = saveListener;
+            saveListener = record -> {
+                if(type.isAssignableFrom(record.getClass())) {
+                    try {
+                        ((Consumer<Record>) (Consumer<?>) listener)
+                                .accept(record);
+                    }
+                    catch (Exception e) {
+                        // Swallow to match builder behavior
+                    }
+                }
+                if(previous != null) {
+                    previous.accept(record);
+                }
+            };
+            return this;
+        }
+
+        /**
+         * Register a listener that will be called <strong>after</strong> any
+         * {@link Record} is successfully saved.
+         * <p>
+         * This is equivalent to calling {@link #onSave(Class, Consumer)
+         * onSave(Record.class, listener)}.
+         * </p>
+         *
+         * @param listener a consumer that processes saved {@link Record
+         *            Records}
+         * @return this {@link Properties} for chaining
+         */
+        public Properties onSave(Consumer<Record> listener) {
+            return onSave(Record.class, listener);
+        }
 
         /**
          * Return {@code true} if this {@link Runway} client and the underlying

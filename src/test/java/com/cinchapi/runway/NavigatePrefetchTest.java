@@ -553,8 +553,10 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Lock lock = new Lock(ImmutableList.of(new Dock("one"), new Dock("two"),
                 new Dock("three")));
         lock.save();
-        CollectionPreSelectStrategy previous = runway.collectionPreSelectStrategy;
-        runway.collectionPreSelectStrategy = CollectionPreSelectStrategy.BULK_SELECT;
+        CollectionPreSelectStrategy previous = runway.properties()
+                .collectionPreSelectStrategy();
+        runway.properties().collectionPreSelectStrategy(
+                CollectionPreSelectStrategy.BULK_SELECT);
         try {
             Lock loaded = runway.load(Lock.class, lock.id());
             Assert.assertEquals(3, loaded.docks.size());
@@ -565,7 +567,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(dockValues.contains("three"));
         }
         finally {
-            runway.collectionPreSelectStrategy = previous;
+            runway.properties().collectionPreSelectStrategy(previous);
         }
     }
 
@@ -594,8 +596,10 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Vessel vessel = new Vessel(port,
                 ImmutableList.of(new Cargo("grain", 100)));
         vessel.save();
-        CollectionPreSelectStrategy previous = runway.collectionPreSelectStrategy;
-        runway.collectionPreSelectStrategy = CollectionPreSelectStrategy.BULK_SELECT;
+        CollectionPreSelectStrategy previous = runway.properties()
+                .collectionPreSelectStrategy();
+        runway.properties().collectionPreSelectStrategy(
+                CollectionPreSelectStrategy.BULK_SELECT);
         try {
             Vessel loaded = runway.load(Vessel.class, vessel.id());
             Assert.assertNotNull(loaded.home);
@@ -605,7 +609,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(100, loaded.cargo.get(0).weight);
         }
         finally {
-            runway.collectionPreSelectStrategy = previous;
+            runway.properties().collectionPreSelectStrategy(previous);
         }
     }
 
@@ -633,15 +637,17 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Node b = new Node("beta");
         a.friends.add(b);
         a.save();
-        CollectionPreSelectStrategy previous = runway.collectionPreSelectStrategy;
-        runway.collectionPreSelectStrategy = CollectionPreSelectStrategy.BULK_SELECT;
+        CollectionPreSelectStrategy previous = runway.properties()
+                .collectionPreSelectStrategy();
+        runway.properties().collectionPreSelectStrategy(
+                CollectionPreSelectStrategy.BULK_SELECT);
         try {
             Node loaded = runway.load(Node.class, a.id());
             Assert.assertEquals(1, loaded.friends.size());
             Assert.assertEquals("beta", loaded.friends.get(0).label);
         }
         finally {
-            runway.collectionPreSelectStrategy = previous;
+            runway.properties().collectionPreSelectStrategy(previous);
         }
     }
 
@@ -675,8 +681,10 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Lock lock = new Lock(ImmutableList.of(new Dock("one"), new Dock("two"),
                 new Dock("three")));
         lock.save();
-        CollectionPreSelectStrategy previous = runway.collectionPreSelectStrategy;
-        runway.collectionPreSelectStrategy = CollectionPreSelectStrategy.NAVIGATE;
+        CollectionPreSelectStrategy previous = runway.properties()
+                .collectionPreSelectStrategy();
+        runway.properties().collectionPreSelectStrategy(
+                CollectionPreSelectStrategy.NAVIGATE);
         try {
             Lock loaded = runway.load(Lock.class, lock.id());
             Assert.assertEquals(3, loaded.docks.size());
@@ -687,7 +695,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(dockValues.contains("three"));
         }
         finally {
-            runway.collectionPreSelectStrategy = previous;
+            runway.properties().collectionPreSelectStrategy(previous);
         }
     }
 
@@ -720,7 +728,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
                 .build();
         try {
             Assert.assertEquals(CollectionPreSelectStrategy.BULK_SELECT,
-                    custom.collectionPreSelectStrategy);
+                    custom.properties().collectionPreSelectStrategy());
         }
         finally {
             custom.close();
@@ -750,7 +758,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
                 .disablePreSelectLinkedRecords().build();
         try {
             Assert.assertEquals(CollectionPreSelectStrategy.NONE,
-                    custom.collectionPreSelectStrategy);
+                    custom.properties().collectionPreSelectStrategy());
         }
         finally {
             custom.close();
@@ -786,7 +794,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
                 .disablePreSelectLinkedRecords().build();
         try {
             Assert.assertEquals(CollectionPreSelectStrategy.NONE,
-                    custom.collectionPreSelectStrategy);
+                    custom.properties().collectionPreSelectStrategy());
         }
         finally {
             custom.close();
@@ -823,7 +831,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
                 .build();
         try {
             Assert.assertEquals(CollectionPreSelectStrategy.NONE,
-                    custom.collectionPreSelectStrategy);
+                    custom.properties().collectionPreSelectStrategy());
         }
         finally {
             custom.close();
