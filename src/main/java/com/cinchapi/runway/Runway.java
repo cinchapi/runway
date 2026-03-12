@@ -381,8 +381,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The strategy for pre-selecting data for {@link Collection
      * Collection&lt;Record&gt;} fields.
      */
-    @VisibleForTesting
-    protected CollectionPreSelectStrategy collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
+    CollectionPreSelectStrategy collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
 
     /**
      * A queue of records that have been successfully saved and are waiting for
@@ -850,6 +849,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return gateway;
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> T load(Class<T> clazz, long id, Realms realms) {
         Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
@@ -887,7 +887,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 Map<String, Set<Object>> data = null;
                 Map<Long, Map<String, Set<Object>>> destinations = null;
-                if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
+                if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE) {
+                    Set<String> navigatePaths = getNavigatePathsForClassIfSupported(
+                            clazz);
+                    if(navigatePaths != null) {
+                        connection = ensureValidConnection(connection);
+                        destinations = connection.navigate(navigatePaths, id);
+                    }
+                }
+                else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
                     connection = ensureValidConnection(connection);
                     Set<String> paths = getPathsForClassIfSupported(clazz);
                     data = paths != null ? connection.select(paths, id)
@@ -2117,8 +2125,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollections(
             @Nullable Class<? extends Record> clazz,
             Map<Long, Map<String, Set<Object>>> data) {
-        return resolveLinkCollectionsPossibleHierarchy(clazz, false,
-                data.keySet(), data);
+        return resolveLinkedCollections(clazz, false, data.keySet(), data);
     }
 
     /**
@@ -2133,7 +2140,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollectionsHierarchy(
             @Nullable Class<? extends Record> clazz,
             Map<Long, Map<String, Set<Object>>> data, Set<Long> ids) {
-        return resolveLinkCollectionsPossibleHierarchy(clazz, true, ids, data);
+        return resolveLinkedCollections(clazz, true, ids, data);
     }
 
     /**
@@ -2157,7 +2164,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return pre-fetched destinations keyed by record ID, or {@code null}
      */
     @SuppressWarnings("deprecation")
-    private Map<Long, Map<String, Set<Object>>> resolveLinkCollectionsPossibleHierarchy(
+    private Map<Long, Map<String, Set<Object>>> resolveLinkedCollections(
             @Nullable Class<? extends Record> clazz, boolean hierarchy,
             Set<Long> navigateIds, Map<Long, Map<String, Set<Object>>> data) {
         if(data.isEmpty()) {
@@ -2404,9 +2411,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * Set the strategy for pre-selecting data for {@link Collection
          * Collection&lt;Record&gt;} fields.
          * <p>
-         * The default is {@link CollectionPreSelectStrategy#NAVIGATE} when the
-         * server supports it, and {@link CollectionPreSelectStrategy#NONE}
-         * otherwise.
+         * The default is {@link CollectionPreSelectStrategy#NONE}.
          * </p>
          *
          * @param strategy the {@link CollectionPreSelectStrategy} to use

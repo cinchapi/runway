@@ -646,6 +646,52 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     // ---------------------------------------------------------------
+    // NAVIGATE single-record load
+    // ---------------------------------------------------------------
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link CollectionPreSelectStrategy#NAVIGATE} correctly populates
+     * {@link java.util.Collection Collection&lt;Record&gt;} fields when loading
+     * a single {@link Record} via {@code runway.load(Class, id)}.
+     * <p>
+     * <strong>Start state:</strong> A {@link Lock} with three {@link Dock
+     * Docks} saved to the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save a {@link Lock} with three {@link Dock} elements.</li>
+     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE}.</li>
+     * <li>Load the {@link Lock} via single-record
+     * {@code runway.load(Lock.class, id)}.</li>
+     * <li>Verify each {@link Dock Dock's} value.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The loaded collection has three elements whose
+     * {@code dock} values match the originals.
+     */
+    @Test
+    public void testNavigateSingleRecordLoadPopulatesCollectionFields() {
+        Lock lock = new Lock(ImmutableList.of(new Dock("one"), new Dock("two"),
+                new Dock("three")));
+        lock.save();
+        CollectionPreSelectStrategy previous = runway.collectionPreSelectStrategy;
+        runway.collectionPreSelectStrategy = CollectionPreSelectStrategy.NAVIGATE;
+        try {
+            Lock loaded = runway.load(Lock.class, lock.id());
+            Assert.assertEquals(3, loaded.docks.size());
+            Set<String> dockValues = loaded.docks.stream().map(d -> d.dock)
+                    .collect(Collectors.toSet());
+            Assert.assertTrue(dockValues.contains("one"));
+            Assert.assertTrue(dockValues.contains("two"));
+            Assert.assertTrue(dockValues.contains("three"));
+        }
+        finally {
+            runway.collectionPreSelectStrategy = previous;
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Builder wiring
     // ---------------------------------------------------------------
 
@@ -738,6 +784,43 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
                 .collectionPreSelectStrategy(
                         CollectionPreSelectStrategy.NAVIGATE)
                 .disablePreSelectLinkedRecords().build();
+        try {
+            Assert.assertEquals(CollectionPreSelectStrategy.NONE,
+                    custom.collectionPreSelectStrategy);
+        }
+        finally {
+            custom.close();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway.Builder#disablePreSelectLinkedRecords()} overrides an
+     * explicit {@link CollectionPreSelectStrategy} even when the disable call
+     * comes <em>after</em> the explicit strategy in the builder chain.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Runway} calling
+     * {@link Runway.Builder#disablePreSelectLinkedRecords()} after
+     * {@link Runway.Builder#collectionPreSelectStrategy(CollectionPreSelectStrategy)
+     * collectionPreSelectStrategy(NAVIGATE)}.</li>
+     * <li>Assert the strategy is {@code NONE}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NONE} because the disable call takes
+     * precedence regardless of ordering.
+     */
+    @Test
+    public void testDisablePreSelectOverridesExplicitStrategyReverseOrder()
+            throws Exception {
+        Runway custom = Runway.builder().port(server.getClientPort())
+                .disablePreSelectLinkedRecords().collectionPreSelectStrategy(
+                        CollectionPreSelectStrategy.NAVIGATE)
+                .build();
         try {
             Assert.assertEquals(CollectionPreSelectStrategy.NONE,
                     custom.collectionPreSelectStrategy);

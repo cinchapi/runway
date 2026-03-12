@@ -431,12 +431,21 @@ public abstract class Record implements Comparable<Record> {
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
      *
-     * @param clazz
-     * @param id
-     * @param existing
-     * @param connections
-     * @param concourse
-     * @return the loaded Record
+     * @param clazz the {@link Record} class to instantiate
+     * @param id the record ID
+     * @param existing previously loaded {@link Record Records} used to break
+     *            cycles
+     * @param connections the {@link ConnectionPool} to use
+     * @param concourse the active {@link Concourse} connection
+     * @param runway the owning {@link Runway} instance
+     * @param data pre-loaded data for this record, or {@code null} to fetch
+     *            from the database
+     * @param prefix a key prefix for navigation-style nested keys, or
+     *            {@code null} for top-level loads
+     * @param destinations pre-fetched destination data keyed by record ID for
+     *            {@link Collection Collection&lt;Record&gt;} elements, or
+     *            {@code null}
+     * @return the loaded {@link Record}
      */
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
@@ -2003,7 +2012,10 @@ public abstract class Record implements Comparable<Record> {
      * @param existing
      * @param data data that is pre-loaded from {@code concourse}; this should
      *            only be provided from a trusted source
-     * @param prefix
+     * @param prefix a key prefix applied when {@code data} contains
+     *            navigation-style nested keys for this {@link Record} (e.g.,
+     *            {@code "company."} when this instance is a nested record
+     *            loaded from a parent's pre-selected data)
      * @param destinations pre-fetched destination {@link Record} data from
      *            {@code navigate()}, keyed by destination record ID; used to
      *            avoid individual DB fetches for {@link Collection

@@ -1,11 +1,11 @@
 # Changelog
 
-#### Version 1.12.1 (March 11, 2026)
+#### Version 1.13.0 (March 12, 2026)
 * **Configurable `CollectionPreSelectStrategy`**: Added `CollectionPreSelectStrategy`, a configurable enum that controls how `Runway` pre-selects data for `Collection<Record>` fields (e.g., `List<Dock>`, `Set<Node>`). Previously, loading a Record with a collection of N linked Records issued N individual `select()` calls — one per element — inside `convert()`. Three strategies are now available:
   * `NAVIGATE` — uses Concourse's `navigate()` API to batch-prefetch all destination Record data in a single call with snapshot atomicity. Requires `StaticAnalysis` class-aware path computation.
   * `BULK_SELECT` — scans loaded data for `Link` values and batch-fetches all discovered targets via `concourse.select(Set<Long>)`, repeating per depth level until all reachable Records are collected. Schema-agnostic — works for untyped loads without class-specific path computation.
   * `NONE` — the legacy N+1 behavior where each linked Record is fetched individually.
-  * Configure via `Runway.builder().collectionPreSelectStrategy(CollectionPreSelectStrategy.BULK_SELECT)`. Default is `NAVIGATE` when the server supports it.
+  * Configure via `Runway.builder().collectionPreSelectStrategy(CollectionPreSelectStrategy.BULK_SELECT)`. Default is `NONE`.
   * Works across all query pipelines: `load()`, `find()`, and bulk `load(Class)`.
   * Self-referential collections (e.g., `List<Node>` on `Node`) are handled with cycle detection to prevent infinite path expansion.
   * Mixed field types (single `Record` + `Collection<Record>`) work correctly — collection pre-select covers the collection while the existing pre-select path mechanism covers single fields.
