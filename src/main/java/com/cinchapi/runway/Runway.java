@@ -2118,8 +2118,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz the target class, or {@code null} for untyped loads
      *            (disqualifies {@link CollectionPreSelectStrategy#NAVIGATE})
      * @param data the initial query data
-     * @return pre-fetched targets keyed by record ID, or {@code null} when
-     *         the strategy is {@link CollectionPreSelectStrategy#NONE}
+     * @return pre-fetched targets keyed by record ID, or {@code null} when the
+     *         strategy is {@link CollectionPreSelectStrategy#NONE}
      */
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollections(
             @Nullable Class<? extends Record> clazz,

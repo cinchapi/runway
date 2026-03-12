@@ -204,8 +204,8 @@ public abstract class Record implements Comparable<Record> {
      *            encountered links
      * @param links a {@link Multimap} that represents encountered links as a
      *            mapping from the <strong>destination</strong> record to any
-     *            source record that links to it (e.g. the targets are
-     *            indexed to make it easy to look up all the parent nodes in the
+     *            source record that links to it (e.g. the targets are indexed
+     *            to make it easy to look up all the parent nodes in the
      *            document graph)
      * @return the {@link TypeAdapterFactory}
      */
