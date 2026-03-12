@@ -184,11 +184,11 @@ public abstract class Record implements Comparable<Record> {
     protected static <T extends Record> T load(Class<?> clazz, long id,
             ConcurrentMap<Long, Record> existing, ConnectionPool connections,
             Runway runway, @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Concourse concourse = connections.request();
         try {
             return load(clazz, id, existing, connections, concourse, runway,
-                    data, null, destinations);
+                    data, null, targets);
         }
         finally {
             connections.release(concourse);
@@ -204,7 +204,7 @@ public abstract class Record implements Comparable<Record> {
      *            encountered links
      * @param links a {@link Multimap} that represents encountered links as a
      *            mapping from the <strong>destination</strong> record to any
-     *            source record that links to it (e.g. the destinations are
+     *            source record that links to it (e.g. the targets are
      *            indexed to make it easy to look up all the parent nodes in the
      *            document graph)
      * @return the {@link TypeAdapterFactory}
@@ -442,7 +442,7 @@ public abstract class Record implements Comparable<Record> {
      *            from the database
      * @param prefix a key prefix for navigation-style nested keys, or
      *            {@code null} for top-level loads
-     * @param destinations pre-fetched destination data keyed by record ID for
+     * @param targets pre-fetched destination data keyed by record ID for
      *            {@link Collection Collection&lt;Record&gt;} elements, or
      *            {@code null}
      * @return the loaded {@link Record}
@@ -452,13 +452,13 @@ public abstract class Record implements Comparable<Record> {
             ConcurrentMap<Long, Record> existing, ConnectionPool connections,
             Concourse concourse, Runway runway,
             @Nullable Map<String, Set<Object>> data, String prefix,
-            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         T record = (T) newDefaultInstance(clazz, connections);
         setInternalFieldValue("id", id, record);
         setInternalFieldValue("waitingToBeDeleted", new LinkedHashSet<>(),
                 record);
         record.assign(runway);
-        record.load(concourse, existing, data, prefix, destinations);
+        record.load(concourse, existing, data, prefix, targets);
         record.onLoad();
         return record;
     }
@@ -2016,7 +2016,7 @@ public abstract class Record implements Comparable<Record> {
      *            navigation-style nested keys for this {@link Record} (e.g.,
      *            {@code "company."} when this instance is a nested record
      *            loaded from a parent's pre-selected data)
-     * @param destinations pre-fetched destination {@link Record} data from
+     * @param targets pre-fetched destination {@link Record} data from
      *            {@code navigate()}, keyed by destination record ID; used to
      *            avoid individual DB fetches for {@link Collection
      *            Collection&lt;Record&gt;} elements
@@ -2024,7 +2024,7 @@ public abstract class Record implements Comparable<Record> {
     @SuppressWarnings({ "rawtypes", "unchecked" })
     final void load(Concourse concourse, ConcurrentMap<Long, Record> existing,
             @Nullable Map<String, Set<Object>> data, @Nullable String prefix,
-            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Preconditions.checkState(id != NULL_ID);
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
@@ -2072,7 +2072,7 @@ public abstract class Record implements Comparable<Record> {
                         ArrayBuilder collector = ArrayBuilder.builder();
                         stored.forEach(item -> {
                             Object converted = convert(path, collectedType,
-                                    item, concourse, existing, destinations);
+                                    item, concourse, existing, targets);
                             if(converted != null) {
                                 collector.add(converted);
                             }
@@ -2130,13 +2130,13 @@ public abstract class Record implements Comparable<Record> {
                                 value = value == null
                                         ? load(type, id, existing, connections,
                                                 concourse, runway, data,
-                                                prepend, destinations)
+                                                prepend, targets)
                                         : value;
                             }
                         }
                         else if(first != null) {
                             value = convert(path, type, first, concourse,
-                                    existing, destinations);
+                                    existing, targets);
                         }
                     }
                     if(value != null) {
@@ -2634,7 +2634,7 @@ public abstract class Record implements Comparable<Record> {
     @SuppressWarnings({ "unchecked", "rawtypes" })
     private Object convert(String key, Class<?> type, Object stored,
             Concourse concourse, ConcurrentMap<Long, Record> alreadyLoaded,
-            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Object converted = null;
         if(Record.class.isAssignableFrom(type)
                 || type == DeferredReference.class) {
@@ -2646,8 +2646,8 @@ public abstract class Record implements Comparable<Record> {
                     converted = new DeferredReference(target, runway);
                 }
                 else {
-                    Map<String, Set<Object>> data = destinations != null
-                            ? destinations.get(target)
+                    Map<String, Set<Object>> data = targets != null
+                            ? targets.get(target)
                             : concourse.select(target);
                     Set<Object> sections = data.getOrDefault(SECTION_KEY,
                             ImmutableSet.of());
@@ -2661,7 +2661,7 @@ public abstract class Record implements Comparable<Record> {
                                 .getClassCasted(section);
                         converted = load(targetClass, target, alreadyLoaded,
                                 connections, concourse, runway, data, null,
-                                destinations);
+                                targets);
                     }
                 }
             }

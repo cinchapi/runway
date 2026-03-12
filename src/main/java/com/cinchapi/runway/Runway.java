@@ -227,10 +227,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             long id, ConcurrentMap<Long, Record> loaded,
             ConnectionPool connections, Runway runway,
             @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         try {
             return Record.load(clazz, id, loaded, connections, runway, data,
-                    destinations);
+                    targets);
         }
         catch (Exception e) {
             if(e instanceof InvalidRecordException) {
@@ -886,13 +886,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     }
                 }
                 Map<String, Set<Object>> data = null;
-                Map<Long, Map<String, Set<Object>>> destinations = null;
+                Map<Long, Map<String, Set<Object>>> targets = null;
                 if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE) {
                     Set<String> navigatePaths = getNavigatePathsForClassIfSupported(
                             clazz);
                     if(navigatePaths != null) {
                         connection = ensureValidConnection(connection);
-                        destinations = connection.navigate(navigatePaths, id);
+                        targets = connection.navigate(navigatePaths, id);
                     }
                 }
                 else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
@@ -903,9 +903,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     Map<Long, Map<String, Set<Object>>> seed = Maps
                             .newHashMap();
                     seed.put(id, data);
-                    destinations = prefetchLinks(connection, seed);
+                    targets = prefetchLinks(connection, seed);
                 }
-                return instantiate(clazz, id, data, destinations);
+                return instantiate(clazz, id, data, targets);
             }
             finally {
                 if(connection != null) {
@@ -1794,9 +1794,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             ConcurrentMap<Long, Record> loaded,
             @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
-                destinations);
+                targets);
     }
 
     /**
@@ -1822,9 +1822,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
-        return instantiate(clazz, id, new ConcurrentHashMap<>(), data,
-                destinations);
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        return instantiate(clazz, id, new ConcurrentHashMap<>(), data, targets);
     }
 
     /**
@@ -1856,7 +1855,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> T instantiate(long id,
             ConcurrentMap<Long, Record> loaded,
             @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         if(data == null) {
             // Since the desired class isn't specified, we must
             // prematurely select the record's data to determine it.
@@ -1872,7 +1871,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 .getLast(data.get(Record.SECTION_KEY));
         Class<T> clazz = Reflection.getClassCasted(section);
         return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
-                destinations);
+                targets);
     }
 
     /**
@@ -1902,8 +1901,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> T instantiate(long id,
             @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> destinations) {
-        return instantiate(id, new ConcurrentHashMap<>(), data, destinations);
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        return instantiate(id, new ConcurrentHashMap<>(), data, targets);
     }
 
     /**
@@ -1917,12 +1916,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Map<Long, Map<String, Set<Object>>> data) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        Map<Long, Map<String, Set<Object>>> destinations = resolveLinkCollections(
+        Map<Long, Map<String, Set<Object>>> targets = resolveLinkCollections(
                 clazz, data);
-        Map<Long, Map<String, Set<Object>>> $destinations = destinations;
+        Map<Long, Map<String, Set<Object>>> $targets = targets;
         Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
             return instantiate(clazz, entry.getKey(), loaded, entry.getValue(),
-                    $destinations);
+                    $targets);
         });
         return records;
     }
@@ -1962,12 +1961,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> instantiateAll(
             Map<Long, Map<String, Set<Object>>> data) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        Map<Long, Map<String, Set<Object>>> destinations = resolveLinkCollections(
+        Map<Long, Map<String, Set<Object>>> targets = resolveLinkCollections(
                 null, data);
-        Map<Long, Map<String, Set<Object>>> $destinations = destinations;
+        Map<Long, Map<String, Set<Object>>> $targets = targets;
         Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
             return instantiate(entry.getKey(), loaded, entry.getValue(),
-                    $destinations);
+                    $targets);
         });
         return records;
     }
@@ -2119,7 +2118,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz the target class, or {@code null} for untyped loads
      *            (disqualifies {@link CollectionPreSelectStrategy#NAVIGATE})
      * @param data the initial query data
-     * @return pre-fetched destinations keyed by record ID, or {@code null} when
+     * @return pre-fetched targets keyed by record ID, or {@code null} when
      *         the strategy is {@link CollectionPreSelectStrategy#NONE}
      */
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollections(
@@ -2135,7 +2134,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz the target class, or {@code null} for untyped loads
      * @param data the initial query data
      * @param ids the record IDs for navigation
-     * @return pre-fetched destinations keyed by record ID, or {@code null}
+     * @return pre-fetched targets keyed by record ID, or {@code null}
      */
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollectionsHierarchy(
             @Nullable Class<? extends Record> clazz,
@@ -2161,7 +2160,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param data the initial query data (used by
      *            {@link CollectionPreSelectStrategy#BULK_SELECT BULK_SELECT} to
      *            discover {@link Link} targets)
-     * @return pre-fetched destinations keyed by record ID, or {@code null}
+     * @return pre-fetched targets keyed by record ID, or {@code null}
      */
     @SuppressWarnings("deprecation")
     private Map<Long, Map<String, Set<Object>>> resolveLinkedCollections(
