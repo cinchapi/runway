@@ -682,7 +682,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * The key that references a records id in Concourse.
      */
-    private static final String IDENTIFIER_KEY = "$id$";
+    /* package */ static final String IDENTIFIER_KEY = "$id$";
 
     /**
      * The prefix applied to a key provided to the
@@ -4969,6 +4969,17 @@ public abstract class Record implements Comparable<Record> {
                 Realms realms) {
             if(tracked.runway != null) {
                 return tracked.runway.loadAny(clazz, realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
+            }
+        }
+
+        @Override
+        public Selections select(Selection<?>... selections) {
+            if(tracked.runway != null) {
+                return tracked.runway.select(selections);
             }
             else {
                 throw new UnsupportedOperationException(

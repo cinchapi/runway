@@ -42,6 +42,8 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Realms;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.Selection;
+import com.cinchapi.runway.Selections;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
@@ -818,6 +820,12 @@ public interface Audience extends DatabaseInterface {
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Realms realms) {
         return $db().loadAny(clazz, $checkIfVisible(), realms);
+    }
+
+    @Override
+    public default Selections select(
+            Selection<?>... selections) {
+        return $db().select(selections);
     }
 
 }

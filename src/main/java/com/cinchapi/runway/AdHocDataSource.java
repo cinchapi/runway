@@ -15,6 +15,9 @@
  */
 package com.cinchapi.runway;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
+
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -325,6 +328,50 @@ public class AdHocDataSource<T extends AdHocRecord> implements
         else {
             return ImmutableSet.of();
         }
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Override
+    public Selections select(Selection<?>... selections) {
+        checkArgument(selections.length > 0,
+                "At least one Selection is required");
+        for (Selection<?> selection : selections) {
+            checkState(
+                    selection.state == Selection.State.PENDING,
+                    "Selection has already been submitted");
+            selection.state = Selection.State.SUBMITTED;
+            Selection raw = selection;
+            if(selection.isById()) {
+                raw.result = load(selection.clazz, selection.id,
+                        selection.realms);
+            }
+            else if(selection.criteria != null) {
+                raw.result = selection.any
+                        ? findAny(selection.clazz,
+                                selection.criteria,
+                                selection.order,
+                                selection.page,
+                                selection.realms)
+                        : find(selection.clazz,
+                                selection.criteria,
+                                selection.order,
+                                selection.page,
+                                selection.realms);
+            }
+            else {
+                raw.result = selection.any
+                        ? loadAny(selection.clazz,
+                                selection.order,
+                                selection.page,
+                                selection.realms)
+                        : load(selection.clazz,
+                                selection.order,
+                                selection.page,
+                                selection.realms);
+            }
+            selection.state = Selection.State.FINISHED;
+        }
+        return new Selections(selections);
     }
 
     /**

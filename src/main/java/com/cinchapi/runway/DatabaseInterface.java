@@ -1053,13 +1053,39 @@ public interface DatabaseInterface {
             Realms realms);
 
     /**
-     * Create a {@link Gateway} instance that provides intelligent routing to
-     * the appropriate database operations based on the parameters provided. The
-     * gateway simplifies database access by automatically choosing between
-     * {@link #find} and {@link #load} operations.
+     * Execute one or more {@link Selection Selections} and return a
+     * {@link Selections} wrapper for positional access to the
+     * results.
+     * <p>
+     * This is the foundational read primitive. All
+     * {@link #find(Class, Criteria) find} and
+     * {@link #load(Class) load} methods delegate to this method
+     * internally.
+     * </p>
+     *
+     * @param selections the {@link Selection Selections} to
+     *            execute
+     * @return a {@link Selections} wrapper for positional access
+     * @throws IllegalStateException if any {@link Selection} has
+     *             already been submitted
+     */
+    public Selections select(Selection<?>... selections);
+
+    /**
+     * Create a {@link Gateway} instance that provides intelligent
+     * routing to the appropriate database operations based on the
+     * parameters provided. The gateway simplifies database access
+     * by automatically choosing between {@link #find} and
+     * {@link #load} operations.
      *
      * @return a new gateway instance for this database interface
+     * @deprecated Use
+     *             {@link Selection#of(Class, Criteria, Order, Page, Realms)}
+     *             or
+     *             {@link Selection#ofAny(Class, Criteria, Order, Page, Realms)}
+     *             with {@link #select(Selection...)} instead.
      */
+    @Deprecated
     public default Gateway gateway() {
         return Gateway.to(this);
     }
