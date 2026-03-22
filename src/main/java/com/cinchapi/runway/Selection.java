@@ -50,30 +50,6 @@ import com.cinchapi.concourse.lang.sort.Order;
 public class Selection<T extends Record> {
 
     /**
-     * The lifecycle state of a {@link Selection}.
-     */
-    enum State {
-
-        /**
-         * The {@link Selection} has been created but not yet submitted for
-         * execution.
-         */
-        PENDING,
-
-        /**
-         * The {@link Selection} has been submitted to a {@link Runway} and is
-         * being processed.
-         */
-        SUBMITTED,
-
-        /**
-         * The {@link Selection} has finished execution and results are
-         * available.
-         */
-        FINISHED
-    }
-
-    /**
      * Create a {@link Selection} that loads all {@link Record Records} of the
      * given {@code clazz}.
      *
@@ -82,18 +58,6 @@ public class Selection<T extends Record> {
      */
     public static <T extends Record> Selection<T> of(Class<T> clazz) {
         return new Selection<>(clazz, null, null, false);
-    }
-
-    /**
-     * Create a {@link Selection} that loads a single {@link Record} of the
-     * given {@code clazz} by its {@code id}.
-     *
-     * @param clazz the {@link Record} class
-     * @param id the record ID
-     * @return a new {@link Selection}
-     */
-    public static <T extends Record> Selection<T> of(Class<T> clazz, long id) {
-        return new Selection<>(clazz, id, null, false);
     }
 
     /**
@@ -107,6 +71,36 @@ public class Selection<T extends Record> {
     public static <T extends Record> Selection<T> of(Class<T> clazz,
             Criteria criteria) {
         return new Selection<>(clazz, null, criteria, false);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} matching the {@code criteria}, sorted by {@code order}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param order the sort order
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Criteria criteria, Order order) {
+        return of(clazz, criteria, order, null, null);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} matching the {@code criteria}, sorted by {@code order} and
+     * paginated by {@code page}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param order the sort order
+     * @param page the pagination
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Criteria criteria, Order order, Page page) {
+        return of(clazz, criteria, order, page, null);
     }
 
     /**
@@ -140,6 +134,260 @@ public class Selection<T extends Record> {
     }
 
     /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} matching the {@code criteria}, sorted by {@code order},
+     * within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param order the sort order
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Criteria criteria, Order order, Realms realms) {
+        return of(clazz, criteria, order, null, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} matching the {@code criteria}, paginated by {@code page}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param page the pagination
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Criteria criteria, Page page) {
+        return of(clazz, criteria, null, page, null);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} matching the {@code criteria}, paginated by {@code page}
+     * and sorted by {@code order}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param page the pagination
+     * @param order the sort order
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Criteria criteria, Page page, Order order) {
+        return of(clazz, criteria, order, page, null);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} matching the {@code criteria}, paginated by {@code page},
+     * sorted by {@code order}, within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param page the pagination
+     * @param order the sort order
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Criteria criteria, Page page, Order order, Realms realms) {
+        return of(clazz, criteria, order, page, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} matching the {@code criteria}, paginated by {@code page},
+     * within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param page the pagination
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Criteria criteria, Page page, Realms realms) {
+        return of(clazz, criteria, null, page, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} matching the {@code criteria}, within the specified
+     * {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        return of(clazz, criteria, (Order) null, null, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that loads a single {@link Record} of the
+     * given {@code clazz} by its {@code id}.
+     *
+     * @param clazz the {@link Record} class
+     * @param id the record ID
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz, long id) {
+        return new Selection<>(clazz, id, null, false);
+    }
+
+    /**
+     * Create a {@link Selection} that loads a single {@link Record} of the
+     * given {@code clazz} by its {@code id} within the specified
+     * {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param id the record ID
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz, long id,
+            Realms realms) {
+        Selection<T> selection = new Selection<>(clazz, id, null, false);
+        selection.realms = realms;
+        return selection;
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz}, sorted by {@code order}.
+     *
+     * @param clazz the {@link Record} class
+     * @param order the sort order
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Order order) {
+        return of(clazz, null, order, null, null);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz}, sorted by {@code order} and paginated by
+     * {@code page}.
+     *
+     * @param clazz the {@link Record} class
+     * @param order the sort order
+     * @param page the pagination
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Order order, Page page) {
+        return of(clazz, null, order, page, null);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz}, sorted by {@code order} and paginated by
+     * {@code page}, within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param order the sort order
+     * @param page the pagination
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Order order, Page page, Realms realms) {
+        return of(clazz, null, order, page, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz}, sorted by {@code order}, within the specified
+     * {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param order the sort order
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Order order, Realms realms) {
+        return of(clazz, null, order, null, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz}, paginated by {@code page}.
+     *
+     * @param clazz the {@link Record} class
+     * @param page the pagination
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Page page) {
+        return of(clazz, null, null, page, null);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz}, paginated by {@code page} and sorted by
+     * {@code order}.
+     *
+     * @param clazz the {@link Record} class
+     * @param page the pagination
+     * @param order the sort order
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz, Page page,
+            Order order) {
+        return of(clazz, null, order, page, null);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz}, paginated by {@code page}, sorted by {@code order},
+     * within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param page the pagination
+     * @param order the sort order
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz, Page page,
+            Order order, Realms realms) {
+        return of(clazz, null, order, page, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz}, paginated by {@code page}, within the specified
+     * {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param page the pagination
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz, Page page,
+            Realms realms) {
+        return of(clazz, null, null, page, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz} within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            Realms realms) {
+        return of(clazz, null, (Order) null, null, realms);
+    }
+
+    /**
      * Create a {@link Selection} that loads all {@link Record Records} of the
      * given {@code clazz} and its descendants.
      *
@@ -148,19 +396,6 @@ public class Selection<T extends Record> {
      */
     public static <T extends Record> Selection<T> ofAny(Class<T> clazz) {
         return new Selection<>(clazz, null, null, true);
-    }
-
-    /**
-     * Create a {@link Selection} that loads a single {@link Record} of the
-     * given {@code clazz} or its descendants by {@code id}.
-     *
-     * @param clazz the {@link Record} class
-     * @param id the record ID
-     * @return a new {@link Selection}
-     */
-    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
-            long id) {
-        return new Selection<>(clazz, id, null, true);
     }
 
     /**
@@ -174,6 +409,37 @@ public class Selection<T extends Record> {
     public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
             Criteria criteria) {
         return new Selection<>(clazz, null, criteria, true);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} and its descendants matching the {@code criteria}, sorted
+     * by {@code order}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param order the sort order
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Criteria criteria, Order order) {
+        return ofAny(clazz, criteria, order, null, null);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} and its descendants matching the {@code criteria}, sorted
+     * by {@code order} and paginated by {@code page}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param order the sort order
+     * @param page the pagination
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Criteria criteria, Order order, Page page) {
+        return ofAny(clazz, criteria, order, page, null);
     }
 
     /**
@@ -204,6 +470,247 @@ public class Selection<T extends Record> {
             selection.realms = realms;
         }
         return selection;
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} and its descendants matching the {@code criteria}, sorted
+     * by {@code order}, within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param order the sort order
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Criteria criteria, Order order, Realms realms) {
+        return ofAny(clazz, criteria, order, null, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} and its descendants matching the {@code criteria},
+     * paginated by {@code page}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param page the pagination
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Criteria criteria, Page page) {
+        return ofAny(clazz, criteria, null, page, null);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} and its descendants matching the {@code criteria},
+     * paginated by {@code page} and sorted by {@code order}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param page the pagination
+     * @param order the sort order
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Criteria criteria, Page page, Order order) {
+        return ofAny(clazz, criteria, order, page, null);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} and its descendants matching the {@code criteria},
+     * paginated by {@code page}, sorted by {@code order}, within the specified
+     * {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param page the pagination
+     * @param order the sort order
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Criteria criteria, Page page, Order order, Realms realms) {
+        return ofAny(clazz, criteria, order, page, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} and its descendants matching the {@code criteria},
+     * paginated by {@code page}, within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param page the pagination
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Criteria criteria, Page page, Realms realms) {
+        return ofAny(clazz, criteria, null, page, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that finds {@link Record Records} of the given
+     * {@code clazz} and its descendants matching the {@code criteria}, within
+     * the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param criteria the query criteria
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        return ofAny(clazz, criteria, (Order) null, null, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that loads a single {@link Record} of the
+     * given {@code clazz} or its descendants by {@code id}.
+     *
+     * @param clazz the {@link Record} class
+     * @param id the record ID
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            long id) {
+        return new Selection<>(clazz, id, null, true);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz} and its descendants, sorted by {@code order}.
+     *
+     * @param clazz the {@link Record} class
+     * @param order the sort order
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Order order) {
+        return ofAny(clazz, null, order, null, null);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz} and its descendants, sorted by {@code order} and
+     * paginated by {@code page}.
+     *
+     * @param clazz the {@link Record} class
+     * @param order the sort order
+     * @param page the pagination
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Order order, Page page) {
+        return ofAny(clazz, null, order, page, null);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz} and its descendants, sorted by {@code order} and
+     * paginated by {@code page}, within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param order the sort order
+     * @param page the pagination
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Order order, Page page, Realms realms) {
+        return ofAny(clazz, null, order, page, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz} and its descendants, sorted by {@code order}, within
+     * the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param order the sort order
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Order order, Realms realms) {
+        return ofAny(clazz, null, order, null, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz} and its descendants, paginated by {@code page}.
+     *
+     * @param clazz the {@link Record} class
+     * @param page the pagination
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Page page) {
+        return ofAny(clazz, null, null, page, null);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz} and its descendants, paginated by {@code page} and
+     * sorted by {@code order}.
+     *
+     * @param clazz the {@link Record} class
+     * @param page the pagination
+     * @param order the sort order
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Page page, Order order) {
+        return ofAny(clazz, null, order, page, null);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz} and its descendants, paginated by {@code page},
+     * sorted by {@code order}, within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param page the pagination
+     * @param order the sort order
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Page page, Order order, Realms realms) {
+        return ofAny(clazz, null, order, page, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz} and its descendants, paginated by {@code page},
+     * within the specified {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param page the pagination
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Page page, Realms realms) {
+        return ofAny(clazz, null, null, page, realms);
+    }
+
+    /**
+     * Create a {@link Selection} that loads all {@link Record Records} of the
+     * given {@code clazz} and its descendants within the specified
+     * {@code realms}.
+     *
+     * @param clazz the {@link Record} class
+     * @param realms the {@link Realms} filter
+     * @return a new {@link Selection}
+     */
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            Realms realms) {
+        return ofAny(clazz, null, (Order) null, null, realms);
     }
 
     /**
@@ -343,6 +850,15 @@ public class Selection<T extends Record> {
     }
 
     /**
+     * Return {@code true} if this is an ID-based selection.
+     *
+     * @return {@code true} if selecting by ID
+     */
+    boolean isById() {
+        return id != null;
+    }
+
+    /**
      * Return {@code true} if this {@link Selection} can be combined with other
      * {@link Selection Selections} in a single database call. A
      * {@link Selection} is combinable if it has no server-side ordering or
@@ -355,12 +871,27 @@ public class Selection<T extends Record> {
     }
 
     /**
-     * Return {@code true} if this is an ID-based selection.
-     *
-     * @return {@code true} if selecting by ID
+     * The lifecycle state of a {@link Selection}.
      */
-    boolean isById() {
-        return id != null;
+    enum State {
+
+        /**
+         * The {@link Selection} has been created but not yet submitted for
+         * execution.
+         */
+        PENDING,
+
+        /**
+         * The {@link Selection} has been submitted to a {@link Runway} and is
+         * being processed.
+         */
+        SUBMITTED,
+
+        /**
+         * The {@link Selection} has finished execution and results are
+         * available.
+         */
+        FINISHED
     }
 
 }
