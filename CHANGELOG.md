@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.14.0 (TBD)
+* **Batched Selection API**: Added `Selection`, `Selections`, and `Runway#select(Selection...)` to support batching multiple data retrieval operations into a single optimized call.
+
 #### Version 1.13.0 (March 12, 2026)
 * **Configurable `CollectionPreSelectStrategy`**: Added `CollectionPreSelectStrategy`, a configurable enum that controls how `Runway` pre-selects data for `Collection<Record>` fields (e.g., `List<Dock>`, `Set<Node>`). Previously, loading a Record with a collection of N linked Records issued N individual `select()` calls — one per element — inside `convert()`. Three strategies are now available:
   * `NAVIGATE` — uses Concourse's `navigate()` API to batch-prefetch all destination Record data in a single call with snapshot atomicity. Requires `StaticAnalysis` class-aware path computation.

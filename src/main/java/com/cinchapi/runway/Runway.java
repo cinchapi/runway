@@ -1242,7 +1242,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Initialize the thread-local reserve for caching pre-fetched query
      * results. Subsequent {@link #select(Selection, Selection...)} calls will
      * cache results so that {@link #find} and {@link #load} can recall them
-     * instead of querying the database.
+     * instead of querying the database. A reserved result is consumed once
+     * &mdash; the first matching {@code find} or {@code load} call retrieves
+     * and removes it from the reserve.
      * <p>
      * If a reserve already exists on the current thread, it is cleared and
      * replaced.
