@@ -112,18 +112,18 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  * </p>
  * <h2>Ad Hoc Data Sources</h2>
  * <p>
- * An {@link AdHocDataSource} can be
- * {@link #attach(AdHocDataSource) attached} to a {@link Runway} to
- * transparently contribute records to {@link #find} and {@link #load} results
- * alongside those stored in the database. Attached sources remain active until
- * they are {@link #detach(AdHocDataSource) detached}.
+ * An {@link AdHocDataSource} can be {@link #attach(AdHocDataSource) attached}
+ * to a {@link Runway} to transparently contribute records to {@link #find} and
+ * {@link #load} results alongside those stored in the database. Attached
+ * sources remain active until they are {@link #detach(AdHocDataSource)
+ * detached}.
  * </p>
  *
  * <h2>Reserving Query Results</h2>
  * <p>
- * {@link Runway} supports pre-fetching query results
- * for later consumption on the same thread. Call {@link #reserve()} to open a
- * reservation scope, then execute {@link Selection Selections} via
+ * {@link Runway} supports pre-fetching query results for later consumption on
+ * the same thread. Call {@link #reserve()} to open a reservation scope, then
+ * execute {@link Selection Selections} via
  * {@link #select(Selection, Selection...)}. The results are cached so that
  * subsequent {@link #find} and {@link #load} calls with matching query
  * signatures return the cached data instead of querying the database again.
@@ -1451,20 +1451,41 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // prepare/submit
             List<Selection<?>> isolated = new ArrayList<>();
             List<Selection<?>> combinable = new ArrayList<>();
-            BuildableState combined = null;
-            for (Selection<?> selection : selections) {
+            Set<String> combinedClasses = Sets.newHashSet();
+            outer: for (Selection<?> selection : selections) {
                 if(selection.isCombinable()) {
-                    checkState(selection.state == Selection.State.PENDING,
-                            "Selection has already been submitted");
-                    Criteria criteria = buildSelectionCriteria(selection);
-                    combined = combined == null
-                            ? Criteria.where().group(criteria)
-                            : combined.or().group(criteria);
-                    combinable.add(selection);
+                    // NOTE: #demux partitions combined results by class name
+                    // only, so same-class selections with different criteria
+                    // would each receive the union. Isolate conflicting ones to
+                    // ensure correct per-criteria filtering.
+                    Set<String> classes = selection.any
+                            ? StaticAnalysis.instance()
+                                    .getClassHierarchy(selection.clazz).stream()
+                                    .map(Class::getName)
+                                    .collect(Collectors.toSet())
+                            : ImmutableSet.of(selection.clazz.getName());
+                    boolean conflict = false;
+                    for (String clazz : classes) {
+                        if(combinedClasses.contains(clazz)) {
+                            conflict = true;
+                            break;
+                        }
+                    }
+                    if(!conflict) {
+                        combinedClasses.addAll(classes);
+                        combinable.add(selection);
+                        continue outer;
+                    }
                 }
-                else {
-                    isolated.add(selection);
-                }
+                isolated.add(selection);
+            }
+            BuildableState combined = null;
+            for (Selection<?> selection : combinable) {
+                checkState(selection.state == Selection.State.PENDING,
+                        "Selection has already been submitted");
+                Criteria criteria = buildSelectionCriteria(selection);
+                combined = combined == null ? Criteria.where().group(criteria)
+                        : combined.or().group(criteria);
             }
             if(combined != null) {
                 Concourse concourse = connections.request();
@@ -1766,12 +1787,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
-            // NOTE: This filters by class name only, not by
-            // each selection's individual criteria. If two
-            // combinable selections target the same class
-            // with different criteria, both will receive the
-            // union of results. Callers should avoid combining
-            // same-class selections until this is addressed.
             Map<Long, Map<String, Set<Object>>> filtered = Maps
                     .newLinkedHashMap();
             Set<String> classNames;

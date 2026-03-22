@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway;
 
+import static com.google.common.base.Preconditions.checkState;
+
 /**
  * A {@link Selections} provides positional access to the results of a
  * {@link DatabaseInterface#select(Selection...)} batch operation.
@@ -80,10 +82,11 @@ public final class Selections {
      *
      * @param <T> the expected result type
      * @return the next result
-     * @throws IndexOutOfBoundsException if all results have already been
-     *             consumed
+     * @throws IllegalStateException if all results have already been consumed
      */
     public <T> T next() {
+        checkState(cursor < selections.length,
+                "All results have been consumed");
         return get(cursor++);
     }
 

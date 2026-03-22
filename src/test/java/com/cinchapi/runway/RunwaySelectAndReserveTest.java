@@ -529,6 +529,53 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(1, gadgets.size());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that two combinable {@link Selection
+     * Selections} targeting the same class with different criteria each receive
+     * only their matching {@link Record Records}, not the union.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Widget Widgets} with varying
+     * scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link Widget Widgets} with scores 10, 50, 80, and
+     * 100.</li>
+     * <li>Create two criteria-based {@link Selection Selections} for
+     * {@link Widget}: one for scores &gt; 50, another for scores &lt; 20.</li>
+     * <li>Execute both in a single {@link Runway#select(Selection...)}
+     * call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first {@link Selection} contains only
+     * {@link Widget Widgets} with scores &gt; 50 and the second contains only
+     * {@link Widget Widgets} with scores &lt; 20.
+     */
+    @Test
+    public void testSameClassDifferentCriteriaNotMerged() {
+        new Widget("low", 10).save();
+        new Widget("mid", 50).save();
+        new Widget("high", 80).save();
+        new Widget("top", 100).save();
+        Criteria highScores = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(50).build();
+        Criteria lowScores = Criteria.where().key("score")
+                .operator(Operator.LESS_THAN).value(20).build();
+        Selection<Widget> highSel = Selection.of(Widget.class, highScores);
+        Selection<Widget> lowSel = Selection.of(Widget.class, lowScores);
+        runway.select(highSel, lowSel);
+        Set<Widget> highResults = highSel.get();
+        Set<Widget> lowResults = lowSel.get();
+        Assert.assertEquals(2, highResults.size());
+        for (Widget w : highResults) {
+            Assert.assertTrue(w.score > 50);
+        }
+        Assert.assertEquals(1, lowResults.size());
+        for (Widget w : lowResults) {
+            Assert.assertTrue(w.score < 20);
+        }
+    }
+
     // ---- Inner Record types for testing ----
 
     /**

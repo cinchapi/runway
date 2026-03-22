@@ -215,6 +215,7 @@ public class Selection<T extends Record> {
      * The record ID for single-record lookups, or {@code null} if this is not
      * an ID-based selection.
      */
+    @Nullable
     final Long id;
 
     /**
@@ -350,7 +351,7 @@ public class Selection<T extends Record> {
      * @return {@code true} if this {@link Selection} is combinable
      */
     boolean isCombinable() {
-        return order == null && page == null || isById();
+        return (order == null && page == null) || isById();
     }
 
     /**
