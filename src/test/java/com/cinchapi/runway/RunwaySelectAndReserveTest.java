@@ -30,7 +30,7 @@ import com.cinchapi.concourse.util.Random;
  *
  * @author Jeff Nelson
  */
-public class SelectionTest extends RunwayBaseClientServerTest {
+public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that a single by-ID {@link Selection} loads
@@ -228,32 +228,6 @@ public class SelectionTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link Selection#submitTo(Runway)}
-     * works as an alternative to {@link Runway#select(Selection...)}.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Widget}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Create and save a {@link Widget}.</li>
-     * <li>Create a {@link Selection} and call {@code submitTo(runway)}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The result is the same as calling
-     * {@code runway.select(sel)}.
-     */
-    @Test
-    public void testSubmitTo() {
-        Widget w = new Widget("submitted");
-        w.save();
-        Selection<Widget> sel = Selection.of(Widget.class, w.id());
-        sel.submitTo(runway);
-        Widget loaded = sel.get();
-        Assert.assertNotNull(loaded);
-        Assert.assertEquals("submitted", loaded.name);
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that calling {@link Selection#get()} before
      * execution throws {@link IllegalStateException}.
      * <p>
@@ -394,6 +368,165 @@ public class SelectionTest extends RunwayBaseClientServerTest {
         runway.select(sel);
         Set<Widget> results = sel.get();
         Assert.assertTrue(results.isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that after
+     * {@link Runway#select(Selection...)}, a subsequent {@link Runway#find}
+     * with the same parameters returns the reserved result without hitting the
+     * database again.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Widget Widgets} with varying
+     * scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link Widget Widgets}.</li>
+     * <li>Create a criteria-based {@link Selection} and execute it via
+     * {@link Runway#select(Selection...)}.</li>
+     * <li>Call {@link Runway#find} with the same parameters.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result from {@code find()} is the exact
+     * same object reference as the {@link Selection Selection's} result,
+     * proving it came from the reserve.
+     */
+    @Test
+    public void testReserveHitOnFindAfterSelect() {
+        new Widget("low", 10).save();
+        new Widget("high", 80).save();
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(50).build();
+        Selection<Widget> sel = Selection.of(Widget.class, criteria);
+        runway.select(sel);
+        Set<Widget> fromSelect = sel.get();
+        Set<Widget> fromFind = runway.find(Widget.class, criteria);
+        Assert.assertSame(fromSelect, fromFind);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that after
+     * {@link Runway#select(Selection...)}, a subsequent
+     * {@link Runway#load(Class, long)} with the same ID returns the reserved
+     * result.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Widget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save a {@link Widget}.</li>
+     * <li>Create an ID-based {@link Selection} and execute it via
+     * {@link Runway#select(Selection...)}.</li>
+     * <li>Call {@link Runway#load(Class, long)} with the same ID.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result from {@code load()} is the exact
+     * same object reference as the {@link Selection Selection's} result.
+     */
+    @Test
+    public void testReserveHitOnLoadAfterSelect() {
+        Widget w = new Widget("reserved");
+        w.save();
+        Selection<Widget> sel = Selection.of(Widget.class, w.id());
+        runway.select(sel);
+        Widget fromSelect = sel.get();
+        Widget fromLoad = runway.load(Widget.class, w.id());
+        Assert.assertSame(fromSelect, fromLoad);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#unreserve()} causes
+     * subsequent {@code find()} calls to go to the database instead of
+     * returning the reserved result.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Widget Widgets} with a
+     * pre-populated reserve.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link Widget Widgets}.</li>
+     * <li>Execute a {@link Selection} to populate the reserve.</li>
+     * <li>Call {@link Runway#unreserve()}.</li>
+     * <li>Call {@link Runway#find} with the same parameters.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After clearing the reserve, {@code find()}
+     * returns a different object reference (fresh from the database), though
+     * with equivalent content.
+     */
+    @Test
+    public void testClearReserveCausesDbHit() {
+        new Widget("w1", 10).save();
+        new Widget("w2", 80).save();
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(50).build();
+        Selection<Widget> sel = Selection.of(Widget.class, criteria);
+        runway.select(sel);
+        Set<Widget> fromSelect = sel.get();
+        runway.unreserve();
+        Set<Widget> fromFind = runway.find(Widget.class, criteria);
+        Assert.assertNotSame(fromSelect, fromFind);
+        Assert.assertEquals(fromSelect.size(), fromFind.size());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that after
+     * {@link Runway#select(Selection...)}, a subsequent
+     * {@link Runway#load(Class)} with the same parameters returns the reserved
+     * result.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Widget Widgets}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link Widget Widgets}.</li>
+     * <li>Create a load-all {@link Selection} and execute it via
+     * {@link Runway#select(Selection...)}.</li>
+     * <li>Call {@link Runway#load(Class)} with the same parameters.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result from {@code load()} is the exact
+     * same object reference as the {@link Selection Selection's} result.
+     */
+    @Test
+    public void testReserveHitOnLoadAllAfterSelect() {
+        new Widget("a").save();
+        new Widget("b").save();
+        Selection<Widget> sel = Selection.of(Widget.class);
+        runway.select(sel);
+        Set<Widget> fromSelect = sel.get();
+        Set<Widget> fromLoad = runway.load(Widget.class);
+        Assert.assertSame(fromSelect, fromLoad);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Selections#next()} returns
+     * results in submission order.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Widget Widgets} and
+     * {@link Gadget Gadgets}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save records of both types.</li>
+     * <li>Execute a multi-select.</li>
+     * <li>Call {@link Selections#next()} twice.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> First call returns {@link Widget Widgets},
+     * second returns {@link Gadget Gadgets}.
+     */
+    @Test
+    public void testNextReturnsResultsInOrder() {
+        new Widget("w1").save();
+        new Gadget("g1", "red").save();
+        Selection<Widget> widgetSel = Selection.of(Widget.class);
+        Selection<Gadget> gadgetSel = Selection.of(Gadget.class);
+        Selections results = runway.select(widgetSel, gadgetSel);
+        Set<Widget> widgets = results.next();
+        Set<Gadget> gadgets = results.next();
+        Assert.assertEquals(1, widgets.size());
+        Assert.assertEquals(1, gadgets.size());
     }
 
     // ---- Inner Record types for testing ----

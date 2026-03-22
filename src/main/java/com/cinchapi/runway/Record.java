@@ -4976,17 +4976,6 @@ public abstract class Record implements Comparable<Record> {
             }
         }
 
-        @Override
-        public Selections select(Selection<?>... selections) {
-            if(tracked.runway != null) {
-                return tracked.runway.select(selections);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
     }
 
     /**

@@ -15,7 +15,6 @@
  */
 package com.cinchapi.runway;
 
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 
 import javax.annotation.Nullable;
@@ -111,33 +110,27 @@ public class Selection<T extends Record> {
     }
 
     /**
-     * Create a {@link Selection} for the given {@code clazz}
-     * with all optional parameters. The {@link Selection} is
-     * automatically configured based on which arguments are
-     * {@code null}:
+     * Create a {@link Selection} for the given {@code clazz} with all optional
+     * parameters. The {@link Selection} is automatically configured based on
+     * which arguments are {@code null}:
      * <ul>
-     * <li>If {@code criteria} is non-null, this is a
-     * criteria-based query (find). Otherwise, it is a
-     * load-all.</li>
-     * <li>{@code order}, {@code page}, and {@code realms}
-     * are applied when non-null.</li>
+     * <li>If {@code criteria} is non-null, this is a criteria-based query
+     * (find). Otherwise, it is a load-all.</li>
+     * <li>{@code order}, {@code page}, and {@code realms} are applied when
+     * non-null.</li>
      * </ul>
      *
      * @param clazz the {@link Record} class
-     * @param criteria the query criteria, or {@code null}
-     *            for load-all
+     * @param criteria the query criteria, or {@code null} for load-all
      * @param order the sort order, or {@code null}
      * @param page the pagination, or {@code null}
-     * @param realms the {@link Realms} filter, or
-     *            {@code null} for all realms
+     * @param realms the {@link Realms} filter, or {@code null} for all realms
      * @return a new {@link Selection}
      */
-    public static <T extends Record> Selection<T> of(
-            Class<T> clazz, @Nullable Criteria criteria,
-            @Nullable Order order, @Nullable Page page,
-            @Nullable Realms realms) {
-        Selection<T> selection = new Selection<>(clazz, null,
-                criteria, false);
+    public static <T extends Record> Selection<T> of(Class<T> clazz,
+            @Nullable Criteria criteria, @Nullable Order order,
+            @Nullable Page page, @Nullable Realms realms) {
+        Selection<T> selection = new Selection<>(clazz, null, criteria, false);
         selection.order = order;
         selection.page = page;
         if(realms != null) {
@@ -184,33 +177,27 @@ public class Selection<T extends Record> {
     }
 
     /**
-     * Create a {@link Selection} for the given {@code clazz}
-     * and its descendants with all optional parameters. The
-     * {@link Selection} is automatically configured based on
-     * which arguments are {@code null}:
+     * Create a {@link Selection} for the given {@code clazz} and its
+     * descendants with all optional parameters. The {@link Selection} is
+     * automatically configured based on which arguments are {@code null}:
      * <ul>
-     * <li>If {@code criteria} is non-null, this is a
-     * criteria-based query (find). Otherwise, it is a
-     * load-all.</li>
-     * <li>{@code order}, {@code page}, and {@code realms}
-     * are applied when non-null.</li>
+     * <li>If {@code criteria} is non-null, this is a criteria-based query
+     * (find). Otherwise, it is a load-all.</li>
+     * <li>{@code order}, {@code page}, and {@code realms} are applied when
+     * non-null.</li>
      * </ul>
      *
      * @param clazz the {@link Record} class
-     * @param criteria the query criteria, or {@code null}
-     *            for load-all
+     * @param criteria the query criteria, or {@code null} for load-all
      * @param order the sort order, or {@code null}
      * @param page the pagination, or {@code null}
-     * @param realms the {@link Realms} filter, or
-     *            {@code null} for all realms
+     * @param realms the {@link Realms} filter, or {@code null} for all realms
      * @return a new {@link Selection}
      */
-    public static <T extends Record> Selection<T> ofAny(
-            Class<T> clazz, @Nullable Criteria criteria,
-            @Nullable Order order, @Nullable Page page,
-            @Nullable Realms realms) {
-        Selection<T> selection = new Selection<>(clazz, null,
-                criteria, true);
+    public static <T extends Record> Selection<T> ofAny(Class<T> clazz,
+            @Nullable Criteria criteria, @Nullable Order order,
+            @Nullable Page page, @Nullable Realms realms) {
+        Selection<T> selection = new Selection<>(clazz, null, criteria, true);
         selection.order = order;
         selection.page = page;
         if(realms != null) {
@@ -305,8 +292,7 @@ public class Selection<T extends Record> {
      */
     @SuppressWarnings("unchecked")
     public <R> R get() {
-        checkState(state == State.FINISHED,
-                "Selection has not been executed");
+        checkState(state == State.FINISHED, "Selection has not been executed");
         return (R) result;
     }
 
@@ -356,28 +342,15 @@ public class Selection<T extends Record> {
     }
 
     /**
-     * Submit this {@link Selection} to the given {@link Runway} for execution.
-     * This is a convenience alternative to calling
-     * {@link Runway#select(Selection...)}.
+     * Return {@code true} if this {@link Selection} can be combined with other
+     * {@link Selection Selections} in a single database call. A
+     * {@link Selection} is combinable if it has no server-side ordering or
+     * pagination, or if it is an ID-based lookup.
      *
-     * @param runway the {@link Runway} to execute against
-     * @return a {@link Selections} containing the results
-     * @throws IllegalStateException if this {@link Selection} has already been
-     *             submitted
+     * @return {@code true} if this {@link Selection} is combinable
      */
-    public Selections submitTo(Runway runway) {
-        return runway.select(this);
-    }
-
-    /**
-     * Return {@code true} if this {@link Selection} requires server-side
-     * ordering or pagination, which prevents it from being combined with other
-     * {@link Selection Selections} in a single database call.
-     *
-     * @return {@code true} if this {@link Selection} is isolated
-     */
-    boolean isIsolated() {
-        return order != null || page != null;
+    boolean isCombinable() {
+        return order == null && page == null || isById();
     }
 
     /**

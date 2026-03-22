@@ -150,11 +150,6 @@ public class AttachmentScope implements DatabaseInterface, AutoCloseable {
     }
 
     @Override
-    public Selections select(Selection<?>... selections) {
-        return runway.select(selections);
-    }
-
-    @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Page page, Realms realms) {
         return runway.load(clazz, order, page, realms);

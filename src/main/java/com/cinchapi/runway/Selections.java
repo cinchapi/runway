@@ -17,12 +17,12 @@ package com.cinchapi.runway;
 
 /**
  * A {@link Selections} provides positional access to the results of a
- * {@link Runway#select(Selection...)} batch operation.
+ * {@link DatabaseInterface#select(Selection...)} batch operation.
  * <p>
  * Results can be retrieved by index, corresponding to the order in which
  * {@link Selection Selections} were passed to
- * {@link Runway#select(Selection...)}. The return type is unchecked &mdash; the
- * caller is responsible for casting to the appropriate type.
+ * {@link DatabaseInterface#select(Selection...)}. The return type is unchecked
+ * &mdash; the caller is responsible for casting to the appropriate type.
  * </p>
  *
  * @author Jeff Nelson
@@ -50,23 +50,20 @@ public final class Selections {
     }
 
     /**
-     * Return the result of the {@link Selection} at the given
-     * {@code index}.
+     * Return the result of the {@link Selection} at the given {@code index}.
      * <p>
-     * The return type is unchecked. For ID-based selections, this
-     * returns a single {@link Record} (or {@code null}). For
-     * criteria-based or load-all selections, this returns a
-     * {@link java.util.Set Set} of {@link Record Records}.
+     * The return type is unchecked. For ID-based selections, this returns a
+     * single {@link Record} (or {@code null}). For criteria-based or load-all
+     * selections, this returns a {@link java.util.Set Set} of {@link Record
+     * Records}.
      * </p>
      *
      * @param <T> the expected result type
-     * @param index the zero-based index of the
-     *            {@link Selection}
+     * @param index the zero-based index of the {@link Selection}
      * @return the result
-     * @throws IndexOutOfBoundsException if the index is out of
-     *             range
-     * @throws IllegalStateException if the {@link Selection} has
-     *             not finished execution
+     * @throws IndexOutOfBoundsException if the index is out of range
+     * @throws IllegalStateException if the {@link Selection} has not finished
+     *             execution
      */
     @SuppressWarnings("unchecked")
     public <T> T get(int index) {
@@ -74,26 +71,24 @@ public final class Selections {
     }
 
     /**
-     * Return the result of the next {@link Selection} in
-     * submission order.
+     * Return the result of the next {@link Selection} in submission order.
      * <p>
-     * Each call advances an internal cursor, so successive calls
-     * return successive results. This enables idiomatic
-     * sequential access without tracking indices.
+     * Each call advances an internal cursor, so successive calls return
+     * successive results. This enables idiomatic sequential access without
+     * tracking indices.
      * </p>
      *
      * @param <T> the expected result type
      * @return the next result
-     * @throws IndexOutOfBoundsException if all results have
-     *             already been consumed
+     * @throws IndexOutOfBoundsException if all results have already been
+     *             consumed
      */
     public <T> T next() {
         return get(cursor++);
     }
 
     /**
-     * Return the number of {@link Selection Selections} in this
-     * batch.
+     * Return the number of {@link Selection Selections} in this batch.
      *
      * @return the selection count
      */
