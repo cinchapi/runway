@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import java.util.AbstractMap;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
@@ -54,9 +56,11 @@ import javax.annotation.Nullable;
 import com.cinchapi.ccl.syntax.ConditionTree;
 import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.common.base.Array;
+import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.concurrent.ExecutorRaceService;
+import com.cinchapi.common.concurrent.JoinableExecutorService;
 import com.cinchapi.common.function.TriConsumer;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -83,6 +87,7 @@ import com.cinchapi.runway.util.Pagination;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
+import com.google.common.base.Preconditions;
 import com.google.common.cache.Cache;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -105,6 +110,27 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  * {@link Record#save() saving} is disabled in which case the application must
  * use the {@link #save(Record...)} method provided by this controller.
  * </p>
+ * <h2>Ad Hoc Data Sources</h2>
+ * <p>
+ * An {@link AdHocDataSource} can be {@link #attach(AdHocDataSource) attached}
+ * to a {@link Runway} to transparently contribute records to {@link #find} and
+ * {@link #load} results alongside those stored in the database. Attached
+ * sources remain active until they are {@link #detach(AdHocDataSource)
+ * detached}.
+ * </p>
+ *
+ * <h2>Reserving Query Results</h2>
+ * <p>
+ * {@link Runway} supports pre-fetching query results for later consumption on
+ * the same thread. Call {@link #reserve()} to open a reservation scope, then
+ * execute {@link Selection Selections} via
+ * {@link #select(Selection, Selection...)}. The results are cached so that
+ * subsequent {@link #find} and {@link #load} calls with matching query
+ * signatures return the cached data instead of querying the database again.
+ * Call {@link #unreserve()} to release the cached data when the reservation
+ * scope ends.
+ * </p>
+ *
  *
  * @author Jeff Nelson
  */
@@ -192,6 +218,33 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         return components;
+    }
+
+    /**
+     * Build the database {@link Criteria} for a single {@link Selection} to be
+     * used in a combined multi-select query.
+     *
+     * @param selection the {@link Selection}
+     * @return the {@link Criteria}
+     */
+    private static Criteria buildSelectionCriteria(Selection<?> selection) {
+        Criteria base;
+        if(selection.isById()) {
+            base = Criteria.where().key(Record.IDENTIFIER_KEY)
+                    .operator(Operator.EQUALS).value(selection.id).build();
+        }
+        else if(selection.criteria != null) {
+            base = selection.any
+                    ? $Criteria.accrossClassHierachy(selection.clazz,
+                            selection.criteria)
+                    : $Criteria.withinClass(selection.clazz,
+                            selection.criteria);
+        }
+        else {
+            base = selection.any ? $Criteria.forClassHierarchy(selection.clazz)
+                    : $Criteria.forClass(selection.clazz);
+        }
+        return $Criteria.amongRealms(selection.realms, base);
     }
 
     /**
@@ -404,6 +457,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The cached {@link Gateway} instance that provides intelligent routing to
      * database operations. Lazily initialized when first accessed.
      */
+    @SuppressWarnings("deprecation")
     private Gateway gateway = null;
 
     /**
@@ -416,6 +470,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * </p>
      */
     private final ThreadLocal<Set<AdHocDataSource<?>>> attached = new ThreadLocal<>();
+
+    /**
+     * Thread-local cache of pre-fetched query results. When
+     * {@link #select(Selection, Selection...)} executes selections, results are
+     * stored here keyed by their query signature. Subsequent calls to
+     * {@link #find} or {@link #load} check the reserve before going to the
+     * database. Initialized by {@link #reserve()} and cleared by
+     * {@link #unreserve()}.
+     */
+    private final ThreadLocal<Map<Reservation, Object>> reservations = new ThreadLocal<>();
+
+    /**
+     * The executor for running isolated selections concurrently.
+     */
+    private final JoinableExecutorService selector;
 
     /**
      * Construct a new instance.
@@ -449,6 +518,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         finally {
             connections.release(concourse);
         }
+        this.selector = JoinableExecutorService
+                .create(Runtime.getRuntime().availableProcessors());
     }
 
     /**
@@ -512,6 +583,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Record.PINNED_RUNWAY_INSTANCE = null;
         }
         executor.shutdownNow();
+        selector.shutdownNow();
         if(saveNotificationExecutor != null) {
             saveNotificationExecutor.shutdownNow();
         }
@@ -613,6 +685,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
             Order order, Page page, Realms realms) {
+        Reservation reservation = Reservation.builder(clazz).criteria(criteria)
+                .order(order).page(page).realms(realms).build();
+        Set<T> reserved = recall(reservation);
+        if(reserved != null) {
+            return reserved;
+        }
         Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
         if(!sources.isEmpty()) {
             if(sources.size() == 1) {
@@ -693,6 +771,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Order order, Page page, Realms realms) {
+        Reservation reservation = Reservation.builder(clazz).criteria(criteria)
+                .order(order).page(page).realms(realms).any(true).build();
+        Set<T> reserved = recall(reservation);
+        if(reserved != null) {
+            return reserved;
+        }
         Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
         if(!sources.isEmpty()) {
             if(sources.size() == 1) {
@@ -841,6 +925,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public Gateway gateway() {
         if(gateway == null) {
@@ -852,6 +937,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> T load(Class<T> clazz, long id, Realms realms) {
+        Reservation reservation = Reservation.builder(clazz).id(id)
+                .realms(realms).build();
+        T reserved = recall(reservation);
+        if(reserved != null) {
+            return reserved;
+        }
         Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
         if(!sources.isEmpty()) {
             for (AdHocDataSource<?> source : sources) {
@@ -919,6 +1010,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Page page, Realms realms) {
+        Reservation reservation = Reservation.builder(clazz).order(order)
+                .page(page).realms(realms).build();
+        Set<T> reserved = recall(reservation);
+        if(reserved != null) {
+            return reserved;
+        }
         Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
         if(!sources.isEmpty()) {
             if(sources.size() == 1) {
@@ -993,6 +1090,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
             Page page, Realms realms) {
+        Reservation reservation = Reservation.builder(clazz).order(order)
+                .page(page).realms(realms).any(true).build();
+        Set<T> reserved = recall(reservation);
+        if(reserved != null) {
+            return reserved;
+        }
         Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
         if(!sources.isEmpty()) {
             if(sources.size() == 1) {
@@ -1133,6 +1236,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public Properties properties() {
         return new Properties();
+    }
+
+    /**
+     * Initialize the thread-local reserve for caching pre-fetched query
+     * results. Subsequent {@link #select(Selection, Selection...)} calls will
+     * cache results so that {@link #find} and {@link #load} can recall them
+     * instead of querying the database. A reserved result is consumed once
+     * &mdash; the first matching {@code find} or {@code load} call retrieves
+     * and removes it from the reserve.
+     * <p>
+     * If a reserve already exists on the current thread, it is cleared and
+     * replaced.
+     * <p>
+     * Call {@link #unreserve()} when the reserve is no longer needed to release
+     * cached data.
+     */
+    public void reserve() {
+        reservations.set(new HashMap<>());
     }
 
     /**
@@ -1315,6 +1436,97 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         finally {
             connections.release(concourse);
         }
+    }
+
+    @Override
+    public Selections select(Selection<?> first, Selection<?>... others) {
+        Selection<?>[] selections = ArrayBuilder.<Selection<?>> builder()
+                .add(first).add(others).build();
+        if(selections.length == 1) {
+            Selection<?> selection = selections[0];
+            Selections result = DatabaseInterface.super.select(selection);
+            reserve(selection);
+            return result;
+        }
+        else {
+            // TODO: Check in the server version is 1.0.0+ and, if so, use
+            // prepare/submit
+            List<Selection<?>> isolated = new ArrayList<>();
+            List<Selection<?>> combinable = new ArrayList<>();
+            Set<String> combinedClasses = Sets.newHashSet();
+            outer: for (Selection<?> selection : selections) {
+                if(selection.isCombinable()) {
+                    // NOTE: #demux partitions combined results by class name
+                    // only, so same-class selections with different criteria
+                    // would each receive the union. Isolate conflicting ones to
+                    // ensure correct per-criteria filtering.
+                    Set<String> classes = selection.any
+                            ? StaticAnalysis.instance()
+                                    .getClassHierarchy(selection.clazz).stream()
+                                    .map(Class::getName)
+                                    .collect(Collectors.toSet())
+                            : ImmutableSet.of(selection.clazz.getName());
+                    boolean conflict = false;
+                    for (String clazz : classes) {
+                        if(combinedClasses.contains(clazz)) {
+                            conflict = true;
+                            break;
+                        }
+                    }
+                    if(!conflict) {
+                        combinedClasses.addAll(classes);
+                        combinable.add(selection);
+                        continue outer;
+                    }
+                }
+                isolated.add(selection);
+            }
+            BuildableState combined = null;
+            for (Selection<?> selection : combinable) {
+                checkState(selection.state == Selection.State.PENDING,
+                        "Selection has already been submitted");
+                Criteria criteria = buildSelectionCriteria(selection);
+                combined = combined == null ? Criteria.where().group(criteria)
+                        : combined.or().group(criteria);
+            }
+            if(combined != null) {
+                Concourse concourse = connections.request();
+                try {
+                    Map<Long, Map<String, Set<Object>>> data = this
+                            .read(concourse, null, combined, null, null);
+                    for (Selection<?> selection : combinable) {
+                        demux(selection, data);
+                    }
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            if(!isolated.isEmpty()) {
+                Runnable[] tasks = new Runnable[isolated.size()];
+                for (int i = 0; i < isolated.size(); i++) {
+                    Selection<?> selection = isolated.get(i);
+                    tasks[i] = () -> {
+                        DatabaseInterface.super.select(selection);
+                    };
+                }
+                selector.join(tasks);
+
+                // Reservation cannot happen in the async threads above because
+                // it needs access to the #reservations thread local.
+                for (Selection<?> selection : isolated) {
+                    reserve(selection);
+                }
+            }
+            return new Selections(selections);
+        }
+    }
+
+    /**
+     * Clear the thread-local reserve, releasing all reserved results.
+     */
+    public void unreserve() {
+        reservations.remove();
     }
 
     /**
@@ -1549,6 +1761,61 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return Arrays.stream(keys).map(key -> concourse.search(key, query))
                 .flatMap(Set::stream).filter(filter)
                 .collect(Collectors.toSet());
+    }
+
+    /**
+     * Partition the results of a combined multi-select query back into a single
+     * {@link Selection} and populate its result.
+     *
+     * @param selection the {@link Selection} to populate
+     * @param data the combined query results
+     */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private void demux(Selection<?> selection,
+            Map<Long, Map<String, Set<Object>>> data) {
+        Object result = null;
+        if(selection.isById()) {
+            Map<String, Set<Object>> recordData = data.get(selection.id);
+            if(recordData != null) {
+                Set<Object> sections = recordData.get(Record.SECTION_KEY);
+                if(sections != null) {
+                    String section = (String) Iterables.getLast(sections);
+                    Class actualClass = Reflection.getClassCasted(section);
+                    if(selection.clazz.isAssignableFrom(actualClass)) {
+                        result = instantiate(actualClass, selection.id,
+                                recordData, null);
+                    }
+                }
+            }
+        }
+        else {
+            Map<Long, Map<String, Set<Object>>> filtered = Maps
+                    .newLinkedHashMap();
+            Set<String> classNames;
+            if(selection.any) {
+                classNames = StaticAnalysis.instance()
+                        .getClassHierarchy(selection.clazz).stream()
+                        .map(Class::getName).collect(Collectors.toSet());
+            }
+            else {
+                classNames = ImmutableSet.of(selection.clazz.getName());
+            }
+            for (Map.Entry<Long, Map<String, Set<Object>>> entry : data
+                    .entrySet()) {
+                Set<Object> sections = entry.getValue().get(Record.SECTION_KEY);
+                if(sections != null) {
+                    String section = (String) Iterables.getLast(sections);
+                    if(classNames.contains(section)) {
+                        filtered.put(entry.getKey(), entry.getValue());
+                    }
+                }
+            }
+            result = selection.any ? instantiateAll(filtered)
+                    : instantiateAll((Class) selection.clazz, filtered);
+        }
+        selection.result = result;
+        selection.state = Selection.State.FINISHED;
+        reserve(selection);
     }
 
     /**
@@ -2090,6 +2357,38 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         return data;
+    }
+
+    /**
+     * Look up a previously reserved result by query signature.
+     *
+     * @param reservation the query signature
+     * @return the reserved result, or {@code null} on miss
+     */
+    @SuppressWarnings("unchecked")
+    private <T> T recall(Reservation reservation) {
+        Map<Reservation, Object> reservations = this.reservations.get();
+        return reservations != null ? (T) reservations.remove(reservation)
+                : null;
+    }
+
+    /**
+     * Store a {@link Selection Selection's} result in the thread-local reserve.
+     *
+     * @param selection the {@link Selection} to reserve
+     */
+    private void reserve(Selection<?> selection) {
+        Preconditions.checkState(selection.state == Selection.State.FINISHED);
+        Reservation reservation = Reservation.builder(selection.clazz)
+                .id(selection.id).criteria(selection.criteria)
+                .order(selection.order).page(selection.page)
+                .realms(selection.realms).any(selection.any).build();
+        Map<Reservation, Object> reservations = this.reservations.get();
+        if(reservations == null) {
+            reservations = new HashMap<>();
+            this.reservations.set(reservations);
+        }
+        reservations.put(reservation, selection.result);
     }
 
     /**

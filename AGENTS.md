@@ -424,8 +424,6 @@ public/protected/private → static → final →
 ```java
 public static final String NAME = "value";
 private static final long NULL_ID = -1;
-/* package */ static ThreadLocal<Command> current =
-        new ThreadLocal<>();
 protected final transient DatabaseInterface db;
 private transient boolean deleted = false;
 ```
@@ -551,18 +549,6 @@ private AnyStrings() {/* no-init */}
   `security`.
 - Not by layer (no `controller`, `service`, `repository`
   packages).
-
-### Package-Private Visibility
-
-When a member is intentionally package-private (no access modifier),
-annotate it with an inline `/* package */` comment to signal that
-the omission is deliberate, not accidental:
-
-```java
-/* package */ static Runway PINNED_RUNWAY_INSTANCE = null;
-/* package */ static final String REALMS_KEY = "_realms";
-/* package */ void resetState() { ... }
-```
 
 ### Internal/Framework Fields
 
@@ -1066,8 +1052,6 @@ Default to the **most restrictive visibility** that works:
   package-private, not public.
 - Fields should be private unless there is a specific reason to
   widen access.
-- Use `/* package */` comments on intentionally package-private
-  members.
 
 ### Constants
 
@@ -1352,8 +1336,7 @@ Tests use JUnit 4 with the following conventions:
 
 - All test classes extend the project's base test class, which
   provides lifecycle hooks (`beforeEachTest()`,
-  `afterEachTest()`) and automatic variable tracking for
-  debugging failures.
+  `afterEachTest()`).
 - Use `@Test` on every test method.
 - Test suites (`*Suite.class`) are excluded from normal test runs.
 
@@ -1448,23 +1431,6 @@ public void testWriteIsRangeBlockedIfReadingAllValues() {}
 // Bad
 public void testAdd() {}
 public void test1() {}
-```
-
-### Variable Tracking
-
-Register local variables with the project's variable tracking
-utility so they are automatically dumped on test failure for
-debugging:
-
-```java
-@Test
-public void testSomeBehavior() {
-    String key = Variables.register("key",
-            TestData.getString());
-    long record = Variables.register("record",
-            TestData.getLong());
-    // ... test logic ...
-}
 ```
 
 ### Randomized Test Data
@@ -1697,23 +1663,21 @@ the task at hand.
     actions. No `get` prefix on accessors. Semantic directionality
     on methods. No redundant qualifiers.
 11. **DRY.** One thing, one place. Extract and reuse relentlessly.
-12. **Package-private members** get a `/* package */` comment.
-13. **Return empty collections, not null.**
-14. **Protect return values** with unmodifiable wrappers.
-15. **Simpler overloads delegate to complex ones.**
-16. **Tests come first.** Write tests before implementation for
+12. **Return empty collections, not null.**
+13. **Protect return values** with unmodifiable wrappers.
+14. **Simpler overloads delegate to complex ones.**
+15. **Tests come first.** Write tests before implementation for
     all new behaviors and bug fixes. No exceptions.
-17. **Test names describe behavior.** Every test method name
+16. **Test names describe behavior.** Every test method name
     explains what it verifies.
-18. **Test method Javadoc is mandatory.** Every `@Test` method
+17. **Test method Javadoc is mandatory.** Every `@Test` method
     must document Goal, Start state, Workflow (as bullet
     points), and Expected state.
-19. **Register test variables** for automatic debugging on failure.
-20. **Understand before changing.** Trace call paths and search
+18. **Understand before changing.** Trace call paths and search
     for existing code before writing anything new.
-21. **Do not fabricate.** Every API reference must be verified.
+19. **Do not fabricate.** Every API reference must be verified.
     Never guess at method names or class names.
-22. **Run `./gradlew spotlessApply` after all code changes.**
+20. **Run `./gradlew spotlessApply` after all code changes.**
     Never skip the formatter. Unformatted code fails CI.
-23. **Opportunistic improvement.** Leave things better than you
+21. **Opportunistic improvement.** Leave things better than you
     found them.

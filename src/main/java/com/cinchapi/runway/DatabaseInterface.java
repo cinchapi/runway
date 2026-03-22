@@ -21,11 +21,13 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.util.Pagination;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Sets;
 
 /**
@@ -1059,7 +1061,12 @@ public interface DatabaseInterface {
      * {@link #find} and {@link #load} operations.
      *
      * @return a new gateway instance for this database interface
+     * @deprecated Use
+     *             {@link Selection#of(Class, Criteria, Order, Page, Realms)} or
+     *             {@link Selection#ofAny(Class, Criteria, Order, Page, Realms)}
+     *             with {@link #select(Selection...)} instead.
      */
+    @Deprecated
     public default Gateway gateway() {
         return Gateway.to(this);
     }
@@ -1120,71 +1127,6 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> T load(Class<T> clazz, long id) {
         return load(clazz, id, Realms.any());
-    }
-
-    /**
-     * Load the {@link Record} that is contained within the specified
-     * {@code clazz} and has the specified {@code id}, throwing an
-     * {@link IllegalStateException} if no such {@link Record} exists.
-     * <p>
-     * This method provides a fail-fast alternative to
-     * {@link #load(Class, long)} for cases where the caller expects the
-     * {@link Record} to exist and considers its absence to be an error
-     * condition.
-     * </p>
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a {@link Record} in isolation.
-     * </p>
-     *
-     * @param clazz the {@link Record} type
-     * @param id the {@link Record} id
-     * @param <T> the {@link Record} type
-     * @return the existing {@link Record}
-     * @throws IllegalStateException if no {@link Record} with the specified
-     *             {@code id} exists
-     */
-    public default <T extends Record> T loadNullSafe(Class<T> clazz, long id) {
-        return loadNullSafe(clazz, id, Realms.any());
-    }
-
-    /**
-     * Load the {@link Record} that is contained within the specified
-     * {@code clazz} and has the specified {@code id} if it exists in any of the
-     * {@code realms}, throwing an {@link IllegalStateException} if no such
-     * {@link Record} exists.
-     * <p>
-     * This method provides a fail-fast alternative to
-     * {@link #load(Class, long, Realms)} for cases where the caller expects the
-     * {@link Record} to exist and considers its absence to be an error
-     * condition.
-     * </p>
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a {@link Record} in isolation.
-     * </p>
-     *
-     * @param clazz the {@link Record} type
-     * @param id the {@link Record} id
-     * @param realms the {@link Realms} to search
-     * @param <T> the {@link Record} type
-     * @return the existing {@link Record}
-     * @throws IllegalStateException if no {@link Record} with the specified
-     *             {@code id} exists in any of the {@code realms}
-     */
-    public default <T extends Record> T loadNullSafe(Class<T> clazz, long id,
-            Realms realms) {
-        T record = load(clazz, id, realms);
-        if(record != null) {
-            return record;
-        }
-        else {
-            throw new IllegalStateException();
-        }
     }
 
     /**
@@ -2098,6 +2040,163 @@ public interface DatabaseInterface {
             String order) {
         Set<T> records = loadAny(clazz);
         return sort(records, order);
+    }
+
+    /**
+     * Load the {@link Record} that is contained within the specified
+     * {@code clazz} and has the specified {@code id}, throwing an
+     * {@link IllegalStateException} if no such {@link Record} exists.
+     * <p>
+     * This method provides a fail-fast alternative to
+     * {@link #load(Class, long)} for cases where the caller expects the
+     * {@link Record} to exist and considers its absence to be an error
+     * condition.
+     * </p>
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a {@link Record} in isolation.
+     * </p>
+     *
+     * @param clazz the {@link Record} type
+     * @param id the {@link Record} id
+     * @param <T> the {@link Record} type
+     * @return the existing {@link Record}
+     * @throws IllegalStateException if no {@link Record} with the specified
+     *             {@code id} exists
+     */
+    public default <T extends Record> T loadNullSafe(Class<T> clazz, long id) {
+        return loadNullSafe(clazz, id, Realms.any());
+    }
+
+    /**
+     * Load the {@link Record} that is contained within the specified
+     * {@code clazz} and has the specified {@code id} if it exists in any of the
+     * {@code realms}, throwing an {@link IllegalStateException} if no such
+     * {@link Record} exists.
+     * <p>
+     * This method provides a fail-fast alternative to
+     * {@link #load(Class, long, Realms)} for cases where the caller expects the
+     * {@link Record} to exist and considers its absence to be an error
+     * condition.
+     * </p>
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a {@link Record} in isolation.
+     * </p>
+     *
+     * @param clazz the {@link Record} type
+     * @param id the {@link Record} id
+     * @param realms the {@link Realms} to search
+     * @param <T> the {@link Record} type
+     * @return the existing {@link Record}
+     * @throws IllegalStateException if no {@link Record} with the specified
+     *             {@code id} exists in any of the {@code realms}
+     */
+    public default <T extends Record> T loadNullSafe(Class<T> clazz, long id,
+            Realms realms) {
+        T record = load(clazz, id, realms);
+        if(record != null) {
+            return record;
+        }
+        else {
+            throw new IllegalStateException();
+        }
+    }
+
+    /**
+     * Execute one or more {@link Selection Selections} and return a
+     * {@link Selections} wrapper for positional access to the results.
+     * <p>
+     * Each {@link Selection} is routed to the appropriate {@link #find} or
+     * {@link #load} method based on its parameters. Subclasses may override
+     * this method to add optimizations such as query batching or result
+     * caching.
+     * </p>
+     *
+     * @param first the first {@link Selection} to execute
+     * @param others additional {@link Selection Selections} to execute
+     * @return a {@link Selections} wrapper for positional access
+     * @throws IllegalStateException if any {@link Selection} has already been
+     *             submitted
+     */
+    public default Selections select(Selection<?> first,
+            Selection<?>... others) {
+        Selection<?>[] selections = ArrayBuilder.<Selection<?>> builder()
+                .add(first).add(others).build();
+        for (Selection<?> selection : selections) {
+            Preconditions.checkState(selection.state == Selection.State.PENDING,
+                    "Selection has already been submitted");
+            selection.state = Selection.State.SUBMITTED;
+            if(selection.isById()) {
+                selection.result = load(selection.clazz, selection.id,
+                        selection.realms);
+            }
+            else {
+                if(selection.criteria != null && selection.order != null
+                        && selection.page != null) {
+                    selection.result = selection.any
+                            ? findAny(selection.clazz, selection.criteria,
+                                    selection.order, selection.page,
+                                    selection.realms)
+                            : find(selection.clazz, selection.criteria,
+                                    selection.order, selection.page,
+                                    selection.realms);
+                }
+                else if(selection.criteria != null && selection.order != null) {
+                    selection.result = selection.any
+                            ? findAny(selection.clazz, selection.criteria,
+                                    selection.order, selection.realms)
+                            : find(selection.clazz, selection.criteria,
+                                    selection.order, selection.realms);
+                }
+                else if(selection.criteria != null && selection.page != null) {
+                    selection.result = selection.any
+                            ? findAny(selection.clazz, selection.criteria,
+                                    selection.page, selection.realms)
+                            : find(selection.clazz, selection.criteria,
+                                    selection.page, selection.realms);
+                }
+                else if(selection.order != null && selection.page != null) {
+                    selection.result = selection.any
+                            ? loadAny(selection.clazz, selection.order,
+                                    selection.page, selection.realms)
+                            : load(selection.clazz, selection.order,
+                                    selection.page, selection.realms);
+                }
+                else if(selection.criteria != null) {
+                    selection.result = selection.any
+                            ? findAny(selection.clazz, selection.criteria,
+                                    selection.realms)
+                            : find(selection.clazz, selection.criteria,
+                                    selection.realms);
+                }
+                else if(selection.order != null) {
+                    selection.result = selection.any
+                            ? loadAny(selection.clazz, selection.order,
+                                    selection.realms)
+                            : load(selection.clazz, selection.order,
+                                    selection.realms);
+                }
+                else if(selection.page != null) {
+                    selection.result = selection.any
+                            ? loadAny(selection.clazz, selection.page,
+                                    selection.realms)
+                            : load(selection.clazz, selection.page,
+                                    selection.realms);
+                }
+                else {
+                    selection.result = selection.any
+                            ? loadAny(selection.clazz, selection.realms)
+                            : load(selection.clazz, selection.realms);
+                }
+            }
+            selection.state = Selection.State.FINISHED;
+        }
+        return new Selections(selections);
     }
 
 }
