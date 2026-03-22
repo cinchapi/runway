@@ -21,6 +21,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
 
@@ -574,6 +575,108 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         for (Widget w : lowResults) {
             Assert.assertTrue(w.score < 20);
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that calling {@link Selections#next()}
+     * after all results have been consumed throws
+     * {@link IllegalStateException}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Widget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save a {@link Widget}.</li>
+     * <li>Execute a single {@link Selection}.</li>
+     * <li>Call {@link Selections#next()} once to consume the only result.</li>
+     * <li>Call {@link Selections#next()} again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second call throws
+     * {@link IllegalStateException}.
+     */
+    @Test(expected = IllegalStateException.class)
+    public void testNextThrowsWhenExhausted() {
+        new Widget("w1").save();
+        Selection<Widget> sel = Selection.of(Widget.class);
+        Selections results = runway.select(sel);
+        results.next();
+        results.next();
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Selection} with an
+     * {@link Order} is correctly treated as non-combinable and executed in
+     * isolation.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Widget Widgets} and
+     * {@link Gadget Gadgets}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link Widget Widgets} and {@link Gadget
+     * Gadgets}.</li>
+     * <li>Create a {@link Widget} {@link Selection} with an {@link Order}.</li>
+     * <li>Create a combinable {@link Gadget} {@link Selection}.</li>
+     * <li>Execute both in a single {@link Runway#select(Selection...)}
+     * call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both {@link Selection Selections} return
+     * correct results; the ordered one is isolated without affecting the
+     * combinable one.
+     */
+    @Test
+    public void testNonCombinableSelectionExecutedInIsolation() {
+        new Widget("beta", 20).save();
+        new Widget("alpha", 10).save();
+        new Gadget("g1", "red").save();
+        Selection<Widget> widgetSel = Selection.of(Widget.class);
+        widgetSel.order(Order.by("name"));
+        Selection<Gadget> gadgetSel = Selection.of(Gadget.class);
+        Selections results = runway.select(widgetSel, gadgetSel);
+        Set<Widget> widgets = widgetSel.get();
+        Set<Gadget> gadgets = gadgetSel.get();
+        Assert.assertEquals(2, widgets.size());
+        Assert.assertEquals(1, gadgets.size());
+        Assert.assertEquals(2, results.size());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two by-ID {@link Selection Selections}
+     * targeting the same class are correctly combined and each returns only its
+     * specific {@link Record}.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Widget Widgets}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save two {@link Widget Widgets}.</li>
+     * <li>Create two by-ID {@link Selection Selections}, one for each
+     * {@link Widget Widget's} ID.</li>
+     * <li>Execute both in a single {@link Runway#select(Selection...)}
+     * call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Each {@link Selection} returns the correct
+     * {@link Widget} by name, proving the by-ID {@code demux} path
+     * distinguishes them even though they share a class.
+     */
+    @Test
+    public void testSameClassByIdSelectionsReturnCorrectRecords() {
+        Widget w1 = new Widget("first");
+        w1.save();
+        Widget w2 = new Widget("second");
+        w2.save();
+        Selection<Widget> sel1 = Selection.of(Widget.class, w1.id());
+        Selection<Widget> sel2 = Selection.of(Widget.class, w2.id());
+        runway.select(sel1, sel2);
+        Widget loaded1 = sel1.get();
+        Widget loaded2 = sel2.get();
+        Assert.assertNotNull(loaded1);
+        Assert.assertNotNull(loaded2);
+        Assert.assertEquals("first", loaded1.name);
+        Assert.assertEquals("second", loaded2.name);
     }
 
     // ---- Inner Record types for testing ----
