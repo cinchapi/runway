@@ -198,6 +198,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Return all known {@link Record} types.
+     *
+     * @return a {@link Set} containing all the known {@link Record} subclasses
+     */
+    public static Set<Class<? extends Record>> getKnownRecordTypes() {
+        return Record.StaticAnalysis.instance().types();
+    }
+
+    /**
      * Return a {@link List} based order specification.
      *
      * @param order

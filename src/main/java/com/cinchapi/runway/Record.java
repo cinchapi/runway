@@ -3956,6 +3956,16 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
+         * Return all known {@link Record} types that were discovered on the
+         * classpath during static analysis.
+         *
+         * @return an unmodifiable {@link Set} of all {@link Record} subclasses
+         */
+        public Set<Class<? extends Record>> types() {
+            return Collections.unmodifiableSet(hierarchies.keySet());
+        }
+
+        /**
          * Return the descendants of {@code clazz}.
          *
          * @param clazz
