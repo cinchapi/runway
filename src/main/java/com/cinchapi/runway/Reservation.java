@@ -82,6 +82,11 @@ final class Reservation {
     private final boolean any;
 
     /**
+     * Whether this is a counting reservation.
+     */
+    private final boolean counting;
+
+    /**
      * Construct a new {@link Reservation}.
      *
      * @param builder the {@link Builder}
@@ -94,6 +99,7 @@ final class Reservation {
         this.page = builder.page;
         this.realms = builder.realms;
         this.any = builder.any;
+        this.counting = builder.counting;
     }
 
     @Override
@@ -108,7 +114,8 @@ final class Reservation {
                     && Objects.equals(criteria, other.criteria)
                     && Objects.equals(order, other.order)
                     && Objects.equals(page, other.page)
-                    && Objects.equals(realms, other.realms) && any == other.any;
+                    && Objects.equals(realms, other.realms) && any == other.any
+                    && counting == other.counting;
         }
         else {
             return false;
@@ -117,7 +124,8 @@ final class Reservation {
 
     @Override
     public int hashCode() {
-        return Objects.hash(clazz, id, criteria, order, page, realms, any);
+        return Objects.hash(clazz, id, criteria, order, page, realms, any,
+                counting);
     }
 
     /**
@@ -165,6 +173,11 @@ final class Reservation {
          * Whether to include descendants.
          */
         private boolean any;
+
+        /**
+         * Whether this is a counting reservation.
+         */
+        private boolean counting;
 
         /**
          * Construct a new {@link Builder}.
@@ -238,6 +251,17 @@ final class Reservation {
          */
         Builder any(boolean any) {
             this.any = any;
+            return this;
+        }
+
+        /**
+         * Set whether this is a counting reservation.
+         *
+         * @param counting {@code true} for counting
+         * @return this {@link Builder}
+         */
+        Builder counting(boolean counting) {
+            this.counting = counting;
             return this;
         }
 

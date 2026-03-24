@@ -53,7 +53,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     public void testSelectByIdReturnsSingleRecord() {
         Widget widget = new Widget("alpha");
         widget.save();
-        Selection<Widget> sel = Selection.of(Widget.class, widget.id());
+        Selection<Widget> sel = Selection.load(Widget.class, widget.id());
         runway.select(sel);
         Widget loaded = sel.get();
         Assert.assertNotNull(loaded);
@@ -81,7 +81,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         new Widget("a").save();
         new Widget("b").save();
         new Widget("c").save();
-        Selection<Widget> sel = Selection.of(Widget.class);
+        Selection<Widget> sel = Selection.load(Widget.class);
         runway.select(sel);
         Set<Widget> widgets = sel.get();
         Assert.assertEquals(3, widgets.size());
@@ -113,7 +113,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         new Widget("top", 100).save();
         Criteria criteria = Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(50).build();
-        Selection<Widget> sel = Selection.of(Widget.class, criteria);
+        Selection<Widget> sel = Selection.find(Widget.class, criteria);
         runway.select(sel);
         Set<Widget> results = sel.get();
         Assert.assertEquals(2, results.size());
@@ -148,8 +148,8 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         new Gadget("g1", "red").save();
         new Gadget("g2", "blue").save();
         new Gadget("g3", "green").save();
-        Selection<Widget> widgetSel = Selection.of(Widget.class);
-        Selection<Gadget> gadgetSel = Selection.of(Gadget.class);
+        Selection<Widget> widgetSel = Selection.load(Widget.class);
+        Selection<Gadget> gadgetSel = Selection.load(Gadget.class);
         Selections results = runway.select(widgetSel, gadgetSel);
         Set<Widget> widgets = widgetSel.get();
         Set<Gadget> gadgets = gadgetSel.get();
@@ -185,8 +185,8 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         g.save();
         Criteria criteria = Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(50).build();
-        Selection<Widget> widgetSel = Selection.of(Widget.class, criteria);
-        Selection<Gadget> gadgetSel = Selection.of(Gadget.class, g.id());
+        Selection<Widget> widgetSel = Selection.find(Widget.class, criteria);
+        Selection<Gadget> gadgetSel = Selection.load(Gadget.class, g.id());
         runway.select(widgetSel, gadgetSel);
         Set<Widget> widgets = widgetSel.get();
         Gadget loaded = gadgetSel.get();
@@ -218,8 +218,8 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         new Widget("w1").save();
         Gadget g = new Gadget("g1", "red");
         g.save();
-        Selection<Widget> widgetSel = Selection.of(Widget.class);
-        Selection<Gadget> gadgetSel = Selection.of(Gadget.class, g.id());
+        Selection<Widget> widgetSel = Selection.load(Widget.class);
+        Selection<Gadget> gadgetSel = Selection.load(Gadget.class, g.id());
         Selections results = runway.select(widgetSel, gadgetSel);
         Set<Widget> widgets = results.get(0);
         Gadget gadget = results.get(1);
@@ -244,7 +244,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
      */
     @Test(expected = IllegalStateException.class)
     public void testGetBeforeExecutionThrows() {
-        Selection<Widget> sel = Selection.of(Widget.class);
+        Selection<Widget> sel = Selection.load(Widget.class);
         sel.get();
     }
 
@@ -268,7 +268,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     public void testDoubleSubmitThrows() {
         Widget w = new Widget("dupe");
         w.save();
-        Selection<Widget> sel = Selection.of(Widget.class, w.id());
+        Selection<Widget> sel = Selection.load(Widget.class, w.id());
         runway.select(sel);
         runway.select(sel);
     }
@@ -290,7 +290,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     @Test(expected = IllegalStateException.class)
     public void testConfigAfterSubmitThrows() {
         new Widget("x").save();
-        Selection<Widget> sel = Selection.of(Widget.class);
+        LoadClassSelection<Widget> sel = Selection.load(Widget.class);
         runway.select(sel);
         sel.order(null);
     }
@@ -311,7 +311,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testSelectByIdMissingReturnsNull() {
-        Selection<Widget> sel = Selection.of(Widget.class, Random.getLong());
+        Selection<Widget> sel = Selection.load(Widget.class, Random.getLong());
         runway.select(sel);
         Widget loaded = sel.get();
         Assert.assertNull(loaded);
@@ -338,7 +338,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     public void testOfAnyIncludesDescendants() {
         new Player("guard", 30).save();
         new PointGuard("pg", 25, 10).save();
-        Selection<Player> sel = Selection.ofAny(Player.class);
+        Selection<Player> sel = Selection.loadAny(Player.class);
         runway.select(sel);
         Set<Player> players = sel.get();
         Assert.assertEquals(2, players.size());
@@ -365,7 +365,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         new Widget("low", 5).save();
         Criteria criteria = Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(1000).build();
-        Selection<Widget> sel = Selection.of(Widget.class, criteria);
+        Selection<Widget> sel = Selection.find(Widget.class, criteria);
         runway.select(sel);
         Set<Widget> results = sel.get();
         Assert.assertTrue(results.isEmpty());
@@ -398,7 +398,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         new Widget("high", 80).save();
         Criteria criteria = Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(50).build();
-        Selection<Widget> sel = Selection.of(Widget.class, criteria);
+        Selection<Widget> sel = Selection.find(Widget.class, criteria);
         runway.select(sel);
         Set<Widget> fromSelect = sel.get();
         Set<Widget> fromFind = runway.find(Widget.class, criteria);
@@ -428,7 +428,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     public void testReserveHitOnLoadAfterSelect() {
         Widget w = new Widget("reserved");
         w.save();
-        Selection<Widget> sel = Selection.of(Widget.class, w.id());
+        Selection<Widget> sel = Selection.load(Widget.class, w.id());
         runway.select(sel);
         Widget fromSelect = sel.get();
         Widget fromLoad = runway.load(Widget.class, w.id());
@@ -461,7 +461,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         new Widget("w2", 80).save();
         Criteria criteria = Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(50).build();
-        Selection<Widget> sel = Selection.of(Widget.class, criteria);
+        Selection<Widget> sel = Selection.find(Widget.class, criteria);
         runway.select(sel);
         Set<Widget> fromSelect = sel.get();
         runway.unreserve();
@@ -493,7 +493,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     public void testReserveHitOnLoadAllAfterSelect() {
         new Widget("a").save();
         new Widget("b").save();
-        Selection<Widget> sel = Selection.of(Widget.class);
+        Selection<Widget> sel = Selection.load(Widget.class);
         runway.select(sel);
         Set<Widget> fromSelect = sel.get();
         Set<Widget> fromLoad = runway.load(Widget.class);
@@ -521,8 +521,8 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     public void testNextReturnsResultsInOrder() {
         new Widget("w1").save();
         new Gadget("g1", "red").save();
-        Selection<Widget> widgetSel = Selection.of(Widget.class);
-        Selection<Gadget> gadgetSel = Selection.of(Gadget.class);
+        Selection<Widget> widgetSel = Selection.load(Widget.class);
+        Selection<Gadget> gadgetSel = Selection.load(Gadget.class);
         Selections results = runway.select(widgetSel, gadgetSel);
         Set<Widget> widgets = results.next();
         Set<Gadget> gadgets = results.next();
@@ -562,8 +562,8 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
                 .operator(Operator.GREATER_THAN).value(50).build();
         Criteria lowScores = Criteria.where().key("score")
                 .operator(Operator.LESS_THAN).value(20).build();
-        Selection<Widget> highSel = Selection.of(Widget.class, highScores);
-        Selection<Widget> lowSel = Selection.of(Widget.class, lowScores);
+        Selection<Widget> highSel = Selection.find(Widget.class, highScores);
+        Selection<Widget> lowSel = Selection.find(Widget.class, lowScores);
         runway.select(highSel, lowSel);
         Set<Widget> highResults = highSel.get();
         Set<Widget> lowResults = lowSel.get();
@@ -598,7 +598,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     @Test(expected = IllegalStateException.class)
     public void testNextThrowsWhenExhausted() {
         new Widget("w1").save();
-        Selection<Widget> sel = Selection.of(Widget.class);
+        Selection<Widget> sel = Selection.load(Widget.class);
         Selections results = runway.select(sel);
         results.next();
         results.next();
@@ -631,9 +631,9 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         new Widget("beta", 20).save();
         new Widget("alpha", 10).save();
         new Gadget("g1", "red").save();
-        Selection<Widget> widgetSel = Selection.of(Widget.class);
+        LoadClassSelection<Widget> widgetSel = Selection.load(Widget.class);
         widgetSel.order(Order.by("name"));
-        Selection<Gadget> gadgetSel = Selection.of(Gadget.class);
+        Selection<Gadget> gadgetSel = Selection.load(Gadget.class);
         Selections results = runway.select(widgetSel, gadgetSel);
         Set<Widget> widgets = widgetSel.get();
         Set<Gadget> gadgets = gadgetSel.get();
@@ -668,8 +668,8 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         w1.save();
         Widget w2 = new Widget("second");
         w2.save();
-        Selection<Widget> sel1 = Selection.of(Widget.class, w1.id());
-        Selection<Widget> sel2 = Selection.of(Widget.class, w2.id());
+        Selection<Widget> sel1 = Selection.load(Widget.class, w1.id());
+        Selection<Widget> sel2 = Selection.load(Widget.class, w2.id());
         runway.select(sel1, sel2);
         Widget loaded1 = sel1.get();
         Widget loaded2 = sel2.get();
@@ -677,6 +677,171 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         Assert.assertNotNull(loaded2);
         Assert.assertEquals("first", loaded1.name);
         Assert.assertEquals("second", loaded2.name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link CountSelection} returns the
+     * correct count of all {@link Record Records} of the target class.
+     * <p>
+     * <strong>Start state:</strong> Three saved {@link Widget Widgets}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save three {@link Widget Widgets}.</li>
+     * <li>Create a {@link CountSelection} for {@link Widget}.</li>
+     * <li>Execute via {@link Runway#select(Selection...)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code get()} returns {@code 3}.
+     */
+    @Test
+    public void testCountSelectionReturnsCorrectCount() {
+        new Widget("a").save();
+        new Widget("b").save();
+        new Widget("c").save();
+        Selection<Widget> sel = Selection.count(Widget.class);
+        runway.select(sel);
+        int count = sel.get();
+        Assert.assertEquals(3, count);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a criteria-based
+     * {@link CountSelection} returns only the count of matching {@link Record
+     * Records}.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Widget Widgets} with varying
+     * scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link Widget Widgets} with scores 10, 50, 80, and
+     * 100.</li>
+     * <li>Create a {@link CountSelection} with criteria filtering score &gt;
+     * 50.</li>
+     * <li>Execute via {@link Runway#select(Selection...)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code get()} returns {@code 2}.
+     */
+    @Test
+    public void testCountSelectionWithCriteriaReturnsCorrectCount() {
+        new Widget("low", 10).save();
+        new Widget("mid", 50).save();
+        new Widget("high", 80).save();
+        new Widget("top", 100).save();
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(50).build();
+        Selection<Widget> sel = Selection.count(Widget.class, criteria);
+        runway.select(sel);
+        int count = sel.get();
+        Assert.assertEquals(2, count);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that executing a {@link CountSelection}
+     * reserves the count so that a subsequent {@link Runway#count} call with
+     * the same parameters returns the cached value.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Widget Widgets} with varying
+     * scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link Widget Widgets} with varying scores.</li>
+     * <li>Create a {@link CountSelection} with criteria filtering score &gt; 50
+     * and execute it.</li>
+     * <li>Call {@link Runway#count(Class, Criteria)} with the same
+     * parameters.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result from {@code count()} matches the
+     * {@link CountSelection CountSelection's} result.
+     */
+    @Test
+    public void testCountSelectionReservedForSubsequentCountMethod() {
+        new Widget("low", 10).save();
+        new Widget("high", 80).save();
+        new Widget("top", 100).save();
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(50).build();
+        Selection<Widget> sel = Selection.count(Widget.class, criteria);
+        runway.select(sel);
+        int fromSelect = sel.get();
+        int fromCount = runway.count(Widget.class, criteria);
+        Assert.assertEquals(fromSelect, fromCount);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that executing a {@link FindSelection}
+     * reserves the result so that a subsequent {@link Runway#count} call with
+     * the same parameters returns the size of the cached find result.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Widget Widgets} with varying
+     * scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link Widget Widgets} with varying scores.</li>
+     * <li>Create a {@link FindSelection} with criteria filtering score &gt; 50
+     * and execute it.</li>
+     * <li>Call {@link Runway#count(Class, Criteria)} with the same
+     * parameters.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count equals the size of the
+     * {@link FindSelection FindSelection's} result.
+     */
+    @Test
+    public void testFindSelectionReservedForSubsequentCountMethod() {
+        new Widget("low", 10).save();
+        new Widget("high", 80).save();
+        new Widget("top", 100).save();
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(50).build();
+        Selection<Widget> sel = Selection.find(Widget.class, criteria);
+        runway.select(sel);
+        Set<Widget> fromSelect = sel.get();
+        int fromCount = runway.count(Widget.class, criteria);
+        Assert.assertEquals(fromSelect.size(), fromCount);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Runway#count} call backed by
+     * a reserved {@link FindSelection} does not consume the reservation, so a
+     * subsequent {@link Runway#find} still returns the same cached object.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Widget Widgets} with varying
+     * scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link Widget Widgets} with varying scores.</li>
+     * <li>Create a {@link FindSelection} with criteria filtering score &gt; 50
+     * and execute it.</li>
+     * <li>Call {@link Runway#count(Class, Criteria)} with the same
+     * parameters.</li>
+     * <li>Call {@link Runway#find(Class, Criteria)} with the same
+     * parameters.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result from {@code find()} is the exact
+     * same object reference as the {@link FindSelection FindSelection's}
+     * result, proving the count did not consume the reservation.
+     */
+    @Test
+    public void testCountSelectionDoesNotConsumeReservation() {
+        new Widget("low", 10).save();
+        new Widget("high", 80).save();
+        new Widget("top", 100).save();
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(50).build();
+        Selection<Widget> sel = Selection.find(Widget.class, criteria);
+        runway.select(sel);
+        Set<Widget> fromSelect = sel.get();
+        runway.count(Widget.class, criteria);
+        Set<Widget> fromFind = runway.find(Widget.class, criteria);
+        Assert.assertSame(fromSelect, fromFind);
     }
 
     // ---- Inner Record types for testing ----

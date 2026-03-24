@@ -39,8 +39,9 @@ import com.cinchapi.concourse.lang.sort.Order;
  * {@link Page} are honored consistently and efficiently.
  * </p>
  *
- * @deprecated Use {@link Selection#of(Class, Criteria, Order, Page, Realms)} or
- *             {@link Selection#ofAny(Class, Criteria, Order, Page, Realms)}
+ * @deprecated Use {@link Selection#find(Class, Criteria, Order, Page, Realms)}
+ *             or
+ *             {@link Selection#findAny(Class, Criteria, Order, Page, Realms)}
  *             with {@link DatabaseInterface#select(Selection...)} instead. The
  *             {@link Selection} API provides the same null-tolerant routing
  *             with support for batching multiple operations into fewer database
@@ -89,7 +90,7 @@ public final class Gateway {
      * @param page the pagination details, possibly null
      * @return the fetched records
      * @deprecated Use
-     *             {@link Selection#of(Class, Criteria, Order, Page, Realms)}
+     *             {@link Selection#find(Class, Criteria, Order, Page, Realms)}
      */
     @Deprecated
     public <T extends Record> Set<T> fetch(Class<T> clazz,
@@ -114,7 +115,7 @@ public final class Gateway {
      * @param realms the realms to search within
      * @return the fetched records
      * @deprecated Use
-     *             {@link Selection#of(Class, Criteria, Order, Page, Realms)}
+     *             {@link Selection#find(Class, Criteria, Order, Page, Realms)}
      */
     @Deprecated
     public <T extends Record> Set<T> fetch(Class<T> clazz,
@@ -137,7 +138,7 @@ public final class Gateway {
      * @param order the sort order, possibly null
      * @return the fetched records
      * @deprecated Use
-     *             {@link Selection#of(Class, Criteria, Order, Page, Realms)}
+     *             {@link Selection#find(Class, Criteria, Order, Page, Realms)}
      */
     @Deprecated
     public <T extends Record> Set<T> fetch(Class<T> clazz,
@@ -162,7 +163,7 @@ public final class Gateway {
      * @param realms the realms to search within, possibly null
      * @return the fetched records
      * @deprecated Use
-     *             {@link Selection#of(Class, Criteria, Order, Page, Realms)}
+     *             {@link Selection#find(Class, Criteria, Order, Page, Realms)}
      */
     @Deprecated
     public <T extends Record> Set<T> fetch(Class<T> clazz,
@@ -185,7 +186,7 @@ public final class Gateway {
      * @param page the pagination details, possibly null
      * @return the fetched records
      * @deprecated Use
-     *             {@link Selection#ofAny(Class, Criteria, Order, Page, Realms)}
+     *             {@link Selection#findAny(Class, Criteria, Order, Page, Realms)}
      */
     @Deprecated
     public <T extends Record> Set<T> fetchAny(Class<T> clazz,
@@ -210,7 +211,7 @@ public final class Gateway {
      * @param realms the realms to search within
      * @return the fetched records
      * @deprecated Use
-     *             {@link Selection#ofAny(Class, Criteria, Order, Page, Realms)}
+     *             {@link Selection#findAny(Class, Criteria, Order, Page, Realms)}
      */
     @Deprecated
     public <T extends Record> Set<T> fetchAny(Class<T> clazz,
@@ -233,7 +234,7 @@ public final class Gateway {
      * @param order the sort order, possibly null
      * @return the fetched records
      * @deprecated Use
-     *             {@link Selection#ofAny(Class, Criteria, Order, Page, Realms)}
+     *             {@link Selection#findAny(Class, Criteria, Order, Page, Realms)}
      */
     @Deprecated
     public <T extends Record> Set<T> fetchAny(Class<T> clazz,
@@ -258,7 +259,7 @@ public final class Gateway {
      * @param realms the realms to search within, possibly null
      * @return the fetched records
      * @deprecated Use
-     *             {@link Selection#ofAny(Class, Criteria, Order, Page, Realms)}
+     *             {@link Selection#findAny(Class, Criteria, Order, Page, Realms)}
      */
     @Deprecated
     public <T extends Record> Set<T> fetchAny(Class<T> clazz,

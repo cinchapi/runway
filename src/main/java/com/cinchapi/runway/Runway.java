@@ -229,16 +229,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private static Criteria buildSelectionCriteria(Selection<?> selection) {
         Criteria base;
-        if(selection.isById()) {
+        if(selection instanceof LoadRecordSelection) {
+            long id = ((LoadRecordSelection<?>) selection).id;
             base = Criteria.where().key(Record.IDENTIFIER_KEY)
-                    .operator(Operator.EQUALS).value(selection.id).build();
+                    .operator(Operator.EQUALS).value(id).build();
         }
-        else if(selection.criteria != null) {
+        else if(selection instanceof FindSelection) {
+            Criteria criteria = ((FindSelection<?>) selection).criteria;
             base = selection.any
-                    ? $Criteria.accrossClassHierachy(selection.clazz,
-                            selection.criteria)
-                    : $Criteria.withinClass(selection.clazz,
-                            selection.criteria);
+                    ? $Criteria.accrossClassHierachy(selection.clazz, criteria)
+                    : $Criteria.withinClass(selection.clazz, criteria);
         }
         else {
             base = selection.any ? $Criteria.forClassHierarchy(selection.clazz)
@@ -592,6 +592,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> int count(Class<T> clazz, Criteria criteria,
             Realms realms) {
+        // Check for a cached count result
+        Reservation countRes = Reservation.builder(clazz).criteria(criteria)
+                .realms(realms).counting(true).build();
+        Integer cachedCount = recall(countRes);
+        if(cachedCount != null) {
+            return cachedCount;
+        }
+        // Check for a cached find result
+        Reservation findRes = Reservation.builder(clazz).criteria(criteria)
+                .realms(realms).build();
+        Collection<?> cachedFind = recall(findRes);
+        if(cachedFind != null) {
+            return cachedFind.size();
+        }
         Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
         if(!sources.isEmpty()) {
             int count = 0;
@@ -624,6 +638,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> int countAny(Class<T> clazz, Criteria criteria,
             Realms realms) {
+        // Check for a cached count result
+        Reservation countRes = Reservation.builder(clazz).criteria(criteria)
+                .realms(realms).any(true).counting(true).build();
+        Integer cachedCount = recall(countRes);
+        if(cachedCount != null) {
+            return cachedCount;
+        }
+        // Check for a cached find result
+        Reservation findRes = Reservation.builder(clazz).criteria(criteria)
+                .realms(realms).any(true).build();
+        Collection<?> cachedFind = recall(findRes);
+        if(cachedFind != null) {
+            return cachedFind.size();
+        }
         Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
         if(!sources.isEmpty()) {
             int count = 0;
@@ -1774,16 +1802,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private void demux(Selection<?> selection,
             Map<Long, Map<String, Set<Object>>> data) {
         Object result = null;
-        if(selection.isById()) {
-            Map<String, Set<Object>> recordData = data.get(selection.id);
+        if(selection instanceof LoadRecordSelection) {
+            long id = ((LoadRecordSelection<?>) selection).id;
+            Map<String, Set<Object>> recordData = data.get(id);
             if(recordData != null) {
                 Set<Object> sections = recordData.get(Record.SECTION_KEY);
                 if(sections != null) {
                     String section = (String) Iterables.getLast(sections);
                     Class actualClass = Reflection.getClassCasted(section);
                     if(selection.clazz.isAssignableFrom(actualClass)) {
-                        result = instantiate(actualClass, selection.id,
-                                recordData, null);
+                        result = instantiate(actualClass, id, recordData, null);
                     }
                 }
             }
@@ -2368,8 +2396,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @SuppressWarnings("unchecked")
     private <T> T recall(Reservation reservation) {
         Map<Reservation, Object> reservations = this.reservations.get();
-        return reservations != null ? (T) reservations.remove(reservation)
-                : null;
+        return reservations != null ? (T) reservations.get(reservation) : null;
     }
 
     /**
@@ -2379,10 +2406,25 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private void reserve(Selection<?> selection) {
         Preconditions.checkState(selection.state == Selection.State.FINISHED);
-        Reservation reservation = Reservation.builder(selection.clazz)
-                .id(selection.id).criteria(selection.criteria)
-                .order(selection.order).page(selection.page)
-                .realms(selection.realms).any(selection.any).build();
+        Reservation.Builder builder = Reservation.builder(selection.clazz)
+                .realms(selection.realms).any(selection.any)
+                .counting(selection.isCounting());
+        if(selection instanceof LoadRecordSelection) {
+            builder.id(((LoadRecordSelection<?>) selection).id);
+        }
+        else if(selection instanceof FindSelection) {
+            FindSelection<?> fs = (FindSelection<?>) selection;
+            builder.criteria(fs.criteria).order(fs.order).page(fs.page);
+        }
+        else if(selection instanceof LoadClassSelection) {
+            LoadClassSelection<?> lc = (LoadClassSelection<?>) selection;
+            builder.order(lc.order).page(lc.page);
+        }
+        else if(selection instanceof CountSelection) {
+            CountSelection<?> cs = (CountSelection<?>) selection;
+            builder.criteria(cs.criteria);
+        }
+        Reservation reservation = builder.build();
         Map<Reservation, Object> reservations = this.reservations.get();
         if(reservations == null) {
             reservations = new HashMap<>();

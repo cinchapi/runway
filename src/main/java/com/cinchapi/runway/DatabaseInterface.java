@@ -2131,67 +2131,63 @@ public interface DatabaseInterface {
             Preconditions.checkState(selection.state == Selection.State.PENDING,
                     "Selection has already been submitted");
             selection.state = Selection.State.SUBMITTED;
-            if(selection.isById()) {
-                selection.result = load(selection.clazz, selection.id,
-                        selection.realms);
-            }
-            else {
-                if(selection.criteria != null && selection.order != null
-                        && selection.page != null) {
-                    selection.result = selection.any
-                            ? findAny(selection.clazz, selection.criteria,
-                                    selection.order, selection.page,
-                                    selection.realms)
-                            : find(selection.clazz, selection.criteria,
-                                    selection.order, selection.page,
-                                    selection.realms);
-                }
-                else if(selection.criteria != null && selection.order != null) {
-                    selection.result = selection.any
-                            ? findAny(selection.clazz, selection.criteria,
-                                    selection.order, selection.realms)
-                            : find(selection.clazz, selection.criteria,
-                                    selection.order, selection.realms);
-                }
-                else if(selection.criteria != null && selection.page != null) {
-                    selection.result = selection.any
-                            ? findAny(selection.clazz, selection.criteria,
-                                    selection.page, selection.realms)
-                            : find(selection.clazz, selection.criteria,
-                                    selection.page, selection.realms);
-                }
-                else if(selection.order != null && selection.page != null) {
-                    selection.result = selection.any
-                            ? loadAny(selection.clazz, selection.order,
-                                    selection.page, selection.realms)
-                            : load(selection.clazz, selection.order,
-                                    selection.page, selection.realms);
-                }
-                else if(selection.criteria != null) {
-                    selection.result = selection.any
-                            ? findAny(selection.clazz, selection.criteria,
-                                    selection.realms)
-                            : find(selection.clazz, selection.criteria,
-                                    selection.realms);
-                }
-                else if(selection.order != null) {
-                    selection.result = selection.any
-                            ? loadAny(selection.clazz, selection.order,
-                                    selection.realms)
-                            : load(selection.clazz, selection.order,
-                                    selection.realms);
-                }
-                else if(selection.page != null) {
-                    selection.result = selection.any
-                            ? loadAny(selection.clazz, selection.page,
-                                    selection.realms)
-                            : load(selection.clazz, selection.page,
-                                    selection.realms);
+            if(selection instanceof CountSelection) {
+                CountSelection<?> s = (CountSelection<?>) selection;
+                if(s.criteria != null) {
+                    s.result = s.any ? countAny(s.clazz, s.criteria, s.realms)
+                            : count(s.clazz, s.criteria, s.realms);
                 }
                 else {
-                    selection.result = selection.any
-                            ? loadAny(selection.clazz, selection.realms)
-                            : load(selection.clazz, selection.realms);
+                    s.result = s.any ? countAny(s.clazz, s.realms)
+                            : count(s.clazz, s.realms);
+                }
+            }
+            else if(selection instanceof LoadRecordSelection) {
+                LoadRecordSelection<?> lr = (LoadRecordSelection<?>) selection;
+                lr.result = load(lr.clazz, lr.id, lr.realms);
+            }
+            else if(selection instanceof FindSelection) {
+                FindSelection<?> s = (FindSelection<?>) selection;
+                if(s.order != null && s.page != null) {
+                    s.result = s.any
+                            ? findAny(s.clazz, s.criteria, s.order, s.page,
+                                    s.realms)
+                            : find(s.clazz, s.criteria, s.order, s.page,
+                                    s.realms);
+                }
+                else if(s.order != null) {
+                    s.result = s.any
+                            ? findAny(s.clazz, s.criteria, s.order, s.realms)
+                            : find(s.clazz, s.criteria, s.order, s.realms);
+                }
+                else if(s.page != null) {
+                    s.result = s.any
+                            ? findAny(s.clazz, s.criteria, s.page, s.realms)
+                            : find(s.clazz, s.criteria, s.page, s.realms);
+                }
+                else {
+                    s.result = s.any ? findAny(s.clazz, s.criteria, s.realms)
+                            : find(s.clazz, s.criteria, s.realms);
+                }
+            }
+            else {
+                LoadClassSelection<?> s = (LoadClassSelection<?>) selection;
+                if(s.order != null && s.page != null) {
+                    s.result = s.any
+                            ? loadAny(s.clazz, s.order, s.page, s.realms)
+                            : load(s.clazz, s.order, s.page, s.realms);
+                }
+                else if(s.order != null) {
+                    s.result = s.any ? loadAny(s.clazz, s.order, s.realms)
+                            : load(s.clazz, s.order, s.realms);
+                }
+                else if(s.page != null) {
+                    s.result = s.any ? loadAny(s.clazz, s.page, s.realms)
+                            : load(s.clazz, s.page, s.realms);
+                }
+                else {
+                    s.result = s.any ? loadAny(s.clazz, s.realms)
+                            : load(s.clazz, s.realms);
                 }
             }
             selection.state = Selection.State.FINISHED;
