@@ -54,11 +54,8 @@ public final class Pagination {
      *         {@code function}
      */
     public static <T> Set<T> applyFilterAndPage(Function<Page, Set<T>> function,
-            @Nullable Predicate<T> filter, @Nullable Page page) {
-        if(filter == null) {
-            return function.apply(page);
-        }
-        else if(page == null) {
+            Predicate<T> filter, @Nullable Page page) {
+        if(page == null) {
             Set<T> unfiltered = function.apply(page);
             return Sets.filter(unfiltered, filter::test);
         }

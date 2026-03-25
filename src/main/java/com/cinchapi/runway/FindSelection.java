@@ -76,7 +76,8 @@ public final class FindSelection<T extends Record>
 
     @Override
     boolean isCombinable() {
-        return order == null && page == null && filter == null;
+        return order == null && page == null
+                && filter == DatabaseSelection.NO_FILTER;
     }
 
 }

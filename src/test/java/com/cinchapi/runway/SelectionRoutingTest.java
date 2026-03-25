@@ -675,12 +675,11 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
         runway.save(new Widget("a"), new Widget("b"));
         Set<Widget> expected = runway.gateway().fetch(Widget.class, null,
                 (Order) null, null);
-        Selections results = runway
-                .select(Selection.of(Widget.class).criteria(null).order(null).page(null));
+        Selections results = runway.select(Selection.of(Widget.class)
+                .criteria(null).order(null).page(null));
         Set<Widget> actual = results.next();
         Assert.assertEquals(expected.size(), actual.size());
     }
-
 
     /**
      * <strong>Goal:</strong> Verify that criteria with null order and null page

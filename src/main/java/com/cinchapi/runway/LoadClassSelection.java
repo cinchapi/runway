@@ -68,7 +68,8 @@ public final class LoadClassSelection<T extends Record>
 
     @Override
     boolean isCombinable() {
-        return order == null && page == null && filter == null;
+        return order == null && page == null
+                && DatabaseSelection.isNoFilter(filter);
     }
 
 }

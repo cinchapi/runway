@@ -286,8 +286,10 @@ public interface Selection<T extends Record> {
          * @param filter the filter predicate
          * @return a {@link QueryBuilder} for chaining
          */
+        @SuppressWarnings("unchecked")
         public QueryBuilder<T> filter(Predicate<T> filter) {
-            state.filter = filter;
+            state.filter = filter != null ? filter
+                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
             return new QueryBuilder<>(state);
         }
     }
@@ -369,8 +371,10 @@ public interface Selection<T extends Record> {
          * @param filter the filter predicate
          * @return this builder for chaining
          */
+        @SuppressWarnings("unchecked")
         public QueryBuilder<T> filter(Predicate<T> filter) {
-            state.filter = filter;
+            state.filter = filter != null ? filter
+                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
             return this;
         }
     }
@@ -442,8 +446,10 @@ public interface Selection<T extends Record> {
          * @param filter the filter predicate
          * @return this builder for chaining
          */
+        @SuppressWarnings("unchecked")
         public SortableBuilder<T> filter(Predicate<T> filter) {
-            state.filter = filter;
+            state.filter = filter != null ? filter
+                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
             return this;
         }
     }
@@ -493,8 +499,10 @@ public interface Selection<T extends Record> {
          * @param filter the filter predicate
          * @return this builder for chaining
          */
+        @SuppressWarnings("unchecked")
         public CountBuilder<T> filter(Predicate<T> filter) {
-            state.filter = filter;
+            state.filter = filter != null ? filter
+                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
             return this;
         }
     }

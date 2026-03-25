@@ -42,6 +42,23 @@ import com.cinchapi.runway.Selection.State;
 abstract class DatabaseSelection<T extends Record> implements Selection<T> {
 
     /**
+     * A default {@link Predicate} that accepts all items, used when no
+     * client-side filter is specified.
+     */
+    static final Predicate<?> NO_FILTER = t -> true;
+
+    /**
+     * Return {@code true} if the given {@code filter} is the default no-op
+     * filter.
+     *
+     * @param filter the filter to check
+     * @return {@code true} if {@code filter} is the default
+     */
+    static boolean isNoFilter(Predicate<?> filter) {
+        return filter == NO_FILTER;
+    }
+
+    /**
      * Resolve a {@link Selection} to an {@link DatabaseSelection}, building
      * from a builder if necessary.
      *
@@ -182,8 +199,8 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
         /**
          * The client-side filter.
          */
-        @Nullable
-        Predicate<T> filter;
+        @SuppressWarnings("unchecked")
+        Predicate<T> filter = (Predicate<T>) NO_FILTER;
 
         /**
          * The record ID for single-record loads.
