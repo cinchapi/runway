@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import javax.annotation.Nullable;
 
@@ -2135,17 +2134,17 @@ public interface DatabaseInterface {
      * caching.
      * </p>
      *
-     * @param first the first {@link Selection} to execute
+     * @param options the {@link Selection Selections} to execute
      * @param others additional {@link Selection Selections} to execute
      * @return a {@link Selections} wrapper for positional access
+     * @throws IllegalArgumentException if the input array is empty
      * @throws IllegalStateException if any {@link Selection} has already been
      *             submitted
      */
     @SuppressWarnings({ "unchecked", "rawtypes" })
-    public default Selections select(Selection<?> first,
-            Selection<?>... others) {
-        DatabaseSelection<?>[] selections = Stream
-                .concat(Stream.of(first), Arrays.stream(others))
+    public default Selections select(Selection<?>... options) {
+        Preconditions.checkArgument(options.length > 0);
+        DatabaseSelection<?>[] selections = Arrays.stream(options)
                 .map(DatabaseSelection::resolve)
                 .toArray(DatabaseSelection[]::new);
         for (DatabaseSelection<?> selection : selections) {

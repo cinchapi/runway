@@ -1476,9 +1476,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     @Override
-    public Selections select(Selection<?> first, Selection<?>... others) {
-        DatabaseSelection<?>[] selections = Stream
-                .concat(Stream.of(first), Arrays.stream(others))
+    public Selections select(Selection<?>... options) {
+        DatabaseSelection<?>[] selections = Arrays.stream(options)
                 .map(DatabaseSelection::resolve)
                 .toArray(DatabaseSelection[]::new);
         if(selections.length == 1) {
