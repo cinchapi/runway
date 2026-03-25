@@ -205,8 +205,6 @@ public class RecordComputeOnceTest extends ClientServerTest {
         Assert.assertEquals(1, widget.tagsInvocations.get());
     }
 
-    // ---- Inner test classes ----
-
     /**
      * A {@link Record} with a {@link Computed} method that uses
      * {@link Record#computeOnce(String, java.util.function.Supplier)} for

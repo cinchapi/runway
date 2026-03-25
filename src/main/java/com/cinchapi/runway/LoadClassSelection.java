@@ -15,7 +15,10 @@
  */
 package com.cinchapi.runway;
 
+import java.util.function.Predicate;
+
 import javax.annotation.Nullable;
+import javax.annotation.concurrent.Immutable;
 
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -25,80 +28,47 @@ import com.cinchapi.concourse.lang.sort.Order;
  * <p>
  * Results can optionally be sorted and paginated. The result is a
  * {@link java.util.Set Set} of {@link Record Records}.
- * </p>
  *
  * @param <T> the {@link Record} type
  * @author Jeff Nelson
  */
-public final class LoadClassSelection<T extends Record> extends Selection<T> {
+@Immutable
+public final class LoadClassSelection<T extends Record>
+        extends DatabaseSelection<T> {
 
     /**
      * The sort order, or {@code null} for no sorting.
      */
     @Nullable
-    Order order;
+    final Order order;
 
     /**
      * The pagination, or {@code null} for no pagination.
      */
     @Nullable
-    Page page;
+    final Page page;
+
+    /**
+     * The client-side filter, or {@code null} for no filtering.
+     */
+    @Nullable
+    final Predicate<T> filter;
 
     /**
      * Construct a new {@link LoadClassSelection}.
      *
-     * @param clazz the target class
-     * @param any whether to include descendants
+     * @param state the builder state
      */
-    LoadClassSelection(Class<T> clazz, boolean any) {
-        super(clazz, any);
-    }
-
-    /**
-     * Sort the results by the given {@code order}.
-     *
-     * @param order the sort order
-     * @return this {@link LoadClassSelection} for chaining
-     * @throws IllegalStateException if this {@link LoadClassSelection} is not
-     *             {@link State#PENDING}
-     */
-    public LoadClassSelection<T> order(Order order) {
-        ensurePending();
-        this.order = order;
-        return this;
-    }
-
-    /**
-     * Paginate the results by the given {@code page}.
-     *
-     * @param page the pagination
-     * @return this {@link LoadClassSelection} for chaining
-     * @throws IllegalStateException if this {@link LoadClassSelection} is not
-     *             {@link State#PENDING}
-     */
-    public LoadClassSelection<T> page(Page page) {
-        ensurePending();
-        this.page = page;
-        return this;
-    }
-
-    /**
-     * Constrain this {@link LoadClassSelection} to the given {@code realms}.
-     *
-     * @param realms the {@link Realms} filter
-     * @return this {@link LoadClassSelection} for chaining
-     * @throws IllegalStateException if this {@link LoadClassSelection} is not
-     *             {@link State#PENDING}
-     */
-    public LoadClassSelection<T> realms(Realms realms) {
-        ensurePending();
-        this.realms = realms;
-        return this;
+    LoadClassSelection(BuilderState<T> state) {
+        super(state.clazz, state.any, state.realms);
+        this.order = state.order;
+        this.page = state.page;
+        this.filter = state.filter;
     }
 
     @Override
     boolean isCombinable() {
-        return order == null && page == null;
+        return order == null && page == null && filter == null;
     }
 
 }

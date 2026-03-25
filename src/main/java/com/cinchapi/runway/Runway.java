@@ -56,7 +56,6 @@ import javax.annotation.Nullable;
 import com.cinchapi.ccl.syntax.ConditionTree;
 import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.common.base.Array;
-import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.concurrent.ExecutorRaceService;
@@ -236,7 +235,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param selection the {@link Selection}
      * @return the {@link Criteria}
      */
-    private static Criteria buildSelectionCriteria(Selection<?> selection) {
+    private static Criteria buildSelectionCriteria(
+            DatabaseSelection<?> selection) {
         Criteria base;
         if(selection instanceof LoadRecordSelection) {
             long id = ((LoadRecordSelection<?>) selection).id;
@@ -1477,10 +1477,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     @Override
     public Selections select(Selection<?> first, Selection<?>... others) {
-        Selection<?>[] selections = ArrayBuilder.<Selection<?>> builder()
-                .add(first).add(others).build();
+        DatabaseSelection<?>[] selections = Stream
+                .concat(Stream.of(first), Arrays.stream(others))
+                .map(DatabaseSelection::resolve)
+                .toArray(DatabaseSelection[]::new);
         if(selections.length == 1) {
-            Selection<?> selection = selections[0];
+            DatabaseSelection<?> selection = selections[0];
             Selections result = DatabaseInterface.super.select(selection);
             reserve(selection);
             return result;
@@ -1488,10 +1490,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             // TODO: Check in the server version is 1.0.0+ and, if so, use
             // prepare/submit
-            List<Selection<?>> isolated = new ArrayList<>();
-            List<Selection<?>> combinable = new ArrayList<>();
+            List<DatabaseSelection<?>> isolated = new ArrayList<>();
+            List<DatabaseSelection<?>> combinable = new ArrayList<>();
             Set<String> combinedClasses = Sets.newHashSet();
-            outer: for (Selection<?> selection : selections) {
+            outer: for (DatabaseSelection<?> selection : selections) {
                 if(selection.isCombinable()) {
                     // NOTE: #demux partitions combined results by class name
                     // only, so same-class selections with different criteria
@@ -1519,7 +1521,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 isolated.add(selection);
             }
             BuildableState combined = null;
-            for (Selection<?> selection : combinable) {
+            for (DatabaseSelection<?> selection : combinable) {
                 checkState(selection.state == Selection.State.PENDING,
                         "Selection has already been submitted");
                 Criteria criteria = buildSelectionCriteria(selection);
@@ -1531,7 +1533,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 try {
                     Map<Long, Map<String, Set<Object>>> data = this
                             .read(concourse, null, combined, null, null);
-                    for (Selection<?> selection : combinable) {
+                    for (DatabaseSelection<?> selection : combinable) {
                         demux(selection, data);
                     }
                 }
@@ -1542,7 +1544,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             if(!isolated.isEmpty()) {
                 Runnable[] tasks = new Runnable[isolated.size()];
                 for (int i = 0; i < isolated.size(); i++) {
-                    Selection<?> selection = isolated.get(i);
+                    DatabaseSelection<?> selection = isolated.get(i);
                     tasks[i] = () -> {
                         DatabaseInterface.super.select(selection);
                     };
@@ -1551,7 +1553,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
                 // Reservation cannot happen in the async threads above because
                 // it needs access to the #reservations thread local.
-                for (Selection<?> selection : isolated) {
+                for (DatabaseSelection<?> selection : isolated) {
                     reserve(selection);
                 }
             }
@@ -1808,7 +1810,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param data the combined query results
      */
     @SuppressWarnings({ "unchecked", "rawtypes" })
-    private void demux(Selection<?> selection,
+    private void demux(DatabaseSelection<?> selection,
             Map<Long, Map<String, Set<Object>>> data) {
         Object result = null;
         if(selection instanceof LoadRecordSelection) {
@@ -2413,7 +2415,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link Selection} to reserve
      */
-    private void reserve(Selection<?> selection) {
+    private void reserve(DatabaseSelection<?> selection) {
         Preconditions.checkState(selection.state == Selection.State.FINISHED);
         Reservation.Builder builder = Reservation.builder(selection.clazz)
                 .realms(selection.realms).any(selection.any)

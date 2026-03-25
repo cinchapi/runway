@@ -15,17 +15,20 @@
  */
 package com.cinchapi.runway;
 
+import javax.annotation.concurrent.Immutable;
+
 /**
  * A {@link Selection} that loads a single {@link Record} by its ID.
  * <p>
  * The result is a single {@link Record} instance, or {@code null} if no record
  * with the given ID exists.
- * </p>
  *
  * @param <T> the {@link Record} type
  * @author Jeff Nelson
  */
-public final class LoadRecordSelection<T extends Record> extends Selection<T> {
+@Immutable
+public final class LoadRecordSelection<T extends Record>
+        extends DatabaseSelection<T> {
 
     /**
      * The record ID.
@@ -35,27 +38,11 @@ public final class LoadRecordSelection<T extends Record> extends Selection<T> {
     /**
      * Construct a new {@link LoadRecordSelection}.
      *
-     * @param clazz the target class
-     * @param id the record ID
-     * @param any whether to include descendants
+     * @param state the builder state
      */
-    LoadRecordSelection(Class<T> clazz, long id, boolean any) {
-        super(clazz, any);
-        this.id = id;
-    }
-
-    /**
-     * Constrain this {@link LoadRecordSelection} to the given {@code realms}.
-     *
-     * @param realms the {@link Realms} filter
-     * @return this {@link LoadRecordSelection} for chaining
-     * @throws IllegalStateException if this {@link LoadRecordSelection} is not
-     *             {@link State#PENDING}
-     */
-    public LoadRecordSelection<T> realms(Realms realms) {
-        ensurePending();
-        this.realms = realms;
-        return this;
+    LoadRecordSelection(BuilderState<T> state) {
+        super(state.clazz, state.any, state.realms);
+        this.id = state.id;
     }
 
     @Override

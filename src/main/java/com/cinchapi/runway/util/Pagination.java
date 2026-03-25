@@ -20,7 +20,10 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
+import javax.annotation.Nullable;
+
 import com.cinchapi.concourse.lang.paginate.Page;
+import com.google.common.collect.Sets;
 
 /**
  * A utility for applying {@link Page Pages}.
@@ -51,49 +54,58 @@ public final class Pagination {
      *         {@code function}
      */
     public static <T> Set<T> applyFilterAndPage(Function<Page, Set<T>> function,
-            Predicate<T> filter, Page page) {
-        Set<T> records = new LinkedHashSet<>();
-        int offset = page.offset();
-        int limit = page.limit();
-        int count = 0;
-        int skipped = 0;
-        page = Page.of(0, limit);
-        int surplusFactor = 1;
-        outer: while (count < limit) {
-            int prevCount = count;
+            @Nullable Predicate<T> filter, @Nullable Page page) {
+        if(filter == null) {
+            return function.apply(page);
+        }
+        else if(page == null) {
             Set<T> unfiltered = function.apply(page);
-            if(unfiltered.isEmpty()) {
-                break;
-            }
-            else {
-                for (T record : unfiltered) {
-                    if(filter.test(record)) {
-                        if(skipped < offset) {
-                            ++skipped;
-                        }
-                        else {
-                            records.add(record);
-                            ++count;
-                            if(count == limit) {
-                                break outer;
+            return Sets.filter(unfiltered, filter::test);
+        }
+        else {
+            Set<T> records = new LinkedHashSet<>();
+            int offset = page.offset();
+            int limit = page.limit();
+            int count = 0;
+            int skipped = 0;
+            page = Page.of(0, limit);
+            int surplusFactor = 1;
+            outer: while (count < limit) {
+                int prevCount = count;
+                Set<T> unfiltered = function.apply(page);
+                if(unfiltered.isEmpty()) {
+                    break;
+                }
+                else {
+                    for (T record : unfiltered) {
+                        if(filter.test(record)) {
+                            if(skipped < offset) {
+                                ++skipped;
+                            }
+                            else {
+                                records.add(record);
+                                ++count;
+                                if(count == limit) {
+                                    break outer;
+                                }
                             }
                         }
                     }
+                    page = page.next();
+                    if(prevCount == count) {
+                        // The last page from the database did not contain any
+                        // filter matches, so try to increase the page size in
+                        // hopes of casting a wider net
+                        ++surplusFactor;
+                    }
+                    else {
+                        surplusFactor = Math.max(1, --surplusFactor);
+                    }
+                    page = page.size(limit * surplusFactor);
                 }
-                page = page.next();
-                if(prevCount == count) {
-                    // The last page from the database did not contain any
-                    // filter matches, so try to increase the page size in hopes
-                    // of casting a wider net
-                    ++surplusFactor;
-                }
-                else {
-                    surplusFactor = Math.max(1, --surplusFactor);
-                }
-                page = page.size(limit * surplusFactor);
             }
+            return records;
         }
-        return records;
     }
 
 }

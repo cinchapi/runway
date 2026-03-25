@@ -15,7 +15,10 @@
  */
 package com.cinchapi.runway;
 
+import java.util.function.Predicate;
+
 import javax.annotation.Nullable;
+import javax.annotation.concurrent.Immutable;
 
 import com.cinchapi.concourse.lang.Criteria;
 
@@ -25,44 +28,36 @@ import com.cinchapi.concourse.lang.Criteria;
  * <p>
  * The result is an {@link Integer} representing the count of matching
  * {@link Record Records}.
- * </p>
  *
  * @param <T> the {@link Record} type
  * @author Jeff Nelson
  */
-public final class CountSelection<T extends Record> extends Selection<T> {
+@Immutable
+public final class CountSelection<T extends Record>
+        extends DatabaseSelection<T> {
 
     /**
-     * The query criteria, or {@code null} for counting all records of the
-     * target class.
+     * The query criteria, or {@code null} for counting all {@link Record
+     * Records} of the target class.
      */
     @Nullable
     final Criteria criteria;
 
     /**
-     * Construct a new {@link CountSelection}.
-     *
-     * @param clazz the target class
-     * @param criteria the query criteria, or {@code null}
-     * @param any whether to include descendants
+     * The client-side filter, or {@code null} for no filtering.
      */
-    CountSelection(Class<T> clazz, @Nullable Criteria criteria, boolean any) {
-        super(clazz, any);
-        this.criteria = criteria;
-    }
+    @Nullable
+    final Predicate<T> filter;
 
     /**
-     * Constrain this {@link CountSelection} to the given {@code realms}.
+     * Construct a new {@link CountSelection}.
      *
-     * @param realms the {@link Realms} filter
-     * @return this {@link CountSelection} for chaining
-     * @throws IllegalStateException if this {@link CountSelection} is not
-     *             {@link State#PENDING}
+     * @param state the builder state
      */
-    public CountSelection<T> realms(Realms realms) {
-        ensurePending();
-        this.realms = realms;
-        return this;
+    CountSelection(BuilderState<T> state) {
+        super(state.clazz, state.any, state.realms);
+        this.criteria = state.criteria;
+        this.filter = state.filter;
     }
 
     @Override

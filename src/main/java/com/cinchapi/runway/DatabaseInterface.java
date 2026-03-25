@@ -15,13 +15,16 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-import com.cinchapi.common.base.ArrayBuilder;
+import javax.annotation.Nullable;
+
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
@@ -101,7 +104,7 @@ public interface DatabaseInterface {
      *         {@code criteria}.
      */
     public default <T extends Record> int count(Class<T> clazz,
-            Criteria criteria, Predicate<T> filter) {
+            Criteria criteria, @Nullable Predicate<T> filter) {
         return count(clazz, criteria, filter, Realms.any());
     }
 
@@ -117,7 +120,7 @@ public interface DatabaseInterface {
      *         {@code criteria}.
      */
     public default <T extends Record> int count(Class<T> clazz,
-            Criteria criteria, Predicate<T> filter, Realms realms) {
+            Criteria criteria, @Nullable Predicate<T> filter, Realms realms) {
         return find(clazz, criteria, filter, realms).size();
     }
 
@@ -145,7 +148,7 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int count(Class<T> clazz,
-            Predicate<T> filter) {
+            @Nullable Predicate<T> filter) {
         return count(clazz, filter, Realms.any());
     }
 
@@ -159,7 +162,7 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int count(Class<T> clazz,
-            Predicate<T> filter, Realms realms) {
+            @Nullable Predicate<T> filter, Realms realms) {
         return load(clazz, filter, realms).size();
     }
 
@@ -211,7 +214,7 @@ public interface DatabaseInterface {
      *         {@code criteria}.
      */
     public default <T extends Record> int countAny(Class<T> clazz,
-            Criteria criteria, Predicate<T> filter) {
+            Criteria criteria, @Nullable Predicate<T> filter) {
         return countAny(clazz, criteria, filter, Realms.any());
     }
 
@@ -228,7 +231,7 @@ public interface DatabaseInterface {
      *         {@code criteria}.
      */
     public default <T extends Record> int countAny(Class<T> clazz,
-            Criteria criteria, Predicate<T> filter, Realms realms) {
+            Criteria criteria, @Nullable Predicate<T> filter, Realms realms) {
         return findAny(clazz, criteria, filter, realms).size();
     }
 
@@ -257,7 +260,7 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int countAny(Class<T> clazz,
-            Predicate<T> filter) {
+            @Nullable Predicate<T> filter) {
         return countAny(clazz, filter, Realms.any());
     }
 
@@ -272,7 +275,7 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int countAny(Class<T> clazz,
-            Predicate<T> filter, Realms realms) {
+            @Nullable Predicate<T> filter, Realms realms) {
         return loadAny(clazz, filter, realms).size();
     }
 
@@ -362,7 +365,8 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Order order, Page page, Predicate<T> filter) {
+            Criteria criteria, Order order, Page page,
+            @Nullable Predicate<T> filter) {
         return find(clazz, criteria, order, page, filter, Realms.any());
     }
 
@@ -381,8 +385,8 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Order order, Page page, Predicate<T> filter,
-            Realms realms) {
+            Criteria criteria, Order order, Page page,
+            @Nullable Predicate<T> filter, Realms realms) {
         return Pagination.applyFilterAndPage(
                 $page -> find(clazz, criteria, order, $page, realms), filter,
                 page);
@@ -415,7 +419,7 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Order order, Predicate<T> filter) {
+            Criteria criteria, Order order, @Nullable Predicate<T> filter) {
         return find(clazz, criteria, order, filter, Realms.any());
     }
 
@@ -432,10 +436,11 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Order order, Predicate<T> filter,
+            Criteria criteria, Order order, @Nullable Predicate<T> filter,
             Realms realms) {
         Set<T> unfiltered = find(clazz, criteria, order, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return filter != null ? Sets.filter(unfiltered, filter::test)
+                : unfiltered;
     }
 
     /**
@@ -495,7 +500,8 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Page page, Order order, Predicate<T> filter) {
+            Criteria criteria, Page page, Order order,
+            @Nullable Predicate<T> filter) {
         return find(clazz, criteria, page, order, filter, Realms.any());
     }
 
@@ -514,8 +520,8 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Page page, Order order, Predicate<T> filter,
-            Realms realms) {
+            Criteria criteria, Page page, Order order,
+            @Nullable Predicate<T> filter, Realms realms) {
         return find(clazz, criteria, order, page, filter, realms);
     }
 
@@ -548,7 +554,7 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Page page, Predicate<T> filter) {
+            Criteria criteria, Page page, @Nullable Predicate<T> filter) {
         return find(clazz, criteria, page, filter, Realms.any());
     }
 
@@ -565,7 +571,8 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
+            Criteria criteria, Page page, @Nullable Predicate<T> filter,
+            Realms realms) {
         return Pagination.applyFilterAndPage(
                 $page -> find(clazz, criteria, $page, realms), filter, page);
     }
@@ -594,7 +601,7 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Predicate<T> filter) {
+            Criteria criteria, @Nullable Predicate<T> filter) {
         return find(clazz, criteria, filter, Realms.any());
     }
 
@@ -610,9 +617,10 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Predicate<T> filter, Realms realms) {
+            Criteria criteria, @Nullable Predicate<T> filter, Realms realms) {
         Set<T> unfiltered = find(clazz, criteria, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return filter != null ? Sets.filter(unfiltered, filter::test)
+                : unfiltered;
     }
 
     /**
@@ -717,7 +725,8 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order, Page page, Predicate<T> filter) {
+            Criteria criteria, Order order, Page page,
+            @Nullable Predicate<T> filter) {
         return findAny(clazz, criteria, order, page, filter, Realms.any());
     }
 
@@ -736,8 +745,8 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order, Page page, Predicate<T> filter,
-            Realms realms) {
+            Criteria criteria, Order order, Page page,
+            @Nullable Predicate<T> filter, Realms realms) {
         return Pagination.applyFilterAndPage(
                 $page -> findAny(clazz, criteria, order, $page, realms), filter,
                 page);
@@ -770,7 +779,7 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order, Predicate<T> filter) {
+            Criteria criteria, Order order, @Nullable Predicate<T> filter) {
         return findAny(clazz, criteria, order, filter, Realms.any());
     }
 
@@ -787,10 +796,11 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order, Predicate<T> filter,
+            Criteria criteria, Order order, @Nullable Predicate<T> filter,
             Realms realms) {
         Set<T> unfiltered = findAny(clazz, criteria, order, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return filter != null ? Sets.filter(unfiltered, filter::test)
+                : unfiltered;
     }
 
     /**
@@ -850,7 +860,8 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page, Order order, Predicate<T> filter) {
+            Criteria criteria, Page page, Order order,
+            @Nullable Predicate<T> filter) {
         return findAny(clazz, criteria, page, order, filter, Realms.any());
     }
 
@@ -869,8 +880,8 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page, Order order, Predicate<T> filter,
-            Realms realms) {
+            Criteria criteria, Page page, Order order,
+            @Nullable Predicate<T> filter, Realms realms) {
         return findAny(clazz, criteria, order, page, filter, realms);
     }
 
@@ -903,7 +914,7 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page, Predicate<T> filter) {
+            Criteria criteria, Page page, @Nullable Predicate<T> filter) {
         return findAny(clazz, criteria, page, filter, Realms.any());
     }
 
@@ -920,7 +931,8 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
+            Criteria criteria, Page page, @Nullable Predicate<T> filter,
+            Realms realms) {
         return Pagination.applyFilterAndPage(
                 $page -> findAny(clazz, criteria, $page, realms), filter, page);
 
@@ -950,7 +962,7 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Predicate<T> filter) {
+            Criteria criteria, @Nullable Predicate<T> filter) {
         return findAny(clazz, criteria, filter, Realms.any());
     }
 
@@ -966,9 +978,10 @@ public interface DatabaseInterface {
      * @return the matching records
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Predicate<T> filter, Realms realms) {
+            Criteria criteria, @Nullable Predicate<T> filter, Realms realms) {
         Set<T> unfiltered = findAny(clazz, criteria, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return filter != null ? Sets.filter(unfiltered, filter::test)
+                : unfiltered;
     }
 
     /**
@@ -1205,7 +1218,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page, Predicate<T> filter) {
+            Page page, @Nullable Predicate<T> filter) {
         return load(clazz, order, page, filter, Realms.any());
     }
 
@@ -1230,7 +1243,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page, Predicate<T> filter, Realms realms) {
+            Page page, @Nullable Predicate<T> filter, Realms realms) {
         return Pagination.applyFilterAndPage(
                 $page -> load(clazz, order, $page, realms), filter, page);
     }
@@ -1274,7 +1287,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Predicate<T> filter) {
+            @Nullable Predicate<T> filter) {
         return load(clazz, order, filter, Realms.any());
     }
 
@@ -1297,9 +1310,10 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Predicate<T> filter, Realms realms) {
+            @Nullable Predicate<T> filter, Realms realms) {
         Set<T> unfiltered = load(clazz, order, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return filter != null ? Sets.filter(unfiltered, filter::test)
+                : unfiltered;
     }
 
     /**
@@ -1382,7 +1396,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Order order, Predicate<T> filter) {
+            Order order, @Nullable Predicate<T> filter) {
         return load(clazz, page, order, filter, Realms.any());
     }
 
@@ -1407,7 +1421,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Order order, Predicate<T> filter, Realms realms) {
+            Order order, @Nullable Predicate<T> filter, Realms realms) {
         return load(clazz, order, page, filter, realms);
     }
 
@@ -1429,7 +1443,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Predicate<T> filter) {
+            @Nullable Predicate<T> filter) {
         return load(clazz, page, filter, Realms.any());
     }
 
@@ -1452,7 +1466,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Predicate<T> filter, Realms realms) {
+            @Nullable Predicate<T> filter, Realms realms) {
         return Pagination.applyFilterAndPage(
                 $page -> load(clazz, $page, realms), filter, page);
     }
@@ -1492,7 +1506,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz,
-            Predicate<T> filter) {
+            @Nullable Predicate<T> filter) {
         return load(clazz, filter, Realms.any());
     }
 
@@ -1512,9 +1526,10 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz,
-            Predicate<T> filter, Realms realms) {
+            @Nullable Predicate<T> filter, Realms realms) {
         Set<T> unfiltered = load(clazz, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return filter != null ? Sets.filter(unfiltered, filter::test)
+                : unfiltered;
     }
 
     /**
@@ -1660,7 +1675,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Page page, Predicate<T> filter) {
+            Order order, Page page, @Nullable Predicate<T> filter) {
         return loadAny(clazz, order, page, filter, Realms.any());
     }
 
@@ -1685,7 +1700,8 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Page page, Predicate<T> filter, Realms realms) {
+            Order order, Page page, @Nullable Predicate<T> filter,
+            Realms realms) {
         return Pagination.applyFilterAndPage(
                 $page -> loadAny(clazz, order, $page, realms), filter, page);
     }
@@ -1730,7 +1746,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Predicate<T> filter) {
+            Order order, @Nullable Predicate<T> filter) {
         return loadAny(clazz, order, filter, Realms.any());
     }
 
@@ -1753,9 +1769,10 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Predicate<T> filter, Realms realms) {
+            Order order, @Nullable Predicate<T> filter, Realms realms) {
         Set<T> unfiltered = loadAny(clazz, order, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return filter != null ? Sets.filter(unfiltered, filter::test)
+                : unfiltered;
     }
 
     /**
@@ -1840,7 +1857,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Order order, Predicate<T> filter) {
+            Order order, @Nullable Predicate<T> filter) {
         return loadAny(clazz, page, order, filter, Realms.any());
     }
 
@@ -1865,7 +1882,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Order order, Predicate<T> filter, Realms realms) {
+            Order order, @Nullable Predicate<T> filter, Realms realms) {
         return loadAny(clazz, order, page, filter, realms);
     }
 
@@ -1911,7 +1928,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Predicate<T> filter) {
+            @Nullable Predicate<T> filter) {
         return loadAny(clazz, page, filter, Realms.any());
     }
 
@@ -1934,7 +1951,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Predicate<T> filter, Realms realms) {
+            @Nullable Predicate<T> filter, Realms realms) {
         return Pagination.applyFilterAndPage(
                 $page -> loadAny(clazz, $page, realms), filter, page);
     }
@@ -1975,7 +1992,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Predicate<T> filter) {
+            @Nullable Predicate<T> filter) {
         return loadAny(clazz, filter, Realms.any());
     }
 
@@ -1997,9 +2014,10 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Predicate<T> filter, Realms realms) {
+            @Nullable Predicate<T> filter, Realms realms) {
         Set<T> unfiltered = loadAny(clazz, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return filter != null ? Sets.filter(unfiltered, filter::test)
+                : unfiltered;
     }
 
     /**
@@ -2123,72 +2141,51 @@ public interface DatabaseInterface {
      * @throws IllegalStateException if any {@link Selection} has already been
      *             submitted
      */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public default Selections select(Selection<?> first,
             Selection<?>... others) {
-        Selection<?>[] selections = ArrayBuilder.<Selection<?>> builder()
-                .add(first).add(others).build();
-        for (Selection<?> selection : selections) {
+        DatabaseSelection<?>[] selections = Stream
+                .concat(Stream.of(first), Arrays.stream(others))
+                .map(DatabaseSelection::resolve)
+                .toArray(DatabaseSelection[]::new);
+        for (DatabaseSelection<?> selection : selections) {
             Preconditions.checkState(selection.state == Selection.State.PENDING,
                     "Selection has already been submitted");
             selection.state = Selection.State.SUBMITTED;
             if(selection instanceof CountSelection) {
+                // NOTE: This path isn't consolidated because #count has
+                // different codepaths with vs without a Criteria
                 CountSelection<?> s = (CountSelection<?>) selection;
+                Predicate filter = s.filter;
                 if(s.criteria != null) {
-                    s.result = s.any ? countAny(s.clazz, s.criteria, s.realms)
-                            : count(s.clazz, s.criteria, s.realms);
+                    s.result = s.any
+                            ? countAny(s.clazz, s.criteria, filter, s.realms)
+                            : count(s.clazz, s.criteria, filter, s.realms);
                 }
                 else {
-                    s.result = s.any ? countAny(s.clazz, s.realms)
-                            : count(s.clazz, s.realms);
+                    s.result = s.any ? countAny(s.clazz, filter, s.realms)
+                            : count(s.clazz, filter, s.realms);
                 }
             }
             else if(selection instanceof LoadRecordSelection) {
-                LoadRecordSelection<?> lr = (LoadRecordSelection<?>) selection;
-                lr.result = load(lr.clazz, lr.id, lr.realms);
+                LoadRecordSelection<?> s = (LoadRecordSelection<?>) selection;
+                s.result = load(s.clazz, s.id, s.realms);
             }
             else if(selection instanceof FindSelection) {
                 FindSelection<?> s = (FindSelection<?>) selection;
-                if(s.order != null && s.page != null) {
-                    s.result = s.any
-                            ? findAny(s.clazz, s.criteria, s.order, s.page,
-                                    s.realms)
-                            : find(s.clazz, s.criteria, s.order, s.page,
-                                    s.realms);
-                }
-                else if(s.order != null) {
-                    s.result = s.any
-                            ? findAny(s.clazz, s.criteria, s.order, s.realms)
-                            : find(s.clazz, s.criteria, s.order, s.realms);
-                }
-                else if(s.page != null) {
-                    s.result = s.any
-                            ? findAny(s.clazz, s.criteria, s.page, s.realms)
-                            : find(s.clazz, s.criteria, s.page, s.realms);
-                }
-                else {
-                    s.result = s.any ? findAny(s.clazz, s.criteria, s.realms)
-                            : find(s.clazz, s.criteria, s.realms);
-                }
+                Predicate filter = s.filter;
+                s.result = s.any
+                        ? findAny(s.clazz, s.criteria, s.order, s.page, filter,
+                                s.realms)
+                        : find(s.clazz, s.criteria, s.order, s.page, filter,
+                                s.realms);
             }
             else {
                 LoadClassSelection<?> s = (LoadClassSelection<?>) selection;
-                if(s.order != null && s.page != null) {
-                    s.result = s.any
-                            ? loadAny(s.clazz, s.order, s.page, s.realms)
-                            : load(s.clazz, s.order, s.page, s.realms);
-                }
-                else if(s.order != null) {
-                    s.result = s.any ? loadAny(s.clazz, s.order, s.realms)
-                            : load(s.clazz, s.order, s.realms);
-                }
-                else if(s.page != null) {
-                    s.result = s.any ? loadAny(s.clazz, s.page, s.realms)
-                            : load(s.clazz, s.page, s.realms);
-                }
-                else {
-                    s.result = s.any ? loadAny(s.clazz, s.realms)
-                            : load(s.clazz, s.realms);
-                }
+                Predicate filter = s.filter;
+                s.result = s.any
+                        ? loadAny(s.clazz, s.order, s.page, filter, s.realms)
+                        : load(s.clazz, s.order, s.page, filter, s.realms);
             }
             selection.state = Selection.State.FINISHED;
         }

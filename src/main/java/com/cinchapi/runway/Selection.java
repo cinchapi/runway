@@ -15,9 +15,7 @@
  */
 package com.cinchapi.runway;
 
-import static com.google.common.base.Preconditions.checkState;
-
-import javax.annotation.Nullable;
+import java.util.function.Predicate;
 
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
@@ -54,792 +52,29 @@ import com.cinchapi.concourse.lang.sort.Order;
  * @param <T> the {@link Record} type
  * @author Jeff Nelson
  */
-public abstract class Selection<T extends Record> {
+public interface Selection<T extends Record> {
 
     /**
-     * Create a {@link FindSelection} that finds {@link Record Records} of the
-     * given {@code clazz} matching the {@code criteria}.
+     * Create a builder targeting the exact {@code clazz} provided, excluding
+     * descendants.
      *
      * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @return a new {@link FindSelection}
+     * @return a new {@link InitialBuilder}
      */
-    public static <T extends Record> FindSelection<T> find(Class<T> clazz,
-            Criteria criteria) {
-        return new FindSelection<>(clazz, criteria, false);
+    public static <T extends Record> InitialBuilder<T> of(Class<T> clazz) {
+        return new InitialBuilder<>(
+                new DatabaseSelection.BuilderState<>(clazz, false));
     }
 
     /**
-     * Create a {@link FindSelection} with all optional parameters.
+     * Create a builder targeting {@code clazz} and all of its descendants.
      *
      * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param order the sort order, or {@code null}
-     * @param page the pagination, or {@code null}
-     * @param realms the {@link Realms} filter, or {@code null}
-     * @return a new {@link FindSelection}
+     * @return a new {@link InitialBuilder}
      */
-    public static <T extends Record> FindSelection<T> find(Class<T> clazz,
-            Criteria criteria, @Nullable Order order, @Nullable Page page,
-            @Nullable Realms realms) {
-        FindSelection<T> selection = new FindSelection<>(clazz, criteria,
-                false);
-        selection.order = order;
-        selection.page = page;
-        if(realms != null) {
-            selection.realms = realms;
-        }
-        return selection;
-    }
-
-    /**
-     * Create a {@link FindSelection} sorted by {@code order}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param order the sort order
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> find(Class<T> clazz,
-            Criteria criteria, Order order) {
-        return find(clazz, criteria, order, null, null);
-    }
-
-    /**
-     * Create a {@link FindSelection} sorted by {@code order} and paginated by
-     * {@code page}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param order the sort order
-     * @param page the pagination
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> find(Class<T> clazz,
-            Criteria criteria, Order order, Page page) {
-        return find(clazz, criteria, order, page, null);
-    }
-
-    /**
-     * Create a {@link FindSelection} sorted by {@code order} within the
-     * specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param order the sort order
-     * @param realms the {@link Realms} filter
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> find(Class<T> clazz,
-            Criteria criteria, Order order, Realms realms) {
-        return find(clazz, criteria, order, null, realms);
-    }
-
-    /**
-     * Create a {@link FindSelection} paginated by {@code page}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param page the pagination
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> find(Class<T> clazz,
-            Criteria criteria, Page page) {
-        return find(clazz, criteria, null, page, null);
-    }
-
-    /**
-     * Create a {@link FindSelection} paginated by {@code page} and sorted by
-     * {@code order}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param page the pagination
-     * @param order the sort order
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> find(Class<T> clazz,
-            Criteria criteria, Page page, Order order) {
-        return find(clazz, criteria, order, page, null);
-    }
-
-    /**
-     * Create a {@link FindSelection} paginated by {@code page}, sorted by
-     * {@code order}, within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param page the pagination
-     * @param order the sort order
-     * @param realms the {@link Realms} filter
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> find(Class<T> clazz,
-            Criteria criteria, Page page, Order order, Realms realms) {
-        return find(clazz, criteria, order, page, realms);
-    }
-
-    /**
-     * Create a {@link FindSelection} paginated by {@code page} within the
-     * specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param page the pagination
-     * @param realms the {@link Realms} filter
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> find(Class<T> clazz,
-            Criteria criteria, Page page, Realms realms) {
-        return find(clazz, criteria, null, page, realms);
-    }
-
-    /**
-     * Create a {@link FindSelection} within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param realms the {@link Realms} filter
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> find(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        return find(clazz, criteria, (Order) null, null, realms);
-    }
-
-    /**
-     * Create a {@link FindSelection} that finds {@link Record Records} of the
-     * given {@code clazz} and its descendants matching the {@code criteria}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> findAny(Class<T> clazz,
-            Criteria criteria) {
-        return new FindSelection<>(clazz, criteria, true);
-    }
-
-    /**
-     * Create a {@link FindSelection} for the given {@code clazz} and its
-     * descendants with all optional parameters.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param order the sort order, or {@code null}
-     * @param page the pagination, or {@code null}
-     * @param realms the {@link Realms} filter, or {@code null}
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> findAny(Class<T> clazz,
-            Criteria criteria, @Nullable Order order, @Nullable Page page,
-            @Nullable Realms realms) {
-        FindSelection<T> selection = new FindSelection<>(clazz, criteria, true);
-        selection.order = order;
-        selection.page = page;
-        if(realms != null) {
-            selection.realms = realms;
-        }
-        return selection;
-    }
-
-    /**
-     * Create a {@link FindSelection} for descendants, sorted by {@code order}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param order the sort order
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order) {
-        return findAny(clazz, criteria, order, null, null);
-    }
-
-    /**
-     * Create a {@link FindSelection} for descendants, sorted by {@code order}
-     * and paginated by {@code page}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param order the sort order
-     * @param page the pagination
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order, Page page) {
-        return findAny(clazz, criteria, order, page, null);
-    }
-
-    /**
-     * Create a {@link FindSelection} for descendants, sorted by {@code order}
-     * within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param order the sort order
-     * @param realms the {@link Realms} filter
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order, Realms realms) {
-        return findAny(clazz, criteria, order, null, realms);
-    }
-
-    /**
-     * Create a {@link FindSelection} for descendants, paginated by
-     * {@code page}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param page the pagination
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page) {
-        return findAny(clazz, criteria, null, page, null);
-    }
-
-    /**
-     * Create a {@link FindSelection} for descendants, paginated by {@code page}
-     * and sorted by {@code order}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param page the pagination
-     * @param order the sort order
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page, Order order) {
-        return findAny(clazz, criteria, order, page, null);
-    }
-
-    /**
-     * Create a {@link FindSelection} for descendants, paginated by
-     * {@code page}, sorted by {@code order}, within the specified
-     * {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param page the pagination
-     * @param order the sort order
-     * @param realms the {@link Realms} filter
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page, Order order, Realms realms) {
-        return findAny(clazz, criteria, order, page, realms);
-    }
-
-    /**
-     * Create a {@link FindSelection} for descendants, paginated by {@code page}
-     * within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param page the pagination
-     * @param realms the {@link Realms} filter
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page, Realms realms) {
-        return findAny(clazz, criteria, null, page, realms);
-    }
-
-    /**
-     * Create a {@link FindSelection} for descendants within the specified
-     * {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param realms the {@link Realms} filter
-     * @return a new {@link FindSelection}
-     */
-    public static <T extends Record> FindSelection<T> findAny(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        return findAny(clazz, criteria, (Order) null, null, realms);
-    }
-
-    /**
-     * Create a {@link LoadRecordSelection} that loads a single {@link Record}
-     * by its {@code id}.
-     *
-     * @param clazz the {@link Record} class
-     * @param id the record ID
-     * @return a new {@link LoadRecordSelection}
-     */
-    public static <T extends Record> LoadRecordSelection<T> load(Class<T> clazz,
-            long id) {
-        return new LoadRecordSelection<>(clazz, id, false);
-    }
-
-    /**
-     * Create a {@link LoadRecordSelection} that loads a single {@link Record}
-     * by its {@code id} within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param id the record ID
-     * @param realms the {@link Realms} filter
-     * @return a new {@link LoadRecordSelection}
-     */
-    public static <T extends Record> LoadRecordSelection<T> load(Class<T> clazz,
-            long id, Realms realms) {
-        LoadRecordSelection<T> selection = new LoadRecordSelection<>(clazz, id,
-                false);
-        selection.realms = realms;
-        return selection;
-    }
-
-    /**
-     * Create a {@link LoadRecordSelection} that loads a single {@link Record}
-     * of the given {@code clazz} or its descendants by {@code id}.
-     *
-     * @param clazz the {@link Record} class
-     * @param id the record ID
-     * @return a new {@link LoadRecordSelection}
-     */
-    public static <T extends Record> LoadRecordSelection<T> loadAny(
-            Class<T> clazz, long id) {
-        return new LoadRecordSelection<>(clazz, id, true);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} that loads all {@link Record Records}
-     * of the given {@code clazz}.
-     *
-     * @param clazz the {@link Record} class
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> load(
-            Class<T> clazz) {
-        return new LoadClassSelection<>(clazz, false);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} with all optional parameters.
-     *
-     * @param clazz the {@link Record} class
-     * @param order the sort order, or {@code null}
-     * @param page the pagination, or {@code null}
-     * @param realms the {@link Realms} filter, or {@code null}
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> load(Class<T> clazz,
-            @Nullable Order order, @Nullable Page page,
-            @Nullable Realms realms) {
-        LoadClassSelection<T> selection = new LoadClassSelection<>(clazz,
-                false);
-        selection.order = order;
-        selection.page = page;
-        if(realms != null) {
-            selection.realms = realms;
-        }
-        return selection;
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} sorted by {@code order}.
-     *
-     * @param clazz the {@link Record} class
-     * @param order the sort order
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> load(Class<T> clazz,
-            Order order) {
-        return load(clazz, order, null, null);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} sorted by {@code order} and paginated
-     * by {@code page}.
-     *
-     * @param clazz the {@link Record} class
-     * @param order the sort order
-     * @param page the pagination
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> load(Class<T> clazz,
-            Order order, Page page) {
-        return load(clazz, order, page, null);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} sorted by {@code order} within the
-     * specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param order the sort order
-     * @param realms the {@link Realms} filter
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> load(Class<T> clazz,
-            Order order, Realms realms) {
-        return load(clazz, order, null, realms);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} paginated by {@code page}.
-     *
-     * @param clazz the {@link Record} class
-     * @param page the pagination
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> load(Class<T> clazz,
-            Page page) {
-        return load(clazz, null, page, null);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} paginated by {@code page} and sorted
-     * by {@code order}.
-     *
-     * @param clazz the {@link Record} class
-     * @param page the pagination
-     * @param order the sort order
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> load(Class<T> clazz,
-            Page page, Order order) {
-        return load(clazz, order, page, null);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} paginated by {@code page}, sorted by
-     * {@code order}, within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param page the pagination
-     * @param order the sort order
-     * @param realms the {@link Realms} filter
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> load(Class<T> clazz,
-            Page page, Order order, Realms realms) {
-        return load(clazz, order, page, realms);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} paginated by {@code page} within the
-     * specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param page the pagination
-     * @param realms the {@link Realms} filter
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> load(Class<T> clazz,
-            Page page, Realms realms) {
-        return load(clazz, null, page, realms);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param realms the {@link Realms} filter
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> load(Class<T> clazz,
-            Realms realms) {
-        return load(clazz, (Order) null, null, realms);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} that loads all {@link Record Records}
-     * of the given {@code clazz} and its descendants.
-     *
-     * @param clazz the {@link Record} class
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> loadAny(
-            Class<T> clazz) {
-        return new LoadClassSelection<>(clazz, true);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} for descendants with all optional
-     * parameters.
-     *
-     * @param clazz the {@link Record} class
-     * @param order the sort order, or {@code null}
-     * @param page the pagination, or {@code null}
-     * @param realms the {@link Realms} filter, or {@code null}
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> loadAny(
-            Class<T> clazz, @Nullable Order order, @Nullable Page page,
-            @Nullable Realms realms) {
-        LoadClassSelection<T> selection = new LoadClassSelection<>(clazz, true);
-        selection.order = order;
-        selection.page = page;
-        if(realms != null) {
-            selection.realms = realms;
-        }
-        return selection;
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} for descendants, sorted by
-     * {@code order}.
-     *
-     * @param clazz the {@link Record} class
-     * @param order the sort order
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> loadAny(
-            Class<T> clazz, Order order) {
-        return loadAny(clazz, order, null, null);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} for descendants, sorted by
-     * {@code order} and paginated by {@code page}.
-     *
-     * @param clazz the {@link Record} class
-     * @param order the sort order
-     * @param page the pagination
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> loadAny(
-            Class<T> clazz, Order order, Page page) {
-        return loadAny(clazz, order, page, null);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} for descendants, sorted by
-     * {@code order} within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param order the sort order
-     * @param realms the {@link Realms} filter
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> loadAny(
-            Class<T> clazz, Order order, Realms realms) {
-        return loadAny(clazz, order, null, realms);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} for descendants, paginated by
-     * {@code page}.
-     *
-     * @param clazz the {@link Record} class
-     * @param page the pagination
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> loadAny(
-            Class<T> clazz, Page page) {
-        return loadAny(clazz, null, page, null);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} for descendants, paginated by
-     * {@code page} and sorted by {@code order}.
-     *
-     * @param clazz the {@link Record} class
-     * @param page the pagination
-     * @param order the sort order
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> loadAny(
-            Class<T> clazz, Page page, Order order) {
-        return loadAny(clazz, order, page, null);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} for descendants, paginated by
-     * {@code page}, sorted by {@code order}, within the specified
-     * {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param page the pagination
-     * @param order the sort order
-     * @param realms the {@link Realms} filter
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> loadAny(
-            Class<T> clazz, Page page, Order order, Realms realms) {
-        return loadAny(clazz, order, page, realms);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} for descendants, paginated by
-     * {@code page} within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param page the pagination
-     * @param realms the {@link Realms} filter
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> loadAny(
-            Class<T> clazz, Page page, Realms realms) {
-        return loadAny(clazz, null, page, realms);
-    }
-
-    /**
-     * Create a {@link LoadClassSelection} for descendants within the specified
-     * {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param realms the {@link Realms} filter
-     * @return a new {@link LoadClassSelection}
-     */
-    public static <T extends Record> LoadClassSelection<T> loadAny(
-            Class<T> clazz, Realms realms) {
-        return loadAny(clazz, (Order) null, null, realms);
-    }
-
-    /**
-     * Create a {@link CountSelection} that counts all {@link Record Records} of
-     * the given {@code clazz}.
-     *
-     * @param clazz the {@link Record} class
-     * @return a new {@link CountSelection}
-     */
-    public static <T extends Record> CountSelection<T> count(Class<T> clazz) {
-        return new CountSelection<>(clazz, null, false);
-    }
-
-    /**
-     * Create a {@link CountSelection} that counts {@link Record Records} of the
-     * given {@code clazz} matching the {@code criteria}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @return a new {@link CountSelection}
-     */
-    public static <T extends Record> CountSelection<T> count(Class<T> clazz,
-            Criteria criteria) {
-        return new CountSelection<>(clazz, criteria, false);
-    }
-
-    /**
-     * Create a {@link CountSelection} that counts {@link Record Records} of the
-     * given {@code clazz} matching the {@code criteria} within the specified
-     * {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param realms the {@link Realms} filter
-     * @return a new {@link CountSelection}
-     */
-    public static <T extends Record> CountSelection<T> count(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        CountSelection<T> selection = new CountSelection<>(clazz, criteria,
-                false);
-        selection.realms = realms;
-        return selection;
-    }
-
-    /**
-     * Create a {@link CountSelection} that counts all {@link Record Records} of
-     * the given {@code clazz} within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param realms the {@link Realms} filter
-     * @return a new {@link CountSelection}
-     */
-    public static <T extends Record> CountSelection<T> count(Class<T> clazz,
-            Realms realms) {
-        CountSelection<T> selection = new CountSelection<>(clazz, null, false);
-        selection.realms = realms;
-        return selection;
-    }
-
-    /**
-     * Create a {@link CountSelection} that counts all {@link Record Records} of
-     * the given {@code clazz} and its descendants.
-     *
-     * @param clazz the {@link Record} class
-     * @return a new {@link CountSelection}
-     */
-    public static <T extends Record> CountSelection<T> countAny(
-            Class<T> clazz) {
-        return new CountSelection<>(clazz, null, true);
-    }
-
-    /**
-     * Create a {@link CountSelection} that counts {@link Record Records} of the
-     * given {@code clazz} and its descendants matching the {@code criteria}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @return a new {@link CountSelection}
-     */
-    public static <T extends Record> CountSelection<T> countAny(Class<T> clazz,
-            Criteria criteria) {
-        return new CountSelection<>(clazz, criteria, true);
-    }
-
-    /**
-     * Create a {@link CountSelection} that counts {@link Record Records} of the
-     * given {@code clazz} and its descendants matching the {@code criteria}
-     * within the specified {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param criteria the query criteria
-     * @param realms the {@link Realms} filter
-     * @return a new {@link CountSelection}
-     */
-    public static <T extends Record> CountSelection<T> countAny(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        CountSelection<T> selection = new CountSelection<>(clazz, criteria,
-                true);
-        selection.realms = realms;
-        return selection;
-    }
-
-    /**
-     * Create a {@link CountSelection} that counts all {@link Record Records} of
-     * the given {@code clazz} and its descendants within the specified
-     * {@code realms}.
-     *
-     * @param clazz the {@link Record} class
-     * @param realms the {@link Realms} filter
-     * @return a new {@link CountSelection}
-     */
-    public static <T extends Record> CountSelection<T> countAny(Class<T> clazz,
-            Realms realms) {
-        CountSelection<T> selection = new CountSelection<>(clazz, null, true);
-        selection.realms = realms;
-        return selection;
-    }
-
-    /**
-     * The target {@link Record} class.
-     */
-    final Class<T> clazz;
-
-    /**
-     * Whether to include descendants of {@link #clazz} in the results.
-     */
-    final boolean any;
-
-    /**
-     * The {@link Realms} filter.
-     */
-    Realms realms = Realms.any();
-
-    /**
-     * The current lifecycle state.
-     */
-    volatile State state = State.PENDING;
-
-    /**
-     * The result of the selection.
-     */
-    Object result;
-
-    /**
-     * Construct a new {@link Selection}.
-     *
-     * @param clazz the target class
-     * @param any whether to include descendants
-     */
-    Selection(Class<T> clazz, boolean any) {
-        this.clazz = clazz;
-        this.any = any;
+    public static <T extends Record> InitialBuilder<T> ofAny(Class<T> clazz) {
+        return new InitialBuilder<>(
+                new DatabaseSelection.BuilderState<>(clazz, true));
     }
 
     /**
@@ -847,45 +82,439 @@ public abstract class Selection<T extends Record> {
      * <p>
      * The return type is unchecked &mdash; the caller is responsible for
      * casting to the appropriate type.
-     * </p>
      *
      * @param <R> the expected result type
      * @return the result
      * @throws IllegalStateException if this {@link Selection} has not finished
      *             execution
      */
-    @SuppressWarnings("unchecked")
-    public <R> R get() {
-        checkState(state == State.FINISHED, "Selection has not been executed");
-        return (R) result;
+    public <R> R get();
+
+    /**
+     * Return the {@link State} of this {@link Selection}.
+     * 
+     * @return the {@link State} of this {@link Selection}
+     */
+    public State state();
+
+    /**
+     * Abstract base for all {@link Selection} builders. Provides methods that
+     * are always valid: {@link #realms(Realms)}, {@link #any()},
+     * {@link #any(boolean)}, and {@link #build()}.
+     * <p>
+     * Each builder implements {@link Selection} so it can be passed directly to
+     * {@link DatabaseInterface#select(Selection, Selection...)} without an
+     * explicit {@link #build()} call.
+     *
+     * @param <T> the {@link Record} type
+     * @param <B> the concrete builder type (self-referencing)
+     */
+    abstract class Builder<T extends Record, B extends Builder<T, B>> implements
+            Selection<T> {
+
+        /**
+         * The accumulated builder state.
+         */
+        final DatabaseSelection.BuilderState<T> state;
+
+        /**
+         * Construct a new {@link Builder}.
+         *
+         * @param state the shared builder state
+         */
+        Builder(DatabaseSelection.BuilderState<T> state) {
+            this.state = state;
+        }
+
+        /**
+         * Return {@code this} cast to the concrete builder type.
+         */
+        @SuppressWarnings("unchecked")
+        private B self() {
+            return (B) this;
+        }
+
+        /**
+         * Constrain the {@link Selection} to the given {@code realms}.
+         *
+         * @param realms the {@link Realms} filter
+         * @return this builder for chaining
+         */
+        public B realms(Realms realms) {
+            state.realms = realms;
+            return self();
+        }
+
+        /**
+         * Include descendants of the target class in the results.
+         *
+         * @return this builder for chaining
+         */
+        public B any() {
+            state.any = true;
+            return self();
+        }
+
+        /**
+         * Set whether to include descendants of the target class in the
+         * results.
+         *
+         * @param any {@code true} to include descendants
+         * @return this builder for chaining
+         */
+        public B any(boolean any) {
+            state.any = any;
+            return self();
+        }
+
+        @Override
+        public State state() {
+            return State.PENDING;
+        }
+
+        /**
+         * Build an immutable {@link Selection} from the accumulated state.
+         *
+         * @return a concrete {@link Selection}
+         */
+        public Selection<T> build() {
+            if(state.id != null) {
+                return new LoadRecordSelection<>(state);
+            }
+            else if(state.counting) {
+                return new CountSelection<>(state);
+            }
+            else if(state.criteria != null) {
+                return new FindSelection<>(state);
+            }
+            else {
+                return new LoadClassSelection<>(state);
+            }
+        }
+
+        @Override
+        public <R> R get() {
+            throw new IllegalStateException("Selection has not been executed");
+        }
     }
 
     /**
-     * Return {@code true} if this {@link Selection} can be combined with other
-     * {@link Selection Selections} in a single database call.
+     * The initial builder state where all configuration methods are available.
      *
-     * @return {@code true} if combinable
+     * @param <T> the {@link Record} type
      */
-    abstract boolean isCombinable();
+    final class InitialBuilder<T extends Record>
+            extends Builder<T, InitialBuilder<T>> {
 
-    /**
-     * Return {@code true} if this is a counting {@link Selection}.
-     *
-     * @return {@code true} if counting
-     */
-    boolean isCounting() {
-        return false;
+        /**
+         * Construct a new {@link InitialBuilder}.
+         *
+         * @param state the shared builder state
+         */
+        InitialBuilder(DatabaseSelection.BuilderState<T> state) {
+            super(state);
+        }
+
+        /**
+         * Set the record {@code id}, making this a single-record load
+         * operation.
+         *
+         * @param id the record ID
+         * @return an {@link IdBuilder} for chaining
+         */
+        public IdBuilder<T> id(long id) {
+            state.id = id;
+            return new IdBuilder<>(state);
+        }
+
+        /**
+         * Mark this as a counting operation.
+         *
+         * @return a {@link CountBuilder} for chaining
+         */
+        public CountBuilder<T> count() {
+            state.counting = true;
+            return new CountBuilder<>(state);
+        }
+
+        /**
+         * Set the query {@code criteria}.
+         *
+         * @param criteria the query criteria
+         * @return a {@link QueryBuilder} for chaining
+         */
+        public QueryBuilder<T> where(Criteria criteria) {
+            state.criteria = criteria;
+            return new QueryBuilder<>(state);
+        }
+
+        /**
+         * Alias for {@link #where(Criteria)}.
+         *
+         * @param criteria the query criteria
+         * @return a {@link QueryBuilder} for chaining
+         */
+        public QueryBuilder<T> criteria(Criteria criteria) {
+            return where(criteria);
+        }
+
+        /**
+         * Set the sort {@code order}.
+         *
+         * @param order the sort order
+         * @return a {@link SortableBuilder} for chaining
+         */
+        public SortableBuilder<T> order(Order order) {
+            state.order = order;
+            return new SortableBuilder<>(state);
+        }
+
+        /**
+         * Set the {@code page} for pagination.
+         *
+         * @param page the pagination
+         * @return a {@link SortableBuilder} for chaining
+         */
+        public SortableBuilder<T> page(Page page) {
+            state.page = page;
+            return new SortableBuilder<>(state);
+        }
+
+        /**
+         * Apply a client-side {@code filter}.
+         *
+         * @param filter the filter predicate
+         * @return a {@link QueryBuilder} for chaining
+         */
+        public QueryBuilder<T> filter(Predicate<T> filter) {
+            state.filter = filter;
+            return new QueryBuilder<>(state);
+        }
     }
 
     /**
-     * Ensure this {@link Selection} is still in the {@link State#PENDING}
-     * state.
+     * A builder for {@link Selection Selections} that have criteria or a filter
+     * set but no sort order or pagination yet. Counting is still available.
      *
-     * @throws IllegalStateException if already submitted
+     * @param <T> the {@link Record} type
      */
-    final void ensurePending() {
-        checkState(state == State.PENDING,
-                "Selection has already been submitted");
+    final class QueryBuilder<T extends Record>
+            extends Builder<T, QueryBuilder<T>> {
+
+        /**
+         * Construct a new {@link QueryBuilder}.
+         *
+         * @param state the shared builder state
+         */
+        QueryBuilder(DatabaseSelection.BuilderState<T> state) {
+            super(state);
+        }
+
+        /**
+         * Mark this as a counting operation.
+         *
+         * @return a {@link CountBuilder} for chaining
+         */
+        public CountBuilder<T> count() {
+            state.counting = true;
+            return new CountBuilder<>(state);
+        }
+
+        /**
+         * Set or replace the query {@code criteria}.
+         *
+         * @param criteria the query criteria
+         * @return this builder for chaining
+         */
+        public QueryBuilder<T> where(Criteria criteria) {
+            state.criteria = criteria;
+            return this;
+        }
+
+        /**
+         * Alias for {@link #where(Criteria)}.
+         *
+         * @param criteria the query criteria
+         * @return this builder for chaining
+         */
+        public QueryBuilder<T> criteria(Criteria criteria) {
+            return where(criteria);
+        }
+
+        /**
+         * Set the sort {@code order}.
+         *
+         * @param order the sort order
+         * @return a {@link SortableBuilder} for chaining
+         */
+        public SortableBuilder<T> order(Order order) {
+            state.order = order;
+            return new SortableBuilder<>(state);
+        }
+
+        /**
+         * Set the {@code page} for pagination.
+         *
+         * @param page the pagination
+         * @return a {@link SortableBuilder} for chaining
+         */
+        public SortableBuilder<T> page(Page page) {
+            state.page = page;
+            return new SortableBuilder<>(state);
+        }
+
+        /**
+         * Apply a client-side {@code filter}.
+         *
+         * @param filter the filter predicate
+         * @return this builder for chaining
+         */
+        public QueryBuilder<T> filter(Predicate<T> filter) {
+            state.filter = filter;
+            return this;
+        }
+    }
+
+    /**
+     * A builder for {@link Selection Selections} that have a sort order or
+     * pagination set. Counting and ID-based lookups are no longer available.
+     *
+     * @param <T> the {@link Record} type
+     */
+    final class SortableBuilder<T extends Record>
+            extends Builder<T, SortableBuilder<T>> {
+
+        /**
+         * Construct a new {@link SortableBuilder}.
+         *
+         * @param state the shared builder state
+         */
+        SortableBuilder(DatabaseSelection.BuilderState<T> state) {
+            super(state);
+        }
+
+        /**
+         * Set or replace the query {@code criteria}.
+         *
+         * @param criteria the query criteria
+         * @return this builder for chaining
+         */
+        public SortableBuilder<T> where(Criteria criteria) {
+            state.criteria = criteria;
+            return this;
+        }
+
+        /**
+         * Alias for {@link #where(Criteria)}.
+         *
+         * @param criteria the query criteria
+         * @return this builder for chaining
+         */
+        public SortableBuilder<T> criteria(Criteria criteria) {
+            return where(criteria);
+        }
+
+        /**
+         * Set or replace the sort {@code order}.
+         *
+         * @param order the sort order
+         * @return this builder for chaining
+         */
+        public SortableBuilder<T> order(Order order) {
+            state.order = order;
+            return this;
+        }
+
+        /**
+         * Set or replace the {@code page} for pagination.
+         *
+         * @param page the pagination
+         * @return this builder for chaining
+         */
+        public SortableBuilder<T> page(Page page) {
+            state.page = page;
+            return this;
+        }
+
+        /**
+         * Apply a client-side {@code filter}.
+         *
+         * @param filter the filter predicate
+         * @return this builder for chaining
+         */
+        public SortableBuilder<T> filter(Predicate<T> filter) {
+            state.filter = filter;
+            return this;
+        }
+    }
+
+    /**
+     * A builder for counting {@link Selection Selections}. Only criteria,
+     * filter, realms, and any are available.
+     *
+     * @param <T> the {@link Record} type
+     */
+    final class CountBuilder<T extends Record>
+            extends Builder<T, CountBuilder<T>> {
+
+        /**
+         * Construct a new {@link CountBuilder}.
+         *
+         * @param state the shared builder state
+         */
+        CountBuilder(DatabaseSelection.BuilderState<T> state) {
+            super(state);
+        }
+
+        /**
+         * Set or replace the query {@code criteria}.
+         *
+         * @param criteria the query criteria
+         * @return this builder for chaining
+         */
+        public CountBuilder<T> where(Criteria criteria) {
+            state.criteria = criteria;
+            return this;
+        }
+
+        /**
+         * Alias for {@link #where(Criteria)}.
+         *
+         * @param criteria the query criteria
+         * @return this builder for chaining
+         */
+        public CountBuilder<T> criteria(Criteria criteria) {
+            return where(criteria);
+        }
+
+        /**
+         * Apply a client-side {@code filter}.
+         *
+         * @param filter the filter predicate
+         * @return this builder for chaining
+         */
+        public CountBuilder<T> filter(Predicate<T> filter) {
+            state.filter = filter;
+            return this;
+        }
+    }
+
+    /**
+     * A builder for ID-based {@link Selection Selections}. Only realms and any
+     * are available.
+     *
+     * @param <T> the {@link Record} type
+     */
+    final class IdBuilder<T extends Record> extends Builder<T, IdBuilder<T>> {
+
+        /**
+         * Construct a new {@link IdBuilder}.
+         *
+         * @param state the shared builder state
+         */
+        IdBuilder(DatabaseSelection.BuilderState<T> state) {
+            super(state);
+        }
     }
 
     /**
