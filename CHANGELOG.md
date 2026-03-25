@@ -3,6 +3,7 @@
 #### Version 1.14.0 (TBD)
 * **Batched Selection API**: Added `Selection`, `Selections`, and `Runway#select(Selection...)` to support batching multiple data retrieval operations into a single optimized call.
 * Added `Runway#getKnownRecordTypes()` to return all known `Record` subclasses discovered on the classpath at runtime.
+* Fixed a bug where `Pagination.applyFilterAndPage` would throw a `NullPointerException` when invoked with a `null` filter or `null` page.
 
 #### Version 1.13.0 (March 12, 2026)
 * **Configurable `CollectionPreSelectStrategy`**: Added `CollectionPreSelectStrategy`, a configurable enum that controls how `Runway` pre-selects data for `Collection<Record>` fields (e.g., `List<Dock>`, `Set<Node>`). Previously, loading a Record with a collection of N linked Records issued N individual `select()` calls — one per element — inside `convert()`. Three strategies are now available:
