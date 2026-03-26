@@ -70,4 +70,38 @@ public final class CountSelection<T extends Record>
         return true;
     }
 
+    /**
+     * Return a {@link Reservation} for a count query with the given parameters.
+     *
+     * @param clazz the target class
+     * @param criteria the query criteria
+     * @param realms the realms filter
+     * @param any whether to include descendants
+     * @return the {@link Reservation}
+     */
+    static Reservation reservationFor(Class<?> clazz,
+            @Nullable Criteria criteria, Realms realms, boolean any) {
+        return Reservation.builder(clazz).realms(realms).any(any).counting(true)
+                .criteria(criteria).build();
+    }
+
+    @Override
+    Reservation reservation() {
+        return reservationFor(clazz, criteria, realms, any);
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("CountSelection{clazz=");
+        sb.append(clazz.getSimpleName());
+        if(criteria != null) {
+            sb.append(", criteria=").append(criteria);
+        }
+        sb.append(", realms=").append(realms);
+        if(any) {
+            sb.append(", any=true");
+        }
+        return sb.append('}').toString();
+    }
+
 }

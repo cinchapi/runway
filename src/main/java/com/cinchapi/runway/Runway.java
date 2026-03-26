@@ -601,19 +601,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> int count(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        // Check for a cached count result
-        Reservation countRes = Reservation.builder(clazz).criteria(criteria)
-                .realms(realms).counting(true).build();
-        Integer cachedCount = recall(countRes);
+        Integer cachedCount = recall(
+                CountSelection.reservationFor(clazz, criteria, realms, false));
         if(cachedCount != null) {
             return cachedCount;
         }
-        // Check for a cached find result
-        Reservation findRes = Reservation.builder(clazz).criteria(criteria)
-                .realms(realms).build();
-        Collection<?> cachedFind = recall(findRes);
-        if(cachedFind != null) {
-            return cachedFind.size();
+        Collection<?> cachedFetch = recall(criteria != null
+                ? FindSelection.reservationFor(clazz, criteria, null, null,
+                        realms, false)
+                : LoadClassSelection.reservationFor(clazz, null, null, realms,
+                        false));
+        if(cachedFetch != null) {
+            return cachedFetch.size();
         }
         Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
         if(!sources.isEmpty()) {
@@ -647,19 +646,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> int countAny(Class<T> clazz, Criteria criteria,
             Realms realms) {
-        // Check for a cached count result
-        Reservation countRes = Reservation.builder(clazz).criteria(criteria)
-                .realms(realms).any(true).counting(true).build();
-        Integer cachedCount = recall(countRes);
+        Integer cachedCount = recall(
+                CountSelection.reservationFor(clazz, criteria, realms, true));
         if(cachedCount != null) {
             return cachedCount;
         }
-        // Check for a cached find result
-        Reservation findRes = Reservation.builder(clazz).criteria(criteria)
-                .realms(realms).any(true).build();
-        Collection<?> cachedFind = recall(findRes);
-        if(cachedFind != null) {
-            return cachedFind.size();
+        Collection<?> cachedFetch = recall(criteria != null
+                ? FindSelection.reservationFor(clazz, criteria, null, null,
+                        realms, true)
+                : LoadClassSelection.reservationFor(clazz, null, null, realms,
+                        true));
+        if(cachedFetch != null) {
+            return cachedFetch.size();
         }
         Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
         if(!sources.isEmpty()) {
@@ -722,11 +720,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
             Order order, Page page, Realms realms) {
-        Reservation reservation = Reservation.builder(clazz).criteria(criteria)
-                .order(order).page(page).realms(realms).build();
-        Set<T> reserved = recall(reservation);
-        if(reserved != null) {
-            return reserved;
+        Set<T> cached = recall(FindSelection.reservationFor(clazz, criteria,
+                order, page, realms, false));
+        if(cached != null) {
+            return cached;
         }
         Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
         if(!sources.isEmpty()) {
@@ -808,11 +805,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
             Order order, Page page, Realms realms) {
-        Reservation reservation = Reservation.builder(clazz).criteria(criteria)
-                .order(order).page(page).realms(realms).any(true).build();
-        Set<T> reserved = recall(reservation);
-        if(reserved != null) {
-            return reserved;
+        Set<T> cached = recall(FindSelection.reservationFor(clazz, criteria,
+                order, page, realms, true));
+        if(cached != null) {
+            return cached;
         }
         Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
         if(!sources.isEmpty()) {
@@ -974,11 +970,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @SuppressWarnings("deprecation")
     @Override
     public <T extends Record> T load(Class<T> clazz, long id, Realms realms) {
-        Reservation reservation = Reservation.builder(clazz).id(id)
-                .realms(realms).build();
-        T reserved = recall(reservation);
-        if(reserved != null) {
-            return reserved;
+        T cached = recall(
+                LoadRecordSelection.reservationFor(clazz, id, realms, false));
+        if(cached != null) {
+            return cached;
         }
         Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
         if(!sources.isEmpty()) {
@@ -1047,11 +1042,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Page page, Realms realms) {
-        Reservation reservation = Reservation.builder(clazz).order(order)
-                .page(page).realms(realms).build();
-        Set<T> reserved = recall(reservation);
-        if(reserved != null) {
-            return reserved;
+        Set<T> cached = recall(LoadClassSelection.reservationFor(clazz, order,
+                page, realms, false));
+        if(cached != null) {
+            return cached;
         }
         Set<AdHocDataSource<?>> sources = getAttachedSources(clazz);
         if(!sources.isEmpty()) {
@@ -1127,11 +1121,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
             Page page, Realms realms) {
-        Reservation reservation = Reservation.builder(clazz).order(order)
-                .page(page).realms(realms).any(true).build();
-        Set<T> reserved = recall(reservation);
-        if(reserved != null) {
-            return reserved;
+        Set<T> cached = recall(LoadClassSelection.reservationFor(clazz, order,
+                page, realms, true));
+        if(cached != null) {
+            return cached;
         }
         Set<AdHocDataSource<?>> sources = getAttachedSourcesForHierarchy(clazz);
         if(!sources.isEmpty()) {
@@ -1276,18 +1269,32 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Initialize the thread-local reserve for caching pre-fetched query
-     * results. Subsequent {@link #select(Selection, Selection...)} calls will
-     * cache results so that {@link #find} and {@link #load} can recall them
-     * instead of querying the database. A reserved result is consumed once
-     * &mdash; the first matching {@code find} or {@code load} call retrieves
-     * and removes it from the reserve.
+     * Activate the thread-local reservation cache. When active,
+     * {@link #select(Selection...)} calls cache their results so that
+     * subsequent reads &mdash; {@link #find}, {@link #count}, {@link #load},
+     * and reads through the {@link Audience} framework &mdash; return the
+     * cached data instead of querying the database.
+     * <p>
+     * The reservation cache is separate from the {@link #select(Selection...)}
+     * API itself. {@code select()} is independently useful for grouping and
+     * combining multiple queries into fewer database round trips. Calling
+     * {@code reserve()} adds a caching layer on top: pre-fetched results are
+     * stored and made available to later reads within the same thread.
+     * <p>
+     * A typical usage pattern in HTTP middleware:
+     * <ol>
+     * <li>Call {@code reserve()} at the start of a request.</li>
+     * <li>Call {@code select(...)} to pre-fetch data the route handler will
+     * need.</li>
+     * <li>The handler calls {@code find()}, {@code count()}, or {@code load()}
+     * &mdash; directly or through an {@link Audience} &mdash; and receives
+     * cached results.</li>
+     * <li>Call {@link #unreserve()} at the end of the request to clear the
+     * cache.</li>
+     * </ol>
      * <p>
      * If a reserve already exists on the current thread, it is cleared and
      * replaced.
-     * <p>
-     * Call {@link #unreserve()} when the reserve is no longer needed to release
-     * cached data.
      */
     public void reserve() {
         reservations.set(new HashMap<>());
@@ -1482,17 +1489,31 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 .toArray(DatabaseSelection[]::new);
         if(selections.length == 1) {
             DatabaseSelection<?> selection = selections[0];
-            Selections result = DatabaseInterface.super.select(selection);
-            reserve(selection);
-            return result;
+            Object cached = recall(selection.reservation());
+            if(cached != null) {
+                selection.state = Selection.State.FINISHED;
+                selection.result = cached;
+            }
+            else {
+                DatabaseInterface.super.select(selection);
+                reserve(selection);
+            }
+            return new Selections(selections);
         }
         else {
-            // TODO: Check in the server version is 1.0.0+ and, if so, use
-            // prepare/submit
+            // TODO: Check in the server version is 1.0.0+
+            // and, if so, use prepare/submit
             List<DatabaseSelection<?>> isolated = new ArrayList<>();
             List<DatabaseSelection<?>> combinable = new ArrayList<>();
             Set<String> combinedClasses = Sets.newHashSet();
             outer: for (DatabaseSelection<?> selection : selections) {
+                // Check cache before categorizing
+                Object cached = recall(selection.reservation());
+                if(cached != null) {
+                    selection.state = Selection.State.FINISHED;
+                    selection.result = cached;
+                    continue outer;
+                }
                 if(selection.isCombinable()) {
                     // NOTE: #demux partitions combined results by class name
                     // only, so same-class selections with different criteria
@@ -1561,7 +1582,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Clear the thread-local reserve, releasing all reserved results.
+     * Deactivate the thread-local reservation cache and release all cached
+     * results. After this call, {@link #find}, {@link #count}, and
+     * {@link #load} will query the database directly until {@link #reserve()}
+     * is called again.
      */
     public void unreserve() {
         reservations.remove();
@@ -2411,36 +2435,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Store a {@link Selection Selection's} result in the thread-local reserve.
+     * This is a no-op if {@link #reserve()} has not been called on the current
+     * thread.
      *
      * @param selection the {@link Selection} to reserve
      */
     private void reserve(DatabaseSelection<?> selection) {
         Preconditions.checkState(selection.state == Selection.State.FINISHED);
-        Reservation.Builder builder = Reservation.builder(selection.clazz)
-                .realms(selection.realms).any(selection.any)
-                .counting(selection.isCounting());
-        if(selection instanceof LoadRecordSelection) {
-            builder.id(((LoadRecordSelection<?>) selection).id);
-        }
-        else if(selection instanceof FindSelection) {
-            FindSelection<?> fs = (FindSelection<?>) selection;
-            builder.criteria(fs.criteria).order(fs.order).page(fs.page);
-        }
-        else if(selection instanceof LoadClassSelection) {
-            LoadClassSelection<?> lc = (LoadClassSelection<?>) selection;
-            builder.order(lc.order).page(lc.page);
-        }
-        else if(selection instanceof CountSelection) {
-            CountSelection<?> cs = (CountSelection<?>) selection;
-            builder.criteria(cs.criteria);
-        }
-        Reservation reservation = builder.build();
         Map<Reservation, Object> reservations = this.reservations.get();
-        if(reservations == null) {
-            reservations = new HashMap<>();
-            this.reservations.set(reservations);
+        if(reservations != null) {
+            reservations.put(selection.reservation(), selection.result);
         }
-        reservations.put(reservation, selection.result);
     }
 
     /**

@@ -128,6 +128,32 @@ final class Reservation {
                 counting);
     }
 
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("Reservation{");
+        sb.append("clazz=").append(clazz.getSimpleName());
+        if(id != null) {
+            sb.append(", id=").append(id);
+        }
+        if(criteria != null) {
+            sb.append(", criteria=").append(criteria);
+        }
+        if(order != null) {
+            sb.append(", order=").append(order);
+        }
+        if(page != null) {
+            sb.append(", page=").append(page);
+        }
+        sb.append(", realms=").append(realms);
+        if(any) {
+            sb.append(", any=true");
+        }
+        if(counting) {
+            sb.append(", counting=true");
+        }
+        return sb.append('}').toString();
+    }
+
     /**
      * A {@link Builder} for constructing {@link Reservation Reservations}.
      *

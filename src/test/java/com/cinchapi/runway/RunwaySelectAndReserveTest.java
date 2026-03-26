@@ -24,6 +24,8 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
+import com.cinchapi.runway.access.AccessControl;
+import com.cinchapi.runway.access.Audience;
 
 /**
  * Unit tests for {@link Selection}, {@link Selections}, and
@@ -407,6 +409,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
                 .operator(Operator.GREATER_THAN).value(50).build();
         Selection<Widget> sel = Selection.of(Widget.class).criteria(criteria)
                 .build();
+        runway.reserve();
         runway.select(sel);
         Set<Widget> fromSelect = sel.get();
         Set<Widget> fromFind = runway.find(Widget.class, criteria);
@@ -437,6 +440,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         Widget w = new Widget("reserved");
         w.save();
         Selection<Widget> sel = Selection.of(Widget.class).id(w.id()).build();
+        runway.reserve();
         runway.select(sel);
         Widget fromSelect = sel.get();
         Widget fromLoad = runway.load(Widget.class, w.id());
@@ -471,6 +475,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
                 .operator(Operator.GREATER_THAN).value(50).build();
         Selection<Widget> sel = Selection.of(Widget.class).criteria(criteria)
                 .build();
+        runway.reserve();
         runway.select(sel);
         Set<Widget> fromSelect = sel.get();
         runway.unreserve();
@@ -503,6 +508,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         new Widget("a").save();
         new Widget("b").save();
         Selection<Widget> sel = Selection.of(Widget.class).build();
+        runway.reserve();
         runway.select(sel);
         Set<Widget> fromSelect = sel.get();
         Set<Widget> fromLoad = runway.load(Widget.class);
@@ -778,6 +784,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
                 .operator(Operator.GREATER_THAN).value(50).build();
         Selection<Widget> sel = Selection.of(Widget.class).criteria(criteria)
                 .count().build();
+        runway.reserve();
         runway.select(sel);
         int fromSelect = sel.get();
         int fromCount = runway.count(Widget.class, criteria);
@@ -813,6 +820,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
                 .operator(Operator.GREATER_THAN).value(50).build();
         Selection<Widget> sel = Selection.of(Widget.class).criteria(criteria)
                 .build();
+        runway.reserve();
         runway.select(sel);
         Set<Widget> fromSelect = sel.get();
         int fromCount = runway.count(Widget.class, criteria);
@@ -851,11 +859,261 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
                 .operator(Operator.GREATER_THAN).value(50).build();
         Selection<Widget> sel = Selection.of(Widget.class).criteria(criteria)
                 .build();
+        runway.reserve();
         runway.select(sel);
         Set<Widget> fromSelect = sel.get();
         runway.count(Widget.class, criteria);
         Set<Widget> fromFind = runway.find(Widget.class, criteria);
         Assert.assertSame(fromSelect, fromFind);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a second
+     * {@link Runway#select(Selection...)} with a {@link CountSelection} hits
+     * the reservation cache populated by the first {@code select()} call,
+     * rather than re-querying the database.
+     * <p>
+     * <strong>Start state:</strong> Three saved {@link Widget Widgets}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save three {@link Widget Widgets}.</li>
+     * <li>Execute a count {@link Selection} via
+     * {@link Runway#select(Selection...)}.</li>
+     * <li>Save a fourth {@link Widget} to mutate the database.</li>
+     * <li>Execute a second count {@link Selection} with the same
+     * parameters.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second {@link Selection} returns the
+     * cached count ({@code 3}) from the first {@code select()} call, not the
+     * fresh database count ({@code 4}).
+     */
+    @Test
+    public void testCountSelectionCacheHitOnSecondSelect() {
+        new Widget("a").save();
+        new Widget("b").save();
+        new Widget("c").save();
+        Selection<Widget> sel1 = Selection.of(Widget.class).count().build();
+        runway.reserve();
+        runway.select(sel1);
+        int fromFirst = sel1.get();
+        Assert.assertEquals(3, fromFirst);
+        new Widget("d").save();
+        Selection<Widget> sel2 = Selection.of(Widget.class).count().build();
+        runway.select(sel2);
+        int fromSecond = sel2.get();
+        Assert.assertEquals(fromFirst, fromSecond);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@link Audience Audience's}
+     * {@code load()} call uses the cached result from a
+     * {@link Runway#select(Selection...)} pre-fetch, and that the
+     * {@link AccessControl} visibility filter is correctly applied on top of
+     * the cached data. This simulates the middleware/handler pattern where the
+     * middleware pre-fetches via the {@link Runway} instance and the route
+     * handler reads through an {@link Audience} {@link Record}.
+     * <p>
+     * <strong>Start state:</strong> Three saved {@link SecureWidget
+     * SecureWidgets} (two public, one classified) and a saved {@link Actor}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save three {@link SecureWidget SecureWidgets}: two with
+     * {@code classified = false}, one with {@code classified = true}.</li>
+     * <li>Create and save an {@link Actor}.</li>
+     * <li>Middleware: execute a load-all {@link Selection} via
+     * {@link Runway#select(Selection...)}.</li>
+     * <li>Handler: call {@code actor.load(SecureWidget.class)} through the
+     * {@link Audience} interface.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Audience} {@code load()} returns
+     * only the 2 non-classified {@link SecureWidget SecureWidgets}. Each
+     * returned {@link Record} is the same object reference as the corresponding
+     * {@link Record} in the pre-fetched result, proving the cached data was
+     * reused.
+     */
+    @Test
+    public void testAudienceLoadAppliesAccessControlOverCachedResult() {
+        new SecureWidget("alpha", false).save();
+        new SecureWidget("beta", false).save();
+        new SecureWidget("secret", true).save();
+        Actor actor = new Actor("user");
+        actor.save();
+        Selection<SecureWidget> sel = Selection.of(SecureWidget.class).build();
+        runway.reserve();
+        runway.select(sel);
+        Set<SecureWidget> fromSelect = sel.get();
+        Assert.assertEquals(3, fromSelect.size());
+        Set<SecureWidget> fromAudience = actor.load(SecureWidget.class);
+        Assert.assertEquals(2, fromAudience.size());
+        for (SecureWidget w : fromAudience) {
+            Assert.assertFalse(w.classified);
+            Assert.assertTrue(fromSelect.stream().anyMatch(s -> s == w));
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@link Audience Audience's}
+     * {@code find()} call uses the cached result from a
+     * {@link Runway#select(Selection...)} pre-fetch, and that the
+     * {@link AccessControl} visibility filter is correctly applied on top of
+     * the cached data.
+     * <p>
+     * <strong>Start state:</strong> {@link SecureWidget SecureWidgets} with
+     * varying scores and visibility, and a saved {@link Actor}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link SecureWidget SecureWidgets}: some matching the
+     * criteria with different visibility.</li>
+     * <li>Create and save an {@link Actor}.</li>
+     * <li>Middleware: execute a criteria-based {@link Selection} via
+     * {@link Runway#select(Selection...)}.</li>
+     * <li>Handler: call {@code actor.find(SecureWidget.class, criteria)}
+     * through the {@link Audience} interface.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Audience} {@code find()} returns
+     * only the visible matching {@link SecureWidget SecureWidgets}. Each
+     * returned {@link Record} is the same object reference as the corresponding
+     * {@link Record} in the pre-fetched result.
+     */
+    @Test
+    public void testAudienceFindAppliesAccessControlOverCachedResult() {
+        new SecureWidget("low", 10, false).save();
+        new SecureWidget("high", 80, false).save();
+        new SecureWidget("secret-high", 90, true).save();
+        Actor actor = new Actor("user");
+        actor.save();
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(50).build();
+        Selection<SecureWidget> sel = Selection.of(SecureWidget.class)
+                .criteria(criteria).build();
+        runway.reserve();
+        runway.select(sel);
+        Set<SecureWidget> fromSelect = sel.get();
+        Assert.assertEquals(2, fromSelect.size());
+        Set<SecureWidget> fromAudience = actor.find(SecureWidget.class,
+                criteria);
+        Assert.assertEquals(1, fromAudience.size());
+        for (SecureWidget w : fromAudience) {
+            Assert.assertFalse(w.classified);
+            Assert.assertTrue(fromSelect.stream().anyMatch(s -> s == w));
+        }
+    }
+
+    /**
+     * A test {@link Record} that implements {@link Audience} for testing the
+     * middleware/handler cache pattern.
+     */
+    class Actor extends Record implements Audience {
+
+        /**
+         * The actor name.
+         */
+        String name;
+
+        /**
+         * Construct a new {@link Actor}.
+         *
+         * @param name the name
+         */
+        Actor(String name) {
+            this.name = name;
+        }
+    }
+
+    /**
+     * A test {@link Record} with {@link AccessControl} that hides classified
+     * instances from non-admin {@link Audience Audiences}.
+     */
+    class SecureWidget extends Record implements AccessControl {
+
+        /**
+         * The widget name.
+         */
+        String name;
+
+        /**
+         * The widget score.
+         */
+        int score;
+
+        /**
+         * Whether this widget is classified.
+         */
+        boolean classified;
+
+        /**
+         * Construct a new {@link SecureWidget}.
+         *
+         * @param name the name
+         * @param classified whether classified
+         */
+        SecureWidget(String name, boolean classified) {
+            this(name, 0, classified);
+        }
+
+        /**
+         * Construct a new {@link SecureWidget}.
+         *
+         * @param name the name
+         * @param score the score
+         * @param classified whether classified
+         */
+        SecureWidget(String name, int score, boolean classified) {
+            this.name = name;
+            this.score = score;
+            this.classified = classified;
+        }
+
+        @Override
+        public boolean $isCreatableBy(Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return false;
+        }
+
+        @Override
+        public boolean $isDeletableBy(Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableBy(Audience audience) {
+            return !classified;
+        }
+
+        @Override
+        public boolean $isDiscoverableByAnonymous() {
+            return !classified;
+        }
+
+        @Override
+        public Set<String> $readableBy(Audience audience) {
+            return classified ? NO_KEYS : ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return classified ? NO_KEYS : ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableBy(Audience audience) {
+            return classified ? NO_KEYS : ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableByAnonymous() {
+            return ALL_KEYS;
+        }
     }
 
     /**

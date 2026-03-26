@@ -162,6 +162,16 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
+     * Return the {@link Reservation} that represents the canonical cache key
+     * for this {@link DatabaseSelection}. Two {@link DatabaseSelection
+     * DatabaseSelections} with equivalent configuration produce equal
+     * {@link Reservation Reservations}.
+     *
+     * @return the {@link Reservation} for this {@link DatabaseSelection}
+     */
+    abstract Reservation reservation();
+
+    /**
      * Mutable state accumulated during the build process.
      *
      * @param <T> the {@link Record} type

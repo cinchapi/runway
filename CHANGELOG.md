@@ -1,7 +1,8 @@
 # Changelog
 
 #### Version 1.14.0 (TBD)
-* **Batched Selection API**: Added `Selection`, `Selections`, and `Runway#select(Selection...)` to support batching multiple data retrieval operations into a single optimized call.
+* **Selection API**: Added `Selection`, `Selections`, and `Runway#select(Selection...)` for declaring and executing multiple data retrieval operations together. `select()` groups compatible queries and possibly combines them into fewer database round trips, reducing overhead regardless of any other configuration.
+* **Reservation Cache**: Added `Runway#reserve()` and `Runway#unreserve()` to activate and deactivate a thread-local result cache that works with both the Selection API and direct read methods. When the reserve is active, `select()` caches its results so that subsequent calls to `select()`, `find()`, `count()`, `load()` &mdash; including reads through the `Audience` framework &mdash; return the cached data instead of re-querying the database. This is designed for the middleware/handler pattern: middleware calls `reserve()` and `select()` to pre-fetch data, route handlers read through `find()`/`count()`/`load()` or `Audience` methods and transparently benefit from the cache, and `unreserve()` clears everything at the end of the request.
 * Added `Runway#getKnownRecordTypes()` to return all known `Record` subclasses discovered on the classpath at runtime.
 * Fixed a bug where `Pagination.applyFilterAndPage` would throw a `NullPointerException` when invoked with a `null` filter or `null` page.
 

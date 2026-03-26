@@ -50,4 +50,31 @@ public final class LoadRecordSelection<T extends Record>
         return true;
     }
 
+    /**
+     * Return a {@link Reservation} for a load-by-ID query with the given
+     * parameters.
+     *
+     * @param clazz the target class
+     * @param id the record ID
+     * @param realms the realms filter
+     * @param any whether to include descendants
+     * @return the {@link Reservation}
+     */
+    static Reservation reservationFor(Class<?> clazz, long id, Realms realms,
+            boolean any) {
+        return Reservation.builder(clazz).realms(realms).any(any).id(id)
+                .build();
+    }
+
+    @Override
+    Reservation reservation() {
+        return reservationFor(clazz, id, realms, any);
+    }
+
+    @Override
+    public String toString() {
+        return "LoadRecordSelection{clazz=" + clazz.getSimpleName() + ", id="
+                + id + ", realms=" + realms + (any ? ", any=true" : "") + '}';
+    }
+
 }
