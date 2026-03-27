@@ -31,7 +31,7 @@ import com.cinchapi.concourse.lang.sort.Order;
  * A {@link DatabaseInterface} provides methods for interacting with a database
  * backend.
  * <p>
- * All retrieval methods delegate to {@link #select(Selection...)}, which is the
+ * All retrieval methods delegate to {@link #fetch(Selection...)}, which is the
  * single dispatch point that implementations must provide. The convenience
  * methods on this interface build the appropriate {@link Selection} and route
  * through {@code select}.
@@ -82,7 +82,7 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int count(Class<T> clazz) {
-        return select(Selection.of(clazz).count());
+        return fetch(Selection.of(clazz).count());
     }
 
     /**
@@ -96,7 +96,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Criteria criteria) {
-        return select(Selection.of(clazz).where(criteria).count());
+        return fetch(Selection.of(clazz).where(criteria).count());
     }
 
     /**
@@ -110,7 +110,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        return select(
+        return fetch(
                 Selection.of(clazz).where(criteria).count().filter(filter));
     }
 
@@ -127,7 +127,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Criteria criteria, Predicate<T> filter, Realms realms) {
-        return select(Selection.of(clazz).where(criteria).count().filter(filter)
+        return fetch(Selection.of(clazz).where(criteria).count().filter(filter)
                 .realms(realms));
     }
 
@@ -143,7 +143,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Criteria criteria, Realms realms) {
-        return select(
+        return fetch(
                 Selection.of(clazz).where(criteria).count().realms(realms));
     }
 
@@ -157,7 +157,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Predicate<T> filter) {
-        return select(Selection.of(clazz).count().filter(filter));
+        return fetch(Selection.of(clazz).count().filter(filter));
     }
 
     /**
@@ -171,8 +171,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Predicate<T> filter, Realms realms) {
-        return select(
-                Selection.of(clazz).count().filter(filter).realms(realms));
+        return fetch(Selection.of(clazz).count().filter(filter).realms(realms));
     }
 
     /**
@@ -184,7 +183,7 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int count(Class<T> clazz, Realms realms) {
-        return select(Selection.of(clazz).count().realms(realms));
+        return fetch(Selection.of(clazz).count().realms(realms));
     }
 
     /**
@@ -195,7 +194,7 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int countAny(Class<T> clazz) {
-        return select(Selection.ofAny(clazz).count());
+        return fetch(Selection.ofAny(clazz).count());
     }
 
     /**
@@ -209,7 +208,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Criteria criteria) {
-        return select(Selection.ofAny(clazz).where(criteria).count());
+        return fetch(Selection.ofAny(clazz).where(criteria).count());
     }
 
     /**
@@ -224,7 +223,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        return select(
+        return fetch(
                 Selection.ofAny(clazz).where(criteria).count().filter(filter));
     }
 
@@ -242,7 +241,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Criteria criteria, Predicate<T> filter, Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).count()
+        return fetch(Selection.ofAny(clazz).where(criteria).count()
                 .filter(filter).realms(realms));
     }
 
@@ -259,7 +258,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Criteria criteria, Realms realms) {
-        return select(
+        return fetch(
                 Selection.ofAny(clazz).where(criteria).count().realms(realms));
     }
 
@@ -273,7 +272,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Predicate<T> filter) {
-        return select(Selection.ofAny(clazz).count().filter(filter));
+        return fetch(Selection.ofAny(clazz).count().filter(filter));
     }
 
     /**
@@ -288,7 +287,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Predicate<T> filter, Realms realms) {
-        return select(
+        return fetch(
                 Selection.ofAny(clazz).count().filter(filter).realms(realms));
     }
 
@@ -302,7 +301,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Realms realms) {
-        return select(Selection.ofAny(clazz).count().realms(realms));
+        return fetch(Selection.ofAny(clazz).count().realms(realms));
     }
 
     /**
@@ -315,7 +314,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria) {
-        return select(Selection.of(clazz).where(criteria));
+        return fetch(Selection.of(clazz).where(criteria));
     }
 
     /**
@@ -331,7 +330,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, List<String> order) {
-        Set<T> records = select(Selection.of(clazz).where(criteria));
+        Set<T> records = fetch(Selection.of(clazz).where(criteria));
         return sort(records, order);
     }
 
@@ -346,7 +345,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order) {
-        return select(Selection.of(clazz).where(criteria).order(order));
+        return fetch(Selection.of(clazz).where(criteria).order(order));
     }
 
     /**
@@ -362,7 +361,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Page page) {
-        return select(
+        return fetch(
                 Selection.of(clazz).where(criteria).order(order).page(page));
     }
 
@@ -380,7 +379,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter) {
-        return select(Selection.of(clazz).where(criteria).filter(filter)
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
                 .order(order).page(page));
     }
 
@@ -401,7 +400,7 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter,
             Realms realms) {
-        return select(Selection.of(clazz).where(criteria).filter(filter)
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
                 .order(order).page(page).realms(realms));
     }
 
@@ -419,8 +418,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Page page, Realms realms) {
-        return select(Selection.of(clazz).where(criteria).order(order)
-                .page(page).realms(realms));
+        return fetch(Selection.of(clazz).where(criteria).order(order).page(page)
+                .realms(realms));
     }
 
     /**
@@ -436,7 +435,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter) {
-        return select(Selection.of(clazz).where(criteria).filter(filter)
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
                 .order(order));
     }
 
@@ -455,7 +454,7 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter,
             Realms realms) {
-        return select(Selection.of(clazz).where(criteria).filter(filter)
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
                 .order(order).realms(realms));
     }
 
@@ -472,7 +471,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Realms realms) {
-        return select(Selection.of(clazz).where(criteria).order(order)
+        return fetch(Selection.of(clazz).where(criteria).order(order)
                 .realms(realms));
     }
 
@@ -487,7 +486,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page) {
-        return select(Selection.of(clazz).where(criteria).page(page));
+        return fetch(Selection.of(clazz).where(criteria).page(page));
     }
 
     /**
@@ -503,7 +502,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Order order) {
-        return select(
+        return fetch(
                 Selection.of(clazz).where(criteria).order(order).page(page));
     }
 
@@ -521,7 +520,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Order order, Predicate<T> filter) {
-        return select(Selection.of(clazz).where(criteria).filter(filter)
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
                 .order(order).page(page));
     }
 
@@ -542,7 +541,7 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Order order, Predicate<T> filter,
             Realms realms) {
-        return select(Selection.of(clazz).where(criteria).filter(filter)
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
                 .order(order).page(page).realms(realms));
     }
 
@@ -560,8 +559,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Order order, Realms realms) {
-        return select(Selection.of(clazz).where(criteria).order(order)
-                .page(page).realms(realms));
+        return fetch(Selection.of(clazz).where(criteria).order(order).page(page)
+                .realms(realms));
     }
 
     /**
@@ -577,7 +576,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter) {
-        return select(
+        return fetch(
                 Selection.of(clazz).where(criteria).filter(filter).page(page));
     }
 
@@ -595,7 +594,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
-        return select(Selection.of(clazz).where(criteria).filter(filter)
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
                 .page(page).realms(realms));
     }
 
@@ -612,7 +611,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Realms realms) {
-        return select(
+        return fetch(
                 Selection.of(clazz).where(criteria).page(page).realms(realms));
     }
 
@@ -627,7 +626,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        return select(Selection.of(clazz).where(criteria).filter(filter));
+        return fetch(Selection.of(clazz).where(criteria).filter(filter));
     }
 
     /**
@@ -643,7 +642,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Predicate<T> filter, Realms realms) {
-        return select(Selection.of(clazz).where(criteria).filter(filter)
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
                 .realms(realms));
     }
 
@@ -658,7 +657,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Realms realms) {
-        return select(Selection.of(clazz).where(criteria).realms(realms));
+        return fetch(Selection.of(clazz).where(criteria).realms(realms));
     }
 
     /**
@@ -674,7 +673,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, String order) {
-        Set<T> records = select(Selection.of(clazz).where(criteria));
+        Set<T> records = fetch(Selection.of(clazz).where(criteria));
         return sort(records, order);
     }
 
@@ -688,7 +687,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria) {
-        return select(Selection.ofAny(clazz).where(criteria));
+        return fetch(Selection.ofAny(clazz).where(criteria));
     }
 
     /**
@@ -704,7 +703,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, List<String> order) {
-        Set<T> records = select(Selection.ofAny(clazz).where(criteria));
+        Set<T> records = fetch(Selection.ofAny(clazz).where(criteria));
         return sort(records, order);
     }
 
@@ -719,7 +718,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order) {
-        return select(Selection.ofAny(clazz).where(criteria).order(order));
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order));
     }
 
     /**
@@ -735,7 +734,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Page page) {
-        return select(
+        return fetch(
                 Selection.ofAny(clazz).where(criteria).order(order).page(page));
     }
 
@@ -753,7 +752,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter) {
-        return select(Selection.ofAny(clazz).where(criteria).filter(filter)
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
                 .order(order).page(page));
     }
 
@@ -774,7 +773,7 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter,
             Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).filter(filter)
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
                 .order(order).page(page).realms(realms));
     }
 
@@ -792,7 +791,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Page page, Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).order(order)
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order)
                 .page(page).realms(realms));
     }
 
@@ -809,7 +808,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter) {
-        return select(Selection.ofAny(clazz).where(criteria).filter(filter)
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
                 .order(order));
     }
 
@@ -828,7 +827,7 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter,
             Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).filter(filter)
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
                 .order(order).realms(realms));
     }
 
@@ -845,7 +844,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).order(order)
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order)
                 .realms(realms));
     }
 
@@ -860,7 +859,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page) {
-        return select(Selection.ofAny(clazz).where(criteria).page(page));
+        return fetch(Selection.ofAny(clazz).where(criteria).page(page));
     }
 
     /**
@@ -876,7 +875,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Order order) {
-        return select(
+        return fetch(
                 Selection.ofAny(clazz).where(criteria).order(order).page(page));
     }
 
@@ -894,7 +893,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Order order, Predicate<T> filter) {
-        return select(Selection.ofAny(clazz).where(criteria).filter(filter)
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
                 .order(order).page(page));
     }
 
@@ -915,7 +914,7 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Order order, Predicate<T> filter,
             Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).filter(filter)
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
                 .order(order).page(page).realms(realms));
     }
 
@@ -933,7 +932,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Order order, Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).order(order)
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order)
                 .page(page).realms(realms));
     }
 
@@ -950,7 +949,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter) {
-        return select(Selection.ofAny(clazz).where(criteria).filter(filter)
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
                 .page(page));
     }
 
@@ -968,7 +967,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).filter(filter)
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
                 .page(page).realms(realms));
     }
 
@@ -985,7 +984,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).page(page)
+        return fetch(Selection.ofAny(clazz).where(criteria).page(page)
                 .realms(realms));
     }
 
@@ -1000,7 +999,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        return select(Selection.ofAny(clazz).where(criteria).filter(filter));
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter));
     }
 
     /**
@@ -1016,7 +1015,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Predicate<T> filter, Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).filter(filter)
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
                 .realms(realms));
     }
 
@@ -1031,7 +1030,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Realms realms) {
-        return select(Selection.ofAny(clazz).where(criteria).realms(realms));
+        return fetch(Selection.ofAny(clazz).where(criteria).realms(realms));
     }
 
     /**
@@ -1047,7 +1046,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, String order) {
-        Set<T> records = select(Selection.ofAny(clazz).where(criteria));
+        Set<T> records = fetch(Selection.ofAny(clazz).where(criteria));
         return sort(records, order);
     }
 
@@ -1075,7 +1074,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> T findAnyUnique(Class<T> clazz,
             Criteria criteria, Realms realms) {
-        Set<T> results = select(Selection.ofAny(clazz).where(criteria)
+        Set<T> results = fetch(Selection.ofAny(clazz).where(criteria)
                 .page(UNIQUE_PAGINATION).realms(realms));
         if(results.isEmpty()) {
             return null;
@@ -1120,7 +1119,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> T findUnique(Class<T> clazz,
             Criteria criteria, Realms realms) {
-        Set<T> results = select(Selection.of(clazz).where(criteria)
+        Set<T> results = fetch(Selection.of(clazz).where(criteria)
                 .page(UNIQUE_PAGINATION).realms(realms));
         if(results.isEmpty()) {
             return null;
@@ -1147,7 +1146,7 @@ public interface DatabaseInterface {
      * @deprecated Use
      *             {@link Selection#of(Class, Criteria, Order, Page, Realms)} or
      *             {@link Selection#ofAny(Class, Criteria, Order, Page, Realms)}
-     *             with {@link #select(Selection...)} instead.
+     *             with {@link #fetch(Selection...)} instead.
      */
     @Deprecated
     public default Gateway gateway() {
@@ -1169,7 +1168,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz) {
-        return select(Selection.of(clazz));
+        return fetch(Selection.of(clazz));
     }
 
     /**
@@ -1190,7 +1189,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> load(Class<T> clazz,
             List<String> order) {
-        Set<T> records = select(Selection.of(clazz));
+        Set<T> records = fetch(Selection.of(clazz));
         return sort(records, order);
     }
 
@@ -1209,7 +1208,7 @@ public interface DatabaseInterface {
      * @return the existing Record
      */
     public default <T extends Record> T load(Class<T> clazz, long id) {
-        return select(Selection.of(clazz).id(id));
+        return fetch(Selection.of(clazz).id(id));
     }
 
     /**
@@ -1228,7 +1227,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> T load(Class<T> clazz, long id,
             Realms realms) {
-        return select(Selection.of(clazz).id(id).realms(realms));
+        return fetch(Selection.of(clazz).id(id).realms(realms));
     }
 
     /**
@@ -1240,7 +1239,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order) {
-        return select(Selection.of(clazz).order(order));
+        return fetch(Selection.of(clazz).order(order));
     }
 
     /**
@@ -1255,7 +1254,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Page page) {
-        return select(Selection.of(clazz).order(order).page(page));
+        return fetch(Selection.of(clazz).order(order).page(page));
     }
 
     /**
@@ -1271,7 +1270,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Page page, Predicate<T> filter) {
-        return select(
+        return fetch(
                 Selection.of(clazz).filter(filter).order(order).page(page));
     }
 
@@ -1290,7 +1289,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Page page, Predicate<T> filter, Realms realms) {
-        return select(Selection.of(clazz).filter(filter).order(order).page(page)
+        return fetch(Selection.of(clazz).filter(filter).order(order).page(page)
                 .realms(realms));
     }
 
@@ -1307,7 +1306,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Page page, Realms realms) {
-        return select(
+        return fetch(
                 Selection.of(clazz).order(order).page(page).realms(realms));
     }
 
@@ -1323,7 +1322,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Predicate<T> filter) {
-        return select(Selection.of(clazz).filter(filter).order(order));
+        return fetch(Selection.of(clazz).filter(filter).order(order));
     }
 
     /**
@@ -1339,7 +1338,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Predicate<T> filter, Realms realms) {
-        return select(
+        return fetch(
                 Selection.of(clazz).filter(filter).order(order).realms(realms));
     }
 
@@ -1355,7 +1354,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
             Realms realms) {
-        return select(Selection.of(clazz).order(order).realms(realms));
+        return fetch(Selection.of(clazz).order(order).realms(realms));
     }
 
     /**
@@ -1367,7 +1366,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page) {
-        return select(Selection.of(clazz).page(page));
+        return fetch(Selection.of(clazz).page(page));
     }
 
     /**
@@ -1382,7 +1381,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Order order) {
-        return select(Selection.of(clazz).order(order).page(page));
+        return fetch(Selection.of(clazz).order(order).page(page));
     }
 
     /**
@@ -1398,7 +1397,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Order order, Predicate<T> filter) {
-        return select(
+        return fetch(
                 Selection.of(clazz).filter(filter).order(order).page(page));
     }
 
@@ -1417,7 +1416,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Order order, Predicate<T> filter, Realms realms) {
-        return select(Selection.of(clazz).filter(filter).order(order).page(page)
+        return fetch(Selection.of(clazz).filter(filter).order(order).page(page)
                 .realms(realms));
     }
 
@@ -1433,7 +1432,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Predicate<T> filter) {
-        return select(Selection.of(clazz).filter(filter).page(page));
+        return fetch(Selection.of(clazz).filter(filter).page(page));
     }
 
     /**
@@ -1449,7 +1448,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Predicate<T> filter, Realms realms) {
-        return select(
+        return fetch(
                 Selection.of(clazz).filter(filter).page(page).realms(realms));
     }
 
@@ -1465,7 +1464,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
             Realms realms) {
-        return select(Selection.of(clazz).page(page).realms(realms));
+        return fetch(Selection.of(clazz).page(page).realms(realms));
     }
 
     /**
@@ -1477,7 +1476,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz,
             Predicate<T> filter) {
-        return select(Selection.of(clazz).filter(filter));
+        return fetch(Selection.of(clazz).filter(filter));
     }
 
     /**
@@ -1490,7 +1489,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz,
             Predicate<T> filter, Realms realms) {
-        return select(Selection.of(clazz).filter(filter).realms(realms));
+        return fetch(Selection.of(clazz).filter(filter).realms(realms));
     }
 
     /**
@@ -1503,7 +1502,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> load(Class<T> clazz,
             Realms realms) {
-        return select(Selection.of(clazz).realms(realms));
+        return fetch(Selection.of(clazz).realms(realms));
     }
 
     /**
@@ -1517,7 +1516,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> load(Class<T> clazz,
             String order) {
-        Set<T> records = select(Selection.of(clazz));
+        Set<T> records = fetch(Selection.of(clazz));
         return sort(records, order);
     }
 
@@ -1529,7 +1528,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz) {
-        return select(Selection.ofAny(clazz));
+        return fetch(Selection.ofAny(clazz));
     }
 
     /**
@@ -1544,7 +1543,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             List<String> order) {
-        Set<T> records = select(Selection.ofAny(clazz));
+        Set<T> records = fetch(Selection.ofAny(clazz));
         return sort(records, order);
     }
 
@@ -1559,7 +1558,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order) {
-        return select(Selection.ofAny(clazz).order(order));
+        return fetch(Selection.ofAny(clazz).order(order));
     }
 
     /**
@@ -1574,7 +1573,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order, Page page) {
-        return select(Selection.ofAny(clazz).order(order).page(page));
+        return fetch(Selection.ofAny(clazz).order(order).page(page));
     }
 
     /**
@@ -1591,7 +1590,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order, Page page, Predicate<T> filter) {
-        return select(
+        return fetch(
                 Selection.ofAny(clazz).filter(filter).order(order).page(page));
     }
 
@@ -1610,7 +1609,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order, Page page, Predicate<T> filter, Realms realms) {
-        return select(Selection.ofAny(clazz).filter(filter).order(order)
+        return fetch(Selection.ofAny(clazz).filter(filter).order(order)
                 .page(page).realms(realms));
     }
 
@@ -1628,7 +1627,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order, Page page, Realms realms) {
-        return select(
+        return fetch(
                 Selection.ofAny(clazz).order(order).page(page).realms(realms));
     }
 
@@ -1644,7 +1643,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order, Predicate<T> filter) {
-        return select(Selection.ofAny(clazz).filter(filter).order(order));
+        return fetch(Selection.ofAny(clazz).filter(filter).order(order));
     }
 
     /**
@@ -1660,7 +1659,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order, Predicate<T> filter, Realms realms) {
-        return select(Selection.ofAny(clazz).filter(filter).order(order)
+        return fetch(Selection.ofAny(clazz).filter(filter).order(order)
                 .realms(realms));
     }
 
@@ -1676,7 +1675,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Order order, Realms realms) {
-        return select(Selection.ofAny(clazz).order(order).realms(realms));
+        return fetch(Selection.ofAny(clazz).order(order).realms(realms));
     }
 
     /**
@@ -1689,7 +1688,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Page page) {
-        return select(Selection.ofAny(clazz).page(page));
+        return fetch(Selection.ofAny(clazz).page(page));
     }
 
     /**
@@ -1704,7 +1703,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Order order) {
-        return select(Selection.ofAny(clazz).order(order).page(page));
+        return fetch(Selection.ofAny(clazz).order(order).page(page));
     }
 
     /**
@@ -1721,7 +1720,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Order order, Predicate<T> filter) {
-        return select(
+        return fetch(
                 Selection.ofAny(clazz).filter(filter).order(order).page(page));
     }
 
@@ -1740,7 +1739,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Order order, Predicate<T> filter, Realms realms) {
-        return select(Selection.ofAny(clazz).filter(filter).order(order)
+        return fetch(Selection.ofAny(clazz).filter(filter).order(order)
                 .page(page).realms(realms));
     }
 
@@ -1758,7 +1757,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Order order, Realms realms) {
-        return select(
+        return fetch(
                 Selection.ofAny(clazz).order(order).page(page).realms(realms));
     }
 
@@ -1774,7 +1773,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Predicate<T> filter) {
-        return select(Selection.ofAny(clazz).filter(filter).page(page));
+        return fetch(Selection.ofAny(clazz).filter(filter).page(page));
     }
 
     /**
@@ -1790,7 +1789,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Predicate<T> filter, Realms realms) {
-        return select(Selection.ofAny(clazz).filter(filter).page(page)
+        return fetch(Selection.ofAny(clazz).filter(filter).page(page)
                 .realms(realms));
     }
 
@@ -1806,7 +1805,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
             Realms realms) {
-        return select(Selection.ofAny(clazz).page(page).realms(realms));
+        return fetch(Selection.ofAny(clazz).page(page).realms(realms));
     }
 
     /**
@@ -1819,7 +1818,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Predicate<T> filter) {
-        return select(Selection.ofAny(clazz).filter(filter));
+        return fetch(Selection.ofAny(clazz).filter(filter));
     }
 
     /**
@@ -1834,7 +1833,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Predicate<T> filter, Realms realms) {
-        return select(Selection.ofAny(clazz).filter(filter).realms(realms));
+        return fetch(Selection.ofAny(clazz).filter(filter).realms(realms));
     }
 
     /**
@@ -1847,7 +1846,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             Realms realms) {
-        return select(Selection.ofAny(clazz).realms(realms));
+        return fetch(Selection.ofAny(clazz).realms(realms));
     }
 
     /**
@@ -1862,7 +1861,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> loadAny(Class<T> clazz,
             String order) {
-        Set<T> records = select(Selection.ofAny(clazz));
+        Set<T> records = fetch(Selection.ofAny(clazz));
         return sort(records, order);
     }
 
@@ -1910,7 +1909,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> T loadNullSafe(Class<T> clazz, long id,
             Realms realms) {
-        T record = select(Selection.of(clazz).id(id).realms(realms));
+        T record = fetch(Selection.of(clazz).id(id).realms(realms));
         if(record != null) {
             return record;
         }
@@ -1934,8 +1933,8 @@ public interface DatabaseInterface {
      * @throws IllegalStateException if the {@link Selection} has already been
      *             submitted
      */
-    public default <R> R select(Selection<?> selection) {
-        return select(new Selection<?>[] { selection }).next();
+    public default <R> R fetch(Selection<?> selection) {
+        return select(selection).next();
     }
 
     /**

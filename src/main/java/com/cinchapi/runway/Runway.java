@@ -1320,14 +1320,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // because filtering a fixed page can produce a short result. The
             // type-specific $select methods handle this correctly via
             // Pagination.applyFilterAndPage.
-            if(cached instanceof Collection) {
-                cached = ((Collection<Record>) cached).stream()
-                        .filter((Predicate<? super Record>) selection.filter)
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
-            }
-            else if(cached instanceof Record) {
-                if(!selection.filter.test((T) cached)) {
-                    cached = null;
+            if(hasFilter) {
+                if(cached instanceof Collection) {
+                    cached = ((Collection<Record>) cached).stream().filter(
+                            (Predicate<? super Record>) selection.filter)
+                            .collect(Collectors
+                                    .toCollection(LinkedHashSet::new));
+                }
+                else if(cached instanceof Record) {
+                    if(!selection.filter.test((T) cached)) {
+                        cached = null;
+                    }
                 }
             }
             result = (R) cached;
@@ -1344,14 +1347,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 if(selection instanceof CountSelection) {
                     Integer count = 0;
                     for (AdHocDataSource<?> source : sources) {
-                        count += (int) source.select(selection.duplicate());
+                        count += (int) source.fetch(selection.duplicate());
                     }
                     result = (R) count;
                 }
                 else if(selection instanceof LoadRecordSelection) {
                     T loaded = null;
                     for (AdHocDataSource<?> source : sources) {
-                        loaded = source.select(selection.duplicate());
+                        loaded = source.fetch(selection.duplicate());
                         if(loaded != null) {
                             break;
                         }
@@ -1363,7 +1366,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     Page page = ((SetBasedSelection<?>) selection).page;
                     Set<T> results = new LinkedHashSet<>();
                     for (AdHocDataSource<?> source : sources) {
-                        results.addAll(source.select(selection.duplicate()));
+                        results.addAll(source.fetch(selection.duplicate()));
                     }
                     if(order != null) {
                         results = DatabaseInterface.sort(results,
@@ -1443,7 +1446,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             else {
                 // Legacy servers lack native sorting/pagination, so results
                 // must be fetched and processed client-side.
-                Set<T> records = select(
+                Set<T> records = fetch(
                         Selection.of(clazz).any(any).realms(realms));
                 if(order != null) {
                     records = DatabaseInterface.sort(records,
@@ -1483,7 +1486,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         Realms realms = selection.realms;
         if(hasFilter) {
-            Set<T> records = select(Selection.of(clazz).any(any).where(criteria)
+            Set<T> records = fetch(Selection.of(clazz).any(any).where(criteria)
                     .filter(filter).realms(realms));
             return records.size();
         }
@@ -1563,7 +1566,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             else {
                 // Legacy servers lack native sorting/pagination, so results
                 // must be fetched and processed client-side.
-                Set<T> records = select(
+                Set<T> records = fetch(
                         Selection.of(clazz).any(any).where(criteria));
                 if(order != null) {
                     records = DatabaseInterface.sort(records,
@@ -1819,7 +1822,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 .toArray(Array.containing());
         Predicate<T> filter = record -> compiler.evaluate(ast,
                 record.mmap(keys));
-        return select(
+        return fetch(
                 Selection.of(clazz).order(order).page(page).filter(filter));
     }
 
@@ -1845,7 +1848,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 .toArray(Array.containing());
         Predicate<T> filter = record -> compiler.evaluate(ast,
                 record.mmap(keys));
-        return select(
+        return fetch(
                 Selection.ofAny(clazz).order(order).page(page).filter(filter));
     }
 
