@@ -141,6 +141,11 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
         this(clazz, any, realms, NO_FILTER);
     }
 
+    @Override
+    public Class<T> clazz() {
+        return clazz;
+    }
+
     @SuppressWarnings("unchecked")
     @Override
     public <R> R get() {

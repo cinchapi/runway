@@ -18,6 +18,7 @@ package com.cinchapi.runway.access;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -79,10 +80,106 @@ import com.google.common.collect.ImmutableSet;
  * access rules, and the framework will automatically respect those rules when
  * navigating to linked records.
  * </p>
+ * <h2>Static Visibility Scopes</h2>
+ * <p>
+ * In addition to instance-based permission methods, the framework supports an
+ * optional, class-level visibility model based on {@link Scope}. A
+ * {@link Scope} expresses which records of a given type are visible to an
+ * {@link Audience} as a static declaration rather than a per-instance
+ * evaluation. When a {@link Scope} is registered for a class, it takes
+ * precedence over the instance-based permission methods for visibility
+ * decisions.
+ * </p>
+ * <p>
+ * {@link Scope Scopes} are most valuable in two situations:
+ * </p>
+ * <ul>
+ * <li><strong>Well-defined criteria</strong> &mdash; When the set of visible
+ * records for an {@link Audience} can be expressed as a
+ * {@link com.cinchapi.concourse.lang.Criteria}, the visibility check is pushed
+ * directly to the database, avoiding the cost of loading and filtering records
+ * in memory. This is especially impactful when only a small fraction of all
+ * records of a type would be visible to a given {@link Audience} &mdash;
+ * without a {@link Scope}, the framework must load and evaluate every record
+ * before returning results.</li>
+ * <li><strong>Broad permissions</strong> &mdash; When an {@link Audience} can
+ * see all records or none at all, {@link Scope#unrestricted()} and
+ * {@link Scope#none()} communicate that intent clearly and allow the framework
+ * to short-circuit evaluation entirely.</li>
+ * </ul>
+ * <p>
+ * The recommended approach is to start with instance-based permissions, which
+ * are simpler to reason about and easier to evolve as access rules change.
+ * Introduce a {@link Scope} only when there is a measurable or anticipated
+ * performance concern &mdash; for example, when queries over a large dataset
+ * return a small visible subset, or when pagination results are incorrect
+ * because client-side filtering reduces page sizes unpredictably.
+ * </p>
+ * <p>
+ * Scopes are registered per class via
+ * {@link #registerVisibilityScope(Class, Function)} or for an entire type
+ * hierarchy via {@link #registerVisibilityScopeHierarchy(Class, Function)}.
+ * </p>
  *
  * @author Jeff Nelson
  */
 public interface AccessControl {
+
+    /**
+     * Register a {@link Scope} provider for {@code clazz}.
+     * <p>
+     * Calling this method again for the same {@code clazz} replaces any
+     * previously registered provider. To cover an entire type hierarchy, use
+     * {@link #registerVisibilityScopeHierarchy(Class, Function)}.
+     * </p>
+     *
+     * @param clazz the {@link AccessControl} class whose visibility
+     *            {@link Scope} is being registered
+     * @param provider a {@link Function} that accepts an {@link Audience} and
+     *            returns the {@link Scope} describing its visibility for
+     *            {@code clazz}
+     * @param <T> the {@link Record} type
+     */
+    public static <T extends Record> void registerVisibilityScope(
+            Class<T> clazz, Function<Audience, Scope> provider) {
+        AccessControlSupport.VISIBILITY_SCOPES.put(clazz, provider);
+    }
+
+    /**
+     * Register a {@link Scope} provider for {@code clazz} and all known
+     * subclasses in its type hierarchy.
+     * <p>
+     * To register for a single class only, use
+     * {@link #registerVisibilityScope(Class, Function)}.
+     * </p>
+     *
+     * @param clazz the root {@link AccessControl} class of the hierarchy
+     * @param provider a {@link Function} that accepts an {@link Audience} and
+     *            returns the {@link Scope} describing its visibility
+     * @param <T> the {@link Record} type
+     */
+    @SuppressWarnings("unchecked")
+    public static <T extends Record> void registerVisibilityScopeHierarchy(
+            Class<T> clazz, Function<Audience, Scope> provider) {
+        Record.StaticAnalysis.instance().getClassHierarchy(clazz)
+                .forEach(type -> AccessControlSupport.VISIBILITY_SCOPES
+                        .putIfAbsent((Class<? extends Record>) type, provider));
+    }
+
+    /**
+     * Resolve the visibility {@link Scope} for {@code clazz} and
+     * {@code audience}, or {@code null} if no provider is registered.
+     *
+     * @param clazz the target class
+     * @param audience the {@link Audience} performing the query
+     * @return the resolved {@link Scope}, or {@code null} if none is registered
+     */
+    @Nullable
+    static Scope resolveVisibilityScope(Class<?> clazz, Audience audience) {
+        Function<Audience, Scope> provider = AccessControlSupport.VISIBILITY_SCOPES
+                .get(clazz);
+        return provider != null ? provider.apply(audience) : null;
+    }
 
     /**
      * Signifies access to all fields in a {@link Record}.

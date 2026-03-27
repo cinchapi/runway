@@ -79,13 +79,12 @@ public interface Selection<T extends Record> {
     }
 
     /**
-     * Return a resolved copy of the given {@link Selection} with an additional
-     * client-side {@code filter} injected. If the {@link Selection} already has
-     * a filter, the two are combined with {@link Predicate#and(Predicate)}.
+     * Return a copy of {@code selection} with the given {@code filter}.
      *
      * @param selection the {@link Selection} to augment
-     * @param filter the additional filter to apply
-     * @return a resolved {@link Selection} with the combined filter
+     * @param filter the injected filter
+     * @param <T> the {@link Record} type
+     * @return a new {@link Selection} with the visibility constraint applied
      */
     @SuppressWarnings("unchecked")
     public static <T extends Record> Selection<T> withInjectedFilter(
@@ -98,6 +97,72 @@ public interface Selection<T extends Record> {
                 : resolved.filter.and(filter);
         return resolved;
     }
+
+    /**
+     * Return a copy of {@code selection} with the {@code injected}
+     * {@link Criteria} applied as a database-level constraint.
+     *
+     * @param selection the {@link Selection} to augment; must be
+     *            {@link State#PENDING}
+     * @param injected the injected {@link Criteria}
+     * @param <T> the {@link Record} type
+     * @return a new {@link Selection} with the visibility constraint applied
+     */
+    @SuppressWarnings("unchecked")
+    public static <T extends Record> Selection<T> withInjectedCriteria(
+            Selection<T> selection, Criteria injected) {
+        Preconditions.checkState(selection.state() == Selection.State.PENDING);
+        DatabaseSelection<T> resolved = (DatabaseSelection<T>) DatabaseSelection
+                .resolve(selection);
+        if(resolved instanceof LoadRecordSelection) {
+            return selection;
+        }
+        else if(resolved instanceof FindSelection) {
+            FindSelection<T> find = (FindSelection<T>) resolved;
+            DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                    resolved.clazz, resolved.any);
+            state.criteria = Criteria.where().group(find.criteria).and()
+                    .group(injected).build();
+            state.order = find.order;
+            state.page = find.page;
+            state.filter = find.filter;
+            state.realms = find.realms;
+            return new FindSelection<>(state);
+        }
+        else if(resolved instanceof CountSelection) {
+            CountSelection<T> count = (CountSelection<T>) resolved;
+            DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                    resolved.clazz, resolved.any);
+            state.counting = true;
+            state.criteria = count.criteria != null
+                    ? Criteria.where().group(count.criteria).and()
+                            .group(injected).build()
+                    : injected;
+            state.filter = count.filter;
+            state.realms = count.realms;
+            return new CountSelection<>(state);
+        }
+        else {
+            // LoadClassSelection — visibility criteria becomes the sole
+            // criteria, promoting to FindSelection
+            SetBasedSelection<T> set = (SetBasedSelection<T>) resolved;
+            DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                    resolved.clazz, resolved.any);
+            state.criteria = injected;
+            state.order = set.order;
+            state.page = set.page;
+            state.filter = resolved.filter;
+            state.realms = resolved.realms;
+            return new FindSelection<>(state);
+        }
+    }
+
+    /**
+     * Return the target {@link Record} class for this {@link Selection}.
+     *
+     * @return the target class
+     */
+    public Class<T> clazz();
 
     /**
      * Return the result of this {@link Selection}.
@@ -187,6 +252,11 @@ public interface Selection<T extends Record> {
         public B any(boolean any) {
             state.any = any;
             return self();
+        }
+
+        @Override
+        public Class<T> clazz() {
+            return state.clazz;
         }
 
         @Override

@@ -589,11 +589,20 @@ public interface Audience extends DatabaseInterface {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public default Selections select(Selection<?>... selections) {
-        Predicate<Record> visibility = $checkIfVisible();
         for (int i = 0; i < selections.length; ++i) {
             Selection<?> selection = selections[i];
-            selections[i] = Selection.withInjectedFilter(selection, visibility);
+            Class<?> clazz = selection.clazz();
+            if(clazz != null && AccessControl.class.isAssignableFrom(clazz)) {
+                Scope scope = AccessControl.resolveVisibilityScope(clazz, this);
+                if(scope != null && scope.isApplicable()) {
+                    selections[i] = scope.apply(selection);
+                    continue;
+                }
+            }
+            selections[i] = Selection.withInjectedFilter(
+                    (Selection<Record>) selection, $checkIfVisible());
         }
         return $db().select(selections);
     }
