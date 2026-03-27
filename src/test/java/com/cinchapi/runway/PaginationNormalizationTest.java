@@ -44,7 +44,7 @@ public class PaginationNormalizationTest extends RunwayBaseClientServerTest {
         }
 
         Criteria criteria = Criteria.where().key("score")
-                .operator(Operator.GREATER_THAN_OR_EQUALS).value(0);
+                .operator(Operator.GREATER_THAN).value(30);
         Order order = Order.by("score").ascending();
         Page page = Page.of(2, 3);
 
@@ -111,7 +111,7 @@ public class PaginationNormalizationTest extends RunwayBaseClientServerTest {
         }
 
         Criteria criteria = Criteria.where().key("score")
-                .operator(Operator.GREATER_THAN_OR_EQUALS).value(0);
+                .operator(Operator.GREATER_THAN).value(30);
         Order order = Order.by("score").ascending();
         Page page = Page.of(2, 3);
 

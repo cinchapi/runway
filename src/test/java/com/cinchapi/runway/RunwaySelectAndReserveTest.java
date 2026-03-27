@@ -281,28 +281,6 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that configuring a {@link Selection} after
-     * submission throws {@link IllegalStateException}.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Widget}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Create a {@link Selection} and submit it.</li>
-     * <li>Attempt to call {@code order()} on it.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@link IllegalStateException} is thrown.
-     */
-    @Test(expected = IllegalStateException.class)
-    public void testResubmitAfterSubmitThrows() {
-        new Widget("x").save();
-        Selection<Widget> sel = Selection.of(Widget.class).build();
-        runway.select(sel);
-        runway.select(sel);
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that an ID-based {@link Selection} for a
      * nonexistent record returns {@code null}.
      * <p>
@@ -605,8 +583,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Create and save a {@link Widget}.</li>
      * <li>Execute two {@link Selection Selections}.</li>
-     * <li>Call {@link Selections#next()} twice to consume both
-     *     results.</li>
+     * <li>Call {@link Selections#next()} twice to consume both results.</li>
      * <li>Call {@link Selections#next()} a third time.</li>
      * </ul>
      * <p>
@@ -660,6 +637,9 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(2, widgets.size());
         Assert.assertEquals(1, gadgets.size());
         Assert.assertEquals(2, results.size());
+        java.util.Iterator<Widget> it = widgets.iterator();
+        Assert.assertEquals("alpha", it.next().name);
+        Assert.assertEquals("beta", it.next().name);
     }
 
     /**

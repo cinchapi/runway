@@ -591,11 +591,11 @@ public interface Audience extends DatabaseInterface {
     @Override
     public default Selections select(Selection<?>... selections) {
         Predicate<Record> visibility = $checkIfVisible();
-        for(int i = 0 ; i < selections.length; ++i) {
+        for (int i = 0; i < selections.length; ++i) {
             Selection<?> selection = selections[i];
             selections[i] = Selection.withInjectedFilter(selection, visibility);
         }
-        return $db().select(selections); 
+        return $db().select(selections);
     }
 
 }

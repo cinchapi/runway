@@ -123,10 +123,10 @@ public class RecordConstraintTest extends AbstractRecordTest {
             mock.set("age", "10");
             Assert.fail();
         }
-        catch (Exception e) {
-            Assert.assertTrue(true);
+        catch (IllegalArgumentException e) {
+            // expected
         }
-        Assert.assertNotEquals("10", mock.age);
+        Assert.assertNull(mock.age);
     }
 
     @Test

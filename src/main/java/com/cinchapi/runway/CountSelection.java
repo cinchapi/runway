@@ -34,8 +34,8 @@ import com.cinchapi.concourse.lang.Criteria;
 final class CountSelection<T extends Record> extends DatabaseSelection<T> {
 
     /**
-     * The query criteria, or {@code null} for counting all
-     * {@link Record Records} of the target class.
+     * The query criteria, or {@code null} for counting all {@link Record
+     * Records} of the target class.
      */
     @Nullable
     final Criteria criteria;
@@ -78,7 +78,6 @@ final class CountSelection<T extends Record> extends DatabaseSelection<T> {
     boolean isCombinable() {
         return false;
     }
-
 
     @Override
     boolean isCounting() {

@@ -34,8 +34,8 @@ import com.cinchapi.concourse.lang.sort.Order;
 final class LoadClassSelection<T extends Record> extends SetBasedSelection<T> {
 
     /**
-     * Return a {@link Reservation} for a load-all query with the
-     * given parameters.
+     * Return a {@link Reservation} for a load-all query with the given
+     * parameters.
      *
      * @param clazz the target class
      * @param order the sort order

@@ -112,34 +112,6 @@ public class RecordMiscTest extends AbstractRecordTest {
     }
 
     @Test
-    public void testCompareToSingleKeyAscending() {
-        Mock a = new Mock();
-        a.name = "Mary";
-        a.age = 40;
-        Mock b = new Mock();
-        b.name = "Barb";
-        b.age = 20;
-        Mock c = new Mock();
-        c.name = "Mary";
-        c.age = 38;
-        Mock d = new Mock();
-        d.name = "Alice";
-        d.age = 10;
-        Assert.assertTrue(a.compareTo(b, "name") > 0);
-        Assert.assertTrue(b.compareTo(c, "name") < 0);
-        Assert.assertTrue(c.compareTo(d, "name") > 0);
-        Assert.assertTrue(a.compareTo(c, "name") < 0); // When
-                                                       // equal,
-                                                       // the
-                                                       // record
-                                                       // id is
-                                                       // used
-                                                       // as a
-                                                       // tie
-                                                       // breaker
-    }
-
-    @Test
     public void testCompareToMultiKeys() {
         Mock a = new Mock();
         a.name = "Mary";

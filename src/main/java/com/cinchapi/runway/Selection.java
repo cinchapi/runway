@@ -79,15 +79,13 @@ public interface Selection<T extends Record> {
     }
 
     /**
-     * Return a resolved copy of the given {@link Selection} with
-     * an additional client-side {@code filter} injected. If the
-     * {@link Selection} already has a filter, the two are
-     * combined with {@link Predicate#and(Predicate)}.
+     * Return a resolved copy of the given {@link Selection} with an additional
+     * client-side {@code filter} injected. If the {@link Selection} already has
+     * a filter, the two are combined with {@link Predicate#and(Predicate)}.
      *
      * @param selection the {@link Selection} to augment
      * @param filter the additional filter to apply
-     * @return a resolved {@link Selection} with the combined
-     *         filter
+     * @return a resolved {@link Selection} with the combined filter
      */
     @SuppressWarnings("unchecked")
     public static <T extends Record> Selection<T> withInjectedFilter(
