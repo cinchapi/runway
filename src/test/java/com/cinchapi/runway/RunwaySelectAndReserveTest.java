@@ -604,19 +604,22 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Create and save a {@link Widget}.</li>
-     * <li>Execute a single {@link Selection}.</li>
-     * <li>Call {@link Selections#next()} once to consume the only result.</li>
-     * <li>Call {@link Selections#next()} again.</li>
+     * <li>Execute two {@link Selection Selections}.</li>
+     * <li>Call {@link Selections#next()} twice to consume both
+     *     results.</li>
+     * <li>Call {@link Selections#next()} a third time.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The second call throws
+     * <strong>Expected:</strong> The third call throws
      * {@link IllegalStateException}.
      */
     @Test(expected = IllegalStateException.class)
     public void testNextThrowsWhenExhausted() {
         new Widget("w1").save();
-        Selection<Widget> sel = Selection.of(Widget.class).build();
-        Selections results = runway.select(sel);
+        Selection<Widget> sel1 = Selection.of(Widget.class).build();
+        Selection<Widget> sel2 = Selection.of(Widget.class).build();
+        Selections results = runway.select(sel1, sel2);
+        results.next();
         results.next();
         results.next();
     }
