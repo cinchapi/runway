@@ -1341,7 +1341,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     : getAttachedSources(selection.clazz);
             if(sources.size() == 1) {
                 result = (R) sources.iterator().next()
-                        .select(selection.duplicate());
+                        .fetch(selection.duplicate());
             }
             else if(!sources.isEmpty()) {
                 if(selection instanceof CountSelection) {
@@ -1365,8 +1365,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     Order order = ((SetBasedSelection<?>) selection).order;
                     Page page = ((SetBasedSelection<?>) selection).page;
                     Set<T> results = new LinkedHashSet<>();
+
                     for (AdHocDataSource<?> source : sources) {
-                        results.addAll(source.fetch(selection.duplicate()));
+                        SetBasedSelection<?> dupe = (SetBasedSelection<?>) selection
+                                .duplicate();
+                        Reflection.set("order", null, dupe);
+                        Reflection.set("page", null, dupe);
+                        results.addAll(source.fetch(dupe));
                     }
                     if(order != null) {
                         results = DatabaseInterface.sort(results,
@@ -1605,6 +1610,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Class<T> clazz = selection.clazz;
         long id = selection.id;
         Realms realms = selection.realms;
+        Predicate<T> filter = selection.filter;
+        boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         try {
             if(StaticAnalysis.instance().getClassHierarchy(clazz).size() > 1) {
                 // The provided clazz has descendants, so it is possible
@@ -1644,7 +1651,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 seed.put(id, data);
                 targets = prefetchLinks(connection, seed);
             }
-            return instantiate(clazz, id, data, targets);
+            T record = instantiate(clazz, id, data, targets);
+            return record != null && (!hasFilter || filter.test(record))
+                    ? record
+                    : null;
         }
         finally {
             if(connection != null) {
