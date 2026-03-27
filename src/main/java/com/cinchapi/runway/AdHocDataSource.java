@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -34,6 +35,7 @@ import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Direction;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.lang.sort.OrderComponent;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 
@@ -78,8 +80,6 @@ import com.google.common.collect.Lists;
  */
 public class AdHocDataSource<T extends AdHocRecord> implements
         DatabaseInterface {
-    
-    // TODO: implement select but call other read methods. Do the legacy DBI select?
 
     /**
      * Convert an {@link Order} to a list-based order specification.
@@ -327,6 +327,61 @@ public class AdHocDataSource<T extends AdHocRecord> implements
         else {
             return ImmutableSet.of();
         }
+    }
+
+    @Override
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    public Selections select(Selection<?>... options) {
+        Preconditions.checkArgument(options.length > 0);
+        DatabaseSelection<?>[] selections = Arrays.stream(options)
+                .map(DatabaseSelection::resolve)
+                .toArray(DatabaseSelection[]::new);
+        for (DatabaseSelection<?> selection : selections) {
+            Preconditions.checkState(selection.state == Selection.State.PENDING,
+                    "Selection has already been submitted");
+            selection.state = Selection.State.SUBMITTED;
+            if(selection instanceof CountSelection) {
+                // NOTE: This path isn't consolidated because #count has
+                // different codepaths with vs without a Criteria
+                CountSelection<?> s = (CountSelection<?>) selection;
+                Predicate filter = s.filter;
+                if(s.criteria != null) {
+                    s.result = s.any
+                            ? countAny(s.clazz, s.criteria, filter, s.realms)
+                            : count(s.clazz, s.criteria, filter, s.realms);
+                }
+                else {
+                    s.result = s.any ? countAny(s.clazz, filter, s.realms)
+                            : count(s.clazz, filter, s.realms);
+                }
+            }
+            else if(selection instanceof LoadRecordSelection) {
+                LoadRecordSelection<?> s = (LoadRecordSelection<?>) selection;
+                s.result = load(s.clazz, s.id, s.realms);
+            }
+            else if(selection instanceof FindSelection) {
+                FindSelection<?> s = (FindSelection<?>) selection;
+                Predicate filter = s.filter;
+                s.result = s.any
+                        ? findAny(s.clazz, s.criteria, s.order, s.page, filter,
+                                s.realms)
+                        : find(s.clazz, s.criteria, s.order, s.page, filter,
+                                s.realms);
+            }
+            else if(selection instanceof LoadClassSelection) {
+                LoadClassSelection<?> s = (LoadClassSelection<?>) selection;
+                Predicate filter = s.filter;
+                s.result = s.any
+                        ? loadAny(s.clazz, s.order, s.page, filter, s.realms)
+                        : load(s.clazz, s.order, s.page, filter, s.realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "Unsupported Selection type " + selection.getClass());
+            }
+            selection.state = Selection.State.FINISHED;
+        }
+        return new Selections(selections);
     }
 
     /**

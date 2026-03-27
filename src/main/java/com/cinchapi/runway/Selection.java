@@ -20,6 +20,7 @@ import java.util.function.Predicate;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
+import com.google.common.base.Preconditions;
 
 /**
  * A {@link Selection} describes a single data retrieval operation against a
@@ -78,6 +79,29 @@ public interface Selection<T extends Record> {
     }
 
     /**
+     * Return a resolved copy of the given {@link Selection} with
+     * an additional client-side {@code filter} injected. If the
+     * {@link Selection} already has a filter, the two are
+     * combined with {@link Predicate#and(Predicate)}.
+     *
+     * @param selection the {@link Selection} to augment
+     * @param filter the additional filter to apply
+     * @return a resolved {@link Selection} with the combined
+     *         filter
+     */
+    @SuppressWarnings("unchecked")
+    public static <T extends Record> Selection<T> withInjectedFilter(
+            Selection<T> selection, Predicate<? super T> filter) {
+        Preconditions.checkState(selection.state() == Selection.State.PENDING);
+        DatabaseSelection<T> resolved = (DatabaseSelection<T>) DatabaseSelection
+                .resolve(selection);
+        resolved.filter = filter == null || DatabaseSelection.isNoFilter(filter)
+                ? (Predicate<T>) filter
+                : resolved.filter.and(filter);
+        return resolved;
+    }
+
+    /**
      * Return the result of this {@link Selection}.
      * <p>
      * The return type is unchecked &mdash; the caller is responsible for
@@ -92,7 +116,7 @@ public interface Selection<T extends Record> {
 
     /**
      * Return the {@link State} of this {@link Selection}.
-     * 
+     *
      * @return the {@link State} of this {@link Selection}
      */
     public State state();

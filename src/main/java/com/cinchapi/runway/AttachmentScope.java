@@ -15,12 +15,6 @@
  */
 package com.cinchapi.runway;
 
-import java.util.Set;
-
-import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.lang.paginate.Page;
-import com.cinchapi.concourse.lang.sort.Order;
-
 /**
  * A scoped attachment of {@link AdHocDataSource AdHocDataSources} to a
  * {@link Runway} instance.
@@ -85,114 +79,8 @@ public class AttachmentScope implements DatabaseInterface, AutoCloseable {
     }
 
     @Override
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order, Page page, Realms realms) {
-        return runway.find(clazz, criteria, order, page, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order, Realms realms) {
-        return runway.find(clazz, criteria, order, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Page page, Realms realms) {
-        return runway.find(clazz, criteria, page, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Realms realms) {
-        return runway.find(clazz, criteria, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Order order, Page page, Realms realms) {
-        return runway.findAny(clazz, criteria, order, page, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Order order, Realms realms) {
-        return runway.findAny(clazz, criteria, order, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Page page, Realms realms) {
-        return runway.findAny(clazz, criteria, page, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Realms realms) {
-        return runway.findAny(clazz, criteria, realms);
-    }
-
-    @Override
-    public <T extends Record> T findAnyUnique(Class<T> clazz, Criteria criteria,
-            Realms realms) {
-        return runway.findAnyUnique(clazz, criteria, realms);
-    }
-
-    @Override
-    public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria,
-            Realms realms) {
-        return runway.findUnique(clazz, criteria, realms);
-    }
-
-    @Override
-    public <T extends Record> T load(Class<T> clazz, long id, Realms realms) {
-        return runway.load(clazz, id, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page, Realms realms) {
-        return runway.load(clazz, order, page, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Realms realms) {
-        return runway.load(clazz, order, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Realms realms) {
-        return runway.load(clazz, page, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> load(Class<T> clazz, Realms realms) {
-        return runway.load(clazz, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-            Page page, Realms realms) {
-        return runway.loadAny(clazz, order, page, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-            Realms realms) {
-        return runway.loadAny(clazz, order, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Realms realms) {
-        return runway.loadAny(clazz, page, realms);
-    }
-
-    @Override
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Realms realms) {
-        return runway.loadAny(clazz, realms);
+    public Selections select(Selection<?>... selections) {
+        return runway.select(selections);
     }
 
 }

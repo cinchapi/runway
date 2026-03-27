@@ -42,12 +42,6 @@ import com.cinchapi.runway.Selection.State;
 abstract class DatabaseSelection<T extends Record> implements Selection<T> {
 
     /**
-     * A default {@link Predicate} that accepts all items, used when no
-     * client-side filter is specified.
-     */
-    static final Predicate<?> NO_FILTER = t -> true;
-
-    /**
      * Return {@code true} if the given {@code filter} is the default no-op
      * filter.
      *
@@ -82,6 +76,12 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
+     * A default {@link Predicate} that accepts all items, used when no
+     * client-side filter is specified.
+     */
+    static final Predicate<?> NO_FILTER = t -> true;
+
+    /**
      * The target {@link Record} class.
      */
     final Class<T> clazz;
@@ -95,6 +95,13 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
      * The {@link Realms} filter.
      */
     final Realms realms;
+
+    /**
+     * The client-side filter applied to results before they are returned.
+     * Defaults to {@link #NO_FILTER}.
+     */
+    @Nullable
+    Predicate<T> filter;
 
     /**
      * The current lifecycle state.
@@ -112,11 +119,26 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
      * @param clazz the target class
      * @param any whether to include descendants
      * @param realms the realms filter
+     * @param filter
      */
-    DatabaseSelection(Class<T> clazz, boolean any, Realms realms) {
+    @SuppressWarnings("unchecked")
+    DatabaseSelection(Class<T> clazz, boolean any, Realms realms,
+            Predicate<?> filter) {
         this.clazz = clazz;
         this.any = any;
         this.realms = realms;
+        this.filter = (Predicate<T>) filter;
+    }
+
+    /**
+     * Construct a new {@link DatabaseSelection}.
+     *
+     * @param clazz the target class
+     * @param any whether to include descendants
+     * @param realms the realms filter
+     */
+    DatabaseSelection(Class<T> clazz, boolean any, Realms realms) {
+        this(clazz, any, realms, NO_FILTER);
     }
 
     @SuppressWarnings("unchecked")
@@ -133,6 +155,15 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
+     * Return a new {@link DatabaseSelection} with the same configuration as
+     * this one but in the {@link State#PENDING} state and with no result. The
+     * duplicate is independent of this instance.
+     *
+     * @return a fresh copy of this {@link DatabaseSelection}
+     */
+    abstract DatabaseSelection<T> duplicate();
+
+    /**
      * Ensure this {@link DatabaseSelection} is still in the
      * {@link State#PENDING} state.
      *
@@ -142,16 +173,6 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
         checkState(state == Selection.State.PENDING,
                 "Selection has already been submitted");
     }
-
-    /**
-     * Return a new {@link DatabaseSelection} with the same
-     * configuration as this one but in the {@link State#PENDING}
-     * state and with no result. The duplicate is independent of
-     * this instance.
-     *
-     * @return a fresh copy of this {@link DatabaseSelection}
-     */
-    abstract DatabaseSelection<T> duplicate();
 
     /**
      * Return {@code true} if this {@link DatabaseSelection} can be combined

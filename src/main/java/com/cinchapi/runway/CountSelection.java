@@ -15,8 +15,6 @@
  */
 package com.cinchapi.runway;
 
-import java.util.function.Predicate;
-
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
 
@@ -36,17 +34,11 @@ import com.cinchapi.concourse.lang.Criteria;
 final class CountSelection<T extends Record> extends DatabaseSelection<T> {
 
     /**
-     * The query criteria, or {@code null} for counting all {@link Record
-     * Records} of the target class.
+     * The query criteria, or {@code null} for counting all
+     * {@link Record Records} of the target class.
      */
     @Nullable
     final Criteria criteria;
-
-    /**
-     * The client-side filter, or {@code null} for no filtering.
-     */
-    @Nullable
-    final Predicate<T> filter;
 
     /**
      * Construct a new {@link CountSelection}.
@@ -54,9 +46,22 @@ final class CountSelection<T extends Record> extends DatabaseSelection<T> {
      * @param state the builder state
      */
     CountSelection(BuilderState<T> state) {
-        super(state.clazz, state.any, state.realms);
+        super(state.clazz, state.any, state.realms, state.filter);
         this.criteria = state.criteria;
-        this.filter = state.filter;
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("CountSelection{clazz=");
+        sb.append(clazz.getSimpleName());
+        if(criteria != null) {
+            sb.append(", criteria=").append(criteria);
+        }
+        sb.append(", realms=").append(realms);
+        if(any) {
+            sb.append(", any=true");
+        }
+        return sb.append('}').toString();
     }
 
     @Override
@@ -74,43 +79,16 @@ final class CountSelection<T extends Record> extends DatabaseSelection<T> {
         return false;
     }
 
+
     @Override
     boolean isCounting() {
         return true;
     }
 
-    /**
-     * Return a {@link Reservation} for a count query with the given parameters.
-     *
-     * @param clazz the target class
-     * @param criteria the query criteria
-     * @param realms the realms filter
-     * @param any whether to include descendants
-     * @return the {@link Reservation}
-     */
-    static Reservation reservationFor(Class<?> clazz,
-            @Nullable Criteria criteria, Realms realms, boolean any) {
-        return Reservation.builder(clazz).realms(realms).any(any).counting(true)
-                .criteria(criteria).build();
-    }
-
     @Override
     Reservation reservation() {
-        return reservationFor(clazz, criteria, realms, any);
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder("CountSelection{clazz=");
-        sb.append(clazz.getSimpleName());
-        if(criteria != null) {
-            sb.append(", criteria=").append(criteria);
-        }
-        sb.append(", realms=").append(realms);
-        if(any) {
-            sb.append(", any=true");
-        }
-        return sb.append('}').toString();
+        return Reservation.builder(clazz).realms(realms).any(any).counting(true)
+                .criteria(criteria).build();
     }
 
 }

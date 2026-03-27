@@ -15,8 +15,6 @@
  */
 package com.cinchapi.runway;
 
-import java.util.function.Predicate;
-
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
 
@@ -36,10 +34,21 @@ import com.cinchapi.concourse.lang.sort.Order;
 final class LoadClassSelection<T extends Record> extends SetBasedSelection<T> {
 
     /**
-     * The client-side filter, or {@code null} for no filtering.
+     * Return a {@link Reservation} for a load-all query with the
+     * given parameters.
+     *
+     * @param clazz the target class
+     * @param order the sort order
+     * @param page the pagination
+     * @param realms the realms filter
+     * @param any whether to include descendants
+     * @return the {@link Reservation}
      */
-    @Nullable
-    final Predicate<T> filter;
+    static Reservation reservationFor(Class<?> clazz, @Nullable Order order,
+            @Nullable Page page, Realms realms, boolean any) {
+        return Reservation.builder(clazz).realms(realms).any(any).order(order)
+                .page(page).build();
+    }
 
     /**
      * Construct a new {@link LoadClassSelection}.
@@ -49,6 +58,23 @@ final class LoadClassSelection<T extends Record> extends SetBasedSelection<T> {
     LoadClassSelection(BuilderState<T> state) {
         super(state.clazz, state.any, state.realms, state.order, state.page);
         this.filter = state.filter;
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("LoadClassSelection{clazz=");
+        sb.append(clazz.getSimpleName());
+        if(order != null) {
+            sb.append(", order=").append(order);
+        }
+        if(page != null) {
+            sb.append(", page=").append(page);
+        }
+        sb.append(", realms=").append(realms);
+        if(any) {
+            sb.append(", any=true");
+        }
+        return sb.append('}').toString();
     }
 
     @Override
@@ -67,43 +93,9 @@ final class LoadClassSelection<T extends Record> extends SetBasedSelection<T> {
                 && DatabaseSelection.isNoFilter(filter);
     }
 
-    /**
-     * Return a {@link Reservation} for a load-all query with the given
-     * parameters.
-     *
-     * @param clazz the target class
-     * @param order the sort order
-     * @param page the pagination
-     * @param realms the realms filter
-     * @param any whether to include descendants
-     * @return the {@link Reservation}
-     */
-    static Reservation reservationFor(Class<?> clazz, @Nullable Order order,
-            @Nullable Page page, Realms realms, boolean any) {
-        return Reservation.builder(clazz).realms(realms).any(any).order(order)
-                .page(page).build();
-    }
-
     @Override
     Reservation reservation() {
         return reservationFor(clazz, order, page, realms, any);
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder("LoadClassSelection{clazz=");
-        sb.append(clazz.getSimpleName());
-        if(order != null) {
-            sb.append(", order=").append(order);
-        }
-        if(page != null) {
-            sb.append(", page=").append(page);
-        }
-        sb.append(", realms=").append(realms);
-        if(any) {
-            sb.append(", any=true");
-        }
-        return sb.append('}').toString();
     }
 
 }
