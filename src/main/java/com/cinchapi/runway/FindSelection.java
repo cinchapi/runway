@@ -35,25 +35,12 @@ import com.cinchapi.concourse.lang.sort.Order;
  * @author Jeff Nelson
  */
 @Immutable
-public final class FindSelection<T extends Record>
-        extends DatabaseSelection<T> {
+final class FindSelection<T extends Record> extends SetBasedSelection<T> {
 
     /**
      * The query criteria.
      */
     final Criteria criteria;
-
-    /**
-     * The sort order, or {@code null} for no sorting.
-     */
-    @Nullable
-    final Order order;
-
-    /**
-     * The pagination, or {@code null} for no pagination.
-     */
-    @Nullable
-    final Page page;
 
     /**
      * The client-side filter, or {@code null} for no filtering.
@@ -67,10 +54,8 @@ public final class FindSelection<T extends Record>
      * @param state the builder state
      */
     FindSelection(BuilderState<T> state) {
-        super(state.clazz, state.any, state.realms);
+        super(state.clazz, state.any, state.realms, state.order, state.page);
         this.criteria = state.criteria;
-        this.order = state.order;
-        this.page = state.page;
         this.filter = state.filter;
     }
 

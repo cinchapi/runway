@@ -27,8 +27,7 @@ import javax.annotation.concurrent.Immutable;
  * @author Jeff Nelson
  */
 @Immutable
-public final class LoadRecordSelection<T extends Record>
-        extends DatabaseSelection<T> {
+final class LoadRecordSelection<T extends Record> extends DatabaseSelection<T> {
 
     /**
      * The record ID.

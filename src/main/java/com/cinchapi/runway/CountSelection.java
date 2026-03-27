@@ -33,8 +33,7 @@ import com.cinchapi.concourse.lang.Criteria;
  * @author Jeff Nelson
  */
 @Immutable
-public final class CountSelection<T extends Record>
-        extends DatabaseSelection<T> {
+final class CountSelection<T extends Record> extends DatabaseSelection<T> {
 
     /**
      * The query criteria, or {@code null} for counting all {@link Record

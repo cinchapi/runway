@@ -33,20 +33,7 @@ import com.cinchapi.concourse.lang.sort.Order;
  * @author Jeff Nelson
  */
 @Immutable
-public final class LoadClassSelection<T extends Record>
-        extends DatabaseSelection<T> {
-
-    /**
-     * The sort order, or {@code null} for no sorting.
-     */
-    @Nullable
-    final Order order;
-
-    /**
-     * The pagination, or {@code null} for no pagination.
-     */
-    @Nullable
-    final Page page;
+final class LoadClassSelection<T extends Record> extends SetBasedSelection<T> {
 
     /**
      * The client-side filter, or {@code null} for no filtering.
@@ -60,9 +47,7 @@ public final class LoadClassSelection<T extends Record>
      * @param state the builder state
      */
     LoadClassSelection(BuilderState<T> state) {
-        super(state.clazz, state.any, state.realms);
-        this.order = state.order;
-        this.page = state.page;
+        super(state.clazz, state.any, state.realms, state.order, state.page);
         this.filter = state.filter;
     }
 
