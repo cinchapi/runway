@@ -1566,8 +1566,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Criteria criteria = selection.criteria;
+        Predicate<T> filter = selection.filter;
+        boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         Realms realms = selection.realms;
-        if(criteria == null) {
+        if(hasFilter) {
+            Set<T> records = select(Selection.of(clazz).any(any).where(criteria)
+                    .filter(filter).realms(realms)).next();
+            return records.size();
+        }
+        else if(criteria == null) {
             // No criteria means count all records of this class
             return any
                     ? $count($Criteria.amongRealms(realms,
@@ -1648,23 +1655,33 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     private <T extends Record> Set<T> $selectClass(
             LoadClassSelection<T> selection) {
-        Concourse connection = null;
+        AtomicReference<Concourse> connection = new AtomicReference<Concourse>(
+                null);
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Order order = selection.order;
         Page page = selection.page;
         Realms realms = selection.realms;
+        Predicate<T> filter = selection.filter;
+        boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         try {
             if(hasNativeSortingAndPagination
                     || doesNotRequireSortingOrPagination(order, page)) {
-                // When native sorting/pagination is supported OR no
-                // sorting/pagination is requested, the database can handle the
-                // query directly without client-side stream manipulation.
-                connection = ensureValidConnection(connection);
-                Map<Long, Map<String, Set<Object>>> data = any
-                        ? $loadAny(connection, clazz, order, page, realms)
-                        : $load(connection, clazz, order, page, realms);
-                return any ? instantiateAll(data) : instantiateAll(clazz, data);
+                Function<Page, Set<T>> retriever = $page -> {
+                    // When native sorting/pagination is supported OR no
+                    // sorting/pagination is requested, the database can handle
+                    // the query directly without client-side stream
+                    // manipulation.
+                    Concourse concourse = ensureValidConnection(connection);
+                    Map<Long, Map<String, Set<Object>>> data = any
+                            ? $loadAny(concourse, clazz, order, $page, realms)
+                            : $load(concourse, clazz, order, $page, realms);
+                    return any ? instantiateAll(data)
+                            : instantiateAll(clazz, data);
+                };
+                return hasFilter
+                        ? Pagination.applyFilterAndPage(retriever, filter, page)
+                        : retriever.apply(page);
             }
             else {
                 // Legacy servers lack native sorting/pagination, so results
@@ -1687,42 +1704,53 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         finally {
-            if(connection != null) {
-                connections.release(connection);
+            if(connection.get() != null) {
+                connections.release(connection.get());
             }
         }
     }
 
     private <T extends Record> Set<T> $selectCriteria(
             FindSelection<T> selection) {
-        Concourse connection = null;
+        AtomicReference<Concourse> connection = new AtomicReference<Concourse>(
+                null);
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Criteria criteria = selection.criteria;
         Order order = selection.order;
         Page page = selection.page;
         Realms realms = selection.realms;
+        Predicate<T> filter = selection.filter;
+        boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         try {
             if(hasNativeSortingAndPagination
                     || doesNotRequireSortingOrPagination(order, page)) {
-                if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                    // When native sorting/pagination is supported OR no
-                    // sorting/pagination is requested, the database can handle
-                    // the query directly without client-side stream
-                    // manipulation.
-                    connection = ensureValidConnection(connection);
-                    Map<Long, Map<String, Set<Object>>> data = any
-                            ? $findAny(connection, clazz, criteria, order, page,
-                                    realms)
-                            : $find(connection, clazz, criteria, order, page,
-                                    realms);
-                    return any ? instantiateAll(data)
-                            : instantiateAll(clazz, data);
-                }
-                else {
-                    return any ? filterAny(clazz, criteria, order, page, realms)
-                            : filter(clazz, criteria, order, page, realms);
-                }
+                Function<Page, Set<T>> retriever = $page -> {
+                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+                        // When native sorting/pagination is supported OR no
+                        // sorting/pagination is requested, the database can
+                        // handle the query directly without client-side stream
+                        // manipulation.
+                        Concourse concourse = ensureValidConnection(connection);
+                        Map<Long, Map<String, Set<Object>>> data = any
+                                ? $findAny(concourse, clazz, criteria, order,
+                                        $page, realms)
+                                : $find(concourse, clazz, criteria, order,
+                                        $page, realms);
+                        return any ? instantiateAll(data)
+                                : instantiateAll(clazz, data);
+                    }
+                    else {
+                        return any
+                                ? filterAny(clazz, criteria, order, $page,
+                                        realms)
+                                : filter(clazz, criteria, order, $page, realms);
+                    }
+                };
+                return hasFilter
+                        ? Pagination.applyFilterAndPage(retriever, filter, page)
+                        : retriever.apply(page);
+
             }
             else {
                 // Legacy servers lack native sorting/pagination, so results
@@ -1745,8 +1773,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         finally {
-            if(connection != null) {
-                connections.release(connection);
+            if(connection.get() != null) {
+                connections.release(connection.get());
             }
         }
     }
@@ -2191,6 +2219,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private Concourse ensureValidConnection(Concourse connection) {
         return connection == null ? connections.request() : connection;
+    }
+
+    private Concourse ensureValidConnection(
+            AtomicReference<Concourse> connection) {
+        if(connection.get() == null) {
+            connection.set(connections.request());
+        }
+        return connection.get();
     }
 
     /**
