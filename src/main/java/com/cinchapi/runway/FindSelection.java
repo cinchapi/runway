@@ -60,6 +60,17 @@ final class FindSelection<T extends Record> extends SetBasedSelection<T> {
     }
 
     @Override
+    DatabaseSelection<T> duplicate() {
+        BuilderState<T> state = new BuilderState<>(clazz, any);
+        state.criteria = criteria;
+        state.order = order;
+        state.page = page;
+        state.filter = filter;
+        state.realms = realms;
+        return new FindSelection<>(state);
+    }
+
+    @Override
     boolean isCombinable() {
         return order == null && page == null
                 && filter == DatabaseSelection.NO_FILTER;

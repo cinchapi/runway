@@ -52,6 +52,16 @@ final class LoadClassSelection<T extends Record> extends SetBasedSelection<T> {
     }
 
     @Override
+    DatabaseSelection<T> duplicate() {
+        BuilderState<T> state = new BuilderState<>(clazz, any);
+        state.order = order;
+        state.page = page;
+        state.filter = filter;
+        state.realms = realms;
+        return new LoadClassSelection<>(state);
+    }
+
+    @Override
     boolean isCombinable() {
         return order == null && page == null
                 && DatabaseSelection.isNoFilter(filter);

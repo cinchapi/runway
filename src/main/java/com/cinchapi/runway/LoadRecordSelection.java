@@ -45,6 +45,14 @@ final class LoadRecordSelection<T extends Record> extends DatabaseSelection<T> {
     }
 
     @Override
+    DatabaseSelection<T> duplicate() {
+        BuilderState<T> state = new BuilderState<>(clazz, any);
+        state.id = id;
+        state.realms = realms;
+        return new LoadRecordSelection<>(state);
+    }
+
+    @Override
     boolean isCombinable() {
         return true;
     }

@@ -144,6 +144,16 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
+     * Return a new {@link DatabaseSelection} with the same
+     * configuration as this one but in the {@link State#PENDING}
+     * state and with no result. The duplicate is independent of
+     * this instance.
+     *
+     * @return a fresh copy of this {@link DatabaseSelection}
+     */
+    abstract DatabaseSelection<T> duplicate();
+
+    /**
      * Return {@code true} if this {@link DatabaseSelection} can be combined
      * with other {@link DatabaseSelection Selections} in a single database
      * call.

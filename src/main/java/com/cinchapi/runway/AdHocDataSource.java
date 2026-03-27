@@ -78,6 +78,8 @@ import com.google.common.collect.Lists;
  */
 public class AdHocDataSource<T extends AdHocRecord> implements
         DatabaseInterface {
+    
+    // TODO: implement select but call other read methods. Do the legacy DBI select?
 
     /**
      * Convert an {@link Order} to a list-based order specification.

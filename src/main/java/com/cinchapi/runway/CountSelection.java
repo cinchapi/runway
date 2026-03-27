@@ -60,6 +60,16 @@ final class CountSelection<T extends Record> extends DatabaseSelection<T> {
     }
 
     @Override
+    DatabaseSelection<T> duplicate() {
+        BuilderState<T> state = new BuilderState<>(clazz, any);
+        state.criteria = criteria;
+        state.filter = filter;
+        state.counting = true;
+        state.realms = realms;
+        return new CountSelection<>(state);
+    }
+
+    @Override
     boolean isCombinable() {
         return false;
     }

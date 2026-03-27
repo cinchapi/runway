@@ -2117,61 +2117,13 @@ public interface DatabaseInterface {
      * caching.
      * </p>
      *
-     * @param options the {@link Selection Selections} to execute
+     * @param selections the {@link Selection Selections} to execute
      * @param others additional {@link Selection Selections} to execute
      * @return a {@link Selections} wrapper for positional access
      * @throws IllegalArgumentException if the input array is empty
      * @throws IllegalStateException if any {@link Selection} has already been
      *             submitted
      */
-    @SuppressWarnings({ "unchecked", "rawtypes" })
-    public default Selections select(Selection<?>... options) {
-        Preconditions.checkArgument(options.length > 0);
-        DatabaseSelection<?>[] selections = Arrays.stream(options)
-                .map(DatabaseSelection::resolve)
-                .toArray(DatabaseSelection[]::new);
-        for (DatabaseSelection<?> selection : selections) {
-            Preconditions.checkState(selection.state == Selection.State.PENDING,
-                    "Selection has already been submitted");
-            selection.state = Selection.State.SUBMITTED;
-            if(selection instanceof CountSelection) {
-                // NOTE: This path isn't consolidated because #count has
-                // different codepaths with vs without a Criteria
-                CountSelection<?> s = (CountSelection<?>) selection;
-                Predicate filter = s.filter;
-                if(s.criteria != null) {
-                    s.result = s.any
-                            ? countAny(s.clazz, s.criteria, filter, s.realms)
-                            : count(s.clazz, s.criteria, filter, s.realms);
-                }
-                else {
-                    s.result = s.any ? countAny(s.clazz, filter, s.realms)
-                            : count(s.clazz, filter, s.realms);
-                }
-            }
-            else if(selection instanceof LoadRecordSelection) {
-                LoadRecordSelection<?> s = (LoadRecordSelection<?>) selection;
-                s.result = load(s.clazz, s.id, s.realms);
-            }
-            else if(selection instanceof FindSelection) {
-                FindSelection<?> s = (FindSelection<?>) selection;
-                Predicate filter = s.filter;
-                s.result = s.any
-                        ? findAny(s.clazz, s.criteria, s.order, s.page, filter,
-                                s.realms)
-                        : find(s.clazz, s.criteria, s.order, s.page, filter,
-                                s.realms);
-            }
-            else {
-                LoadClassSelection<?> s = (LoadClassSelection<?>) selection;
-                Predicate filter = s.filter;
-                s.result = s.any
-                        ? loadAny(s.clazz, s.order, s.page, filter, s.realms)
-                        : load(s.clazz, s.order, s.page, filter, s.realms);
-            }
-            selection.state = Selection.State.FINISHED;
-        }
-        return new Selections(selections);
-    }
+    public Selections select(Selection<?>... selections);
 
 }
