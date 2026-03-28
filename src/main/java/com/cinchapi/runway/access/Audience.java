@@ -148,6 +148,31 @@ public interface Audience extends DatabaseInterface {
     }
 
     /**
+     * Return a {@link Predicate} that tests whether a {@link Record} is visible
+     * to this {@link Audience}, using the registered {@link Scope} if one
+     * exists and is {@link Scope#isApplicable() applicable}, or falling back to
+     * {@link #$checkIfVisible()} otherwise.
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
+     *
+     * @return a {@link Predicate} to filter for visible records
+     */
+    public default <T extends Record> Predicate<T> $checkIfInScopeOrVisible() {
+        // TODO: make private in Java 9+
+        return record -> {
+            if(record instanceof AccessControl) {
+                Scope scope = AccessControl
+                        .resolveVisibilityScope(record.getClass(), this);
+                if(scope != null && scope.isApplicable()) {
+                    return scope.test(record);
+                }
+            }
+            return $checkIfVisible().test(record);
+        };
+    }
+
+    /**
      * Return the appropriate {@link DatabaseInterface} to which database
      * operations should be delegated.
      * <p>
@@ -268,7 +293,7 @@ public interface Audience extends DatabaseInterface {
             Collection<String> keys, T subject) {
         Preconditions.checkNotNull(keys, "keys cannot be null");
         Map<String, Object> data;
-        if(!$checkIfVisible().test(subject)) {
+        if(!$checkIfInScopeOrVisible().test(subject)) {
             return null;
         }
         else if(subject instanceof AccessControl) {

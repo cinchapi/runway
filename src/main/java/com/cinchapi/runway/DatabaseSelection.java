@@ -177,8 +177,8 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
-     * Add type-specific fields to the {@link ToStringHelper} used
-     * by {@link #toString()}.
+     * Add type-specific fields to the {@link ToStringHelper} used by
+     * {@link #toString()}.
      * <p>
      * Subclasses append their distinguishing properties (e.g., criteria, id,
      * order, page) to {@code helper}. Common fields ({@code clazz},

@@ -17,7 +17,9 @@ package com.cinchapi.runway.access;
 
 import javax.annotation.concurrent.Immutable;
 
+import com.cinchapi.ccl.syntax.ConditionTree;
 import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
@@ -119,6 +121,14 @@ public abstract class Scope {
     public abstract boolean isApplicable();
 
     /**
+     * Test whether the given {@code record} falls within this {@link Scope}.
+     *
+     * @param record the {@link Record} to test
+     * @return {@code true} if the {@code record} is within this {@link Scope}
+     */
+    public abstract boolean test(Record record);
+
+    /**
      * A {@link Scope} whose visibility is expressed as a {@link Criteria}.
      */
     @Immutable
@@ -148,6 +158,14 @@ public abstract class Scope {
         @Override
         public boolean isApplicable() {
             return true;
+        }
+
+        @Override
+        public boolean test(Record record) {
+            ConcourseCompiler compiler = ConcourseCompiler.get();
+            ConditionTree tree = (ConditionTree) compiler.parse(criteria);
+            return compiler.evaluate(tree,
+                    Reflection.call(record, "mmap")); /* (authorized) */
         }
     }
 
@@ -193,6 +211,11 @@ public abstract class Scope {
         public boolean isApplicable() {
             return true;
         }
+
+        @Override
+        public boolean test(Record record) {
+            return false;
+        }
     }
 
     /**
@@ -218,6 +241,11 @@ public abstract class Scope {
 
         @Override
         public boolean isApplicable() {
+            return true;
+        }
+
+        @Override
+        public boolean test(Record record) {
             return true;
         }
 
@@ -248,6 +276,11 @@ public abstract class Scope {
         @Override
         public boolean isApplicable() {
             return false;
+        }
+
+        @Override
+        public boolean test(Record record) {
+            throw new UnsupportedOperationException();
         }
 
     }

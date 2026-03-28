@@ -74,8 +74,8 @@ abstract class SetBasedSelection<T extends Record>
     }
 
     /**
-     * Add selection-type-specific fields to the
-     * {@link ToStringHelper} used by {@link #toString()}.
+     * Add selection-type-specific fields to the {@link ToStringHelper} used by
+     * {@link #toString()}.
      * <p>
      * Subclasses append their distinguishing properties (e.g., criteria) to
      * {@code helper}. Common set-based fields ({@code order}, {@code page}) are
