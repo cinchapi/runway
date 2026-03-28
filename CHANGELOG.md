@@ -1,7 +1,15 @@
 # Changelog
 
 #### Version 1.14.0 (TBD)
-* **Selection API**: Added `Selection`, `Selections`, and `Runway#select(Selection...)` for declaring and executing multiple data retrieval operations together. `select()` groups compatible queries and possibly combines them into fewer database round trips, reducing overhead regardless of any other configuration.
+* **Static Visibility Scopes**: Added `Scope` and static scope registration to the `AccessControl` framework as a class-level alternative to instance-based visibility checks. When a `Scope` is registered for an `AccessControl` type, it is applied during `Audience.select()` in place of the per-instance `$isDiscoverableBy` check:
+  * `Scope.of(Criteria)` pushes visibility filtering to the database as a query constraint, ensuring only matching records are returned rather than loading all records and filtering post-load. This is significantly more performant when only a small fraction of records for a class are visible to a given audience.
+  * `Scope.unrestricted()` short-circuits to return all records without any filtering.
+  * `Scope.none()` short-circuits to return no records without any database query.
+  * `Scope.unsupported()` signals that scope-based visibility is not applicable; instance-based checks are used instead.
+  * `AccessControl.registerVisibilityScope(Class, Function<Audience, Scope>)` registers a scope provider for a single class.
+  * `AccessControl.registerVisibilityScopeHierarchy(Class, Function<Audience, Scope>)` registers a scope provider for a class and all known subclasses discovered at runtime, without overwriting any explicit per-class registrations already made.
+  * Instance-based permissions remain the default and are recommended for most use cases. Static scopes are best suited when access rules can be expressed as a well-defined `Criteria` (to push filtering to the database) or when access is uniformly all-or-nothing across an entire class.
+* **Selection API**: Added `Selection`, `Selections`, and `Runway#select(Selection...)` for declaring and executing multiple data retrieval operations together. The `select()` API possibly executes multiple reads in as little as a single database round trips, reducing overhead regardless of any other configuration.
 * **Reservation Cache**: Added `Runway#reserve()` and `Runway#unreserve()` to activate and deactivate a thread-local result cache that works with both the Selection API and direct read methods. When the reserve is active, `select()` caches its results so that subsequent calls to `select()`, `find()`, `count()`, `load()` &mdash; including reads through the `Audience` framework &mdash; return the cached data instead of re-querying the database. This is designed for the middleware/handler pattern: middleware calls `reserve()` and `select()` to pre-fetch data, route handlers read through `find()`/`count()`/`load()` or `Audience` methods and transparently benefit from the cache, and `unreserve()` clears everything at the end of the request.
 * Added `Runway#getKnownRecordTypes()` to return all known `Record` subclasses discovered on the classpath at runtime.
 * Fixed a bug where `Pagination.applyFilterAndPage` would throw a `NullPointerException` when invoked with a `null` filter or `null` page.
