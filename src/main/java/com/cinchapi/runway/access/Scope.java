@@ -17,9 +17,11 @@ package com.cinchapi.runway.access;
 
 import javax.annotation.concurrent.Immutable;
 
+import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
+import com.google.common.collect.ImmutableSet;
 
 /**
  * Describes the visibility that an {@link Audience} has for a given
@@ -168,15 +170,29 @@ public abstract class Scope {
         @Override
         @SuppressWarnings("unchecked")
         public Selection<?> apply(Selection<?> selection) {
-            return Selection.withInjectedFilter((Selection<Record>) selection,
-                    record -> false);
+            selection = Selection.withInjectedFilter(
+                    (Selection<Record>) selection, record -> false);
+            String className = selection.getClass().getSimpleName();
+            Object result;
+            if(className.equals("CountSelection")) {
+                result = 0;
+            }
+            else if(className.equals("LoadRecordSelection")) {
+                result = null;
+            }
+            else {
+                result = ImmutableSet.of();
+            }
+            Reflection.set("result", result, selection); /* (authorized) */
+            Reflection.set("state", Selection.State.RESOLVED,
+                    selection); /* (authorized) */
+            return selection;
         }
 
         @Override
         public boolean isApplicable() {
             return true;
         }
-
     }
 
     /**

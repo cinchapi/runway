@@ -15,8 +15,6 @@
  */
 package com.cinchapi.runway;
 
-import static com.google.common.base.Preconditions.checkState;
-
 import java.util.AbstractMap;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
@@ -948,7 +946,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Preconditions.checkArgument(options.length > 0);
         DatabaseSelection<?>[] selections = Arrays.stream(options)
                 .peek(option -> Preconditions.checkState(
-                        option.state() == Selection.State.PENDING,
+                        option.state() == Selection.State.PENDING
+                                || option.state() == Selection.State.RESOLVED,
                         "Selection has already been submitted"))
                 .map(DatabaseSelection::resolve)
                 .toArray(DatabaseSelection[]::new);
@@ -965,6 +964,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             List<DatabaseSelection<?>> combinable = new ArrayList<>();
             Set<String> combinedClasses = Sets.newHashSet();
             outer: for (DatabaseSelection<?> selection : selections) {
+                if(selection.state == Selection.State.RESOLVED) {
+                    selection.state = Selection.State.FINISHED;
+                    continue outer; /* (authorized short circuit) */
+                }
                 // Must manually attempt to recall here because it won't
                 // register as cached when dispatching route if a combination
                 // occurs and gets dispatched
@@ -1002,8 +1005,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             BuildableState combined = null;
             for (DatabaseSelection<?> selection : combinable) {
-                checkState(selection.state == Selection.State.PENDING,
-                        "Selection has already been submitted");
+                selection.ensurePending();
                 Criteria criteria = buildSelectionCriteria(selection);
                 combined = combined == null ? Criteria.where().group(criteria)
                         : combined.or().group(criteria);
@@ -1300,6 +1302,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     @SuppressWarnings("unchecked")
     private <T extends Record, R> void $select(DatabaseSelection<T> selection) {
+        if(selection.state == Selection.State.RESOLVED) {
+            selection.state = Selection.State.FINISHED;
+            return; /* (authorized short circuit) */
+        }
         selection.state = Selection.State.SUBMITTED;
         R result;
         Object cached = recall(selection.reservation());

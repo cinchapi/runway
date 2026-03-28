@@ -17,10 +17,11 @@ package com.cinchapi.runway;
 
 import java.util.function.Predicate;
 
+import com.cinchapi.ccl.syntax.ConditionTree;
+import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
-import com.google.common.base.Preconditions;
 
 /**
  * A {@link Selection} describes a single data retrieval operation against a
@@ -79,26 +80,6 @@ public interface Selection<T extends Record> {
     }
 
     /**
-     * Return a copy of {@code selection} with the given {@code filter}.
-     *
-     * @param selection the {@link Selection} to augment
-     * @param filter the injected filter
-     * @param <T> the {@link Record} type
-     * @return a new {@link Selection} with the visibility constraint applied
-     */
-    @SuppressWarnings("unchecked")
-    public static <T extends Record> Selection<T> withInjectedFilter(
-            Selection<T> selection, Predicate<? super T> filter) {
-        Preconditions.checkState(selection.state() == Selection.State.PENDING);
-        DatabaseSelection<T> resolved = (DatabaseSelection<T>) DatabaseSelection
-                .resolve(selection);
-        resolved.filter = filter == null || DatabaseSelection.isNoFilter(filter)
-                ? (Predicate<T>) filter
-                : resolved.filter.and(filter);
-        return resolved;
-    }
-
-    /**
      * Return a copy of {@code selection} with the {@code injected}
      * {@link Criteria} applied as a database-level constraint.
      *
@@ -111,50 +92,76 @@ public interface Selection<T extends Record> {
     @SuppressWarnings("unchecked")
     public static <T extends Record> Selection<T> withInjectedCriteria(
             Selection<T> selection, Criteria injected) {
-        Preconditions.checkState(selection.state() == Selection.State.PENDING);
         DatabaseSelection<T> resolved = (DatabaseSelection<T>) DatabaseSelection
                 .resolve(selection);
         if(resolved instanceof LoadRecordSelection) {
-            return selection;
-        }
-        else if(resolved instanceof FindSelection) {
-            FindSelection<T> find = (FindSelection<T>) resolved;
-            DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
-                    resolved.clazz, resolved.any);
-            state.criteria = Criteria.where().group(find.criteria).and()
-                    .group(injected).build();
-            state.order = find.order;
-            state.page = find.page;
-            state.filter = find.filter;
-            state.realms = find.realms;
-            return new FindSelection<>(state);
-        }
-        else if(resolved instanceof CountSelection) {
-            CountSelection<T> count = (CountSelection<T>) resolved;
-            DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
-                    resolved.clazz, resolved.any);
-            state.counting = true;
-            state.criteria = count.criteria != null
-                    ? Criteria.where().group(count.criteria).and()
-                            .group(injected).build()
-                    : injected;
-            state.filter = count.filter;
-            state.realms = count.realms;
-            return new CountSelection<>(state);
+            return withInjectedFilter(selection, record -> {
+                ConcourseCompiler compiler = ConcourseCompiler.get();
+                ConditionTree tree = (ConditionTree) compiler.parse(injected);
+                return compiler.evaluate(tree, record.mmap());
+            });
         }
         else {
-            // LoadClassSelection — visibility criteria becomes the sole
-            // criteria, promoting to FindSelection
-            SetBasedSelection<T> set = (SetBasedSelection<T>) resolved;
-            DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
-                    resolved.clazz, resolved.any);
-            state.criteria = injected;
-            state.order = set.order;
-            state.page = set.page;
-            state.filter = resolved.filter;
-            state.realms = resolved.realms;
-            return new FindSelection<>(state);
+            resolved = resolved.duplicate();
+            if(resolved instanceof FindSelection) {
+                FindSelection<T> find = (FindSelection<T>) resolved;
+                DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                        resolved.clazz, resolved.any);
+                state.criteria = Criteria.where().group(find.criteria).and()
+                        .group(injected).build();
+                state.order = find.order;
+                state.page = find.page;
+                state.filter = find.filter;
+                state.realms = find.realms;
+                return new FindSelection<>(state);
+            }
+            else if(resolved instanceof CountSelection) {
+                CountSelection<T> count = (CountSelection<T>) resolved;
+                DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                        resolved.clazz, resolved.any);
+                state.counting = true;
+                state.criteria = count.criteria != null
+                        ? Criteria.where().group(count.criteria).and()
+                                .group(injected).build()
+                        : injected;
+                state.filter = count.filter;
+                state.realms = count.realms;
+                return new CountSelection<>(state);
+            }
+            else {
+                // LoadClassSelection — visibility criteria becomes the sole
+                // criteria, promoting to FindSelection
+                SetBasedSelection<T> set = (SetBasedSelection<T>) resolved;
+                DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                        resolved.clazz, resolved.any);
+                state.criteria = injected;
+                state.order = set.order;
+                state.page = set.page;
+                state.filter = resolved.filter;
+                state.realms = resolved.realms;
+                return new FindSelection<>(state);
+            }
         }
+    }
+
+    /**
+     * Return a copy of {@code selection} with the given {@code filter}.
+     *
+     * @param selection the {@link Selection} to augment
+     * @param filter the injected filter
+     * @param <T> the {@link Record} type
+     * @return a new {@link Selection} with the visibility constraint applied
+     */
+    @SuppressWarnings("unchecked")
+    public static <T extends Record> Selection<T> withInjectedFilter(
+            Selection<T> selection, Predicate<? super T> filter) {
+        DatabaseSelection<T> resolved = (DatabaseSelection<T>) DatabaseSelection
+                .resolve(selection);
+        resolved = resolved.duplicate();
+        resolved.filter = filter == null || DatabaseSelection.isNoFilter(filter)
+                ? (Predicate<T>) filter
+                : resolved.filter.and(filter);
+        return resolved;
     }
 
     /**
@@ -214,25 +221,6 @@ public interface Selection<T extends Record> {
         }
 
         /**
-         * Return {@code this} cast to the concrete builder type.
-         */
-        @SuppressWarnings("unchecked")
-        private B self() {
-            return (B) this;
-        }
-
-        /**
-         * Constrain the {@link Selection} to the given {@code realms}.
-         *
-         * @param realms the {@link Realms} filter
-         * @return this builder for chaining
-         */
-        public B realms(Realms realms) {
-            state.realms = realms;
-            return self();
-        }
-
-        /**
          * Include descendants of the target class in the results.
          *
          * @return this builder for chaining
@@ -252,16 +240,6 @@ public interface Selection<T extends Record> {
         public B any(boolean any) {
             state.any = any;
             return self();
-        }
-
-        @Override
-        public Class<T> clazz() {
-            return state.clazz;
-        }
-
-        @Override
-        public State state() {
-            return State.PENDING;
         }
 
         /**
@@ -285,8 +263,108 @@ public interface Selection<T extends Record> {
         }
 
         @Override
+        public Class<T> clazz() {
+            return state.clazz;
+        }
+
+        @Override
         public <R> R get() {
             throw new IllegalStateException("Selection has not been executed");
+        }
+
+        /**
+         * Constrain the {@link Selection} to the given {@code realms}.
+         *
+         * @param realms the {@link Realms} filter
+         * @return this builder for chaining
+         */
+        public B realms(Realms realms) {
+            state.realms = realms;
+            return self();
+        }
+
+        @Override
+        public State state() {
+            return State.PENDING;
+        }
+
+        /**
+         * Return {@code this} cast to the concrete builder type.
+         */
+        @SuppressWarnings("unchecked")
+        private B self() {
+            return (B) this;
+        }
+    }
+
+    /**
+     * A builder for counting {@link Selection Selections}. Only criteria,
+     * filter, realms, and any are available.
+     *
+     * @param <T> the {@link Record} type
+     */
+    final class CountBuilder<T extends Record>
+            extends Builder<T, CountBuilder<T>> {
+
+        /**
+         * Construct a new {@link CountBuilder}.
+         *
+         * @param state the shared builder state
+         */
+        CountBuilder(DatabaseSelection.BuilderState<T> state) {
+            super(state);
+        }
+
+        /**
+         * Alias for {@link #where(Criteria)}.
+         *
+         * @param criteria the query criteria
+         * @return this builder for chaining
+         */
+        public CountBuilder<T> criteria(Criteria criteria) {
+            return where(criteria);
+        }
+
+        /**
+         * Apply a client-side {@code filter}.
+         *
+         * @param filter the filter predicate
+         * @return this builder for chaining
+         */
+        @SuppressWarnings("unchecked")
+        public CountBuilder<T> filter(Predicate<T> filter) {
+            state.filter = filter != null ? filter
+                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
+            return this;
+        }
+
+        /**
+         * Set or replace the query {@code criteria}.
+         *
+         * @param criteria the query criteria
+         * @return this builder for chaining
+         */
+        public CountBuilder<T> where(Criteria criteria) {
+            state.criteria = criteria;
+            return this;
+        }
+    }
+
+    /**
+     * A builder for ID-based {@link Selection Selections}. Only realms and any
+     * are available.
+     *
+     * @param <T> the {@link Record} type
+     */
+    final class IdBuilder<T extends Record> extends Builder<T, IdBuilder<T>> {
+
+        /**
+         * Construct a new {@link IdBuilder}.
+         *
+         * @param state the shared builder state
+         */
+        IdBuilder(DatabaseSelection.BuilderState<T> state) {
+            super(state);
         }
     }
 
@@ -308,18 +386,6 @@ public interface Selection<T extends Record> {
         }
 
         /**
-         * Set the record {@code id}, making this a single-record load
-         * operation.
-         *
-         * @param id the record ID
-         * @return an {@link IdBuilder} for chaining
-         */
-        public IdBuilder<T> id(long id) {
-            state.id = id;
-            return new IdBuilder<>(state);
-        }
-
-        /**
          * Mark this as a counting operation.
          *
          * @return a {@link CountBuilder} for chaining
@@ -330,17 +396,6 @@ public interface Selection<T extends Record> {
         }
 
         /**
-         * Set the query {@code criteria}.
-         *
-         * @param criteria the query criteria
-         * @return a {@link QueryBuilder} for chaining
-         */
-        public QueryBuilder<T> where(Criteria criteria) {
-            state.criteria = criteria;
-            return new QueryBuilder<>(state);
-        }
-
-        /**
          * Alias for {@link #where(Criteria)}.
          *
          * @param criteria the query criteria
@@ -348,6 +403,31 @@ public interface Selection<T extends Record> {
          */
         public QueryBuilder<T> criteria(Criteria criteria) {
             return where(criteria);
+        }
+
+        /**
+         * Apply a client-side {@code filter}.
+         *
+         * @param filter the filter predicate
+         * @return a {@link QueryBuilder} for chaining
+         */
+        @SuppressWarnings("unchecked")
+        public QueryBuilder<T> filter(Predicate<T> filter) {
+            state.filter = filter != null ? filter
+                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
+            return new QueryBuilder<>(state);
+        }
+
+        /**
+         * Set the record {@code id}, making this a single-record load
+         * operation.
+         *
+         * @param id the record ID
+         * @return an {@link IdBuilder} for chaining
+         */
+        public IdBuilder<T> id(long id) {
+            state.id = id;
+            return new IdBuilder<>(state);
         }
 
         /**
@@ -373,15 +453,13 @@ public interface Selection<T extends Record> {
         }
 
         /**
-         * Apply a client-side {@code filter}.
+         * Set the query {@code criteria}.
          *
-         * @param filter the filter predicate
+         * @param criteria the query criteria
          * @return a {@link QueryBuilder} for chaining
          */
-        @SuppressWarnings("unchecked")
-        public QueryBuilder<T> filter(Predicate<T> filter) {
-            state.filter = filter != null ? filter
-                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
+        public QueryBuilder<T> where(Criteria criteria) {
+            state.criteria = criteria;
             return new QueryBuilder<>(state);
         }
     }
@@ -415,17 +493,6 @@ public interface Selection<T extends Record> {
         }
 
         /**
-         * Set or replace the query {@code criteria}.
-         *
-         * @param criteria the query criteria
-         * @return this builder for chaining
-         */
-        public QueryBuilder<T> where(Criteria criteria) {
-            state.criteria = criteria;
-            return this;
-        }
-
-        /**
          * Alias for {@link #where(Criteria)}.
          *
          * @param criteria the query criteria
@@ -433,6 +500,19 @@ public interface Selection<T extends Record> {
          */
         public QueryBuilder<T> criteria(Criteria criteria) {
             return where(criteria);
+        }
+
+        /**
+         * Apply a client-side {@code filter}.
+         *
+         * @param filter the filter predicate
+         * @return this builder for chaining
+         */
+        @SuppressWarnings("unchecked")
+        public QueryBuilder<T> filter(Predicate<T> filter) {
+            state.filter = filter != null ? filter
+                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
+            return this;
         }
 
         /**
@@ -458,15 +538,13 @@ public interface Selection<T extends Record> {
         }
 
         /**
-         * Apply a client-side {@code filter}.
+         * Set or replace the query {@code criteria}.
          *
-         * @param filter the filter predicate
+         * @param criteria the query criteria
          * @return this builder for chaining
          */
-        @SuppressWarnings("unchecked")
-        public QueryBuilder<T> filter(Predicate<T> filter) {
-            state.filter = filter != null ? filter
-                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
+        public QueryBuilder<T> where(Criteria criteria) {
+            state.criteria = criteria;
             return this;
         }
     }
@@ -490,17 +568,6 @@ public interface Selection<T extends Record> {
         }
 
         /**
-         * Set or replace the query {@code criteria}.
-         *
-         * @param criteria the query criteria
-         * @return this builder for chaining
-         */
-        public SortableBuilder<T> where(Criteria criteria) {
-            state.criteria = criteria;
-            return this;
-        }
-
-        /**
          * Alias for {@link #where(Criteria)}.
          *
          * @param criteria the query criteria
@@ -508,6 +575,19 @@ public interface Selection<T extends Record> {
          */
         public SortableBuilder<T> criteria(Criteria criteria) {
             return where(criteria);
+        }
+
+        /**
+         * Apply a client-side {@code filter}.
+         *
+         * @param filter the filter predicate
+         * @return this builder for chaining
+         */
+        @SuppressWarnings("unchecked")
+        public SortableBuilder<T> filter(Predicate<T> filter) {
+            state.filter = filter != null ? filter
+                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
+            return this;
         }
 
         /**
@@ -533,87 +613,14 @@ public interface Selection<T extends Record> {
         }
 
         /**
-         * Apply a client-side {@code filter}.
-         *
-         * @param filter the filter predicate
-         * @return this builder for chaining
-         */
-        @SuppressWarnings("unchecked")
-        public SortableBuilder<T> filter(Predicate<T> filter) {
-            state.filter = filter != null ? filter
-                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
-            return this;
-        }
-    }
-
-    /**
-     * A builder for counting {@link Selection Selections}. Only criteria,
-     * filter, realms, and any are available.
-     *
-     * @param <T> the {@link Record} type
-     */
-    final class CountBuilder<T extends Record>
-            extends Builder<T, CountBuilder<T>> {
-
-        /**
-         * Construct a new {@link CountBuilder}.
-         *
-         * @param state the shared builder state
-         */
-        CountBuilder(DatabaseSelection.BuilderState<T> state) {
-            super(state);
-        }
-
-        /**
          * Set or replace the query {@code criteria}.
          *
          * @param criteria the query criteria
          * @return this builder for chaining
          */
-        public CountBuilder<T> where(Criteria criteria) {
+        public SortableBuilder<T> where(Criteria criteria) {
             state.criteria = criteria;
             return this;
-        }
-
-        /**
-         * Alias for {@link #where(Criteria)}.
-         *
-         * @param criteria the query criteria
-         * @return this builder for chaining
-         */
-        public CountBuilder<T> criteria(Criteria criteria) {
-            return where(criteria);
-        }
-
-        /**
-         * Apply a client-side {@code filter}.
-         *
-         * @param filter the filter predicate
-         * @return this builder for chaining
-         */
-        @SuppressWarnings("unchecked")
-        public CountBuilder<T> filter(Predicate<T> filter) {
-            state.filter = filter != null ? filter
-                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
-            return this;
-        }
-    }
-
-    /**
-     * A builder for ID-based {@link Selection Selections}. Only realms and any
-     * are available.
-     *
-     * @param <T> the {@link Record} type
-     */
-    final class IdBuilder<T extends Record> extends Builder<T, IdBuilder<T>> {
-
-        /**
-         * Construct a new {@link IdBuilder}.
-         *
-         * @param state the shared builder state
-         */
-        IdBuilder(DatabaseSelection.BuilderState<T> state) {
-            super(state);
         }
     }
 
@@ -638,7 +645,13 @@ public interface Selection<T extends Record> {
          * The {@link Selection} has finished execution and results are
          * available.
          */
-        FINISHED
+        FINISHED,
+
+        /**
+         * The {@link Selection} is in a transient state where it has been
+         * resolved, but not yet marked as finished.
+         */
+        RESOLVED
     }
 
 }

@@ -363,8 +363,11 @@ public class AdHocDataSource<T extends AdHocRecord> implements
                 .map(DatabaseSelection::resolve)
                 .toArray(DatabaseSelection[]::new);
         for (DatabaseSelection<?> selection : selections) {
-            Preconditions.checkState(selection.state == Selection.State.PENDING,
-                    "Selection has already been submitted");
+            if(selection.state == Selection.State.RESOLVED) {
+                selection.state = Selection.State.FINISHED;
+                continue; /* (authorized short circuit) */
+            }
+            selection.ensurePending();
             selection.state = Selection.State.SUBMITTED;
             if(selection instanceof CountSelection) {
                 // NOTE: This path isn't consolidated because #count has
