@@ -17,7 +17,10 @@ package com.cinchapi.runway.access;
 
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 import javax.annotation.Nullable;
 
@@ -54,6 +57,19 @@ import com.google.common.collect.Multiset;
  * @author Jeff Nelson
  */
 class AccessControlSupport {
+
+    /**
+     * Registry mapping each {@link AccessControl} class to a provider
+     * {@link Function} that, given an {@link Audience}, returns the
+     * {@link Scope} describing that audience's database-level visibility.
+     * <p>
+     * Populated via
+     * {@link AccessControl#registerVisibilityScope(Class, Function)} and
+     * consulted at query time by
+     * {@link Audience#select(com.cinchapi.runway.Selection[])}.
+     * </p>
+     */
+    static final Map<Class<?>, Function<Audience, Scope>> VISIBILITY_SCOPES = new ConcurrentHashMap<>();
 
     /**
      * Check whether the {@code requested} keys are permitted by the access

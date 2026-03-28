@@ -15,13 +15,12 @@
  */
 package com.cinchapi.runway;
 
-import java.util.function.Predicate;
-
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
 
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
+import com.google.common.base.MoreObjects;
 
 /**
  * A {@link Selection} that loads all {@link Record Records} of a given class.
@@ -33,44 +32,7 @@ import com.cinchapi.concourse.lang.sort.Order;
  * @author Jeff Nelson
  */
 @Immutable
-public final class LoadClassSelection<T extends Record>
-        extends DatabaseSelection<T> {
-
-    /**
-     * The sort order, or {@code null} for no sorting.
-     */
-    @Nullable
-    final Order order;
-
-    /**
-     * The pagination, or {@code null} for no pagination.
-     */
-    @Nullable
-    final Page page;
-
-    /**
-     * The client-side filter, or {@code null} for no filtering.
-     */
-    @Nullable
-    final Predicate<T> filter;
-
-    /**
-     * Construct a new {@link LoadClassSelection}.
-     *
-     * @param state the builder state
-     */
-    LoadClassSelection(BuilderState<T> state) {
-        super(state.clazz, state.any, state.realms);
-        this.order = state.order;
-        this.page = state.page;
-        this.filter = state.filter;
-    }
-
-    @Override
-    boolean isCombinable() {
-        return order == null && page == null
-                && DatabaseSelection.isNoFilter(filter);
-    }
+final class LoadClassSelection<T extends Record> extends SetBasedSelection<T> {
 
     /**
      * Return a {@link Reservation} for a load-all query with the given
@@ -89,26 +51,41 @@ public final class LoadClassSelection<T extends Record>
                 .page(page).build();
     }
 
-    @Override
-    Reservation reservation() {
-        return reservationFor(clazz, order, page, realms, any);
+    /**
+     * Construct a new {@link LoadClassSelection}.
+     *
+     * @param state the builder state
+     */
+    LoadClassSelection(BuilderState<T> state) {
+        super(state.clazz, state.any, state.realms, state.order, state.page);
+        this.filter = state.filter;
     }
 
     @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder("LoadClassSelection{clazz=");
-        sb.append(clazz.getSimpleName());
-        if(order != null) {
-            sb.append(", order=").append(order);
-        }
-        if(page != null) {
-            sb.append(", page=").append(page);
-        }
-        sb.append(", realms=").append(realms);
-        if(any) {
-            sb.append(", any=true");
-        }
-        return sb.append('}').toString();
+    protected void describeSetSpec(MoreObjects.ToStringHelper helper) {
+        // No additional fields beyond what SetBasedSelection
+        // provides.
+    }
+
+    @Override
+    DatabaseSelection<T> duplicate() {
+        BuilderState<T> state = new BuilderState<>(clazz, any);
+        state.order = order;
+        state.page = page;
+        state.filter = filter;
+        state.realms = realms;
+        return new LoadClassSelection<>(state);
+    }
+
+    @Override
+    boolean isCombinable() {
+        return order == null && page == null
+                && DatabaseSelection.isNoFilter(filter);
+    }
+
+    @Override
+    Reservation reservation() {
+        return reservationFor(clazz, order, page, realms, any);
     }
 
 }

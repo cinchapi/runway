@@ -311,13 +311,12 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         parent.deleteOnSave();
         parent.save();
 
-        List<Class<? extends Record>> records = ImmutableList
-                .of(ParentRecord.class, ChildRecord.class, InnerRecord.class);
-        records.forEach(clazz -> {
-            Assert.assertNull(
-                    clazz.getSimpleName() + " should have been deleted",
-                    runway.load(clazz, parent.id()));
-        });
+        Assert.assertNull("ParentRecord should have been deleted",
+                runway.load(ParentRecord.class, parent.id()));
+        Assert.assertNull("ChildRecord should have been deleted",
+                runway.load(ChildRecord.class, child.id()));
+        Assert.assertNull("InnerRecord should have been deleted",
+                runway.load(InnerRecord.class, inner.id()));
     }
 
     @Test
@@ -368,6 +367,7 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         @CascadeDelete
         private ParentRecord parent;
 
+        @CascadeDelete
         protected Collection<InnerRecord> innerChildren;
     }
 

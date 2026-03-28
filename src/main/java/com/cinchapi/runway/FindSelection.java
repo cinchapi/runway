@@ -15,14 +15,10 @@
  */
 package com.cinchapi.runway;
 
-import java.util.function.Predicate;
-
-import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
 
 import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.lang.paginate.Page;
-import com.cinchapi.concourse.lang.sort.Order;
+import com.google.common.base.MoreObjects.ToStringHelper;
 
 /**
  * A {@link Selection} that finds {@link Record Records} matching a
@@ -35,8 +31,7 @@ import com.cinchapi.concourse.lang.sort.Order;
  * @author Jeff Nelson
  */
 @Immutable
-public final class FindSelection<T extends Record>
-        extends DatabaseSelection<T> {
+final class FindSelection<T extends Record> extends SetBasedSelection<T> {
 
     /**
      * The query criteria.
@@ -44,34 +39,30 @@ public final class FindSelection<T extends Record>
     final Criteria criteria;
 
     /**
-     * The sort order, or {@code null} for no sorting.
-     */
-    @Nullable
-    final Order order;
-
-    /**
-     * The pagination, or {@code null} for no pagination.
-     */
-    @Nullable
-    final Page page;
-
-    /**
-     * The client-side filter, or {@code null} for no filtering.
-     */
-    @Nullable
-    final Predicate<T> filter;
-
-    /**
      * Construct a new {@link FindSelection}.
      *
      * @param state the builder state
      */
     FindSelection(BuilderState<T> state) {
-        super(state.clazz, state.any, state.realms);
+        super(state.clazz, state.any, state.realms, state.order, state.page);
         this.criteria = state.criteria;
-        this.order = state.order;
-        this.page = state.page;
         this.filter = state.filter;
+    }
+
+    @Override
+    protected void describeSetSpec(ToStringHelper helper) {
+        helper.add("criteria", criteria);
+    }
+
+    @Override
+    DatabaseSelection<T> duplicate() {
+        BuilderState<T> state = new BuilderState<>(clazz, any);
+        state.criteria = criteria;
+        state.order = order;
+        state.page = page;
+        state.filter = filter;
+        state.realms = realms;
+        return new FindSelection<>(state);
     }
 
     @Override
@@ -80,45 +71,10 @@ public final class FindSelection<T extends Record>
                 && filter == DatabaseSelection.NO_FILTER;
     }
 
-    /**
-     * Return a {@link Reservation} for a find query with the given parameters.
-     *
-     * @param clazz the target class
-     * @param criteria the query criteria
-     * @param order the sort order
-     * @param page the pagination
-     * @param realms the realms filter
-     * @param any whether to include descendants
-     * @return the {@link Reservation}
-     */
-    static Reservation reservationFor(Class<?> clazz, Criteria criteria,
-            @Nullable Order order, @Nullable Page page, Realms realms,
-            boolean any) {
-        return Reservation.builder(clazz).realms(realms).any(any)
-                .criteria(criteria).order(order).page(page).build();
-    }
-
     @Override
     Reservation reservation() {
-        return reservationFor(clazz, criteria, order, page, realms, any);
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder("FindSelection{clazz=");
-        sb.append(clazz.getSimpleName());
-        sb.append(", criteria=").append(criteria);
-        if(order != null) {
-            sb.append(", order=").append(order);
-        }
-        if(page != null) {
-            sb.append(", page=").append(page);
-        }
-        sb.append(", realms=").append(realms);
-        if(any) {
-            sb.append(", any=true");
-        }
-        return sb.append('}').toString();
+        return Reservation.builder(clazz).realms(realms).any(any)
+                .criteria(criteria).order(order).page(page).build();
     }
 
 }

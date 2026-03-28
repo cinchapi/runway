@@ -17,6 +17,8 @@ package com.cinchapi.runway;
 
 import javax.annotation.concurrent.Immutable;
 
+import com.google.common.base.MoreObjects.ToStringHelper;
+
 /**
  * A {@link Selection} that loads a single {@link Record} by its ID.
  * <p>
@@ -27,8 +29,7 @@ import javax.annotation.concurrent.Immutable;
  * @author Jeff Nelson
  */
 @Immutable
-public final class LoadRecordSelection<T extends Record>
-        extends DatabaseSelection<T> {
+final class LoadRecordSelection<T extends Record> extends DatabaseSelection<T> {
 
     /**
      * The record ID.
@@ -41,8 +42,22 @@ public final class LoadRecordSelection<T extends Record>
      * @param state the builder state
      */
     LoadRecordSelection(BuilderState<T> state) {
-        super(state.clazz, state.any, state.realms);
+        super(state.clazz, state.any, state.realms, state.filter);
         this.id = state.id;
+    }
+
+    @Override
+    protected void describeSpec(ToStringHelper helper) {
+        helper.add("id", id);
+    }
+
+    @Override
+    DatabaseSelection<T> duplicate() {
+        BuilderState<T> state = new BuilderState<>(clazz, any);
+        state.id = id;
+        state.filter = filter;
+        state.realms = realms;
+        return new LoadRecordSelection<>(state);
     }
 
     @Override
@@ -50,31 +65,10 @@ public final class LoadRecordSelection<T extends Record>
         return true;
     }
 
-    /**
-     * Return a {@link Reservation} for a load-by-ID query with the given
-     * parameters.
-     *
-     * @param clazz the target class
-     * @param id the record ID
-     * @param realms the realms filter
-     * @param any whether to include descendants
-     * @return the {@link Reservation}
-     */
-    static Reservation reservationFor(Class<?> clazz, long id, Realms realms,
-            boolean any) {
-        return Reservation.builder(clazz).realms(realms).any(any).id(id)
-                .build();
-    }
-
     @Override
     Reservation reservation() {
-        return reservationFor(clazz, id, realms, any);
-    }
-
-    @Override
-    public String toString() {
-        return "LoadRecordSelection{clazz=" + clazz.getSimpleName() + ", id="
-                + id + ", realms=" + realms + (any ? ", any=true" : "") + '}';
+        return Reservation.builder(clazz).realms(realms).any(any).id(id)
+                .build();
     }
 
 }
