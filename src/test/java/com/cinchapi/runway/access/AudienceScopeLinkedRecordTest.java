@@ -183,6 +183,115 @@ public class AudienceScopeLinkedRecordTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(2, visible);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a linked {@link ScopedOwner} is
+     * excluded when {@link Scope#none()} is registered for its class.
+     * <p>
+     * <strong>Start state:</strong> A {@link ScopedOwner} with
+     * {@code status = "active"} linked from a {@link Project}. A
+     * {@link Scope#none()} is registered for {@link ScopedOwner}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register {@link Scope#none()} for {@link ScopedOwner}.</li>
+     * <li>Save a {@link TestUser}, an active {@link ScopedOwner}, and a
+     * {@link Project} linking to that owner.</li>
+     * <li>Frame the {@link Project} as the {@link TestUser}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@code owner} field in the framed data is
+     * {@code null} because {@link Scope#none()} unconditionally blocks
+     * visibility.
+     */
+    @Test
+    public void testLinkedRecordIsNullWhenScopeIsNone() {
+        AccessControl.registerVisibilityScope(ScopedOwner.class,
+                audience -> Scope.none());
+        TestUser user = new TestUser("alice");
+        user.save();
+        ScopedOwner owner = new ScopedOwner("Acme", "active");
+        owner.save();
+        Project project = new Project("Alpha", owner);
+        project.save();
+        Map<String, Object> frame = user.frame(project);
+        Assert.assertNotNull(frame);
+        Assert.assertNull(frame.get("owner"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that when {@link Scope#unsupported()} is
+     * registered, visibility falls back to the instance-level
+     * {@link AccessControl} permissions.
+     * <p>
+     * <strong>Start state:</strong> A {@link RestrictedOwner} linked from a
+     * {@link RestrictedProject}. {@link Scope#unsupported()} is registered for
+     * {@link RestrictedOwner}. The {@link RestrictedOwner RestrictedOwner's}
+     * instance-level {@code $isDiscoverableBy} returns {@code false} for all
+     * {@link Audience Audiences}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register {@link Scope#unsupported()} for
+     * {@link RestrictedOwner}.</li>
+     * <li>Save a {@link TestUser}, a {@link RestrictedOwner}, and a
+     * {@link RestrictedProject} linking to that owner.</li>
+     * <li>Frame the {@link RestrictedProject} as the {@link TestUser}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@code owner} field in the framed data is
+     * {@code null} because the fallback {@code $checkIfVisible()} check rejects
+     * the {@link RestrictedOwner}.
+     */
+    @Test
+    public void testFallsBackToCheckIfVisibleWhenScopeIsUnsupported() {
+        AccessControl.registerVisibilityScope(RestrictedOwner.class,
+                audience -> Scope.unsupported());
+        TestUser user = new TestUser("alice");
+        user.save();
+        RestrictedOwner owner = new RestrictedOwner("secret");
+        owner.save();
+        RestrictedProject project = new RestrictedProject("Alpha", owner);
+        project.save();
+        Map<String, Object> frame = user.frame(project);
+        Assert.assertNotNull(frame);
+        Assert.assertNull(frame.get("owner"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that when no {@link Scope} is registered
+     * for a linked {@link Record Record's} class, visibility falls back to the
+     * instance-level {@link AccessControl} permissions.
+     * <p>
+     * <strong>Start state:</strong> A {@link RestrictedOwner} linked from a
+     * {@link RestrictedProject}. No {@link Scope} is registered for
+     * {@link RestrictedOwner}. The {@link RestrictedOwner RestrictedOwner's}
+     * instance-level {@code $isDiscoverableBy} returns {@code false} for all
+     * {@link Audience Audiences}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TestUser}, a {@link RestrictedOwner}, and a
+     * {@link RestrictedProject} linking to that owner.</li>
+     * <li>Frame the {@link RestrictedProject} as the {@link TestUser}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@code owner} field in the framed data is
+     * {@code null} because the fallback {@code $checkIfVisible()} check rejects
+     * the {@link RestrictedOwner}.
+     */
+    @Test
+    public void testFallsBackToCheckIfVisibleWhenNoScopeRegistered() {
+        TestUser user = new TestUser("alice");
+        user.save();
+        RestrictedOwner owner = new RestrictedOwner("secret");
+        owner.save();
+        RestrictedProject project = new RestrictedProject("Alpha", owner);
+        project.save();
+        Map<String, Object> frame = user.frame(project);
+        Assert.assertNotNull(frame);
+        Assert.assertNull(frame.get("owner"));
+    }
+
     // ----------------------------------------------------------
     // Test fixtures
     // ----------------------------------------------------------
@@ -404,6 +513,148 @@ public class AudienceScopeLinkedRecordTest extends RunwayBaseClientServerTest {
         public boolean $isDiscoverableBy(@Nonnull Audience audience) {
             // Intentionally permissive — the Scope provides
             // the real restriction
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableByAnonymous() {
+            return false;
+        }
+
+        @Override
+        public Set<String> $readableBy(@Nonnull Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return AccessControl.NO_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableBy(@Nonnull Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableByAnonymous() {
+            return AccessControl.NO_KEYS;
+        }
+    }
+
+    /**
+     * A {@link Record} whose instance-level permissions reject all
+     * {@link Audience Audiences}. Used to verify that the fallback to
+     * {@link Audience#$checkIfVisible()} works correctly when no {@link Scope}
+     * is registered or the {@link Scope} is {@link Scope#unsupported()}.
+     */
+    static class RestrictedOwner extends Record implements AccessControl {
+
+        /**
+         * The owner's name.
+         */
+        public String name;
+
+        /**
+         * Construct a new {@link RestrictedOwner}.
+         *
+         * @param name the owner name
+         */
+        RestrictedOwner(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return false;
+        }
+
+        @Override
+        public boolean $isDeletableBy(@Nonnull Audience audience) {
+            return false;
+        }
+
+        @Override
+        public boolean $isDiscoverableBy(@Nonnull Audience audience) {
+            return false;
+        }
+
+        @Override
+        public boolean $isDiscoverableByAnonymous() {
+            return false;
+        }
+
+        @Override
+        public Set<String> $readableBy(@Nonnull Audience audience) {
+            return AccessControl.NO_KEYS;
+        }
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return AccessControl.NO_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableBy(@Nonnull Audience audience) {
+            return AccessControl.NO_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableByAnonymous() {
+            return AccessControl.NO_KEYS;
+        }
+    }
+
+    /**
+     * A {@link Record} that links to a single {@link RestrictedOwner}.
+     * Discovery is open to all authenticated {@link Audience Audiences} so the
+     * test can focus on the linked record's visibility.
+     */
+    static class RestrictedProject extends Record implements AccessControl {
+
+        /**
+         * The project name.
+         */
+        public String name;
+
+        /**
+         * The linked owner.
+         */
+        public RestrictedOwner owner;
+
+        /**
+         * Construct a new {@link RestrictedProject}.
+         *
+         * @param name the project name
+         * @param owner the linked {@link RestrictedOwner}
+         */
+        RestrictedProject(String name, RestrictedOwner owner) {
+            this.name = name;
+            this.owner = owner;
+        }
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return false;
+        }
+
+        @Override
+        public boolean $isDeletableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableBy(@Nonnull Audience audience) {
             return true;
         }
 
