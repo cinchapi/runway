@@ -24,6 +24,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.thrift.Operator;
@@ -550,6 +551,20 @@ public class AudienceVisibilityScopeIntegrationTest
         OwnedDocument result = alice.load(OwnedDocument.class, aliceDoc.id());
         Assert.assertNotNull(result);
         Assert.assertEquals("alice", result.owner);
+    }
+
+    @Test
+    public void testSelectDoesNotThrowArrayStoreExceptionWhenPassedBuilderArray() {
+        TestUser alice = new TestUser("alice");
+        alice.save();
+        runway.save(new OwnedDocument("d1", "alice"));
+        Criteria criteria = Criteria.where().key("title")
+                .operator(Operator.EQUALS).value("d1").build();
+        Selection<?>[] selections = ArrayBuilder.<Selection<?>> builder()
+                .add(Selection.of(OwnedDocument.class).where(criteria)).build();
+        Selections results = alice.select(selections);
+        Set<OwnedDocument> docs = results.next();
+        Assert.assertEquals(1, docs.size());
     }
 
     /**

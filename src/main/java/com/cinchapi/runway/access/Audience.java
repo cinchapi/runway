@@ -20,6 +20,7 @@ import static com.cinchapi.runway.access.AccessControl.NO_KEYS;
 import static com.cinchapi.runway.access.AccessControlSupport.*;
 
 import java.util.AbstractMap.SimpleEntry;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -591,19 +592,17 @@ public interface Audience extends DatabaseInterface {
     @Override
     @SuppressWarnings("unchecked")
     public default Selections select(Selection<?>... selections) {
-        for (int i = 0; i < selections.length; ++i) {
-            Selection<?> selection = selections[i];
+        selections = Arrays.stream(selections).map(selection -> {
             Class<?> clazz = selection.clazz();
             if(clazz != null && AccessControl.class.isAssignableFrom(clazz)) {
                 Scope scope = AccessControl.resolveVisibilityScope(clazz, this);
                 if(scope != null && scope.isApplicable()) {
-                    selections[i] = scope.apply(selection);
-                    continue;
+                    return scope.apply(selection);
                 }
             }
-            selections[i] = Selection.withInjectedFilter(
-                    (Selection<Record>) selection, $checkIfVisible());
-        }
+            return Selection.withInjectedFilter((Selection<Record>) selection,
+                    $checkIfVisible());
+        }).toArray(Selection[]::new);
         return $db().select(selections);
     }
 
