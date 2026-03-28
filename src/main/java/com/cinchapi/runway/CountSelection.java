@@ -19,6 +19,7 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
 
 import com.cinchapi.concourse.lang.Criteria;
+import com.google.common.base.MoreObjects.ToStringHelper;
 
 /**
  * A {@link Selection} that counts {@link Record Records} matching optional
@@ -51,17 +52,10 @@ final class CountSelection<T extends Record> extends DatabaseSelection<T> {
     }
 
     @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder("CountSelection{clazz=");
-        sb.append(clazz.getSimpleName());
+    protected void describeSpec(ToStringHelper helper) {
         if(criteria != null) {
-            sb.append(", criteria=").append(criteria);
+            helper.add("criteria", criteria);
         }
-        sb.append(", realms=").append(realms);
-        if(any) {
-            sb.append(", any=true");
-        }
-        return sb.append('}').toString();
     }
 
     @Override

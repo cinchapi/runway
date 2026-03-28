@@ -20,6 +20,7 @@ import javax.annotation.concurrent.Immutable;
 
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
+import com.google.common.base.MoreObjects;
 
 /**
  * A {@link Selection} that loads all {@link Record Records} of a given class.
@@ -61,20 +62,9 @@ final class LoadClassSelection<T extends Record> extends SetBasedSelection<T> {
     }
 
     @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder("LoadClassSelection{clazz=");
-        sb.append(clazz.getSimpleName());
-        if(order != null) {
-            sb.append(", order=").append(order);
-        }
-        if(page != null) {
-            sb.append(", page=").append(page);
-        }
-        sb.append(", realms=").append(realms);
-        if(any) {
-            sb.append(", any=true");
-        }
-        return sb.append('}').toString();
+    protected void describeSetSpec(MoreObjects.ToStringHelper helper) {
+        // No additional fields beyond what SetBasedSelection
+        // provides.
     }
 
     @Override

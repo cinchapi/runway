@@ -19,6 +19,8 @@ import javax.annotation.Nullable;
 
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
+import com.google.common.base.MoreObjects;
+import com.google.common.base.MoreObjects.ToStringHelper;
 
 /**
  * A {@link DatabaseSelection} whose result is a {@link java.util.Set Set} of
@@ -59,5 +61,28 @@ abstract class SetBasedSelection<T extends Record>
         this.order = order;
         this.page = page;
     }
+
+    @Override
+    protected final void describeSpec(ToStringHelper helper) {
+        describeSetSpec(helper);
+        if(order != null) {
+            helper.add("order", order);
+        }
+        if(page != null) {
+            helper.add("page", page);
+        }
+    }
+
+    /**
+     * Add selection-type-specific fields to the
+     * {@link ToStringHelper} used by {@link #toString()}.
+     * <p>
+     * Subclasses append their distinguishing properties (e.g., criteria) to
+     * {@code helper}. Common set-based fields ({@code order}, {@code page}) are
+     * added by the caller and must not be duplicated here.
+     *
+     * @param helper the {@link MoreObjects.ToStringHelper} to populate
+     */
+    protected abstract void describeSetSpec(ToStringHelper helper);
 
 }

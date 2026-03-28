@@ -18,6 +18,7 @@ package com.cinchapi.runway;
 import javax.annotation.concurrent.Immutable;
 
 import com.cinchapi.concourse.lang.Criteria;
+import com.google.common.base.MoreObjects.ToStringHelper;
 
 /**
  * A {@link Selection} that finds {@link Record Records} matching a
@@ -49,21 +50,8 @@ final class FindSelection<T extends Record> extends SetBasedSelection<T> {
     }
 
     @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder("FindSelection{clazz=");
-        sb.append(clazz.getSimpleName());
-        sb.append(", criteria=").append(criteria);
-        if(order != null) {
-            sb.append(", order=").append(order);
-        }
-        if(page != null) {
-            sb.append(", page=").append(page);
-        }
-        sb.append(", realms=").append(realms);
-        if(any) {
-            sb.append(", any=true");
-        }
-        return sb.append('}').toString();
+    protected void describeSetSpec(ToStringHelper helper) {
+        helper.add("criteria", criteria);
     }
 
     @Override

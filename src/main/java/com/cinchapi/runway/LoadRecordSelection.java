@@ -17,6 +17,8 @@ package com.cinchapi.runway;
 
 import javax.annotation.concurrent.Immutable;
 
+import com.google.common.base.MoreObjects.ToStringHelper;
+
 /**
  * A {@link Selection} that loads a single {@link Record} by its ID.
  * <p>
@@ -45,9 +47,8 @@ final class LoadRecordSelection<T extends Record> extends DatabaseSelection<T> {
     }
 
     @Override
-    public String toString() {
-        return "LoadRecordSelection{clazz=" + clazz.getSimpleName() + ", id="
-                + id + ", realms=" + realms + (any ? ", any=true" : "") + '}';
+    protected void describeSpec(ToStringHelper helper) {
+        helper.add("id", id);
     }
 
     @Override

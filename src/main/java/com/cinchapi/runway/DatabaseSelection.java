@@ -25,6 +25,8 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.Selection.State;
+import com.google.common.base.MoreObjects;
+import com.google.common.base.MoreObjects.ToStringHelper;
 
 /**
  * Base implementation of {@link Selection} that holds the resolved, immutable
@@ -119,6 +121,17 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
      * @param clazz the target class
      * @param any whether to include descendants
      * @param realms the realms filter
+     */
+    DatabaseSelection(Class<T> clazz, boolean any, Realms realms) {
+        this(clazz, any, realms, NO_FILTER);
+    }
+
+    /**
+     * Construct a new {@link DatabaseSelection}.
+     *
+     * @param clazz the target class
+     * @param any whether to include descendants
+     * @param realms the realms filter
      * @param filter
      */
     @SuppressWarnings("unchecked")
@@ -128,17 +141,6 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
         this.any = any;
         this.realms = realms;
         this.filter = (Predicate<T>) filter;
-    }
-
-    /**
-     * Construct a new {@link DatabaseSelection}.
-     *
-     * @param clazz the target class
-     * @param any whether to include descendants
-     * @param realms the realms filter
-     */
-    DatabaseSelection(Class<T> clazz, boolean any, Realms realms) {
-        this(clazz, any, realms, NO_FILTER);
     }
 
     @Override
@@ -158,6 +160,34 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     public State state() {
         return state;
     }
+
+    @Override
+    public final String toString() {
+        ToStringHelper helper = MoreObjects.toStringHelper(this).add("clazz",
+                clazz.getSimpleName());
+        describeSpec(helper);
+        helper.add("realms", realms);
+        if(any) {
+            helper.add("any", true);
+        }
+        if(filter != null && !isNoFilter(filter)) {
+            helper.add("hasFilter", true);
+        }
+        return helper.toString();
+    }
+
+    /**
+     * Add type-specific fields to the {@link ToStringHelper} used
+     * by {@link #toString()}.
+     * <p>
+     * Subclasses append their distinguishing properties (e.g., criteria, id,
+     * order, page) to {@code helper}. Common fields ({@code clazz},
+     * {@code realms}, {@code any}) are added by the caller and must not be
+     * duplicated here.
+     *
+     * @param helper the {@link ToStringHelper} to populate
+     */
+    protected abstract void describeSpec(ToStringHelper helper);
 
     /**
      * Return a new {@link DatabaseSelection} with the same configuration as

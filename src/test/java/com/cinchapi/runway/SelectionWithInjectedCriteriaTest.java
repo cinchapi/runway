@@ -157,38 +157,9 @@ public class SelectionWithInjectedCriteriaTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that injecting visibility criteria into a
-     * {@link LoadRecordSelection} returns the selection unchanged.
-     * <p>
-     * <strong>Start state:</strong> No prior state needed.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Build a {@link LoadRecordSelection}.</li>
-     * <li>Call {@link Selection#withInjectedCriteria} with a visibility
-     * criteria.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The result is the same
-     * {@link LoadRecordSelection} instance (predicate fallback handles
-     * visibility for single-record loads).
-     */
-    @Test
-    public void testLoadRecordSelectionReturnedUnchanged() {
-        Criteria visibility = Criteria.where().key("owner")
-                .operator(Operator.EQUALS).value(42L).build();
-        Selection<TestRecord> sel = Selection.of(TestRecord.class).id(1)
-                .build();
-        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
-                visibility);
-        Assert.assertSame(sel, result);
-    }
-
-    /**
      * A simple {@link Record} subclass for testing.
      */
-    static class TestRecord extends Record {
-        // empty — used only for type checking
-    }
+    static class TestRecord extends Record {} // empty — used only for type
+                                              // checking
 
 }

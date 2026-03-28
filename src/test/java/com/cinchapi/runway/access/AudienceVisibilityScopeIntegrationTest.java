@@ -472,14 +472,13 @@ public class AudienceVisibilityScopeIntegrationTest
     }
 
     /**
-     * <strong>Goal:</strong> Verify that loading a record by ID through
-     * an {@link Audience} with a criteria-based {@link Scope} returns
-     * {@code null} when the record does not satisfy the scope's
-     * {@link Criteria}.
+     * <strong>Goal:</strong> Verify that loading a record by ID through an
+     * {@link Audience} with a criteria-based {@link Scope} returns {@code null}
+     * when the record does not satisfy the scope's {@link Criteria}.
      * <p>
-     * <strong>Start state:</strong> Two {@link OwnedDocument
-     * OwnedDocuments}: one owned by "alice", one by "bob". Criteria
-     * scope registered to filter on {@code owner}.
+     * <strong>Start state:</strong> Two {@link OwnedDocument OwnedDocuments}:
+     * one owned by "alice", one by "bob". Criteria scope registered to filter
+     * on {@code owner}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -488,43 +487,38 @@ public class AudienceVisibilityScopeIntegrationTest
      * <li>Load bob's document by ID as alice.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The result is {@code null} because
-     * bob's document does not satisfy the scope criteria
-     * {@code owner = "alice"}.
+     * <strong>Expected:</strong> The result is {@code null} because bob's
+     * document does not satisfy the scope criteria {@code owner = "alice"}.
      */
     @Test
     public void testLoadByIdWithCriteriaScopeReturnsNullWhenRecordOutsideScope() {
-        AccessControl.registerVisibilityScope(OwnedDocument.class,
-                audience -> {
-                    if(audience instanceof TestUser) {
-                        String name = ((TestUser) audience).name;
-                        return Scope.of(Criteria.where().key("owner")
-                                .operator(Operator.EQUALS).value(name)
-                                .build());
-                    }
-                    else {
-                        return Scope.none();
-                    }
-                });
+        AccessControl.registerVisibilityScope(OwnedDocument.class, audience -> {
+            if(audience instanceof TestUser) {
+                String name = ((TestUser) audience).name;
+                return Scope.of(Criteria.where().key("owner")
+                        .operator(Operator.EQUALS).value(name).build());
+            }
+            else {
+                return Scope.none();
+            }
+        });
         TestUser alice = new TestUser("alice");
         alice.save();
-        OwnedDocument aliceDoc = new OwnedDocument("alice-doc",
-                "alice");
+        OwnedDocument aliceDoc = new OwnedDocument("alice-doc", "alice");
         OwnedDocument bobDoc = new OwnedDocument("bob-doc", "bob");
         runway.save(aliceDoc, bobDoc);
-        OwnedDocument result = alice.load(OwnedDocument.class,
-                bobDoc.id());
+        OwnedDocument result = alice.load(OwnedDocument.class, bobDoc.id());
         Assert.assertNull(result);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that loading a record by ID through
-     * an {@link Audience} with a criteria-based {@link Scope} returns
-     * the record when it satisfies the scope's {@link Criteria}.
+     * <strong>Goal:</strong> Verify that loading a record by ID through an
+     * {@link Audience} with a criteria-based {@link Scope} returns the record
+     * when it satisfies the scope's {@link Criteria}.
      * <p>
-     * <strong>Start state:</strong> Two {@link OwnedDocument
-     * OwnedDocuments}: one owned by "alice", one by "bob". Criteria
-     * scope registered to filter on {@code owner}.
+     * <strong>Start state:</strong> Two {@link OwnedDocument OwnedDocuments}:
+     * one owned by "alice", one by "bob". Criteria scope registered to filter
+     * on {@code owner}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -533,31 +527,27 @@ public class AudienceVisibilityScopeIntegrationTest
      * <li>Load alice's document by ID as alice.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The record is returned because it
-     * satisfies the scope criteria.
+     * <strong>Expected:</strong> The record is returned because it satisfies
+     * the scope criteria.
      */
     @Test
     public void testLoadByIdWithCriteriaScopeReturnsRecordWhenInsideScope() {
-        AccessControl.registerVisibilityScope(OwnedDocument.class,
-                audience -> {
-                    if(audience instanceof TestUser) {
-                        String name = ((TestUser) audience).name;
-                        return Scope.of(Criteria.where().key("owner")
-                                .operator(Operator.EQUALS).value(name)
-                                .build());
-                    }
-                    else {
-                        return Scope.none();
-                    }
-                });
+        AccessControl.registerVisibilityScope(OwnedDocument.class, audience -> {
+            if(audience instanceof TestUser) {
+                String name = ((TestUser) audience).name;
+                return Scope.of(Criteria.where().key("owner")
+                        .operator(Operator.EQUALS).value(name).build());
+            }
+            else {
+                return Scope.none();
+            }
+        });
         TestUser alice = new TestUser("alice");
         alice.save();
-        OwnedDocument aliceDoc = new OwnedDocument("alice-doc",
-                "alice");
+        OwnedDocument aliceDoc = new OwnedDocument("alice-doc", "alice");
         OwnedDocument bobDoc = new OwnedDocument("bob-doc", "bob");
         runway.save(aliceDoc, bobDoc);
-        OwnedDocument result = alice.load(OwnedDocument.class,
-                aliceDoc.id());
+        OwnedDocument result = alice.load(OwnedDocument.class, aliceDoc.id());
         Assert.assertNotNull(result);
         Assert.assertEquals("alice", result.owner);
     }
