@@ -101,43 +101,66 @@ public class ScopeTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link Scope#unsupported()} returns
-     * {@code false} from {@code isSupported()}.
+     * {@code false} from {@link Scope#isApplicable()}.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@link Scope#unsupported()}.{@code isSupported()}.</li>
+     * <li>Call {@link Scope#isApplicable()} on
+     * {@link Scope#unsupported()}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> {@code false} is returned.
      */
     @Test
-    public void testUnsupportedIsNotSupported() {
+    public void testUnsupportedIsNotApplicable() {
         Assert.assertFalse(Scope.unsupported().isApplicable());
     }
 
     /**
-     * <strong>Goal:</strong> Verify that all supported {@link Scope} variants
-     * return {@code true} from {@code isSupported()}.
+     * <strong>Goal:</strong> Verify that all concrete {@link Scope} variants
+     * that carry a meaningful visibility rule return {@code true} from
+     * {@link Scope#isApplicable()}.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code isSupported()} on {@link Scope#unrestricted()},
+     * <li>Call {@link Scope#isApplicable()} on {@link Scope#unrestricted()},
      * {@link Scope#none()}, and a {@link Scope#of(Criteria)} instance.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> All three return {@code true}.
      */
     @Test
-    public void testSupportedVariantsReturnIsSupported() {
+    public void testApplicableVariantsReturnTrue() {
         Criteria criteria = Criteria.where().key("active")
                 .operator(Operator.EQUALS).value(true).build();
         Assert.assertTrue(Scope.unrestricted().isApplicable());
         Assert.assertTrue(Scope.none().isApplicable());
         Assert.assertTrue(Scope.of(criteria).isApplicable());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that calling {@link Scope#apply(Selection)}
+     * on {@link Scope#unsupported()} throws
+     * {@link UnsupportedOperationException}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@link Scope#apply(Selection)} on
+     * {@link Scope#unsupported()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@link UnsupportedOperationException} is
+     * thrown.
+     */
+    @Test(expected = UnsupportedOperationException.class)
+    public void testUnsupportedApplyThrows() {
+        Scope.unsupported().apply(Selection.of(TestRecord.class));
     }
 
     /**

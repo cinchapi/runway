@@ -158,6 +158,36 @@ public class AccessControlVisibilityScopeTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that calling
+     * {@link AccessControl#registerVisibilityScope(Class, java.util.function.Function)}
+     * twice for the same class replaces the prior registration.
+     * <p>
+     * <strong>Start state:</strong> Registry is empty.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a provider returning {@link Scope#none()} for
+     * {@link TestResource}.</li>
+     * <li>Register a second provider returning {@link Scope#unrestricted()} for
+     * {@link TestResource}.</li>
+     * <li>Resolve the scope for {@link TestResource}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The resolved {@link Scope} is
+     * {@code Scope.unrestricted()} — the second registration wins.
+     */
+    @Test
+    public void testRegisterVisibilityScopeOverwritesPriorRegistration() {
+        AccessControl.registerVisibilityScope(TestResource.class,
+                audience -> Scope.none());
+        AccessControl.registerVisibilityScope(TestResource.class,
+                audience -> Scope.unrestricted());
+        Scope result = AccessControl.resolveVisibilityScope(TestResource.class,
+                new TestAudience());
+        Assert.assertSame(Scope.unrestricted(), result);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that resolving a class with no exact
      * registration returns {@code null} even if a parent class is registered.
      * <p>

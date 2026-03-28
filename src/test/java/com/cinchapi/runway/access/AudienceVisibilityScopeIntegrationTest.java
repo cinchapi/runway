@@ -342,6 +342,136 @@ public class AudienceVisibilityScopeIntegrationTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that when a registered provider returns
+     * {@code null}, the framework falls back to the instance-based predicate
+     * filter.
+     * <p>
+     * <strong>Start state:</strong> Two documents with different owners. Scope
+     * provider registered to return {@code null}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a scope provider that returns {@code null}.</li>
+     * <li>Save one document owned by alice and one by bob.</li>
+     * <li>Query as alice.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Only alice's document is returned; the
+     * {@code null} scope triggers the predicate fallback path.
+     */
+    @Test
+    public void testNullScopeFallsBackToPredicate() {
+        AccessControl.registerVisibilityScope(OwnedDocument.class,
+                audience -> null);
+        TestUser alice = new TestUser("alice");
+        alice.save();
+        runway.save(new OwnedDocument("d1", "alice"),
+                new OwnedDocument("d2", "bob"));
+        Selections sel = alice.select(Selection.of(OwnedDocument.class));
+        Set<OwnedDocument> results = sel.next();
+        Assert.assertEquals(1, results.size());
+        Assert.assertEquals("alice", results.iterator().next().owner);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a criteria scope is ANDed with an
+     * existing query {@link Criteria} on a find {@link Selection}, so that both
+     * constraints must be satisfied.
+     * <p>
+     * <strong>Start state:</strong> Three documents: one matching both
+     * criteria, one matching only the user query, one matching only the scope.
+     * Criteria scope registered to filter on owner.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a criteria scope: {@code owner = "alice"}.</li>
+     * <li>Save three documents: {@code "target"/"alice"},
+     * {@code "other"/"alice"}, {@code "target"/"bob"}.</li>
+     * <li>Query using a find {@link Selection} with criteria
+     * {@code title = "target"} as alice.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Exactly one document is returned — the one
+     * where both {@code title = "target"} and {@code owner = "alice"} are
+     * satisfied.
+     */
+    @Test
+    public void testFindSelectionWithCriteriaScopeConjoinsCriteria() {
+        AccessControl.registerVisibilityScope(OwnedDocument.class, audience -> {
+            if(audience instanceof TestUser) {
+                String name = ((TestUser) audience).name;
+                return Scope.of(Criteria.where().key("owner")
+                        .operator(Operator.EQUALS).value(name).build());
+            }
+            else {
+                return Scope.none();
+            }
+        });
+        TestUser alice = new TestUser("alice");
+        alice.save();
+        runway.save(new OwnedDocument("target", "alice"),
+                new OwnedDocument("other", "alice"),
+                new OwnedDocument("target", "bob"));
+        Criteria userCriteria = Criteria.where().key("title")
+                .operator(Operator.EQUALS).value("target").build();
+        Selections sel = alice
+                .select(Selection.of(OwnedDocument.class).where(userCriteria));
+        Set<OwnedDocument> results = sel.next();
+        Assert.assertEquals(1, results.size());
+        OwnedDocument doc = results.iterator().next();
+        Assert.assertEquals("target", doc.title);
+        Assert.assertEquals("alice", doc.owner);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a batch {@link Selection} containing
+     * both an {@link AccessControl} type (with a registered scope) and a
+     * non-{@link AccessControl} type processes each selection independently,
+     * applying the scope to the former and returning all records for the
+     * latter.
+     * <p>
+     * <strong>Start state:</strong> Two {@link OwnedDocument OwnedDocuments}
+     * (alice's and bob's) and three {@link Note Notes} saved. Criteria scope
+     * registered for {@link OwnedDocument}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a criteria scope for {@link OwnedDocument}.</li>
+     * <li>Save one document per owner and three notes.</li>
+     * <li>Issue a two-selection batch: one for {@link OwnedDocument}, one for
+     * {@link Note}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link OwnedDocument} result contains only
+     * alice's document; the {@link Note} result contains all three notes.
+     */
+    @Test
+    public void testMixedBatchAppliesScopeToAccessControlOnly() {
+        AccessControl.registerVisibilityScope(OwnedDocument.class, audience -> {
+            if(audience instanceof TestUser) {
+                String name = ((TestUser) audience).name;
+                return Scope.of(Criteria.where().key("owner")
+                        .operator(Operator.EQUALS).value(name).build());
+            }
+            else {
+                return Scope.none();
+            }
+        });
+        TestUser alice = new TestUser("alice");
+        alice.save();
+        runway.save(new OwnedDocument("doc-alice", "alice"),
+                new OwnedDocument("doc-bob", "bob"));
+        runway.save(new Note("n1"), new Note("n2"), new Note("n3"));
+        Selections sel = alice.select(Selection.of(OwnedDocument.class),
+                Selection.of(Note.class));
+        Set<OwnedDocument> docs = sel.next();
+        Set<Note> notes = sel.next();
+        Assert.assertEquals(1, docs.size());
+        Assert.assertEquals("alice", docs.iterator().next().owner);
+        Assert.assertEquals(3, notes.size());
+    }
+
+    /**
      * A document with an explicit {@code owner} field. Visibility (via the
      * predicate path) is granted only to the audience whose name matches the
      * document's owner.
@@ -416,6 +546,29 @@ public class AudienceVisibilityScopeIntegrationTest
         @Override
         public Set<String> $writableByAnonymous() {
             return AccessControl.NO_KEYS;
+        }
+
+    }
+
+    /**
+     * A plain {@link Record} with no {@link AccessControl} constraints, used to
+     * verify that non-access-controlled selections are unaffected by scope
+     * registration.
+     */
+    static class Note extends Record {
+
+        /**
+         * The note text.
+         */
+        public String text;
+
+        /**
+         * Construct a new {@link Note}.
+         *
+         * @param text the note text
+         */
+        Note(String text) {
+            this.text = text;
         }
 
     }
