@@ -429,6 +429,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean supportsPreSelectLinkedRecords;
 
     /**
+     * A flag that indicates if the connected server supports native
+     * {@code count} calculations using the {@code $id$} identifier key, which
+     * efficiently counts matching {@link Record Records} without transferring
+     * all their IDs.
+     * <p>
+     * This functionality is supported in Concourse 0.12.2+
+     * </p>
+     */
+    private final boolean supportsNativeCount;
+
+    /**
      * The strategy for pre-selecting data for {@link Collection
      * Collection&lt;Record&gt;} fields.
      */
@@ -510,6 +521,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             target = Version.forIntegers(0, 11, 3);
             this.supportsPreSelectLinkedRecords = actual
                     .greaterThanOrEqualTo(target)
+                    || actual.equals(
+                            Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
+            target = Version.forIntegers(0, 12, 2);
+            this.supportsNativeCount = actual.greaterThanOrEqualTo(target)
                     || actual.equals(
                             Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
         }
@@ -1151,7 +1166,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private int $count(Criteria criteria) {
         Concourse concourse = connections.request();
         try {
-            return concourse.find(criteria).size();
+            if(supportsNativeCount) {
+                return (int) concourse.calculate().count(Record.IDENTIFIER_KEY,
+                        criteria);
+            }
+            else {
+                return concourse.find(criteria).size();
+            }
         }
         finally {
             connections.release(concourse);
