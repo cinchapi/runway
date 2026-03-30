@@ -52,7 +52,7 @@ public class RecordJsonTest extends AbstractRecordTest {
     public void testJsonSingleValueCollectionDefault() {
         Shoe shoe = new Shoe(ImmutableList.of("Nike"));
         String json = shoe.json();
-        JsonElement elt = new JsonParser().parse(json);
+        JsonElement elt = JsonParser.parseString(json);
         Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonArray());
     }
 
@@ -61,7 +61,7 @@ public class RecordJsonTest extends AbstractRecordTest {
         Shoe shoe = new Shoe(ImmutableList.of("Nike"));
         String json = shoe.json(SerializationOptions.builder()
                 .flattenSingleElementCollections(true).build());
-        JsonElement elt = new JsonParser().parse(json);
+        JsonElement elt = JsonParser.parseString(json);
         Assert.assertTrue(elt.getAsJsonObject().get("shoes").isJsonPrimitive());
     }
 
@@ -119,10 +119,10 @@ public class RecordJsonTest extends AbstractRecordTest {
     @Test
     public void testConcourseTypesJsonRepresentation() {
         Pock pock = new Pock("test");
-        JsonElement expected = new JsonParser()
-                .parse(new GsonBuilder().setPrettyPrinting().create().toJson(
+        JsonElement expected = JsonParser.parseString(
+                new GsonBuilder().setPrettyPrinting().create().toJson(
                         ImmutableMap.of("tag", "test", "id", pock.id())));
-        JsonElement actual = new JsonParser().parse(pock.json());
+        JsonElement actual = JsonParser.parseString(pock.json());
         Assert.assertEquals(expected, actual);
     }
 
