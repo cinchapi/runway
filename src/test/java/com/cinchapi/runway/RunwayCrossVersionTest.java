@@ -39,7 +39,7 @@ import com.cinchapi.concourse.util.Random;
  *
  * @author Jeff Nelson
  */
-@Versions({ "0.9.6", Testing.CONCOURSE_VERSION })
+@Versions({ "0.9.6", "0.12.1", Testing.CONCOURSE_VERSION })
 public class RunwayCrossVersionTest extends CrossVersionTest {
 
     private Runway runway;
@@ -142,6 +142,76 @@ public class RunwayCrossVersionTest extends CrossVersionTest {
             Assert.assertTrue(ab.ts < ts);
             ts = ab.ts;
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that counting all {@link Record Records} of
+     * a class returns the correct count across server versions.
+     * <p>
+     * <strong>Start state:</strong> 1000 saved {@link A} records and 1000 saved
+     * {@link AB} records (from {@code beforeEachTest}).
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Execute a counting {@link Selection} for {@link A}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code 1000}.
+     */
+    @Test
+    public void testCount() {
+        int count = runway.select(Selection.of(A.class).count()).next();
+        Assert.assertEquals(1000, count);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that counting {@link Record Records}
+     * matching a {@link Criteria} returns the correct count across server
+     * versions.
+     * <p>
+     * <strong>Start state:</strong> 1000 saved {@link A} records, some active
+     * and some inactive (from {@code beforeEachTest}).
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Count {@link A} records where {@code active} is {@code true} using a
+     * counting {@link Selection}.</li>
+     * <li>Count {@link A} records where {@code active} is {@code true} using
+     * {@code find().size()} as a baseline.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both counts are equal.
+     */
+    @Test
+    public void testCountWithCriteria() {
+        Criteria criteria = Criteria.where().key("active")
+                .operator(Operator.EQUALS).value(true);
+        int count = runway.select(Selection.of(A.class).where(criteria).count())
+                .next();
+        int expected = runway.find(A.class, criteria).size();
+        Assert.assertEquals(expected, count);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that counting with {@code any} includes
+     * descendants across server versions.
+     * <p>
+     * <strong>Start state:</strong> 1000 {@link A}, 1000 {@link AB}, 1000
+     * {@link AC}, and 1000 {@link ACD} records (from {@code beforeEachTest}).
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Execute a counting {@link Selection} using
+     * {@code ofAny(A.class)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code 4000} (all subclasses
+     * included).
+     */
+    @Test
+    public void testCountAny() {
+        int count = runway.select(Selection.ofAny(A.class).count()).next();
+        Assert.assertEquals(4000, count);
     }
 
     class A extends Record {
