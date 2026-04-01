@@ -21,6 +21,10 @@ import java.util.Set;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.ccl.syntax.ConditionTree;
+import com.cinchapi.concourse.lang.ConcourseCompiler;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Multimap;
@@ -369,6 +373,42 @@ public class RecordDataAccessTest extends AbstractRecordTest {
             Record.StaticAnalysis.COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS = computePathsForDescendantDefinedFields;
             Record.StaticAnalysis.instance().computeAllPossiblePaths();
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} satisfies a
+     * {@link Criteria} whose key navigates through a private field into a
+     * linked {@link Record Record's} property.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Conversation} with a private
+     * {@link Participant} reference.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create a {@link Participant} with a known {@code userId}.</li>
+     * <li>Create a {@link Conversation} whose private {@code participant} field
+     * references that {@link Participant}.</li>
+     * <li>Build a {@link Criteria} using the navigation key
+     * {@code participant.userId}.</li>
+     * <li>Parse and evaluate the {@link Criteria} against the
+     * {@link Conversation Conversation's} {@code mmap}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link ConcourseCompiler} evaluates the
+     * condition as {@code true} because the navigation should traverse the
+     * private field to reach the linked {@link Participant Participant's}
+     * {@code userId}.
+     */
+    @Test
+    public void testSatisfiesCriteriaWithNavigationKeyFromPrivateField() {
+        Participant alice = new Participant("alice123");
+        Conversation convo = new Conversation("Hello", alice);
+        convo.save();
+        Criteria criteria = Criteria.where().key("participant.userId")
+                .operator(Operator.EQUALS).value("alice123").build();
+        ConcourseCompiler compiler = ConcourseCompiler.get();
+        ConditionTree tree = (ConditionTree) compiler.parse(criteria);
+        Assert.assertTrue(compiler.evaluate(tree, convo.mmap()));
     }
 
     @Test

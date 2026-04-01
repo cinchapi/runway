@@ -59,6 +59,12 @@ configurations.all {
 }
 
 dependencies {
+    constraints {
+        implementation('com.cinchapi:ccl:3.2.2') {
+            because 'fix for local criteria evaluation using navigation keys'
+        }
+    }
+
     // Internal dependencies (not exposed to consumers)
     implementation 'com.google.guava:guava:25.1-jre'
     implementation (group: 'com.cinchapi', name: 'accent4j', version: accent4jVersion, changing:true)
