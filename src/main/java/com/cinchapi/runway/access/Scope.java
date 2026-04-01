@@ -24,6 +24,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Multimap;
 
 /**
  * Describes the visibility that an {@link Audience} has for a given
@@ -164,8 +165,8 @@ public abstract class Scope {
         public boolean test(Record record) {
             ConcourseCompiler compiler = ConcourseCompiler.get();
             ConditionTree tree = (ConditionTree) compiler.parse(criteria);
-            return compiler.evaluate(tree,
-                    Reflection.call(record, "mmap")); /* (authorized) */
+            Multimap<String, Object> mmap = Reflection.call(record, "mmap");
+            return compiler.evaluate(tree, mmap); /* (authorized) */
         }
     }
 
