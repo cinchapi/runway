@@ -476,6 +476,31 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(1, results.size());
         }
     }
+    
+    @Test
+    public void testFindAnyWithMultipleSourcesInHierarchyAlt() {
+        Collection<TestAdHocRecord> testData = Arrays.asList(
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 25));
+        Collection<OtherAdHocRecord> otherData = Arrays.asList(
+                new OtherAdHocRecord("Alpha"), new OtherAdHocRecord("Beta"));
+
+        AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> testData);
+        AdHocDataSource<OtherAdHocRecord> source2 = new AdHocDataSource<>(
+                OtherAdHocRecord.class, () -> otherData);
+
+        try (AttachmentScope scope = runway.attach(source1, source2)) {
+            // Find with a criteria that matches across both types
+            // Using a field that exists in both (name/value starting with 'A')
+            Criteria criteria = Criteria.where().key("age")
+                    .operator(Operator.LESS_THAN).value(30).build();
+            Set<AdHocRecord> results = runway.findAny(AdHocRecord.class,
+                    criteria);
+            // Only TestAdHocRecord has 'name' field matching
+            Assert.assertEquals(1, results.size());
+        }
+    }
 
     @Test
     public void testCountAnyWithMultipleSourcesInHierarchy() {
