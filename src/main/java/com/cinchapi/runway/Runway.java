@@ -983,10 +983,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     selection.state = Selection.State.FINISHED;
                     continue outer; /* (authorized short circuit) */
                 }
-                // Must manually attempt to recall here because it won't
+                // NOTE: Must manually attempt to recall here because it won't
                 // register as cached when dispatching route if a combination
                 // occurs and gets dispatched
-                Object cached = recall(selection.reservation());
+                Object cached = recallAndPossiblyFilter(selection);
                 if(cached != null) {
                     selection.state = Selection.State.FINISHED;
                     selection.result = cached;
@@ -1329,38 +1329,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
         selection.state = Selection.State.SUBMITTED;
         R result;
-        Object cached = recall(selection.reservation());
-        boolean hasFilter = selection.filter != null
-                && !DatabaseSelection.isNoFilter(selection.filter);
-        boolean hasPagination = selection instanceof SetBasedSelection
-                && ((SetBasedSelection<?>) selection).page != null;
-        if(cached != null && !(hasFilter && hasPagination)) {
-            // NOTE: The reservation cache is keyed by database query parameters
-            // (class, criteria, order, page, realms) but not by client-side
-            // filter. This allows filtered queries (e.g., Audience visibility
-            // checks) to reuse pre-fetched results from an unfiltered select.
-            // Furthermore, filters are lambdas and have no semantic notion of
-            // equality across instances. The filter must be applied here on
-            // cache hit since the type-specific $select methods are bypassed.
-            //
-            // When both a filter and a page are present, the cache is skipped
-            // because filtering a fixed page can produce a short result. The
-            // type-specific $select methods handle this correctly via
-            // Pagination.applyFilterAndPage.
-            if(hasFilter) {
-                if(cached instanceof Collection) {
-                    cached = ((Collection<Record>) cached).stream().filter(
-                            (Predicate<? super Record>) selection.filter)
-                            .collect(Collectors
-                                    .toCollection(LinkedHashSet::new));
-                }
-                else if(cached instanceof Record) {
-                    if(!selection.filter.test((T) cached)) {
-                        cached = null;
-                    }
-                }
-            }
-            result = (R) cached;
+        R cached = recallAndPossiblyFilter(selection);
+        if(cached != null) {
+            result = cached;
         }
         else {
             Set<AdHocDataSource<?>> sources = selection.any
@@ -2293,6 +2264,58 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T> T recall(Reservation reservation) {
         Map<Reservation, Object> reservations = this.reservations.get();
         return reservations != null ? (T) reservations.get(reservation) : null;
+    }
+
+    /**
+     * Look up a previously reserved result for the {@code selection} and apply
+     * client-side filtering if necessary.
+     * <p>
+     * The reservation cache is keyed by database query parameters (class,
+     * criteria, order, page, realms) but not by client-side filter, so a cache
+     * hit may contain unfiltered results. This method applies the
+     * {@link DatabaseSelection#filter} on hit &mdash; streaming
+     * {@link Collection Collections} and testing single {@link Record Records}
+     * &mdash; so that callers always receive correctly filtered data.
+     * <p>
+     * When both a filter and a page are present the cache is skipped entirely,
+     * because filtering a fixed page can produce a short result. The
+     * type-specific {@code $select} methods handle that case correctly via
+     * {@code Pagination.applyFilterAndPage}.
+     *
+     * @param selection the {@link DatabaseSelection} whose reservation to look
+     *            up
+     * @param <T> the {@link Record} type
+     * @param <R> the result type
+     * @return the filtered cached result, or {@code null} on miss or when the
+     *         cache must be bypassed
+     */
+    @SuppressWarnings("unchecked")
+    private <T extends Record, R> R recallAndPossiblyFilter(
+            DatabaseSelection<T> selection) {
+        Object cached = recall(selection.reservation());
+        boolean hasFilter = selection.filter != null
+                && !DatabaseSelection.isNoFilter(selection.filter);
+        boolean hasPagination = selection instanceof SetBasedSelection
+                && ((SetBasedSelection<?>) selection).page != null;
+        if(cached != null && !(hasFilter && hasPagination)) {
+            if(hasFilter) {
+                if(cached instanceof Collection) {
+                    cached = ((Collection<Record>) cached).stream().filter(
+                            (Predicate<? super Record>) selection.filter)
+                            .collect(Collectors
+                                    .toCollection(LinkedHashSet::new));
+                }
+                else if(cached instanceof Record) {
+                    if(!selection.filter.test((T) cached)) {
+                        cached = null;
+                    }
+                }
+            }
+            return (R) cached;
+        }
+        else {
+            return null;
+        }
     }
 
     /**
