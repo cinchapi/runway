@@ -1,5 +1,7 @@
 # Changelog
 
+#### Version 1.15.0 (TBD)
+
 #### Version 1.14.0 (April 2, 2026)
 * **Static Visibility Scopes**: Added `Scope` and static scope registration to the `AccessControl` framework as a class-level alternative to instance-based visibility checks. When a `Scope` is registered for an `AccessControl` type, it is applied during `Audience.select()` in place of the per-instance `$isDiscoverableBy` check:
   * `Scope.of(Criteria)` pushes visibility filtering to the database as a query constraint, ensuring only matching records are returned rather than loading all records and filtering post-load. This is significantly more performant when only a small fraction of records for a class are visible to a given audience.
