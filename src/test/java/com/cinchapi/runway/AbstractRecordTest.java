@@ -271,6 +271,7 @@ public abstract class AbstractRecordTest extends RunwayBaseClientServerTest {
         /**
          * The {@link Participant} in this {@link Conversation}.
          */
+        @SuppressWarnings("unused")
         private Participant participant;
 
         /**

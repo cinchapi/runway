@@ -7,6 +7,15 @@ follow these guidelines.
 
 ---
 
+## Important: Do Not Run Tests
+
+**Do not run `./gradlew test` or `./gradlew build`.** The test
+suite requires a live Concourse server and takes too long to run
+in an interactive session. Write tests, but do not execute them.
+You may still run `./gradlew spotlessApply` for formatting.
+
+---
+
 ## Project Overview
 
 Concourse is a distributed database warehouse for transactions,

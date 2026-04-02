@@ -14,6 +14,7 @@
 * Added `Runway#getKnownRecordTypes()` to return all known `Record` subclasses discovered on the classpath at runtime.
 * Fixed a bug where `Pagination.applyFilterAndPage` would throw a `NullPointerException` when invoked with a `null` filter or `null` page.
 * Fixed a bug where local `Criteria` evaluation via `ConcourseCompiler` did not account for non-readable fields, producing results that diverged from how Concourse would resolve the same `Criteria` server-side. Non-readable (e.g., private) fields are stored in the database and indexed like any other field, so server-side resolution always considers them. Local evaluation now includes all fields regardless of visibility, matching server-side behavior.
+* Added `Record#matches(Criteria)` to test whether a `Record` satisfies a `Criteria` locally. Navigation keys are fully supported, including traversal through private fields and collections of linked `Records`.
 * Upgraded the `concourse-driver-java` dependency to `0.12.4` to fix a bug that caused local `Criteria` evaluation via `ConcourseCompiler` to provide inconsistent and unexpected results for records that did not contain a value stored under one or more keys in the input `Criteria`.
 
 #### Version 1.13.0 (March 12, 2026)

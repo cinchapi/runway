@@ -17,8 +17,6 @@ package com.cinchapi.runway;
 
 import java.util.function.Predicate;
 
-import com.cinchapi.ccl.syntax.ConditionTree;
-import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -95,11 +93,8 @@ public interface Selection<T extends Record> {
         DatabaseSelection<T> resolved = (DatabaseSelection<T>) DatabaseSelection
                 .resolve(selection);
         if(resolved instanceof LoadRecordSelection) {
-            return withInjectedFilter(selection, record -> {
-                ConcourseCompiler compiler = ConcourseCompiler.get();
-                ConditionTree tree = (ConditionTree) compiler.parse(injected);
-                return compiler.evaluate(tree, record.mmap());
-            });
+            return withInjectedFilter(selection,
+                    record -> record.matches(injected));
         }
         else {
             resolved = resolved.duplicate();
