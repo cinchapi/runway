@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway;
 
+import static com.cinchapi.runway.DatabaseInterface.duplicateEntryException;
+
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -401,6 +403,21 @@ public class AdHocDataSource<T extends AdHocRecord> implements
                         ? loadAny(s.clazz, s.order, s.page, filter, s.realms)
                         : load(s.clazz, s.order, s.page, filter, s.realms);
             }
+            else if(selection instanceof UniqueSelection) {
+                UniqueSelection<?> s = (UniqueSelection<?>) selection;
+                Predicate filter = s.filter;
+                Set results;
+                if(s.criteria != null) {
+                    results = s.any
+                            ? findAny(s.clazz, s.criteria, filter, s.realms)
+                            : find(s.clazz, s.criteria, filter, s.realms);
+                }
+                else {
+                    results = s.any ? loadAny(s.clazz, filter, s.realms)
+                            : load(s.clazz, filter, s.realms);
+                }
+                s.result = unique(results, s.clazz, s.criteria);
+            }
             else {
                 throw new UnsupportedOperationException(
                         "Unsupported Selection type " + selection.getClass());
@@ -585,10 +602,8 @@ public class AdHocDataSource<T extends AdHocRecord> implements
             return results.iterator().next();
         }
         else {
-            throw new DuplicateEntryException(
-                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                            "Multiple records match " + criteria + " in "
-                                    + clazz));
+            throw duplicateEntryException("Multiple records match {} in {} ",
+                    criteria, clazz);
         }
     }
 

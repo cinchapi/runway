@@ -41,10 +41,25 @@ import com.cinchapi.concourse.lang.sort.Order;
 public interface DatabaseInterface {
 
     /**
+     * Return a {@link DuplicateEntryException} with a message formatted from
+     * the given {@code template} and {@code args}.
+     *
+     * @param template the message template
+     * @param args the template arguments
+     * @return a new {@link DuplicateEntryException}
+     */
+    public static DuplicateEntryException duplicateEntryException(
+            String template, Object... args) {
+        return new DuplicateEntryException(
+                new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                        AnyStrings.format(template, args)));
+    }
+
+    /**
      * A {@link Page} that retrieves at most two results, used by unique-result
      * queries to detect duplicates without fetching the entire result set.
      */
-    static Page UNIQUE_PAGINATION = Page.sized(2);
+    public static Page UNIQUE_PAGINATION = Page.sized(2);
 
     /**
      * Return the {@code records} in sorted {@code order}.
@@ -1074,21 +1089,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> T findAnyUnique(Class<T> clazz,
             Criteria criteria, Realms realms) {
-        Set<T> results = fetch(Selection.ofAny(clazz).where(criteria)
-                .page(UNIQUE_PAGINATION).realms(realms));
-        if(results.isEmpty()) {
-            return null;
-        }
-        else if(results.size() == 1) {
-            return results.iterator().next();
-        }
-        else {
-            throw new DuplicateEntryException(
-                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                            AnyStrings.format(
-                                    "There are more than one records that match {} in the hierarchy of {}",
-                                    criteria, clazz)));
-        }
+        return fetch(
+                Selection.ofAnyUnique(clazz).where(criteria).realms(realms));
     }
 
     /**
@@ -1119,21 +1121,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> T findUnique(Class<T> clazz,
             Criteria criteria, Realms realms) {
-        Set<T> results = fetch(Selection.of(clazz).where(criteria)
-                .page(UNIQUE_PAGINATION).realms(realms));
-        if(results.isEmpty()) {
-            return null;
-        }
-        else if(results.size() == 1) {
-            return results.iterator().next();
-        }
-        else {
-            throw new DuplicateEntryException(
-                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                            AnyStrings.format(
-                                    "There are more than one records that match {} in {}",
-                                    criteria, clazz)));
-        }
+        return fetch(Selection.ofUnique(clazz).where(criteria).realms(realms));
     }
 
     /**
