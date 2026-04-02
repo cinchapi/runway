@@ -242,14 +242,14 @@ public class AdHocDataSource<T extends AdHocRecord> implements
     public <R extends Record> R findAnyUnique(Class<R> clazz, Criteria criteria,
             Realms realms) {
         Set<R> results = findAny(clazz, criteria, realms);
-        return unique(results, clazz, criteria);
+        return unique(results, clazz, criteria, true);
     }
 
     @Override
     public <R extends Record> R findUnique(Class<R> clazz, Criteria criteria,
             Realms realms) {
         Set<R> results = find(clazz, criteria, realms);
-        return unique(results, clazz, criteria);
+        return unique(results, clazz, criteria, false);
     }
 
     @Override
@@ -416,7 +416,7 @@ public class AdHocDataSource<T extends AdHocRecord> implements
                     results = s.any ? loadAny(s.clazz, filter, s.realms)
                             : load(s.clazz, filter, s.realms);
                 }
-                s.result = unique(results, s.clazz, s.criteria);
+                s.result = unique(results, s.clazz, s.criteria, s.any);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -590,11 +590,12 @@ public class AdHocDataSource<T extends AdHocRecord> implements
      * @param results the result set
      * @param clazz the queried class
      * @param criteria the query criteria
+     * @param any whether the query includes descendants
      * @return the single result, or {@code null} if empty
      * @throws DuplicateEntryException if more than one result exists
      */
     private <R extends Record> R unique(Set<R> results, Class<R> clazz,
-            Criteria criteria) {
+            Criteria criteria, boolean any) {
         if(results.isEmpty()) {
             return null;
         }
@@ -602,8 +603,8 @@ public class AdHocDataSource<T extends AdHocRecord> implements
             return results.iterator().next();
         }
         else {
-            throw duplicateEntryException("Multiple records match {} in {} ",
-                    criteria, clazz);
+            throw duplicateEntryException("Multiple records match {} in {}{}",
+                    criteria, any ? "the hierarchy of " : "", clazz);
         }
     }
 

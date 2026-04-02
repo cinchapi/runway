@@ -285,4 +285,135 @@ public class UniqueSelectionEndToEndTest extends RunwayBaseClientServerTest {
         Assert.assertNotNull(result);
         Assert.assertEquals(player.id(), result.id());
     }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link UniqueSelection} without
+     * criteria returns the single {@link Record} when only one of that exact
+     * class exists.
+     * <p>
+     * <strong>Start state:</strong> One {@link Player} saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a single {@link Player}.</li>
+     * <li>Fetch via {@code Selection.ofUnique(Player.class)} with no
+     * {@code where} clause.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The single {@link Player} is returned.
+     */
+    @Test
+    public void testOfUniqueWithNoCriteriaReturnsSingleRecord() {
+        Player player = new Player("OnlyOne", 77);
+        runway.save(player);
+
+        Player result = runway.fetch(Selection.ofUnique(Player.class));
+        Assert.assertNotNull(result);
+        Assert.assertEquals(player.id(), result.id());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link UniqueSelection} without
+     * criteria throws {@link DuplicateEntryException} when more than one
+     * {@link Record} of that class exists.
+     * <p>
+     * <strong>Start state:</strong> Two {@link Player Players} saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Player Players}.</li>
+     * <li>Fetch via {@code Selection.ofUnique(Player.class)} with no
+     * {@code where} clause.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown.
+     */
+    @Test(expected = DuplicateEntryException.class)
+    public void testOfUniqueWithNoCriteriaThrowsOnMultiple() {
+        runway.save(new Player("First", 10));
+        runway.save(new Player("Second", 20));
+
+        runway.fetch(Selection.ofUnique(Player.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link UniqueSelection} without
+     * criteria returns {@code null} when no {@link Record Records} of that
+     * class exist.
+     * <p>
+     * <strong>Start state:</strong> No {@link Player Players} saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Fetch via {@code Selection.ofUnique(Player.class)} with no
+     * {@code where} clause and no saved data.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code null}.
+     */
+    @Test
+    public void testOfUniqueWithNoCriteriaReturnsNullWhenEmpty() {
+        Player result = runway.fetch(Selection.ofUnique(Player.class));
+        Assert.assertNull(result);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link UniqueSelection} with a
+     * client-side filter returns the single matching {@link Record} after
+     * filtering.
+     * <p>
+     * <strong>Start state:</strong> Two {@link Player Players} saved with
+     * different scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Player Players} with different scores.</li>
+     * <li>Fetch via {@code Selection.ofUnique(Player.class)} with a filter that
+     * accepts only one of them.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The single matching {@link Player} is
+     * returned.
+     */
+    @Test
+    public void testOfUniqueWithFilterReturnsSingleMatch() {
+        Player low = new Player("Low", 5);
+        Player high = new Player("High", 95);
+        runway.save(low);
+        runway.save(high);
+
+        Criteria criteria = Criteria.where().key("name")
+                .operator(Operator.REGEX).value(".*");
+        Player result = runway.fetch(Selection.ofUnique(Player.class)
+                .where(criteria).filter(p -> p.score > 50));
+        Assert.assertNotNull(result);
+        Assert.assertEquals(high.id(), result.id());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link UniqueSelection} with a
+     * client-side filter returns {@code null} when the filter excludes all
+     * matches.
+     * <p>
+     * <strong>Start state:</strong> One {@link Player} saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Player} with a known score.</li>
+     * <li>Fetch via {@code Selection.ofUnique(Player.class)} with a filter that
+     * rejects the saved record.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code null}.
+     */
+    @Test
+    public void testOfUniqueWithFilterReturnsNullWhenFilteredOut() {
+        runway.save(new Player("Filtered", 10));
+
+        Criteria criteria = Criteria.where().key("name")
+                .operator(Operator.EQUALS).value("Filtered");
+        Player result = runway.fetch(Selection.ofUnique(Player.class)
+                .where(criteria).filter(p -> p.score > 99));
+        Assert.assertNull(result);
+    }
 }

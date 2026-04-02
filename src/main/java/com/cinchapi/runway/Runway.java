@@ -1366,8 +1366,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             // Enforce uniqueness across AdHocDataSources
                             UniqueSelection<T> us = (UniqueSelection<T>) selection;
                             throw duplicateEntryException(
-                                    "Multiple records match {} in {}",
-                                    us.criteria, selection.clazz);
+                                    "Multiple records match {} in {}{}",
+                                    us.criteria,
+                                    us.any ? "the hierarchy of " : "",
+                                    selection.clazz);
                         }
                         else if(candidate != null) {
                             found = candidate;
@@ -1641,10 +1643,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return results.iterator().next();
         }
         else {
-            throw duplicateEntryException("Multiple records match {} in {}",
+            throw duplicateEntryException("Multiple records match {} in {}{}",
                     selection.criteria,
-                    selection.any ? "the hierarchy of " + selection.clazz
-                            : selection.clazz);
+                    selection.any ? "the hierarchy of " : "", selection.clazz);
         }
     }
 
