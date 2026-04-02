@@ -20,6 +20,7 @@ import static com.cinchapi.runway.access.AccessControl.NO_KEYS;
 import static com.cinchapi.runway.access.AccessControlSupport.*;
 
 import java.util.AbstractMap.SimpleEntry;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -36,12 +37,10 @@ import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
 import com.cinchapi.common.reflect.Reflection;
-import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.lang.paginate.Page;
-import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.DatabaseInterface;
-import com.cinchapi.runway.Realms;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.Selection;
+import com.cinchapi.runway.Selections;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
@@ -145,6 +144,31 @@ public interface Audience extends DatabaseInterface {
             else {
                 return true;
             }
+        };
+    }
+
+    /**
+     * Return a {@link Predicate} that tests whether a {@link Record} is visible
+     * to this {@link Audience}, using the registered {@link Scope} if one
+     * exists and is {@link Scope#isApplicable() applicable}, or falling back to
+     * {@link #$checkIfVisible()} otherwise.
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
+     *
+     * @return a {@link Predicate} to filter for visible records
+     */
+    public default <T extends Record> Predicate<T> $checkIfInScopeOrVisible() {
+        // TODO: make private in Java 9+
+        return record -> {
+            if(record instanceof AccessControl) {
+                Scope scope = AccessControl
+                        .resolveVisibilityScope(record.getClass(), this);
+                if(scope != null && scope.isApplicable()) {
+                    return scope.test(record);
+                }
+            }
+            return $checkIfVisible().test(record);
         };
     }
 
@@ -269,7 +293,7 @@ public interface Audience extends DatabaseInterface {
             Collection<String> keys, T subject) {
         Preconditions.checkNotNull(keys, "keys cannot be null");
         Map<String, Object> data;
-        if(!$checkIfVisible().test(subject)) {
+        if(!$checkIfInScopeOrVisible().test(subject)) {
             return null;
         }
         else if(subject instanceof AccessControl) {
@@ -591,233 +615,20 @@ public interface Audience extends DatabaseInterface {
     }
 
     @Override
-    default <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order, Page page, Predicate<T> filter, Realms realms) {
-        return $db().find(clazz, criteria, order, page,
-                filter.and($checkIfVisible()), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Order order, Page page, Realms realms) {
-        return $db().find(clazz, criteria, order, page, $checkIfVisible(),
-                realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Order order, Predicate<T> filter,
-            Realms realms) {
-        return $db().find(clazz, criteria, order, filter.and($checkIfVisible()),
-                realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Order order, Realms realms) {
-        return $db().find(clazz, criteria, order, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
-        return $db().find(clazz, criteria, page, filter.and($checkIfVisible()),
-                realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Page page, Realms realms) {
-        return $db().find(clazz, criteria, page, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Predicate<T> filter, Realms realms) {
-        return $db().find(clazz, criteria, filter.and($checkIfVisible()),
-                realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> find(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        return $db().find(clazz, criteria, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order, Page page, Predicate<T> filter,
-            Realms realms) {
-        return $db().findAny(clazz, criteria, order, page,
-                filter.and($checkIfVisible()), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order, Page page, Realms realms) {
-        return $db().findAny(clazz, criteria, order, page, $checkIfVisible(),
-                realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order, Predicate<T> filter,
-            Realms realms) {
-        return $db().findAny(clazz, criteria, order,
-                filter.and($checkIfVisible()), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Order order, Realms realms) {
-        return $db().findAny(clazz, criteria, order, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
-        return $db().findAny(clazz, criteria, page,
-                filter.and($checkIfVisible()), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Page page, Realms realms) {
-        return $db().findAny(clazz, criteria, page, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Predicate<T> filter, Realms realms) {
-        return $db().findAny(clazz, criteria, filter.and($checkIfVisible()),
-                realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> findAny(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        return $db().findAny(clazz, criteria, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> T findAnyUnique(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        T record = $db().findAnyUnique(clazz, criteria, realms);
-        return $checkIfVisible().test(record) ? record : null;
-    }
-
-    @Override
-    public default <T extends Record> T findUnique(Class<T> clazz,
-            Criteria criteria, Realms realms) {
-        T record = $db().findUnique(clazz, criteria, realms);
-        return $checkIfVisible().test(record) ? record : null;
-    }
-
-    @Override
-    public default <T extends Record> T load(Class<T> clazz, long id,
-            Realms realms) {
-        T record = $db().load(clazz, id, realms);
-        return $checkIfVisible().test(record) ? record : null;
-    }
-
-    @Override
-    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page, Predicate<T> filter, Realms realms) {
-        return $db().load(clazz, order, page, filter.and($checkIfVisible()),
-                realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page, Realms realms) {
-        return $db().load(clazz, order, page, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Predicate<T> filter, Realms realms) {
-        return $db().load(clazz, order, filter.and($checkIfVisible()), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Realms realms) {
-        return $db().load(clazz, order, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Predicate<T> filter, Realms realms) {
-        return $db().load(clazz, page, filter.and($checkIfVisible()), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Realms realms) {
-        return $db().load(clazz, page, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> load(Class<T> clazz,
-            Predicate<T> filter, Realms realms) {
-        return $db().load(clazz, filter.and($checkIfVisible()), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> load(Class<T> clazz,
-            Realms realms) {
-        return $db().load(clazz, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Page page, Predicate<T> filter, Realms realms) {
-        return $db().loadAny(clazz, order, page, filter.and($checkIfVisible()),
-                realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Page page, Realms realms) {
-        return $db().loadAny(clazz, order, page, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Predicate<T> filter, Realms realms) {
-        return $db().loadAny(clazz, order, filter.and($checkIfVisible()),
-                realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Realms realms) {
-        return $db().loadAny(clazz, order, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Predicate<T> filter, Realms realms) {
-        return $db().loadAny(clazz, page, filter.and($checkIfVisible()),
-                realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Realms realms) {
-        return $db().loadAny(clazz, page, $checkIfVisible(), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Predicate<T> filter, Realms realms) {
-        return $db().loadAny(clazz, filter.and($checkIfVisible()), realms);
-    }
-
-    @Override
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Realms realms) {
-        return $db().loadAny(clazz, $checkIfVisible(), realms);
+    @SuppressWarnings("unchecked")
+    public default Selections select(Selection<?>... selections) {
+        selections = Arrays.stream(selections).map(selection -> {
+            Class<?> clazz = selection.clazz();
+            if(clazz != null && AccessControl.class.isAssignableFrom(clazz)) {
+                Scope scope = AccessControl.resolveVisibilityScope(clazz, this);
+                if(scope != null && scope.isApplicable()) {
+                    return scope.apply(selection);
+                }
+            }
+            return Selection.withInjectedFilter((Selection<Record>) selection,
+                    $checkIfVisible());
+        }).toArray(Selection[]::new);
+        return $db().select(selections);
     }
 
 }

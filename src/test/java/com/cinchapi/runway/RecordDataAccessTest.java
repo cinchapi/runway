@@ -21,9 +21,10 @@ import java.util.Set;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Multimap;
 
 /**
  * Tests for {@link Record} data access, filtering, computed/derived properties,
@@ -371,8 +372,122 @@ public class RecordDataAccessTest extends AbstractRecordTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * evaluates a {@link Criteria} whose key navigates through a private field
+     * into a linked {@link Record Record's} property.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Conversation} with a private
+     * {@link Participant} reference.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create a {@link Participant} with a known {@code userId}.</li>
+     * <li>Create a {@link Conversation} whose private {@code participant} field
+     * references that {@link Participant}.</li>
+     * <li>Build a {@link Criteria} using the navigation key
+     * {@code participant.userId}.</li>
+     * <li>Call {@link Record#matches(Criteria)} on the
+     * {@link Conversation}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true} because
+     * the navigation traverses the private field to reach the linked
+     * {@link Participant Participant's} {@code userId}.
+     */
     @Test
-    public void testMmap() {
+    public void testMatchesWithNavigationKeyFromPrivateField() {
+        Participant alice = new Participant("alice123");
+        Conversation convo = new Conversation("Hello", alice);
+        convo.save();
+        Criteria criteria = Criteria.where().key("participant.userId")
+                .operator(Operator.EQUALS).value("alice123").build();
+        Assert.assertTrue(convo.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * returns {@code false} when the navigation key resolves to a value that
+     * does not satisfy the {@link Criteria}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Conversation} with a private
+     * {@link Participant} reference.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create a {@link Participant} with {@code userId}
+     * {@code "alice123"}.</li>
+     * <li>Create a {@link Conversation} referencing that
+     * {@link Participant}.</li>
+     * <li>Build a {@link Criteria} that expects {@code participant.userId} to
+     * equal {@code "bob456"}.</li>
+     * <li>Call {@link Record#matches(Criteria)} on the
+     * {@link Conversation}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code false} because
+     * the actual value does not match.
+     */
+    @Test
+    public void testMatchesReturnsFalseWhenNavigationKeyDoesNotSatisfyCriteria() {
+        Participant alice = new Participant("alice123");
+        Conversation convo = new Conversation("Hello", alice);
+        convo.save();
+        Criteria criteria = Criteria.where().key("participant.userId")
+                .operator(Operator.EQUALS).value("bob456").build();
+        Assert.assertFalse(convo.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)} works
+     * with simple (non-navigation) keys.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Conversation} with a known
+     * {@code topic}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create a {@link Conversation} with topic {@code "Hello"}.</li>
+     * <li>Build a {@link Criteria} matching {@code topic} equals
+     * {@code "Hello"}.</li>
+     * <li>Call {@link Record#matches(Criteria)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true}.
+     */
+    @Test
+    public void testMatchesWithSimpleKey() {
+        Participant alice = new Participant("alice123");
+        Conversation convo = new Conversation("Hello", alice);
+        convo.save();
+        Criteria criteria = Criteria.where().key("topic")
+                .operator(Operator.EQUALS).value("Hello").build();
+        Assert.assertTrue(convo.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * correctly resolves navigation keys through a collection of linked
+     * {@link Record Records}.
+     * <p>
+     * <strong>Start state:</strong> A {@link Node} with a list of friend
+     * {@link Node Nodes}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create {@link Node Nodes} {@code a}, {@code b}, {@code c}, and
+     * {@code d}.</li>
+     * <li>Add {@code b}, {@code c}, and {@code d} as friends of {@code a}.</li>
+     * <li>Build a {@link Criteria} matching {@code friends.label} equals
+     * {@code "b"}.</li>
+     * <li>Call {@link Record#matches(Criteria)} on {@code a}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true} because
+     * one of {@code a}'s friends has label {@code "b"}.
+     */
+    @Test
+    public void testMatchesWithCollectionNavigationKey() {
         Node a = new Node("a");
         Node b = new Node("b");
         Node c = new Node("c");
@@ -380,15 +495,9 @@ public class RecordDataAccessTest extends AbstractRecordTest {
         a.friends.add(b);
         a.friends.add(c);
         a.friends.add(d);
-        b.friends.add(a);
-        b.friends.add(c);
-        Multimap<String, Object> mmap = a.mmap();
-        Assert.assertEquals(mmap.get("label"), ImmutableList.of("a"));
-        Assert.assertEquals(mmap.get("friends"), ImmutableList.of(b, c, d));
-        Assert.assertTrue(mmap.containsValue(b));
-        Assert.assertTrue(mmap.containsValue("a"));
-        mmap = a.mmap("label");
-        Assert.assertFalse(mmap.containsKey("friends"));
+        Criteria criteria = Criteria.where().key("friends.label")
+                .operator(Operator.EQUALS).value("b").build();
+        Assert.assertTrue(a.matches(criteria));
     }
 
 }

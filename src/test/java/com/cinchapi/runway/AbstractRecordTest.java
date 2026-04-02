@@ -236,6 +236,56 @@ public abstract class AbstractRecordTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * A {@link Record} representing an individual who participates in a
+     * {@link Conversation}.
+     */
+    class Participant extends Record {
+
+        /**
+         * The unique identifier for this {@link Participant}.
+         */
+        public final String userId;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param userId the unique identifier
+         */
+        public Participant(String userId) {
+            this.userId = userId;
+        }
+    }
+
+    /**
+     * A {@link Record} representing a conversation that references a
+     * {@link Participant} via a private field.
+     */
+    class Conversation extends Record {
+
+        /**
+         * The topic of this {@link Conversation}.
+         */
+        public final String topic;
+
+        /**
+         * The {@link Participant} in this {@link Conversation}.
+         */
+        @SuppressWarnings("unused")
+        private Participant participant;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param topic the conversation topic
+         * @param participant the {@link Participant}
+         */
+        public Conversation(String topic, Participant participant) {
+            this.topic = topic;
+            this.participant = participant;
+        }
+    }
+
     class Jock extends Record {
 
         public Gock testy;

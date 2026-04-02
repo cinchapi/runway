@@ -478,6 +478,56 @@ Set<Document> publicDocs = anon.find(Document.class, criteria);
 
 You can also return a specific set of field names, or use negative rules (prefix with `-`) to deny specific fields while allowing all others.
 
+### Visibility Scopes
+
+By default, `$isDiscoverableBy` is evaluated per-instance — every record must be loaded and checked individually. For large datasets where only a fraction of records are visible to a given audience, this is expensive and causes problems with pagination and count accuracy.
+
+A `Scope` expresses which records of a type are visible to an audience as a class-level declaration rather than a per-instance evaluation. When registered, a Scope pushes visibility constraints directly to the database, so only matching records are returned.
+
+#### Scope Variants
+
+| Factory Method | Behavior |
+|-------------------------|-----------------------------------------------|
+| `Scope.of(criteria)` | Visibility expressed as a `Criteria` pushed into the database query |
+| `Scope.unrestricted()` | Audience sees all records; no filter applied |
+| `Scope.none()` | Audience sees no records; short-circuits immediately |
+| `Scope.unsupported()` | Cannot be expressed as a constraint; falls back to per-instance checking |
+
+#### Registering Scopes
+
+Register a Scope provider for a single class:
+
+```java
+AccessControl.registerVisibilityScope(Document.class, audience -> {
+    if(audience.equals(adminUser)) {
+        return Scope.unrestricted();
+    }
+    else {
+        User user = (User) audience;
+        return Scope.of(Criteria.where().key("owner")
+                .operator(Operator.EQUALS)
+                .value(user.name).build());
+    }
+});
+```
+
+Register for an entire type hierarchy:
+
+```java
+AccessControl.registerVisibilityScopeHierarchy(
+        Document.class, audience -> Scope.unrestricted());
+```
+
+Once registered, Scopes are applied automatically when the audience performs queries — no changes to query code are needed.
+
+#### When to Use Scopes
+
+Start with instance-based permissions (`$isDiscoverableBy`), which are simpler to reason about. Introduce a Scope when:
+
+- Queries return large datasets but only a small visible subset
+- Pagination results are incorrect because client-side filtering reduces page sizes unpredictably
+- Count queries need to reflect the visible subset accurately
+
 ## Metadata
 
 Implement the `Metadata` interface on a Record to gain computed temporal properties:

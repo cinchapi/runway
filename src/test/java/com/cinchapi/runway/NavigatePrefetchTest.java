@@ -40,10 +40,6 @@ import com.google.common.collect.Lists;
  */
 public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
 
-    // ---------------------------------------------------------------
-    // StaticAnalysis path computation
-    // ---------------------------------------------------------------
-
     /**
      * <strong>Goal:</strong> Verify that {@link Record.StaticAnalysis} computes
      * navigate paths for {@link java.util.Collection Collection&lt;Record&gt;}
@@ -170,10 +166,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Assert.assertFalse(hasHomePath);
     }
 
-    // ---------------------------------------------------------------
-    // End-to-end loading — field value correctness
-    // ---------------------------------------------------------------
-
     /**
      * <strong>Goal:</strong> Verify that loading a {@link Record} with a
      * {@link java.util.Collection Collection&lt;Record&gt;} field correctly
@@ -277,10 +269,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Assert.assertEquals("c", loadedB.friends.get(0).label);
     }
 
-    // ---------------------------------------------------------------
-    // Mixed field types — single Record + Collection<Record>
-    // ---------------------------------------------------------------
-
     /**
      * <strong>Goal:</strong> Verify that a {@link Record} with both a single
      * {@link Record} field and a {@link java.util.Collection
@@ -318,10 +306,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(descriptions.contains("lumber"));
         Assert.assertTrue(descriptions.contains("steel"));
     }
-
-    // ---------------------------------------------------------------
-    // find() pipeline
-    // ---------------------------------------------------------------
 
     /**
      * <strong>Goal:</strong> Verify that the {@code find()} pipeline (which
@@ -365,10 +349,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(dockValues.contains("port"));
         Assert.assertTrue(dockValues.contains("starboard"));
     }
-
-    // ---------------------------------------------------------------
-    // Bulk loading
-    // ---------------------------------------------------------------
 
     /**
      * <strong>Goal:</strong> Verify that bulk loading multiple {@link Record
@@ -454,10 +434,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         }
     }
 
-    // ---------------------------------------------------------------
-    // Regression — no Collection<Record> fields
-    // ---------------------------------------------------------------
-
     /**
      * <strong>Goal:</strong> Verify that loading a {@link Record} without any
      * {@link java.util.Collection Collection&lt;Record&gt;} fields still works
@@ -524,10 +500,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(names.contains("y"));
         Assert.assertTrue(names.contains("z"));
     }
-
-    // ---------------------------------------------------------------
-    // BULK_SELECT correctness
-    // ---------------------------------------------------------------
 
     /**
      * <strong>Goal:</strong> Verify that
@@ -651,10 +623,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         }
     }
 
-    // ---------------------------------------------------------------
-    // NAVIGATE single-record load
-    // ---------------------------------------------------------------
-
     /**
      * <strong>Goal:</strong> Verify that
      * {@link CollectionPreSelectStrategy#NAVIGATE} correctly populates
@@ -698,10 +666,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
             runway.properties().collectionPreSelectStrategy(previous);
         }
     }
-
-    // ---------------------------------------------------------------
-    // Builder wiring
-    // ---------------------------------------------------------------
 
     /**
      * <strong>Goal:</strong> Verify that
@@ -837,10 +801,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
             custom.close();
         }
     }
-
-    // ---------------------------------------------------------------
-    // Model classes
-    // ---------------------------------------------------------------
 
     // NOTE: Performance benchmark tests were removed because
     // timing-based assertions are inherently flaky on localhost

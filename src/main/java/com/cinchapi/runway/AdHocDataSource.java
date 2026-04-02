@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -25,15 +26,13 @@ import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
 
-import com.cinchapi.ccl.syntax.ConditionTree;
-import com.cinchapi.common.base.Array;
 import com.cinchapi.concourse.DuplicateEntryException;
-import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Direction;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.lang.sort.OrderComponent;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 
@@ -118,10 +117,34 @@ public class AdHocDataSource<T extends AdHocRecord> implements
     }
 
     @Override
+    public <R extends Record> int count(Class<R> clazz, Criteria criteria,
+            Predicate<R> filter, Realms realms) {
+        return find(clazz, criteria, filter, realms).size();
+    }
+
+    @Override
+    public <R extends Record> int count(Class<R> clazz, Predicate<R> filter,
+            Realms realms) {
+        return load(clazz, filter, realms).size();
+    }
+
+    @Override
+    public <R extends Record> int countAny(Class<R> clazz, Criteria criteria,
+            Predicate<R> filter, Realms realms) {
+        return findAny(clazz, criteria, filter, realms).size();
+    }
+
+    @Override
+    public <R extends Record> int countAny(Class<R> clazz, Predicate<R> filter,
+            Realms realms) {
+        return loadAny(clazz, filter, realms).size();
+    }
+
+    @Override
     public <R extends Record> Set<R> find(Class<R> clazz, Criteria criteria,
-            Order order, Page page, Realms realms) {
+            Order order, Page page, Predicate<R> filter, Realms realms) {
         if(handles(clazz)) {
-            Set<R> filtered = doFind(criteria);
+            Set<R> filtered = doFind(criteria, filter);
             filtered = sort(filtered, order);
             return paginate(filtered, page);
         }
@@ -132,9 +155,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> find(Class<R> clazz, Criteria criteria,
-            Order order, Realms realms) {
+            Order order, Predicate<R> filter, Realms realms) {
         if(handles(clazz)) {
-            Set<R> filtered = doFind(criteria);
+            Set<R> filtered = doFind(criteria, filter);
             return sort(filtered, order);
         }
         else {
@@ -144,9 +167,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> find(Class<R> clazz, Criteria criteria,
-            Page page, Realms realms) {
+            Page page, Predicate<R> filter, Realms realms) {
         if(handles(clazz)) {
-            Set<R> filtered = doFind(criteria);
+            Set<R> filtered = doFind(criteria, filter);
             return paginate(filtered, page);
         }
         else {
@@ -156,9 +179,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> find(Class<R> clazz, Criteria criteria,
-            Realms realms) {
+            Predicate<R> filter, Realms realms) {
         if(handles(clazz)) {
-            return doFind(criteria);
+            return doFind(criteria, filter);
         }
         else {
             return ImmutableSet.of();
@@ -167,9 +190,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> findAny(Class<R> clazz, Criteria criteria,
-            Order order, Page page, Realms realms) {
+            Order order, Page page, Predicate<R> filter, Realms realms) {
         if(handlesHierarchy(clazz)) {
-            Set<R> filtered = doFindAny(clazz, criteria);
+            Set<R> filtered = doFindAny(clazz, criteria, filter);
             filtered = sort(filtered, order);
             return paginate(filtered, page);
         }
@@ -180,9 +203,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> findAny(Class<R> clazz, Criteria criteria,
-            Order order, Realms realms) {
+            Order order, Predicate<R> filter, Realms realms) {
         if(handlesHierarchy(clazz)) {
-            Set<R> filtered = doFindAny(clazz, criteria);
+            Set<R> filtered = doFindAny(clazz, criteria, filter);
             return sort(filtered, order);
         }
         else {
@@ -192,9 +215,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> findAny(Class<R> clazz, Criteria criteria,
-            Page page, Realms realms) {
+            Page page, Predicate<R> filter, Realms realms) {
         if(handlesHierarchy(clazz)) {
-            Set<R> filtered = doFindAny(clazz, criteria);
+            Set<R> filtered = doFindAny(clazz, criteria, filter);
             return paginate(filtered, page);
         }
         else {
@@ -204,9 +227,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> findAny(Class<R> clazz, Criteria criteria,
-            Realms realms) {
+            Predicate<R> filter, Realms realms) {
         if(handlesHierarchy(clazz)) {
-            return doFindAny(clazz, criteria);
+            return doFindAny(clazz, criteria, filter);
         }
         else {
             return ImmutableSet.of();
@@ -230,7 +253,7 @@ public class AdHocDataSource<T extends AdHocRecord> implements
     @Override
     public <R extends Record> R load(Class<R> clazz, long id, Realms realms) {
         if(handles(clazz)) {
-            return doLoad(id);
+            return doLoad(id, r -> true);
         }
         else {
             return null;
@@ -239,9 +262,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> load(Class<R> clazz, Order order,
-            Page page, Realms realms) {
+            Page page, Predicate<R> filter, Realms realms) {
         if(handles(clazz)) {
-            Set<R> all = doLoad();
+            Set<R> all = doLoad(filter);
             all = sort(all, order);
             return paginate(all, page);
         }
@@ -252,9 +275,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> load(Class<R> clazz, Order order,
-            Realms realms) {
+            Predicate<R> filter, Realms realms) {
         if(handles(clazz)) {
-            return sort(doLoad(), order);
+            return sort(doLoad(filter), order);
         }
         else {
             return ImmutableSet.of();
@@ -263,9 +286,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> load(Class<R> clazz, Page page,
-            Realms realms) {
+            Predicate<R> filter, Realms realms) {
         if(handles(clazz)) {
-            return paginate(doLoad(), page);
+            return paginate(doLoad(filter), page);
         }
         else {
             return ImmutableSet.of();
@@ -273,9 +296,10 @@ public class AdHocDataSource<T extends AdHocRecord> implements
     }
 
     @Override
-    public <R extends Record> Set<R> load(Class<R> clazz, Realms realms) {
+    public <R extends Record> Set<R> load(Class<R> clazz, Predicate<R> filter,
+            Realms realms) {
         if(handles(clazz)) {
-            return doLoad();
+            return doLoad(filter);
         }
         else {
             return ImmutableSet.of();
@@ -284,9 +308,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> loadAny(Class<R> clazz, Order order,
-            Page page, Realms realms) {
+            Page page, Predicate<R> filter, Realms realms) {
         if(handlesHierarchy(clazz)) {
-            Set<R> all = doLoadAny(clazz);
+            Set<R> all = doLoadAny(clazz, filter);
             all = sort(all, order);
             return paginate(all, page);
         }
@@ -297,9 +321,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> loadAny(Class<R> clazz, Order order,
-            Realms realms) {
+            Predicate<R> filter, Realms realms) {
         if(handlesHierarchy(clazz)) {
-            return sort(doLoadAny(clazz), order);
+            return sort(doLoadAny(clazz, filter), order);
         }
         else {
             return ImmutableSet.of();
@@ -308,9 +332,9 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     @Override
     public <R extends Record> Set<R> loadAny(Class<R> clazz, Page page,
-            Realms realms) {
+            Predicate<R> filter, Realms realms) {
         if(handlesHierarchy(clazz)) {
-            return paginate(doLoadAny(clazz), page);
+            return paginate(doLoadAny(clazz, filter), page);
         }
         else {
             return ImmutableSet.of();
@@ -318,13 +342,72 @@ public class AdHocDataSource<T extends AdHocRecord> implements
     }
 
     @Override
-    public <R extends Record> Set<R> loadAny(Class<R> clazz, Realms realms) {
+    public <R extends Record> Set<R> loadAny(Class<R> clazz,
+            Predicate<R> filter, Realms realms) {
         if(handlesHierarchy(clazz)) {
-            return doLoadAny(clazz);
+            return doLoadAny(clazz, filter);
         }
         else {
             return ImmutableSet.of();
         }
+    }
+
+    @Override
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    public Selections select(Selection<?>... options) {
+        Preconditions.checkArgument(options.length > 0);
+        DatabaseSelection<?>[] selections = Arrays.stream(options)
+                .map(DatabaseSelection::resolve)
+                .toArray(DatabaseSelection[]::new);
+        for (DatabaseSelection<?> selection : selections) {
+            if(selection.state == Selection.State.RESOLVED) {
+                selection.state = Selection.State.FINISHED;
+                continue; /* (authorized short circuit) */
+            }
+            selection.ensurePending();
+            selection.state = Selection.State.SUBMITTED;
+            if(selection instanceof CountSelection) {
+                // NOTE: This path isn't consolidated because #count has
+                // different codepaths with vs without a Criteria
+                CountSelection<?> s = (CountSelection<?>) selection;
+                Predicate filter = s.filter;
+                if(s.criteria != null) {
+                    s.result = s.any
+                            ? countAny(s.clazz, s.criteria, filter, s.realms)
+                            : count(s.clazz, s.criteria, filter, s.realms);
+                }
+                else {
+                    s.result = s.any ? countAny(s.clazz, filter, s.realms)
+                            : count(s.clazz, filter, s.realms);
+                }
+            }
+            else if(selection instanceof LoadRecordSelection) {
+                LoadRecordSelection<?> s = (LoadRecordSelection<?>) selection;
+                s.result = load(s.clazz, s.id, s.realms);
+            }
+            else if(selection instanceof FindSelection) {
+                FindSelection<?> s = (FindSelection<?>) selection;
+                Predicate filter = s.filter;
+                s.result = s.any
+                        ? findAny(s.clazz, s.criteria, s.order, s.page, filter,
+                                s.realms)
+                        : find(s.clazz, s.criteria, s.order, s.page, filter,
+                                s.realms);
+            }
+            else if(selection instanceof LoadClassSelection) {
+                LoadClassSelection<?> s = (LoadClassSelection<?>) selection;
+                Predicate filter = s.filter;
+                s.result = s.any
+                        ? loadAny(s.clazz, s.order, s.page, filter, s.realms)
+                        : load(s.clazz, s.order, s.page, filter, s.realms);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "Unsupported Selection type " + selection.getClass());
+            }
+            selection.state = Selection.State.FINISHED;
+        }
+        return new Selections(selections);
     }
 
     /**
@@ -343,77 +426,92 @@ public class AdHocDataSource<T extends AdHocRecord> implements
      * @return a predicate that tests records against the criteria
      */
     private Predicate<T> createFilter(Criteria criteria) {
-        ConcourseCompiler compiler = ConcourseCompiler.get();
-        ConditionTree ast = (ConditionTree) compiler.parse(criteria);
-        String[] keys = compiler.analyze(ast).keys()
-                .toArray(Array.containing());
-        return record -> compiler.evaluate(ast, record.mmap(keys));
+        return record -> record.matches(criteria);
     }
 
     /**
-     * Find all records matching the given criteria.
+     * Find all {@link Record Records} matching the given criteria and passing
+     * the {@code inputFilter}.
      *
      * @param criteria the filter criteria
+     * @param inputFilter an additional predicate applied after the criteria
+     *            match
      * @return matching records
      */
     @SuppressWarnings("unchecked")
-    private <R extends Record> Set<R> doFind(Criteria criteria) {
+    private <R extends Record> Set<R> doFind(Criteria criteria,
+            Predicate<R> inputFilter) {
         Predicate<T> filter = createFilter(criteria);
         return supplier.get().stream().filter(filter).map(record -> (R) record)
+                .filter(inputFilter)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     /**
-     * Find all records in the class hierarchy matching the given criteria.
+     * Find all {@link Record Records} in the class hierarchy matching the given
+     * criteria and passing the {@code inputFilter}.
      *
      * @param requestedClass the requested class (may be a supertype)
      * @param criteria the filter criteria
+     * @param inputFilter an additional predicate applied after the criteria
+     *            match
      * @return matching records
      */
     @SuppressWarnings("unchecked")
     private <R extends Record> Set<R> doFindAny(Class<R> requestedClass,
-            Criteria criteria) {
+            Criteria criteria, Predicate<R> inputFilter) {
         Predicate<T> filter = createFilter(criteria);
         return supplier.get().stream()
                 .filter(record -> requestedClass.isInstance(record))
-                .filter(filter).map(record -> (R) record)
+                .filter(filter).map(record -> (R) record).filter(inputFilter)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     /**
-     * Load all records from the supplier.
+     * Load all {@link Record Records} from the supplier that pass the
+     * {@code inputFilter}.
      *
-     * @return all records
-     */
-    @SuppressWarnings("unchecked")
-    private <R extends Record> Set<R> doLoad() {
-        return supplier.get().stream().map(record -> (R) record)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-    }
-
-    /**
-     * Load a specific record by id.
-     *
-     * @param id the record id
-     * @return the record, or {@code null} if not found
-     */
-    @SuppressWarnings("unchecked")
-    private <R extends Record> R doLoad(long id) {
-        return supplier.get().stream().filter(record -> record.id() == id)
-                .map(record -> (R) record).findFirst().orElse(null);
-    }
-
-    /**
-     * Load all records assignable to the requested class.
-     *
-     * @param requestedClass the requested class (may be a supertype)
+     * @param inputFilter a predicate that each record must satisfy to be
+     *            included
      * @return matching records
      */
     @SuppressWarnings("unchecked")
-    private <R extends Record> Set<R> doLoadAny(Class<R> requestedClass) {
+    private <R extends Record> Set<R> doLoad(Predicate<R> inputFilter) {
+        return supplier.get().stream().map(record -> (R) record)
+                .filter(inputFilter)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * Load a specific {@link Record} by id that passes the {@code inputFilter}.
+     *
+     * @param id the record id
+     * @param inputFilter a predicate that the record must satisfy to be
+     *            returned
+     * @return the record, or {@code null} if not found or filtered out
+     */
+    @SuppressWarnings("unchecked")
+    private <R extends Record> R doLoad(long id, Predicate<R> inputFilter) {
+        return supplier.get().stream().filter(record -> record.id() == id)
+                .map(record -> (R) record).filter(inputFilter).findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * Load all {@link Record Records} assignable to the requested class that
+     * pass the {@code inputFilter}.
+     *
+     * @param requestedClass the requested class (may be a supertype)
+     * @param inputFilter a predicate that each record must satisfy to be
+     *            included
+     * @return matching records
+     */
+    @SuppressWarnings("unchecked")
+    private <R extends Record> Set<R> doLoadAny(Class<R> requestedClass,
+            Predicate<R> inputFilter) {
         return supplier.get().stream()
                 .filter(record -> requestedClass.isInstance(record))
-                .map(record -> (R) record)
+                .map(record -> (R) record).filter(inputFilter)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 

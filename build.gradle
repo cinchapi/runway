@@ -49,7 +49,7 @@ repositories {
 
 
 // Set the version for all Concourse dependencies
-ext.concourseVersion = '0.12.0'
+ext.concourseVersion = '0.12.4'
 ext.accent4jVersion = '1.16.0'
 
 configurations.all {
@@ -59,6 +59,12 @@ configurations.all {
 }
 
 dependencies {
+    constraints {
+        implementation('com.cinchapi:ccl:3.2.2') {
+            because 'fix for local criteria evaluation using navigation keys'
+        }
+    }
+
     // Internal dependencies (not exposed to consumers)
     implementation 'com.google.guava:guava:25.1-jre'
     implementation (group: 'com.cinchapi', name: 'accent4j', version: accent4jVersion, changing:true)

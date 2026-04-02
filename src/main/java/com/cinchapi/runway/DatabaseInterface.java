@@ -21,20 +21,30 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
-import com.cinchapi.runway.util.Pagination;
-import com.google.common.collect.Sets;
 
 /**
  * A {@link DatabaseInterface} provides methods for interacting with a database
  * backend.
+ * <p>
+ * All retrieval methods delegate to {@link #fetch(Selection...)}, which is the
+ * single dispatch point that implementations must provide. The convenience
+ * methods on this interface build the appropriate {@link Selection} and route
+ * through {@code select}.
  *
  * @author Jeff Nelson
  */
 public interface DatabaseInterface {
+
+    /**
+     * A {@link Page} that retrieves at most two results, used by unique-result
+     * queries to detect duplicates without fetching the entire result set.
+     */
+    static Page UNIQUE_PAGINATION = Page.sized(2);
 
     /**
      * Return the {@code records} in sorted {@code order}.
@@ -72,7 +82,7 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int count(Class<T> clazz) {
-        return count(clazz, Realms.any());
+        return fetch(Selection.of(clazz).count());
     }
 
     /**
@@ -86,7 +96,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Criteria criteria) {
-        return count(clazz, criteria, Realms.any());
+        return fetch(Selection.of(clazz).where(criteria).count());
     }
 
     /**
@@ -100,7 +110,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        return count(clazz, criteria, filter, Realms.any());
+        return fetch(
+                Selection.of(clazz).where(criteria).count().filter(filter));
     }
 
     /**
@@ -116,7 +127,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Criteria criteria, Predicate<T> filter, Realms realms) {
-        return find(clazz, criteria, filter, realms).size();
+        return fetch(Selection.of(clazz).where(criteria).count().filter(filter)
+                .realms(realms));
     }
 
     /**
@@ -131,7 +143,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Criteria criteria, Realms realms) {
-        return find(clazz, criteria, realms).size();
+        return fetch(
+                Selection.of(clazz).where(criteria).count().realms(realms));
     }
 
     /**
@@ -144,7 +157,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Predicate<T> filter) {
-        return count(clazz, filter, Realms.any());
+        return fetch(Selection.of(clazz).count().filter(filter));
     }
 
     /**
@@ -158,7 +171,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int count(Class<T> clazz,
             Predicate<T> filter, Realms realms) {
-        return load(clazz, filter, realms).size();
+        return fetch(Selection.of(clazz).count().filter(filter).realms(realms));
     }
 
     /**
@@ -170,7 +183,7 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int count(Class<T> clazz, Realms realms) {
-        return load(clazz, realms).size();
+        return fetch(Selection.of(clazz).count().realms(realms));
     }
 
     /**
@@ -181,7 +194,7 @@ public interface DatabaseInterface {
      * @return the number of {@link Records} in {@code clazz}.
      */
     public default <T extends Record> int countAny(Class<T> clazz) {
-        return countAny(clazz, Realms.any());
+        return fetch(Selection.ofAny(clazz).count());
     }
 
     /**
@@ -195,7 +208,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Criteria criteria) {
-        return countAny(clazz, criteria, Realms.any());
+        return fetch(Selection.ofAny(clazz).where(criteria).count());
     }
 
     /**
@@ -210,7 +223,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        return countAny(clazz, criteria, filter, Realms.any());
+        return fetch(
+                Selection.ofAny(clazz).where(criteria).count().filter(filter));
     }
 
     /**
@@ -227,7 +241,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Criteria criteria, Predicate<T> filter, Realms realms) {
-        return findAny(clazz, criteria, filter, realms).size();
+        return fetch(Selection.ofAny(clazz).where(criteria).count()
+                .filter(filter).realms(realms));
     }
 
     /**
@@ -243,7 +258,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Criteria criteria, Realms realms) {
-        return findAny(clazz, criteria, realms).size();
+        return fetch(
+                Selection.ofAny(clazz).where(criteria).count().realms(realms));
     }
 
     /**
@@ -256,7 +272,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Predicate<T> filter) {
-        return countAny(clazz, filter, Realms.any());
+        return fetch(Selection.ofAny(clazz).count().filter(filter));
     }
 
     /**
@@ -271,7 +287,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Predicate<T> filter, Realms realms) {
-        return loadAny(clazz, filter, realms).size();
+        return fetch(
+                Selection.ofAny(clazz).count().filter(filter).realms(realms));
     }
 
     /**
@@ -284,7 +301,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> int countAny(Class<T> clazz,
             Realms realms) {
-        return loadAny(clazz, realms).size();
+        return fetch(Selection.ofAny(clazz).count().realms(realms));
     }
 
     /**
@@ -297,7 +314,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria) {
-        return find(clazz, criteria, Realms.any());
+        return fetch(Selection.of(clazz).where(criteria));
     }
 
     /**
@@ -313,7 +330,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, List<String> order) {
-        Set<T> records = find(clazz, criteria);
+        Set<T> records = fetch(Selection.of(clazz).where(criteria));
         return sort(records, order);
     }
 
@@ -328,7 +345,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order) {
-        return find(clazz, criteria, order, Realms.any());
+        return fetch(Selection.of(clazz).where(criteria).order(order));
     }
 
     /**
@@ -344,7 +361,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Page page) {
-        return find(clazz, criteria, order, page, Realms.any());
+        return fetch(
+                Selection.of(clazz).where(criteria).order(order).page(page));
     }
 
     /**
@@ -361,7 +379,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter) {
-        return find(clazz, criteria, order, page, filter, Realms.any());
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .order(order).page(page));
     }
 
     /**
@@ -381,9 +400,8 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter,
             Realms realms) {
-        return Pagination.applyFilterAndPage(
-                $page -> find(clazz, criteria, order, $page, realms), filter,
-                page);
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .order(order).page(page).realms(realms));
     }
 
     /**
@@ -398,8 +416,11 @@ public interface DatabaseInterface {
      * @param realms
      * @return the matching records
      */
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order, Page page, Realms realms);
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Order order, Page page, Realms realms) {
+        return fetch(Selection.of(clazz).where(criteria).order(order).page(page)
+                .realms(realms));
+    }
 
     /**
      * Find and return all the records of type {@code clazz} that match the
@@ -414,7 +435,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter) {
-        return find(clazz, criteria, order, filter, Realms.any());
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .order(order));
     }
 
     /**
@@ -432,8 +454,8 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter,
             Realms realms) {
-        Set<T> unfiltered = find(clazz, criteria, order, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .order(order).realms(realms));
     }
 
     /**
@@ -447,8 +469,11 @@ public interface DatabaseInterface {
      * @param realms
      * @return the matching records
      */
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Order order, Realms realms);
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Order order, Realms realms) {
+        return fetch(Selection.of(clazz).where(criteria).order(order)
+                .realms(realms));
+    }
 
     /**
      * Find and return all the records of type {@code clazz} that match the
@@ -461,7 +486,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page) {
-        return find(clazz, criteria, page, Realms.any());
+        return fetch(Selection.of(clazz).where(criteria).page(page));
     }
 
     /**
@@ -477,7 +502,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Order order) {
-        return find(clazz, criteria, page, order, Realms.any());
+        return fetch(
+                Selection.of(clazz).where(criteria).order(order).page(page));
     }
 
     /**
@@ -494,7 +520,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Order order, Predicate<T> filter) {
-        return find(clazz, criteria, page, order, filter, Realms.any());
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .order(order).page(page));
     }
 
     /**
@@ -514,7 +541,8 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Order order, Predicate<T> filter,
             Realms realms) {
-        return find(clazz, criteria, order, page, filter, realms);
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .order(order).page(page).realms(realms));
     }
 
     /**
@@ -531,7 +559,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Order order, Realms realms) {
-        return find(clazz, criteria, order, page, realms);
+        return fetch(Selection.of(clazz).where(criteria).order(order).page(page)
+                .realms(realms));
     }
 
     /**
@@ -547,7 +576,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter) {
-        return find(clazz, criteria, page, filter, Realms.any());
+        return fetch(
+                Selection.of(clazz).where(criteria).filter(filter).page(page));
     }
 
     /**
@@ -564,8 +594,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
-        return Pagination.applyFilterAndPage(
-                $page -> find(clazz, criteria, $page, realms), filter, page);
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .page(page).realms(realms));
     }
 
     /**
@@ -579,8 +609,11 @@ public interface DatabaseInterface {
      * @param realms
      * @return the matching records
      */
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Page page, Realms realms);
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Page page, Realms realms) {
+        return fetch(
+                Selection.of(clazz).where(criteria).page(page).realms(realms));
+    }
 
     /**
      * Find and return all the records of type {@code clazz} that match the
@@ -593,7 +626,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        return find(clazz, criteria, filter, Realms.any());
+        return fetch(Selection.of(clazz).where(criteria).filter(filter));
     }
 
     /**
@@ -609,8 +642,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, Predicate<T> filter, Realms realms) {
-        Set<T> unfiltered = find(clazz, criteria, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .realms(realms));
     }
 
     /**
@@ -622,8 +655,10 @@ public interface DatabaseInterface {
      * @param realms
      * @return the matching records
      */
-    public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-            Realms realms);
+    public default <T extends Record> Set<T> find(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        return fetch(Selection.of(clazz).where(criteria).realms(realms));
+    }
 
     /**
      * Find and return all the records of type {@code clazz} that match the
@@ -638,7 +673,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> find(Class<T> clazz,
             Criteria criteria, String order) {
-        Set<T> records = find(clazz, criteria);
+        Set<T> records = fetch(Selection.of(clazz).where(criteria));
         return sort(records, order);
     }
 
@@ -652,7 +687,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria) {
-        return findAny(clazz, criteria, Realms.any());
+        return fetch(Selection.ofAny(clazz).where(criteria));
     }
 
     /**
@@ -668,7 +703,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, List<String> order) {
-        Set<T> records = findAny(clazz, criteria);
+        Set<T> records = fetch(Selection.ofAny(clazz).where(criteria));
         return sort(records, order);
     }
 
@@ -683,7 +718,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order) {
-        return findAny(clazz, criteria, order, Realms.any());
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order));
     }
 
     /**
@@ -699,7 +734,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Page page) {
-        return findAny(clazz, criteria, order, page, Realms.any());
+        return fetch(
+                Selection.ofAny(clazz).where(criteria).order(order).page(page));
     }
 
     /**
@@ -716,7 +752,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter) {
-        return findAny(clazz, criteria, order, page, filter, Realms.any());
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .order(order).page(page));
     }
 
     /**
@@ -736,9 +773,8 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Page page, Predicate<T> filter,
             Realms realms) {
-        return Pagination.applyFilterAndPage(
-                $page -> findAny(clazz, criteria, order, $page, realms), filter,
-                page);
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .order(order).page(page).realms(realms));
     }
 
     /**
@@ -753,8 +789,11 @@ public interface DatabaseInterface {
      * @param realms
      * @return the matching records
      */
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Order order, Page page, Realms realms);
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Order order, Page page, Realms realms) {
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order)
+                .page(page).realms(realms));
+    }
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
@@ -769,7 +808,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter) {
-        return findAny(clazz, criteria, order, filter, Realms.any());
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .order(order));
     }
 
     /**
@@ -787,8 +827,8 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter,
             Realms realms) {
-        Set<T> unfiltered = findAny(clazz, criteria, order, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .order(order).realms(realms));
     }
 
     /**
@@ -802,8 +842,11 @@ public interface DatabaseInterface {
      * @param realms
      * @return the matching records
      */
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Order order, Realms realms);
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Order order, Realms realms) {
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order)
+                .realms(realms));
+    }
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
@@ -816,7 +859,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page) {
-        return findAny(clazz, criteria, page, Realms.any());
+        return fetch(Selection.ofAny(clazz).where(criteria).page(page));
     }
 
     /**
@@ -832,7 +875,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Order order) {
-        return findAny(clazz, criteria, page, order, Realms.any());
+        return fetch(
+                Selection.ofAny(clazz).where(criteria).order(order).page(page));
     }
 
     /**
@@ -849,7 +893,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Order order, Predicate<T> filter) {
-        return findAny(clazz, criteria, page, order, filter, Realms.any());
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .order(order).page(page));
     }
 
     /**
@@ -869,7 +914,8 @@ public interface DatabaseInterface {
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Order order, Predicate<T> filter,
             Realms realms) {
-        return findAny(clazz, criteria, order, page, filter, realms);
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .order(order).page(page).realms(realms));
     }
 
     /**
@@ -886,7 +932,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Order order, Realms realms) {
-        return findAny(clazz, criteria, order, page, realms);
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order)
+                .page(page).realms(realms));
     }
 
     /**
@@ -902,7 +949,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter) {
-        return findAny(clazz, criteria, page, filter, Realms.any());
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .page(page));
     }
 
     /**
@@ -919,9 +967,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Page page, Predicate<T> filter, Realms realms) {
-        return Pagination.applyFilterAndPage(
-                $page -> findAny(clazz, criteria, $page, realms), filter, page);
-
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .page(page).realms(realms));
     }
 
     /**
@@ -935,8 +982,11 @@ public interface DatabaseInterface {
      * @param realms
      * @return the matching records
      */
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Page page, Realms realms);
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Page page, Realms realms) {
+        return fetch(Selection.ofAny(clazz).where(criteria).page(page)
+                .realms(realms));
+    }
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
@@ -949,7 +999,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Predicate<T> filter) {
-        return findAny(clazz, criteria, filter, Realms.any());
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter));
     }
 
     /**
@@ -965,8 +1015,8 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, Predicate<T> filter, Realms realms) {
-        Set<T> unfiltered = findAny(clazz, criteria, realms);
-        return Sets.filter(unfiltered, filter::test);
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .realms(realms));
     }
 
     /**
@@ -978,8 +1028,10 @@ public interface DatabaseInterface {
      * @param realms
      * @return the matching records
      */
-    public <T extends Record> Set<T> findAny(Class<T> clazz, Criteria criteria,
-            Realms realms);
+    public default <T extends Record> Set<T> findAny(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        return fetch(Selection.ofAny(clazz).where(criteria).realms(realms));
+    }
 
     /**
      * Execute the {@link #find(Class, Criteria)} query for {@code clazz} and
@@ -994,7 +1046,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> findAny(Class<T> clazz,
             Criteria criteria, String order) {
-        Set<T> records = findAny(clazz, criteria);
+        Set<T> records = fetch(Selection.ofAny(clazz).where(criteria));
         return sort(records, order);
     }
 
@@ -1020,8 +1072,24 @@ public interface DatabaseInterface {
      * @param realms
      * @return the one matching record
      */
-    public <T extends Record> T findAnyUnique(Class<T> clazz, Criteria criteria,
-            Realms realms);
+    public default <T extends Record> T findAnyUnique(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        Set<T> results = fetch(Selection.ofAny(clazz).where(criteria)
+                .page(UNIQUE_PAGINATION).realms(realms));
+        if(results.isEmpty()) {
+            return null;
+        }
+        else if(results.size() == 1) {
+            return results.iterator().next();
+        }
+        else {
+            throw new DuplicateEntryException(
+                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                            AnyStrings.format(
+                                    "There are more than one records that match {} in the hierarchy of {}",
+                                    criteria, clazz)));
+        }
+    }
 
     /**
      * Find the one record of type {@code clazz} that matches the
@@ -1049,8 +1117,24 @@ public interface DatabaseInterface {
      * @return the one matching record
      * @throws DuplicateEntryException
      */
-    public <T extends Record> T findUnique(Class<T> clazz, Criteria criteria,
-            Realms realms);
+    public default <T extends Record> T findUnique(Class<T> clazz,
+            Criteria criteria, Realms realms) {
+        Set<T> results = fetch(Selection.of(clazz).where(criteria)
+                .page(UNIQUE_PAGINATION).realms(realms));
+        if(results.isEmpty()) {
+            return null;
+        }
+        else if(results.size() == 1) {
+            return results.iterator().next();
+        }
+        else {
+            throw new DuplicateEntryException(
+                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
+                            AnyStrings.format(
+                                    "There are more than one records that match {} in {}",
+                                    criteria, clazz)));
+        }
+    }
 
     /**
      * Create a {@link Gateway} instance that provides intelligent routing to
@@ -1059,7 +1143,12 @@ public interface DatabaseInterface {
      * {@link #find} and {@link #load} operations.
      *
      * @return a new gateway instance for this database interface
+     * @deprecated Use
+     *             {@link Selection#of(Class, Criteria, Order, Page, Realms)} or
+     *             {@link Selection#ofAny(Class, Criteria, Order, Page, Realms)}
+     *             with {@link #fetch(Selection...)} instead.
      */
+    @Deprecated
     public default Gateway gateway() {
         return Gateway.to(this);
     }
@@ -1079,7 +1168,7 @@ public interface DatabaseInterface {
      * @return a {@link Set set} of {@link Record} objects
      */
     public default <T extends Record> Set<T> load(Class<T> clazz) {
-        return load(clazz, Realms.any());
+        return fetch(Selection.of(clazz));
     }
 
     /**
@@ -1100,7 +1189,7 @@ public interface DatabaseInterface {
     @Deprecated
     public default <T extends Record> Set<T> load(Class<T> clazz,
             List<String> order) {
-        Set<T> records = load(clazz);
+        Set<T> records = fetch(Selection.of(clazz));
         return sort(records, order);
     }
 
@@ -1119,7 +1208,661 @@ public interface DatabaseInterface {
      * @return the existing Record
      */
     public default <T extends Record> T load(Class<T> clazz, long id) {
-        return load(clazz, id, Realms.any());
+        return fetch(Selection.of(clazz).id(id));
+    }
+
+    /**
+     * Load the Record that is contained within the specified {@code clazz} and
+     * has the specified {@code id} if it exist in any of the {@code realms}.
+     * <p>
+     * Multiple calls to this method with the same parameters will return
+     * <strong>different</strong> instances (e.g. the instances are not cached).
+     * This is done deliberately so different threads/clients can make changes
+     * to a Record in isolation.
+     * </p>
+     *
+     * @param clazz
+     * @param id
+     * @return the existing Record
+     */
+    public default <T extends Record> T load(Class<T> clazz, long id,
+            Realms realms) {
+        return fetch(Selection.of(clazz).id(id).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order}.
+     *
+     * @param clazz
+     * @param order
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order) {
+        return fetch(Selection.of(clazz).order(order));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order} and limited to
+     * the specified {@code page}.
+     *
+     * @param clazz
+     * @param order
+     * @param page
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Page page) {
+        return fetch(Selection.of(clazz).order(order).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, sorted using the specified
+     * {@code order} and limited to the specified {@code page}.
+     *
+     * @param clazz
+     * @param order
+     * @param page
+     * @param filter
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Page page, Predicate<T> filter) {
+        return fetch(
+                Selection.of(clazz).filter(filter).order(order).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, sorted using the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param order
+     * @param page
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Page page, Predicate<T> filter, Realms realms) {
+        return fetch(Selection.of(clazz).filter(filter).order(order).page(page)
+                .realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order} and limited to
+     * the specified {@code page} among the {@code realms}.
+     *
+     * @param clazz
+     * @param order
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Page page, Realms realms) {
+        return fetch(
+                Selection.of(clazz).order(order).page(page).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, sorted using the specified
+     * {@code order}.
+     *
+     * @param clazz
+     * @param order
+     * @param filter
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Predicate<T> filter) {
+        return fetch(Selection.of(clazz).filter(filter).order(order));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, sorted using the specified
+     * {@code order} among the {@code realms}.
+     *
+     * @param clazz
+     * @param order
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Predicate<T> filter, Realms realms) {
+        return fetch(
+                Selection.of(clazz).filter(filter).order(order).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order} among the
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param order
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
+            Realms realms) {
+        return fetch(Selection.of(clazz).order(order).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and limited to the specified {@code page}.
+     *
+     * @param clazz
+     * @param page
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page) {
+        return fetch(Selection.of(clazz).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order} and limited to
+     * the specified {@code page}.
+     *
+     * @param clazz
+     * @param page
+     * @param order
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Order order) {
+        return fetch(Selection.of(clazz).order(order).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, sorted using the specified
+     * {@code order} and limited to the specified {@code page}.
+     *
+     * @param clazz
+     * @param page
+     * @param order
+     * @param filter
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Order order, Predicate<T> filter) {
+        return fetch(
+                Selection.of(clazz).filter(filter).order(order).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, sorted using the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param page
+     * @param order
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Order order, Predicate<T> filter, Realms realms) {
+        return fetch(Selection.of(clazz).filter(filter).order(order).page(page)
+                .realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, limited to the specified
+     * {@code page}.
+     *
+     * @param clazz
+     * @param page
+     * @param filter
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Predicate<T> filter) {
+        return fetch(Selection.of(clazz).filter(filter).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, limited to the specified
+     * {@code page} among the {@code realms}.
+     *
+     * @param clazz
+     * @param page
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Predicate<T> filter, Realms realms) {
+        return fetch(
+                Selection.of(clazz).filter(filter).page(page).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and limited to the specified {@code page} among the
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
+            Realms realms) {
+        return fetch(Selection.of(clazz).page(page).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and pass the {@code filter}.
+     *
+     * @param clazz
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz,
+            Predicate<T> filter) {
+        return fetch(Selection.of(clazz).filter(filter));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and pass the {@code filter} among the {@code realms}.
+     *
+     * @param clazz
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz,
+            Predicate<T> filter, Realms realms) {
+        return fetch(Selection.of(clazz).filter(filter).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} among the {@code realms}.
+     *
+     * @param clazz
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> load(Class<T> clazz,
+            Realms realms) {
+        return fetch(Selection.of(clazz).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and sorted using the specified {@code order}.
+     *
+     * @param clazz
+     * @return a {@link Set set} of {@link Record} objects
+     * @deprecated Use {@link #load(Class, Order)} instead
+     */
+    @Deprecated
+    public default <T extends Record> Set<T> load(Class<T> clazz,
+            String order) {
+        Set<T> records = fetch(Selection.of(clazz));
+        return sort(records, order);
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants.
+     *
+     * @param clazz
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz) {
+        return fetch(Selection.ofAny(clazz));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order}.
+     *
+     * @param clazz
+     * @return a {@link Set set} of {@link Record} objects
+     * @deprecated Use {@link #loadAny(Class, Order)} instead
+     */
+    @Deprecated
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            List<String> order) {
+        Set<T> records = fetch(Selection.ofAny(clazz));
+        return sort(records, order);
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order}.
+     *
+     * @param clazz
+     * @param order
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order) {
+        return fetch(Selection.ofAny(clazz).order(order));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} and limited to the specified {@code page}.
+     *
+     * @param clazz
+     * @param order
+     * @param page
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order, Page page) {
+        return fetch(Selection.ofAny(clazz).order(order).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants that pass the {@code filter},
+     * sorted using the specified {@code order} and limited to the specified
+     * {@code page}.
+     *
+     * @param clazz
+     * @param order
+     * @param page
+     * @param filter
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order, Page page, Predicate<T> filter) {
+        return fetch(
+                Selection.ofAny(clazz).filter(filter).order(order).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants that pass the {@code filter},
+     * sorted using the specified {@code order} and limited to the specified
+     * {@code page} among the {@code realms}.
+     *
+     * @param clazz
+     * @param order
+     * @param page
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order, Page page, Predicate<T> filter, Realms realms) {
+        return fetch(Selection.ofAny(clazz).filter(filter).order(order)
+                .page(page).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param order
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order, Page page, Realms realms) {
+        return fetch(
+                Selection.ofAny(clazz).order(order).page(page).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants that pass the {@code filter},
+     * sorted using the specified {@code order}.
+     *
+     * @param clazz
+     * @param order
+     * @param filter
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order, Predicate<T> filter) {
+        return fetch(Selection.ofAny(clazz).filter(filter).order(order));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants that pass the {@code filter},
+     * sorted using the specified {@code order} among the {@code realms}.
+     *
+     * @param clazz
+     * @param order
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order, Predicate<T> filter, Realms realms) {
+        return fetch(Selection.ofAny(clazz).filter(filter).order(order)
+                .realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} among {@code realms}
+     *
+     * @param clazz
+     * @param order
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Order order, Realms realms) {
+        return fetch(Selection.ofAny(clazz).order(order).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and limited to the specified {@code page}.
+     *
+     * @param clazz
+     * @param page
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Page page) {
+        return fetch(Selection.ofAny(clazz).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} and limited to the specified {@code page}.
+     *
+     * @param clazz
+     * @param page
+     * @param order
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Order order) {
+        return fetch(Selection.ofAny(clazz).order(order).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants that pass the {@code filter},
+     * sorted using the specified {@code order} and limited to the specified
+     * {@code page}.
+     *
+     * @param clazz
+     * @param page
+     * @param order
+     * @param filter
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Order order, Predicate<T> filter) {
+        return fetch(
+                Selection.ofAny(clazz).filter(filter).order(order).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants that pass the {@code filter},
+     * sorted using the specified {@code order} and limited to the specified
+     * {@code page}.
+     *
+     * @param clazz
+     * @param page
+     * @param order
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Order order, Predicate<T> filter, Realms realms) {
+        return fetch(Selection.ofAny(clazz).filter(filter).order(order)
+                .page(page).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order} and limited to the specified {@code page} among the
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param page
+     * @param order
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Order order, Realms realms) {
+        return fetch(
+                Selection.ofAny(clazz).order(order).page(page).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, limited to the specified
+     * {@code page}.
+     *
+     * @param clazz
+     * @param page
+     * @param filter
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Predicate<T> filter) {
+        return fetch(Selection.ofAny(clazz).filter(filter).page(page));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} that pass the {@code filter}, limited to the specified
+     * {@code page} among the {@code realms}.
+     *
+     * @param clazz
+     * @param page
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Predicate<T> filter, Realms realms) {
+        return fetch(Selection.ofAny(clazz).filter(filter).page(page)
+                .realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} and limited to the specified {@code page} among the
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param page
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
+            Realms realms) {
+        return fetch(Selection.ofAny(clazz).page(page).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and pass the {@code filter}.
+     *
+     * @param clazz
+     * @param filter
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Predicate<T> filter) {
+        return fetch(Selection.ofAny(clazz).filter(filter));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and pass the {@code filter} amomg
+     * the {@code realms}.
+     *
+     * @param clazz
+     * @param filter
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Predicate<T> filter, Realms realms) {
+        return fetch(Selection.ofAny(clazz).filter(filter).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants among the {@code realms}.
+     *
+     * @param clazz
+     * @param realms
+     * @return a {@link Set set} of {@link Record} objects
+     */
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            Realms realms) {
+        return fetch(Selection.ofAny(clazz).realms(realms));
+    }
+
+    /**
+     * Load all the Records that are contained within the specified
+     * {@code clazz} or any of its descendants and sorted using the specified
+     * {@code order}.
+     *
+     * @param clazz
+     * @return a {@link Set set} of {@link Record} objects
+     * @deprecated Use {@link #loadAny(Class, Order)} instead
+     */
+    @Deprecated
+    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
+            String order) {
+        Set<T> records = fetch(Selection.ofAny(clazz));
+        return sort(records, order);
     }
 
     /**
@@ -1131,12 +1874,6 @@ public interface DatabaseInterface {
      * {@link #load(Class, long)} for cases where the caller expects the
      * {@link Record} to exist and considers its absence to be an error
      * condition.
-     * </p>
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a {@link Record} in isolation.
      * </p>
      *
      * @param clazz the {@link Record} type
@@ -1161,12 +1898,6 @@ public interface DatabaseInterface {
      * {@link Record} to exist and considers its absence to be an error
      * condition.
      * </p>
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a {@link Record} in isolation.
-     * </p>
      *
      * @param clazz the {@link Record} type
      * @param id the {@link Record} id
@@ -1178,7 +1909,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> T loadNullSafe(Class<T> clazz, long id,
             Realms realms) {
-        T record = load(clazz, id, realms);
+        T record = fetch(Selection.of(clazz).id(id).realms(realms));
         if(record != null) {
             return record;
         }
@@ -1188,916 +1919,39 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Load the Record that is contained within the specified {@code clazz} and
-     * has the specified {@code id} if it exist in any of the {@code realms}.
+     * Execute a single {@link Selection} and return the result directly, cast
+     * to the appropriate type.
      * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
+     * The return type is inferred from the calling context &mdash; a
+     * {@link java.util.Set Set} for find and load queries, a single
+     * {@link Record} for load-by-id queries, or an {@link Integer} for count
+     * queries.
      *
-     * @param clazz
-     * @param id
-     * @return the existing Record
+     * @param selection the {@link Selection} to execute
+     * @param <R> the expected result type
+     * @return the result of the {@link Selection}
+     * @throws IllegalStateException if the {@link Selection} has already been
+     *             submitted
      */
-    public <T extends Record> T load(Class<T> clazz, long id, Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and sorted using the specified {@code order}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Order order) {
-        return load(clazz, order, Realms.any());
+    public default <R> R fetch(Selection<?> selection) {
+        return select(selection).next();
     }
 
     /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and sorted using the specified {@code order} and limited to
-     * the specified {@code page}.
-     *
+     * Execute one or more {@link Selection Selections} and return a
+     * {@link Selections} wrapper for positional access to the results.
      * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
+     * This is the single dispatch point for all retrieval operations. Every
+     * other read method on this interface delegates here. Subclasses provide
+     * the actual query execution, caching, and optimization.
      * </p>
      *
-     * @param clazz
-     * @param order
-     * @param page
-     * @return a {@link Set set} of {@link Record} objects
+     * @param selections the {@link Selection Selections} to execute
+     * @return a {@link Selections} wrapper for positional access
+     * @throws IllegalArgumentException if the input array is empty
+     * @throws IllegalStateException if any {@link Selection} has already been
+     *             submitted
      */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page) {
-        return load(clazz, order, page, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, sorted using the specified
-     * {@code order} and limited to the specified {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param page
-     * @param filter
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page, Predicate<T> filter) {
-        return load(clazz, order, page, filter, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, sorted using the specified
-     * {@code order} and limited to the specified {@code page} among the
-     * {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param page
-     * @param filter
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page, Predicate<T> filter, Realms realms) {
-        return Pagination.applyFilterAndPage(
-                $page -> load(clazz, order, $page, realms), filter, page);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and sorted using the specified {@code order} and limited to
-     * the specified {@code page} among the {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param page
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Page page, Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, sorted using the specified
-     * {@code order}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param filter
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Predicate<T> filter) {
-        return load(clazz, order, filter, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, sorted using the specified
-     * {@code order} among the {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param filter
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Predicate<T> filter, Realms realms) {
-        Set<T> unfiltered = load(clazz, order, realms);
-        return Sets.filter(unfiltered, filter::test);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and sorted using the specified {@code order} among the
-     * {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-            Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and limited to the specified {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Page page) {
-        return load(clazz, page, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and sorted using the specified {@code order} and limited to
-     * the specified {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param order
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Order order) {
-        return load(clazz, order, page);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, sorted using the specified
-     * {@code order} and limited to the specified {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param order
-     * @param filter
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Order order, Predicate<T> filter) {
-        return load(clazz, page, order, filter, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, sorted using the specified
-     * {@code order} and limited to the specified {@code page} among the
-     * {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param order
-     * @param filter
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Order order, Predicate<T> filter, Realms realms) {
-        return load(clazz, order, page, filter, realms);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, limited to the specified
-     * {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param filter
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Predicate<T> filter) {
-        return load(clazz, page, filter, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, limited to the specified
-     * {@code page} among the {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param filter
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Predicate<T> filter, Realms realms) {
-        return Pagination.applyFilterAndPage(
-                $page -> load(clazz, $page, realms), filter, page);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and limited to the specified {@code page} among the
-     * {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> load(Class<T> clazz, Page page,
-            Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and pass the {@code filter}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz,
-            Predicate<T> filter) {
-        return load(clazz, filter, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and pass the {@code filter} among the {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> load(Class<T> clazz,
-            Predicate<T> filter, Realms realms) {
-        Set<T> unfiltered = load(clazz, realms);
-        return Sets.filter(unfiltered, filter::test);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} among the {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> load(Class<T> clazz, Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and sorted using the specified {@code order}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @return a {@link Set set} of {@link Record} objects
-     * @deprecated Use {@link #load(Class, Order)} instead
-     */
-    @Deprecated
-    public default <T extends Record> Set<T> load(Class<T> clazz,
-            String order) {
-        Set<T> records = load(clazz);
-        return sort(records, order);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz) {
-        return loadAny(clazz, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @return a {@link Set set} of {@link Record} objects
-     * @deprecated Use {@link #loadAny(Class, Order)} instead
-     */
-    @Deprecated
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            List<String> order) {
-        Set<T> records = loadAny(clazz);
-        return sort(records, order);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order) {
-        return loadAny(clazz, order, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order} and limited to the specified {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param page
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Page page) {
-        return loadAny(clazz, order, page, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants that pass the {@code filter},
-     * sorted using the specified {@code order} and limited to the specified
-     * {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param page
-     * @param filter
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Page page, Predicate<T> filter) {
-        return loadAny(clazz, order, page, filter, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants that pass the {@code filter},
-     * sorted using the specified {@code order} and limited to the specified
-     * {@code page} among the {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param page
-     * @param filter
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Page page, Predicate<T> filter, Realms realms) {
-        return Pagination.applyFilterAndPage(
-                $page -> loadAny(clazz, order, $page, realms), filter, page);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order} and limited to the specified {@code page} among the
-     * {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param page
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-            Page page, Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants that pass the {@code filter},
-     * sorted using the specified {@code order}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param filter
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Predicate<T> filter) {
-        return loadAny(clazz, order, filter, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants that pass the {@code filter},
-     * sorted using the specified {@code order} among the {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param filter
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Order order, Predicate<T> filter, Realms realms) {
-        Set<T> unfiltered = loadAny(clazz, order, realms);
-        return Sets.filter(unfiltered, filter::test);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order} among {@code realms}
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param order
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-            Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and limited to the specified {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Page page) {
-        return loadAny(clazz, page, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order} and limited to the specified {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param order
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Order order) {
-        return loadAny(clazz, order, page, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants that pass the {@code filter},
-     * sorted using the specified {@code order} and limited to the specified
-     * {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param order
-     * @param filter
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Order order, Predicate<T> filter) {
-        return loadAny(clazz, page, order, filter, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants that pass the {@code filter},
-     * sorted using the specified {@code order} and limited to the specified
-     * {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param order
-     * @param filter
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Order order, Predicate<T> filter, Realms realms) {
-        return loadAny(clazz, order, page, filter, realms);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order} and limited to the specified {@code page} among the
-     * {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param order
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Order order, Realms realms) {
-        return loadAny(clazz, page, order, realms);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, limited to the specified
-     * {@code page}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param filter
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Predicate<T> filter) {
-        return loadAny(clazz, page, filter, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} that pass the {@code filter}, limited to the specified
-     * {@code page} among the {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param filter
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Predicate<T> filter, Realms realms) {
-        return Pagination.applyFilterAndPage(
-                $page -> loadAny(clazz, $page, realms), filter, page);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} and limited to the specified {@code page} among the
-     * {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param page
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-            Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and pass the {@code filter}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param filter
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Predicate<T> filter) {
-        return loadAny(clazz, filter, Realms.any());
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and pass the {@code filter} amomg
-     * the {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param filter
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            Predicate<T> filter, Realms realms) {
-        Set<T> unfiltered = loadAny(clazz, realms);
-        return Sets.filter(unfiltered, filter::test);
-    }
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants among the {@code realms}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @param realms
-     * @return a {@link Set set} of {@link Record} objects
-     */
-    public <T extends Record> Set<T> loadAny(Class<T> clazz, Realms realms);
-
-    /**
-     * Load all the Records that are contained within the specified
-     * {@code clazz} or any of its descendants and sorted using the specified
-     * {@code order}.
-     *
-     * <p>
-     * Multiple calls to this method with the same parameters will return
-     * <strong>different</strong> instances (e.g. the instances are not cached).
-     * This is done deliberately so different threads/clients can make changes
-     * to a Record in isolation.
-     * </p>
-     *
-     * @param clazz
-     * @return a {@link Set set} of {@link Record} objects
-     * @deprecated Use {@link #loadAny(Class, Order)} instead
-     */
-    @Deprecated
-    public default <T extends Record> Set<T> loadAny(Class<T> clazz,
-            String order) {
-        Set<T> records = loadAny(clazz);
-        return sort(records, order);
-    }
+    public Selections select(Selection<?>... selections);
 
 }

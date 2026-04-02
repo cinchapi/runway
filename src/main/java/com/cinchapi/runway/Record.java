@@ -62,6 +62,7 @@ import org.reflections.util.ClasspathHelper;
 import org.reflections.util.ConfigurationBuilder;
 
 import com.cinchapi.ccl.Parser;
+import com.cinchapi.ccl.syntax.ConditionTree;
 import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.ArrayBuilder;
@@ -79,6 +80,7 @@ import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.BuildableState;
+import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -102,11 +104,9 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.LinkedHashMultiset;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
-import com.google.common.collect.Multiset;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
@@ -682,7 +682,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * The key that references a records id in Concourse.
      */
-    private static final String IDENTIFIER_KEY = "$id$";
+    /* package */ static final String IDENTIFIER_KEY = "$id$";
 
     /**
      * The prefix applied to a key provided to the
@@ -1162,13 +1162,30 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Retrieve a dynamic value.
+     * Return the value associated with {@code key}.
+     * <p>
+     * Navigation keys (e.g., {@code "participant.userId"}) are supported and
+     * traverse through linked {@link Record Records}.
+     * </p>
      *
-     * @param key the key name
-     * @return the dynamic value
+     * @param key the key name or navigation key
+     * @return the resolved value, or {@code null} if no readable value is found
+     */
+    public <T> T get(String key) {
+        return get(key, Record::isReadableField);
+    }
+
+    /**
+     * Return the value associated with {@code key}, using {@code filter} to
+     * govern field accessibility.
+     *
+     * @param key the key name or navigation key
+     * @param filter a {@link Predicate} that determines whether a declared
+     *            {@link Field} should be read
+     * @return the resolved value, or {@code null} if no value is found
      */
     @SuppressWarnings("unchecked")
-    public <T> T get(String key) {
+    private <T> T get(String key, Predicate<Field> filter) {
         if(key.equalsIgnoreCase("id")) {
             return (T) data().get(key);
         }
@@ -1180,7 +1197,7 @@ public abstract class Record implements Comparable<Record> {
                     try {
                         Field field = StaticAnalysis.instance().getField(this,
                                 key);
-                        if(isReadableField(field)) {
+                        if(filter.test(field)) {
                             value = field.get(this);
                             value = dereference(key, value);
                         }
@@ -1202,10 +1219,10 @@ public abstract class Record implements Comparable<Record> {
                 // The presented key is a navigation key, so incrementally
                 // traverse the document graph.
                 String stop = stops[0];
-                Object destination = get(stop);
+                Object destination = get(stop, filter);
                 String path = StringUtils.join(stops, '.', 1, stops.length);
                 if(destination instanceof Record) {
-                    return (T) ((Record) destination).get(path);
+                    return (T) ((Record) destination).get(path, filter);
                 }
                 else if(Sequences.isSequence(destination)) {
                     Collection<Object> seq = destination instanceof Set
@@ -1213,7 +1230,7 @@ public abstract class Record implements Comparable<Record> {
                             : Lists.newArrayList();
                     Sequences.forEach(destination, item -> {
                         if(item instanceof Record) {
-                            Object next = ((Record) item).get(path);
+                            Object next = ((Record) item).get(path, filter);
                             seq.add(next);
                         }
                     });
@@ -1416,35 +1433,38 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return a map that contains "readable" data from this {@link Record}.
+     * Return a map that contains readable data from this {@link Record}.
      * <p>
-     * If no {@code keys} are provided, all the readable data will be returned.
+     * If no {@code keys} are provided, all readable data will be returned.
+     * Navigation keys (e.g., {@code "company.name"}) may be used to reach
+     * values in linked {@link Record Records}.
      * </p>
      * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
+     * This method also supports <strong>negative filtering</strong>. Prefix any
+     * key with {@code -} to exclude it from the result.
      * </p>
      *
-     * @return the data in this record
+     * @return the data in this {@link Record}
      */
     public Map<String, Object> map() {
         return map(Array.containing());
     }
 
     /**
-     * Return a map that contains "readable" data from this {@link Record}.
+     * Return a map that contains readable data from this {@link Record}.
      * <p>
-     * If no {@code keys} are provided, all the readable data will be returned.
+     * If no {@code keys} are provided, all readable data will be returned.
+     * Navigation keys (e.g., {@code "company.name"}) may be used to reach
+     * values in linked {@link Record Records}.
      * </p>
      * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
+     * This method also supports <strong>negative filtering</strong>. Prefix any
+     * key with {@code -} to exclude it from the result.
      * </p>
      *
-     * @param keys
-     * @return the data in this record
+     * @param options the {@link SerializationOptions} to apply
+     * @param keys the keys to include (or exclude with {@code -} prefix)
+     * @return the data in this {@link Record}
      */
     public Map<String, Object> map(SerializationOptions options,
             String... keys) {
@@ -1528,21 +1548,44 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return a map that contains "readable" data from this {@link Record}.
+     * Return a map that contains readable data from this {@link Record}.
      * <p>
-     * If no {@code keys} are provided, all the readable data will be returned.
+     * If no {@code keys} are provided, all readable data will be returned.
+     * Navigation keys (e.g., {@code "company.name"}) may be used to reach
+     * values in linked {@link Record Records}.
      * </p>
      * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
+     * This method also supports <strong>negative filtering</strong>. Prefix any
+     * key with {@code -} to exclude it from the result.
      * </p>
      *
-     * @param keys
-     * @return the data in this record
+     * @param keys the keys to include (or exclude with {@code -} prefix)
+     * @return the data in this {@link Record}
      */
     public Map<String, Object> map(String... keys) {
         return map(SerializationOptions.defaults(), keys);
+    }
+
+    /**
+     * Return {@code true} if this {@link Record} satisfies the given
+     * {@link Criteria}.
+     * <p>
+     * The {@link Criteria} may reference navigation keys (e.g.,
+     * {@code "participant.userId"}) to match against values in linked
+     * {@link Record Records}.
+     * </p>
+     *
+     * @param criteria the {@link Criteria} to evaluate
+     * @return {@code true} if this {@link Record} satisfies the
+     *         {@link Criteria}
+     */
+    public boolean matches(Criteria criteria) {
+        ConcourseCompiler compiler = ConcourseCompiler.get();
+        ConditionTree ast = (ConditionTree) compiler.parse(criteria);
+        String[] keys = compiler.analyze(ast).keys()
+                .toArray(Array.containing());
+        Association data = navigate(keys);
+        return compiler.evaluate(ast, data);
     }
 
     /**
@@ -2163,40 +2206,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
-     *
-     * @return the data {@link Multimap}
-     */
-    Multimap<String, Object> mmap() {
-        return mmap(Array.containing());
-    }
-
-    /**
-     * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
-     *
-     * @param options
-     * @param keys
-     * @return the data {@link Multimap}
-     */
-    Multimap<String, Object> mmap(SerializationOptions options,
-            String... keys) {
-        Map<String, Object> data = map(options, keys);
-        Map<String, Collection<Object>> wrapper = new CollectionValueWrapperMap<>(
-                data);
-        return new SyntheticMultimap<>(wrapper);
-    }
-
-    /**
-     * Return this {@link Record}'s data {@link map()} as a {@link Multimap}.
-     *
-     * @param keys
-     * @return the data {@link Multimap}
-     */
-    Multimap<String, Object> mmap(String... keys) {
-        return mmap(SerializationOptions.defaults(), keys);
-    }
-
-    /**
      * Restore this {@link Record Record's} state from a previously captured
      * {@link Snapshot}.
      *
@@ -2689,9 +2698,13 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return a map that contains all of the readable data in this record.
-     *
-     * @return the data in this record
+     * Return a map that contains all "readable" data in this {@link Record}.
+     * <p>
+     * To get access to non-readable fields, use the
+     * {@link #navigate(String...)} method.
+     * </p>
+     * 
+     * @return the data in this {@link Record}
      */
     private Map<String, Object> data() {
         // The #computed data must be wrapped in a special map that only
@@ -2846,6 +2859,37 @@ public abstract class Record implements Comparable<Record> {
         for (Record record : waitingToBeDeleted) {
             record.deleteWithinTransaction(concourse, preventStaleWrite);
         }
+    }
+
+    /**
+     * Return an {@link Association} mapping each of the requested {@code keys}
+     * to its resolved value, without readability restrictions.
+     * <p>
+     * Navigation keys are stored under the full path in the returned
+     * {@link Association}.
+     * </p>
+     *
+     * @param keys the keys to resolve
+     * @return an {@link Association} mapping each key to its resolved value
+     */
+    private Association navigate(String... keys) {
+        Preconditions.checkArgument(keys.length > 0,
+                "Must provide at least one key");
+        Association data = Association.of();
+        // NOTE: Each key is resolved independently, so keys that share a common
+        // prefix (e.g., "participant.userId" and "participant.age") will
+        // traverse the first segment twice. This is acceptable because field
+        // access via reflection is just reading an object reference from
+        // memory, DeferredReference caches after first resolution, and all
+        // Records are already loaded in-memory (that's the premise of
+        // client-side evaluation).
+        for (String key : keys) {
+            Object value = get(key, Predicates.alwaysTrue());
+            if(value != null) {
+                data.set(key, value);
+            }
+        }
+        return data;
     }
 
     /**
@@ -3342,92 +3386,6 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
-         * Return the non-cyclic paths (e.g., keys and navigation keys) for the
-         * fields in {@code clazz}; all prefixed with {@code prefix} and using
-         * {@code ancestors} for cycle detection.
-         *
-         * @param clazz
-         * @param hierarchies
-         * @param fieldsByClass
-         * @return the paths
-         */
-        private static Set<String> computePaths(Class<? extends Record> clazz,
-                Multimap<Class<? extends Record>, Class<?>> hierarchies,
-                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass) {
-            return computePaths(clazz, hierarchies, fieldsByClass, "",
-                    Sets.newHashSet(), false);
-        }
-
-        /**
-         * Return the non-cyclic paths (e.g., keys and navigation keys) for the
-         * fields in {@code clazz}; all prefixed with {@code prefix} and using
-         * {@code ancestors} for cycle detection.
-         *
-         * @param clazz
-         * @param hierarchies
-         * @param fieldsByClass
-         * @param prefix
-         * @param ancestors
-         * @param includeRecordFieldKeys
-         * @return the paths
-         */
-        @SuppressWarnings("unchecked")
-        private static Set<String> computePaths(Class<? extends Record> clazz,
-                Multimap<Class<? extends Record>, Class<?>> hierarchies,
-                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
-                String prefix, Set<Class<? extends Record>> ancestors,
-                boolean includeRecordFieldKeys) {
-            ancestors.add(clazz);
-            Set<String> paths = new LinkedHashSet<>();
-            paths.add(prefix + SECTION_KEY);
-            paths.add(prefix + IDENTIFIER_KEY);
-            paths.add(prefix + REALMS_KEY);
-            Collection<Field> fields = fieldsByClass
-                    .getOrDefault(clazz, ImmutableMap.of()).values();
-            for (Field field : fields) {
-                Class<?> type = field.getType();
-                Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
-                if(Record.class.isAssignableFrom(type)
-                        && !ancestors.contains(type)
-                        && (COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS
-                                || !hasDescendantDefinedFields(type,
-                                        hierarchies, fieldsByClass))) {
-                    if(includeRecordFieldKeys) {
-                        // NOTE: For select(), nested navigation keys (e.g.,
-                        // company._) fold destination data into the source
-                        // record's result, so the raw Link value is
-                        // unnecessary. For navigate(), each hop resolves to a
-                        // separate entry keyed by destination ID, so the
-                        // intermediate record never receives the Link value
-                        // unless we explicitly include the bare field name as a
-                        // path.
-                        paths.add(prefix + field.getName());
-                    }
-                    Class<? extends Record> _type = (Class<? extends Record>) type;
-                    lineage.add(_type);
-                    Collection<Class<?>> hierarchy = hierarchies.get(_type);
-                    Set<String> nested = new HashSet<>();
-                    for (Class<?> descendant : hierarchy) {
-                        // Account for declared types having descendant
-                        // defined fields in child classes by computing the
-                        // paths for each descendant type at this junction, in
-                        // the path
-                        nested.addAll(computePaths(
-                                (Class<? extends Record>) descendant,
-                                hierarchies, fieldsByClass,
-                                prefix + field.getName() + ".", lineage,
-                                includeRecordFieldKeys));
-                    }
-                    paths.addAll(nested);
-                }
-                else {
-                    paths.add(prefix + field.getName());
-                }
-            }
-            return paths;
-        }
-
-        /**
          * Return the paths that should be used with {@code navigate()} to
          * pre-fetch destination {@link Record} data for {@link Collection
          * Collection&lt;Record&gt;} fields in {@code clazz}. For each such
@@ -3532,6 +3490,92 @@ public abstract class Record implements Comparable<Record> {
                 paths.addAll(computeNavigatePaths(
                         (Class<? extends Record>) type, hierarchies,
                         fieldsByClass, fieldTypeArgumentsByClass));
+            }
+            return paths;
+        }
+
+        /**
+         * Return the non-cyclic paths (e.g., keys and navigation keys) for the
+         * fields in {@code clazz}; all prefixed with {@code prefix} and using
+         * {@code ancestors} for cycle detection.
+         *
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @return the paths
+         */
+        private static Set<String> computePaths(Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass) {
+            return computePaths(clazz, hierarchies, fieldsByClass, "",
+                    Sets.newHashSet(), false);
+        }
+
+        /**
+         * Return the non-cyclic paths (e.g., keys and navigation keys) for the
+         * fields in {@code clazz}; all prefixed with {@code prefix} and using
+         * {@code ancestors} for cycle detection.
+         *
+         * @param clazz
+         * @param hierarchies
+         * @param fieldsByClass
+         * @param prefix
+         * @param ancestors
+         * @param includeRecordFieldKeys
+         * @return the paths
+         */
+        @SuppressWarnings("unchecked")
+        private static Set<String> computePaths(Class<? extends Record> clazz,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
+                String prefix, Set<Class<? extends Record>> ancestors,
+                boolean includeRecordFieldKeys) {
+            ancestors.add(clazz);
+            Set<String> paths = new LinkedHashSet<>();
+            paths.add(prefix + SECTION_KEY);
+            paths.add(prefix + IDENTIFIER_KEY);
+            paths.add(prefix + REALMS_KEY);
+            Collection<Field> fields = fieldsByClass
+                    .getOrDefault(clazz, ImmutableMap.of()).values();
+            for (Field field : fields) {
+                Class<?> type = field.getType();
+                Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
+                if(Record.class.isAssignableFrom(type)
+                        && !ancestors.contains(type)
+                        && (COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS
+                                || !hasDescendantDefinedFields(type,
+                                        hierarchies, fieldsByClass))) {
+                    if(includeRecordFieldKeys) {
+                        // NOTE: For select(), nested navigation keys (e.g.,
+                        // company._) fold destination data into the source
+                        // record's result, so the raw Link value is
+                        // unnecessary. For navigate(), each hop resolves to a
+                        // separate entry keyed by destination ID, so the
+                        // intermediate record never receives the Link value
+                        // unless we explicitly include the bare field name as a
+                        // path.
+                        paths.add(prefix + field.getName());
+                    }
+                    Class<? extends Record> _type = (Class<? extends Record>) type;
+                    lineage.add(_type);
+                    Collection<Class<?>> hierarchy = hierarchies.get(_type);
+                    Set<String> nested = new HashSet<>();
+                    for (Class<?> descendant : hierarchy) {
+                        // Account for declared types having descendant
+                        // defined fields in child classes by computing the
+                        // paths for each descendant type at this junction, in
+                        // the path
+                        nested.addAll(computePaths(
+                                (Class<? extends Record>) descendant,
+                                hierarchies, fieldsByClass,
+                                prefix + field.getName() + ".", lineage,
+                                includeRecordFieldKeys));
+                    }
+                    paths.addAll(nested);
+                }
+                else {
+                    paths.add(prefix + field.getName());
+                }
             }
             return paths;
         }
@@ -4063,29 +4107,6 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
-         * Return all the paths (e.g., navigable keys based on fields with
-         * linked {@link Record} types) for {@code clazz}.
-         *
-         * @param clazz
-         * @return the paths
-         */
-        public <T extends Record> Set<String> getPaths(Class<T> clazz) {
-            return pathsByClass.get(clazz);
-        }
-
-        /**
-         * Return all the paths (e.g., navigable keys based on fields with
-         * linked {@link Record} types) for {@code clazz} and all of its
-         * descendents.
-         *
-         * @param clazz
-         * @return the paths
-         */
-        public Set<String> getPathsHierarchy(Class<? extends Record> clazz) {
-            return pathsByClassHierarchy.get(clazz);
-        }
-
-        /**
          * Return the navigate paths for {@code clazz} &mdash; the paths that
          * should be used with {@code navigate()} to pre-fetch destination
          * {@link Record} data for {@link Collection Collection&lt;Record&gt;}
@@ -4112,30 +4133,26 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
-         * Return {@code true} if {@code clazz} has any fields whose type is a
-         * {@link Collection} parameterized with a subclass of {@link Record}.
+         * Return all the paths (e.g., navigable keys based on fields with
+         * linked {@link Record} types) for {@code clazz}.
          *
-         * @param clazz the {@link Record} class
-         * @return {@code true} if the class has {@link Collection
-         *         Collection&lt;Record&gt;} fields
+         * @param clazz
+         * @return the paths
          */
-        public boolean hasCollectionRecordFieldInClass(
-                Class<? extends Record> clazz) {
-            return hasCollectionRecordFieldTypeByClass.contains(clazz);
+        public <T extends Record> Set<String> getPaths(Class<T> clazz) {
+            return pathsByClass.get(clazz);
         }
 
         /**
-         * Return {@code true} if {@code clazz}, or any of its descendants, have
-         * any fields whose type is a {@link Collection} parameterized with a
-         * subclass of {@link Record}.
+         * Return all the paths (e.g., navigable keys based on fields with
+         * linked {@link Record} types) for {@code clazz} and all of its
+         * descendents.
          *
-         * @param clazz the {@link Record} class
-         * @return {@code true} if the class or its descendants have
-         *         {@link Collection Collection&lt;Record&gt;} fields
+         * @param clazz
+         * @return the paths
          */
-        public boolean hasCollectionRecordFieldInClassHierarchy(
-                Class<? extends Record> clazz) {
-            return hasCollectionRecordFieldTypeByClassHierarchy.contains(clazz);
+        public Set<String> getPathsHierarchy(Class<? extends Record> clazz) {
+            return pathsByClassHierarchy.get(clazz);
         }
 
         /**
@@ -4172,6 +4189,33 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Return {@code true} if {@code clazz} has any fields whose type is a
+         * {@link Collection} parameterized with a subclass of {@link Record}.
+         *
+         * @param clazz the {@link Record} class
+         * @return {@code true} if the class has {@link Collection
+         *         Collection&lt;Record&gt;} fields
+         */
+        public boolean hasCollectionRecordFieldInClass(
+                Class<? extends Record> clazz) {
+            return hasCollectionRecordFieldTypeByClass.contains(clazz);
+        }
+
+        /**
+         * Return {@code true} if {@code clazz}, or any of its descendants, have
+         * any fields whose type is a {@link Collection} parameterized with a
+         * subclass of {@link Record}.
+         *
+         * @param clazz the {@link Record} class
+         * @return {@code true} if the class or its descendants have
+         *         {@link Collection Collection&lt;Record&gt;} fields
+         */
+        public boolean hasCollectionRecordFieldInClassHierarchy(
+                Class<? extends Record> clazz) {
+            return hasCollectionRecordFieldTypeByClassHierarchy.contains(clazz);
+        }
+
+        /**
+         * Return {@code true} if {@code clazz} has any fields whose type is a
          * subclass of {@link Record}.
          *
          * @param clazz
@@ -4194,6 +4238,16 @@ public abstract class Record implements Comparable<Record> {
         public boolean hasFieldOfTypeRecordInClassHierarchy(
                 Class<? extends Record> clazz) {
             return hasRecordFieldTypeByClassHierarchy.contains(clazz);
+        }
+
+        /**
+         * Return all known {@link Record} types that were discovered on the
+         * classpath during static analysis.
+         *
+         * @return an unmodifiable {@link Set} of all {@link Record} subclasses
+         */
+        public Set<Class<? extends Record>> types() {
+            return Collections.unmodifiableSet(hierarchies.keySet());
         }
 
         /**
@@ -4412,91 +4466,6 @@ public abstract class Record implements Comparable<Record> {
             this.hasModifiedRealms = Record.this._hasModifiedRealms;
             this.checksum = Record.this.__checksum;
             this.author = Record.this._author;
-        }
-
-    }
-
-    /**
-     * A read-only {@link Map} that ensures that the values of another
-     * {@link Map} are wrapped in a {@link Collection}.
-     * <p>
-     * If the input {@link Map} associates a key to a scalar value, that value
-     * is added to a {@link Collection}. Otherwise, if the associated value is a
-     * {@link Sequence}, the items within it are represented using a
-     * {@link Collection}.
-     * </p>
-     *
-     * @author Jeff Nelson
-     */
-    private static class CollectionValueWrapperMap<K>
-            extends AbstractMap<K, Collection<Object>> {
-
-        private final Map<K, Object> data;
-
-        /**
-         * Construct a new instance.
-         *
-         * @param data
-         */
-        public CollectionValueWrapperMap(Map<K, Object> data) {
-            this.data = data;
-        }
-
-        @Override
-        public boolean containsKey(Object key) {
-            return data.containsKey(key);
-        }
-
-        @Override
-        public Set<Entry<K, Collection<Object>>> entrySet() {
-            return keySet().stream()
-                    .map(key -> new AbstractMap.SimpleImmutableEntry<>(key,
-                            get(key)))
-                    .collect(Collectors.toCollection(
-                            () -> new LinkedHashSet<>(data.size())));
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public Collection<Object> get(Object key) {
-            Object value = data.get(key);
-            if(value instanceof Collection) {
-                return (Collection<Object>) value;
-            }
-            else if(Sequences.isSequence(value)) {
-                return Sequences.stream(value).collect(Collectors.toList());
-            }
-            else if(value == null) {
-                return ImmutableList.of();
-            }
-            else {
-                return ImmutableList.of(value);
-            }
-        }
-
-        @Override
-        public boolean isEmpty() {
-            return data.isEmpty();
-        }
-
-        @Override
-        public Set<K> keySet() {
-            return data.keySet();
-        }
-
-        @Override
-        public Collection<Object> put(K key, Collection<Object> value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Collection<Object> remove(Object key) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public int size() {
-            return data.size();
         }
 
     }
@@ -4976,166 +4945,15 @@ public abstract class Record implements Comparable<Record> {
             }
         }
 
-    }
-
-    /**
-     * A read-only {@link Multimap} interface for a {@link Map} where each key
-     * is associated with a {@link Collection} of values.
-     * <p>
-     * A {@link SyntheticMultimap} allows for treating a {@link Map} with
-     * {@link Collection} values as a {@link Multimap} without explicitly
-     * copying the data over.
-     * </p>
-     *
-     * @author Jeff Nelson
-     */
-    private static class SyntheticMultimap<K, V> implements Multimap<K, V> {
-
-        /**
-         * The map that this interface treats like a {@link Multimap}.
-         */
-        private final Map<K, Collection<V>> data;
-
-        /**
-         * Construct a new instance.
-         *
-         * @param data
-         */
-        public SyntheticMultimap(Map<K, Collection<V>> data) {
-            this.data = data;
-        }
-
         @Override
-        public Map<K, Collection<V>> asMap() {
-            return data;
-        }
-
-        @Override
-        public void clear() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean containsEntry(Object key, Object value) {
-            Collection<V> values = data.getOrDefault(key, ImmutableSet.of());
-            return values.contains(value);
-        }
-
-        @Override
-        public boolean containsKey(Object key) {
-            return data.containsKey(key);
-        }
-
-        @Override
-        public boolean containsValue(Object value) {
-            for (Entry<K, Collection<V>> entry : data.entrySet()) {
-                for (V v : entry.getValue()) {
-                    if(v.equals(value)) {
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        @Override
-        public Collection<Entry<K, V>> entries() {
-            List<Entry<K, V>> entries = new ArrayList<>();
-            for (Entry<K, Collection<V>> entry : data.entrySet()) {
-                K key = entry.getKey();
-                for (V value : entry.getValue()) {
-                    entries.add(
-                            new AbstractMap.SimpleImmutableEntry<>(key, value));
-                }
-            }
-            return entries;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if(obj instanceof Multimap) {
-                Multimap<?, ?> mmap = (Multimap<?, ?>) obj;
-                return mmap.asMap().equals(asMap());
+        public Selections select(Selection<?>... selections) {
+            if(tracked.runway != null) {
+                return tracked.runway.select(selections);
             }
             else {
-                return false;
+                throw new UnsupportedOperationException(
+                        "No database interface has been assigned to this Record");
             }
-        }
-
-        @Override
-        public Collection<V> get(K key) {
-            return data.get(key);
-        }
-
-        @Override
-        public int hashCode() {
-            return data.hashCode();
-        }
-
-        @Override
-        public boolean isEmpty() {
-            return data.isEmpty();
-        }
-
-        @Override
-        public Multiset<K> keys() {
-            Multiset<K> keys = LinkedHashMultiset.create();
-            for (Entry<K, Collection<V>> entry : data.entrySet()) {
-                keys.add(entry.getKey(), entry.getValue().size());
-            }
-            return keys;
-        }
-
-        @Override
-        public Set<K> keySet() {
-            return data.keySet();
-        }
-
-        @Override
-        public boolean put(K key, V value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean putAll(K key, Iterable<? extends V> values) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean putAll(Multimap<? extends K, ? extends V> multimap) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean remove(Object key, Object value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Collection<V> removeAll(Object key) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Collection<V> replaceValues(K key,
-                Iterable<? extends V> values) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public int size() {
-            return data.size();
-        }
-
-        @Override
-        public String toString() {
-            return data.toString();
-        }
-
-        @Override
-        public Collection<V> values() {
-            return data.values().stream().flatMap(values -> values.stream())
-                    .collect(Collectors.toList());
         }
 
     }
