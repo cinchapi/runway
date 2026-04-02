@@ -51,8 +51,6 @@ import java.util.stream.Stream;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-import com.cinchapi.ccl.syntax.ConditionTree;
-import com.cinchapi.common.base.Array;
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.concurrent.ExecutorRaceService;
@@ -65,7 +63,6 @@ import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
-import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.ValueState;
 import com.cinchapi.concourse.lang.paginate.Page;
@@ -1823,15 +1820,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> filter(Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
-        ConcourseCompiler compiler = ConcourseCompiler.get();
-        ConditionTree ast = (ConditionTree) compiler
-                .parse($Criteria.amongRealms(realms, criteria));
-        String[] keys = compiler.analyze(ast).keys()
-                .toArray(Array.containing());
-        Predicate<T> filter = record -> compiler.evaluate(ast,
-                record.mmap(keys));
-        return fetch(
-                Selection.of(clazz).order(order).page(page).filter(filter));
+        return fetch(Selection.of(clazz).order(order).page(page)
+                .filter(record -> record
+                        .matches($Criteria.amongRealms(realms, criteria))));
     }
 
     /**
@@ -1849,15 +1840,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> Set<T> filterAny(Class<T> clazz,
             Criteria criteria, @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
-        ConcourseCompiler compiler = ConcourseCompiler.get();
-        ConditionTree ast = (ConditionTree) compiler
-                .parse($Criteria.amongRealms(realms, criteria));
-        String[] keys = compiler.analyze(ast).keys()
-                .toArray(Array.containing());
-        Predicate<T> filter = record -> compiler.evaluate(ast,
-                record.mmap(keys));
-        return fetch(
-                Selection.ofAny(clazz).order(order).page(page).filter(filter));
+        return fetch(Selection.ofAny(clazz).order(order).page(page)
+                .filter(record -> record
+                        .matches($Criteria.amongRealms(realms, criteria))));
     }
 
     /**

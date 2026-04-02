@@ -26,10 +26,7 @@ import java.util.stream.Collectors;
 
 import javax.annotation.Nullable;
 
-import com.cinchapi.ccl.syntax.ConditionTree;
-import com.cinchapi.common.base.Array;
 import com.cinchapi.concourse.DuplicateEntryException;
-import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Direction;
@@ -429,11 +426,7 @@ public class AdHocDataSource<T extends AdHocRecord> implements
      * @return a predicate that tests records against the criteria
      */
     private Predicate<T> createFilter(Criteria criteria) {
-        ConcourseCompiler compiler = ConcourseCompiler.get();
-        ConditionTree ast = (ConditionTree) compiler.parse(criteria);
-        String[] keys = compiler.analyze(ast).keys()
-                .toArray(Array.containing());
-        return record -> compiler.evaluate(ast, record.mmap(keys));
+        return record -> record.matches(criteria);
     }
 
     /**
