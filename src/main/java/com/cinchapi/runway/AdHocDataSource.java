@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway;
 
+import static com.cinchapi.runway.DatabaseInterface.duplicateEntryException;
+
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -240,14 +242,14 @@ public class AdHocDataSource<T extends AdHocRecord> implements
     public <R extends Record> R findAnyUnique(Class<R> clazz, Criteria criteria,
             Realms realms) {
         Set<R> results = findAny(clazz, criteria, realms);
-        return unique(results, clazz, criteria);
+        return unique(results, clazz, criteria, true);
     }
 
     @Override
     public <R extends Record> R findUnique(Class<R> clazz, Criteria criteria,
             Realms realms) {
         Set<R> results = find(clazz, criteria, realms);
-        return unique(results, clazz, criteria);
+        return unique(results, clazz, criteria, false);
     }
 
     @Override
@@ -400,6 +402,21 @@ public class AdHocDataSource<T extends AdHocRecord> implements
                 s.result = s.any
                         ? loadAny(s.clazz, s.order, s.page, filter, s.realms)
                         : load(s.clazz, s.order, s.page, filter, s.realms);
+            }
+            else if(selection instanceof UniqueSelection) {
+                UniqueSelection<?> s = (UniqueSelection<?>) selection;
+                Predicate filter = s.filter;
+                Set results;
+                if(s.criteria != null) {
+                    results = s.any
+                            ? findAny(s.clazz, s.criteria, filter, s.realms)
+                            : find(s.clazz, s.criteria, filter, s.realms);
+                }
+                else {
+                    results = s.any ? loadAny(s.clazz, filter, s.realms)
+                            : load(s.clazz, filter, s.realms);
+                }
+                s.result = unique(results, s.clazz, s.criteria, s.any);
             }
             else {
                 throw new UnsupportedOperationException(
@@ -573,11 +590,12 @@ public class AdHocDataSource<T extends AdHocRecord> implements
      * @param results the result set
      * @param clazz the queried class
      * @param criteria the query criteria
+     * @param any whether the query includes descendants
      * @return the single result, or {@code null} if empty
      * @throws DuplicateEntryException if more than one result exists
      */
     private <R extends Record> R unique(Set<R> results, Class<R> clazz,
-            Criteria criteria) {
+            Criteria criteria, boolean any) {
         if(results.isEmpty()) {
             return null;
         }
@@ -585,10 +603,8 @@ public class AdHocDataSource<T extends AdHocRecord> implements
             return results.iterator().next();
         }
         else {
-            throw new DuplicateEntryException(
-                    new com.cinchapi.concourse.thrift.DuplicateEntryException(
-                            "Multiple records match " + criteria + " in "
-                                    + clazz));
+            throw duplicateEntryException("Multiple records match {} in {}{}",
+                    criteria, any ? "the hierarchy of " : "", clazz);
         }
     }
 

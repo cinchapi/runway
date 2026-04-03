@@ -157,6 +157,98 @@ public class SelectionWithInjectedCriteriaTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that injecting visibility criteria into a
+     * {@link UniqueSelection} that already has criteria produces a new
+     * {@link UniqueSelection} with AND-ed criteria.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link UniqueSelection} with a base criteria.</li>
+     * <li>Call {@link Selection#withInjectedCriteria} with a visibility
+     * criteria.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection} with
+     * non-null criteria that is not the original.
+     */
+    @Test
+    public void testUniqueSelectionCriteriaIsAnded() {
+        Criteria base = Criteria.where().key("active").operator(Operator.EQUALS)
+                .value(true).build();
+        Criteria visibility = Criteria.where().key("owner")
+                .operator(Operator.EQUALS).value(42L).build();
+        Selection<TestRecord> sel = Selection.ofUnique(TestRecord.class)
+                .where(base).build();
+        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
+                visibility);
+        Assert.assertTrue(result instanceof UniqueSelection);
+        UniqueSelection<TestRecord> unique = (UniqueSelection<TestRecord>) result;
+        Assert.assertNotSame(base, unique.criteria);
+        Assert.assertNotNull(unique.criteria);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that injecting visibility criteria into a
+     * {@link UniqueSelection} that has no criteria uses the visibility criteria
+     * as the sole criteria.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link UniqueSelection} with no criteria.</li>
+     * <li>Call {@link Selection#withInjectedCriteria} with a visibility
+     * criteria.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection} whose
+     * criteria is exactly the visibility criteria.
+     */
+    @Test
+    public void testUniqueSelectionWithNoCriteriaUsesVisibility() {
+        Criteria visibility = Criteria.where().key("owner")
+                .operator(Operator.EQUALS).value(42L).build();
+        Selection<TestRecord> sel = Selection.ofUnique(TestRecord.class)
+                .build();
+        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
+                visibility);
+        Assert.assertTrue(result instanceof UniqueSelection);
+        UniqueSelection<TestRecord> unique = (UniqueSelection<TestRecord>) result;
+        Assert.assertSame(visibility, unique.criteria);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that injecting visibility criteria into a
+     * {@link UniqueSelection} preserves the {@code any} flag.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link UniqueSelection} via {@code ofAnyUnique}.</li>
+     * <li>Call {@link Selection#withInjectedCriteria} with a visibility
+     * criteria.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection} with
+     * {@code any == true}.
+     */
+    @Test
+    public void testUniqueSelectionPreservesAnyFlag() {
+        Criteria visibility = Criteria.where().key("owner")
+                .operator(Operator.EQUALS).value(42L).build();
+        Selection<TestRecord> sel = Selection.ofAnyUnique(TestRecord.class)
+                .build();
+        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
+                visibility);
+        Assert.assertTrue(result instanceof UniqueSelection);
+        DatabaseSelection<TestRecord> db = (DatabaseSelection<TestRecord>) result;
+        Assert.assertTrue(db.any);
+    }
+
+    /**
      * A simple {@link Record} subclass for testing.
      */
     static class TestRecord extends Record {} // empty — used only for type

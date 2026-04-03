@@ -476,7 +476,7 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(1, results.size());
         }
     }
-    
+
     @Test
     public void testFindAnyWithMultipleSourcesInHierarchyAlt() {
         Collection<TestAdHocRecord> testData = Arrays.asList(

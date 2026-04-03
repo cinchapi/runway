@@ -493,6 +493,160 @@ public class SelectionBuilderTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that
+     * {@code Selection.of(clazz).unique().build()} produces a
+     * {@link UniqueSelection}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Selection} via
+     * {@code Selection.of(clazz).unique()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection}.
+     */
+    @Test
+    public void testBuildWithUniqueReturnsUniqueSelection() {
+        Selection<TestRecord> sel = Selection.of(TestRecord.class).unique()
+                .build();
+        Assert.assertTrue(sel instanceof UniqueSelection);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@code Selection.of(clazz).where(c).unique().build()} produces a
+     * {@link UniqueSelection} with criteria set.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Selection} with criteria and {@code unique()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection} and
+     * its criteria field is non-null.
+     */
+    @Test
+    public void testBuildWithCriteriaAndUniqueReturnsUniqueSelection() {
+        Criteria criteria = Criteria.where().key("name")
+                .operator(Operator.EQUALS).value("test").build();
+        Selection<TestRecord> sel = Selection.of(TestRecord.class)
+                .where(criteria).unique().build();
+        Assert.assertTrue(sel instanceof UniqueSelection);
+        Assert.assertNotNull(((UniqueSelection<?>) sel).criteria);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@code Selection.ofUnique(clazz).build()} produces a
+     * {@link UniqueSelection}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Selection} via {@code Selection.ofUnique(clazz)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection} with
+     * {@code any == false}.
+     */
+    @Test
+    public void testOfUniqueReturnsUniqueSelection() {
+        DatabaseSelection<?> sel = DatabaseSelection
+                .resolve(Selection.ofUnique(TestRecord.class).build());
+        Assert.assertTrue(sel instanceof UniqueSelection);
+        Assert.assertFalse(sel.any);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@code Selection.ofAnyUnique(clazz).build()} produces a
+     * {@link UniqueSelection} with {@code any == true}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Selection} via
+     * {@code Selection.ofAnyUnique(clazz)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection} with
+     * {@code any == true}.
+     */
+    @Test
+    public void testOfAnyUniqueReturnsUniqueSelectionWithAny() {
+        DatabaseSelection<?> sel = DatabaseSelection
+                .resolve(Selection.ofAnyUnique(TestRecord.class).build());
+        Assert.assertTrue(sel instanceof UniqueSelection);
+        Assert.assertTrue(sel.any);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link UniqueSelection} is never
+     * combinable.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link UniqueSelection}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code isCombinable()} returns {@code false}.
+     */
+    @Test
+    public void testUniqueSelectionIsNotCombinable() {
+        DatabaseSelection<?> sel = DatabaseSelection
+                .resolve(Selection.of(TestRecord.class).unique().build());
+        Assert.assertFalse(sel.isCombinable());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code isUnique()} returns
+     * {@code true} for a {@link UniqueSelection}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link UniqueSelection}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code isUnique()} returns {@code true}.
+     */
+    @Test
+    public void testUniqueSelectionIsUnique() {
+        DatabaseSelection<?> sel = DatabaseSelection
+                .resolve(Selection.of(TestRecord.class).unique().build());
+        Assert.assertTrue(sel.isUnique());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code isUnique()} returns
+     * {@code false} for a non-unique {@link Selection}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link LoadClassSelection}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code isUnique()} returns {@code false}.
+     */
+    @Test
+    public void testNonUniqueSelectionIsNotUnique() {
+        DatabaseSelection<?> sel = DatabaseSelection
+                .resolve(Selection.of(TestRecord.class).build());
+        Assert.assertFalse(sel.isUnique());
+    }
+
+    /**
      * A simple {@link Record} subclass for testing.
      */
     static class TestRecord extends Record {
