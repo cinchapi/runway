@@ -167,9 +167,7 @@ public class RecordLinkTest extends AbstractRecordTest {
         b.friends.add(d);
         c.friends.add(e);
         c.friends.add(a);
-        Assert.assertEquals(
-                ImmutableList.of(ImmutableList.of("d"),
-                        ImmutableList.of("e", "a")),
+        Assert.assertEquals(ImmutableList.of("d", "e", "a"),
                 a.get("friends.friends.label"));
     }
 
