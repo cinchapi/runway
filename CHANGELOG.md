@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 1.14.3 (TBD)
+#### Version 1.14.3 (April 3, 2026)
 * Fixed a bug where `AdHocDataSource` records were invisible to `Runway.select()` when executing multiple selections simultaneously, causing count and data queries to return empty results ([GH-86](https://github.com/cinchapi/runway/issues/86))
 * Fixed a bug where `Runway#close()` could leave dangling instances in the static registry if closing the connection pool threw an exception, which could interfere with subsequent implicit saves ([GH-87](https://github.com/cinchapi/runway/issues/87))
 
