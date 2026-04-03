@@ -997,7 +997,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     selection.result = cached;
                     continue outer;
                 }
-                if(selection.isCombinable()) {
+                Set<AdHocDataSource<?>> sources = selection.any
+                        ? getAttachedSourcesForHierarchy(selection.clazz)
+                        : getAttachedSources(selection.clazz);
+                if(!sources.isEmpty()) {
+                    selection.state = Selection.State.SUBMITTED;
+                    $selectWithPossibleSources(selection, sources);
+                    reserve(selection);
+                    continue outer;
+                }
+                else if(selection.isCombinable()) {
                     // NOTE: #demux partitions combined results by class name
                     // only, so same-class selections with different criteria
                     // would each receive the union. Isolate conflicting ones to
@@ -1335,114 +1344,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param <T> the {@link Record} type
      * @param <R> the result type
      */
-    @SuppressWarnings("unchecked")
     private <T extends Record, R> void $select(DatabaseSelection<T> selection) {
-        if(selection.state == Selection.State.RESOLVED) {
-            selection.state = Selection.State.FINISHED;
-            return; /* (authorized short circuit) */
-        }
-        selection.state = Selection.State.SUBMITTED;
-        R result;
-        R cached = recallAndPossiblyFilter(selection);
-        if(cached != null) {
-            result = cached;
-        }
-        else {
-            Set<AdHocDataSource<?>> sources = selection.any
-                    ? getAttachedSourcesForHierarchy(selection.clazz)
-                    : getAttachedSources(selection.clazz);
-            if(sources.size() == 1) {
-                result = (R) sources.iterator().next()
-                        .fetch(selection.duplicate());
-            }
-            else if(!sources.isEmpty()) {
-                if(selection instanceof CountSelection) {
-                    Integer count = 0;
-                    for (AdHocDataSource<?> source : sources) {
-                        count += (int) source.fetch(selection.duplicate());
-                    }
-                    result = (R) count;
-                }
-                else if(selection instanceof LoadRecordSelection) {
-                    T loaded = null;
-                    for (AdHocDataSource<?> source : sources) {
-                        loaded = source.fetch(selection.duplicate());
-                        if(loaded != null) {
-                            break;
-                        }
-                    }
-                    result = (R) loaded;
-                }
-                else if(selection instanceof UniqueSelection) {
-                    T found = null;
-                    for (AdHocDataSource<?> source : sources) {
-                        T candidate = source.fetch(selection.duplicate());
-                        if(candidate != null && found != null) {
-                            // Enforce uniqueness across AdHocDataSources
-                            UniqueSelection<T> us = (UniqueSelection<T>) selection;
-                            throw duplicateEntryException(
-                                    "Multiple records match {} in {}{}",
-                                    us.criteria,
-                                    us.any ? "the hierarchy of " : "",
-                                    selection.clazz);
-                        }
-                        else if(candidate != null) {
-                            found = candidate;
-                        }
-                    }
-                    result = (R) found;
-                }
-                else if(selection instanceof SetBasedSelection) {
-                    Order order = ((SetBasedSelection<?>) selection).order;
-                    Page page = ((SetBasedSelection<?>) selection).page;
-                    Set<T> results = new LinkedHashSet<>();
-
-                    for (AdHocDataSource<?> source : sources) {
-                        SetBasedSelection<?> dupe = (SetBasedSelection<?>) selection
-                                .duplicate();
-                        Reflection.set("order", null, dupe);
-                        Reflection.set("page", null, dupe);
-                        results.addAll(source.fetch(dupe));
-                    }
-                    if(order != null) {
-                        results = DatabaseInterface.sort(results,
-                                backwardsCompatible(order));
-                    }
-                    if(page != null) {
-                        results = results.stream().skip(page.skip())
-                                .limit(page.limit()).collect(Collectors
-                                        .toCollection(LinkedHashSet::new));
-                    }
-                    result = (R) results;
-                }
-                else {
-                    throw new IllegalStateException(
-                            "Unsupported Selection type "
-                                    + selection.getClass());
-                }
-            }
-            else if(selection instanceof CountSelection) {
-                result = (R) $selectCount((CountSelection<T>) selection);
-            }
-            else if(selection instanceof LoadRecordSelection) {
-                result = (R) $selectRecord((LoadRecordSelection<T>) selection);
-            }
-            else if(selection instanceof LoadClassSelection) {
-                result = (R) $selectClass((LoadClassSelection<T>) selection);
-            }
-            else if(selection instanceof FindSelection) {
-                result = (R) $selectCriteria((FindSelection<T>) selection);
-            }
-            else if(selection instanceof UniqueSelection) {
-                result = (R) $selectUnique((UniqueSelection<T>) selection);
-            }
-            else {
-                throw new IllegalStateException(
-                        "Unsupported Selection type " + selection.getClass());
-            }
-        }
-        selection.result = result;
-        selection.state = Selection.State.FINISHED;
+        $selectWithPossibleSources(selection, null);
     }
 
     /**
@@ -1630,41 +1533,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Execute a {@link UniqueSelection} against the database.
-     *
-     * @param selection the {@link UniqueSelection} to execute
-     * @param <T> the {@link Record} type
-     * @return the unique matching {@link Record}, or {@code null} if none match
-     * @throws DuplicateEntryException if more than one {@link Record} matches
-     */
-    private <T extends Record> T $selectUnique(UniqueSelection<T> selection) {
-        DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
-                selection.clazz, selection.any);
-        state.criteria = selection.criteria;
-        state.page = DatabaseInterface.UNIQUE_PAGINATION;
-        state.filter = selection.filter;
-        state.realms = selection.realms;
-        Set<T> results;
-        if(selection.criteria != null) {
-            results = $selectCriteria(new FindSelection<>(state));
-        }
-        else {
-            results = $selectClass(new LoadClassSelection<>(state));
-        }
-        if(results.isEmpty()) {
-            return null;
-        }
-        else if(results.size() == 1) {
-            return results.iterator().next();
-        }
-        else {
-            throw duplicateEntryException("Multiple records match {} in {}{}",
-                    selection.criteria,
-                    selection.any ? "the hierarchy of " : "", selection.clazz);
-        }
-    }
-
-    /**
      * Execute a {@link LoadRecordSelection} against the database.
      *
      * @param selection the {@link LoadRecordSelection} to execute
@@ -1730,6 +1598,174 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 connections.release(connection);
             }
         }
+    }
+
+    /**
+     * Execute a {@link UniqueSelection} against the database.
+     *
+     * @param selection the {@link UniqueSelection} to execute
+     * @param <T> the {@link Record} type
+     * @return the unique matching {@link Record}, or {@code null} if none match
+     * @throws DuplicateEntryException if more than one {@link Record} matches
+     */
+    private <T extends Record> T $selectUnique(UniqueSelection<T> selection) {
+        DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                selection.clazz, selection.any);
+        state.criteria = selection.criteria;
+        state.page = DatabaseInterface.UNIQUE_PAGINATION;
+        state.filter = selection.filter;
+        state.realms = selection.realms;
+        Set<T> results;
+        if(selection.criteria != null) {
+            results = $selectCriteria(new FindSelection<>(state));
+        }
+        else {
+            results = $selectClass(new LoadClassSelection<>(state));
+        }
+        if(results.isEmpty()) {
+            return null;
+        }
+        else if(results.size() == 1) {
+            return results.iterator().next();
+        }
+        else {
+            throw duplicateEntryException("Multiple records match {} in {}{}",
+                    selection.criteria,
+                    selection.any ? "the hierarchy of " : "", selection.clazz);
+        }
+    }
+
+    /**
+     * Execute a single {@link DatabaseSelection}. This is the canonical
+     * dispatch point for all read operations &mdash; cache recall,
+     * {@link AdHocDataSource} routing, and database querying all funnel through
+     * here.
+     * <p>
+     * On completion, {@code selection}'s {@link DatabaseSelection#result
+     * result} and {@link DatabaseSelection#state state} are set.
+     *
+     * @param selection the {@link DatabaseSelection} to execute
+     * @param sources known {@link AdHocDataSource AdHocDataSources} that may
+     *            have data relevant {@link Selection}; typically provided if
+     *            the {@link Selection#clazz()} is a subclass of
+     *            {@link AdHocRecord} and prior work to
+     *            {@link #getAttachedSources(Class) get attached sources}
+     *            preceded this method call
+     * @param <T> the {@link Record} type
+     * @param <R> the result type
+     */
+    @SuppressWarnings("unchecked")
+    private <T extends Record, R> void $selectWithPossibleSources(
+            DatabaseSelection<T> selection,
+            @Nullable Set<AdHocDataSource<?>> sources) {
+        if(selection.state == Selection.State.RESOLVED) {
+            selection.state = Selection.State.FINISHED;
+            return; /* (authorized short circuit) */
+        }
+        selection.state = Selection.State.SUBMITTED;
+        R result;
+        R cached = recallAndPossiblyFilter(selection);
+        if(cached != null) {
+            result = cached;
+        }
+        else {
+            sources = sources == null
+                    ? (selection.any
+                            ? getAttachedSourcesForHierarchy(selection.clazz)
+                            : getAttachedSources(selection.clazz))
+                    : sources;
+            if(sources.size() == 1) {
+                result = (R) sources.iterator().next()
+                        .fetch(selection.duplicate());
+            }
+            else if(!sources.isEmpty()) {
+                if(selection instanceof CountSelection) {
+                    Integer count = 0;
+                    for (AdHocDataSource<?> source : sources) {
+                        count += (int) source.fetch(selection.duplicate());
+                    }
+                    result = (R) count;
+                }
+                else if(selection instanceof LoadRecordSelection) {
+                    T loaded = null;
+                    for (AdHocDataSource<?> source : sources) {
+                        loaded = source.fetch(selection.duplicate());
+                        if(loaded != null) {
+                            break;
+                        }
+                    }
+                    result = (R) loaded;
+                }
+                else if(selection instanceof UniqueSelection) {
+                    T found = null;
+                    for (AdHocDataSource<?> source : sources) {
+                        T candidate = source.fetch(selection.duplicate());
+                        if(candidate != null && found != null) {
+                            // Enforce uniqueness across AdHocDataSources
+                            UniqueSelection<T> us = (UniqueSelection<T>) selection;
+                            throw duplicateEntryException(
+                                    "Multiple records match {} in {}{}",
+                                    us.criteria,
+                                    us.any ? "the hierarchy of " : "",
+                                    selection.clazz);
+                        }
+                        else if(candidate != null) {
+                            found = candidate;
+                        }
+                    }
+                    result = (R) found;
+                }
+                else if(selection instanceof SetBasedSelection) {
+                    Order order = ((SetBasedSelection<?>) selection).order;
+                    Page page = ((SetBasedSelection<?>) selection).page;
+                    Set<T> results = new LinkedHashSet<>();
+
+                    for (AdHocDataSource<?> source : sources) {
+                        SetBasedSelection<?> dupe = (SetBasedSelection<?>) selection
+                                .duplicate();
+                        Reflection.set("order", null, dupe);
+                        Reflection.set("page", null, dupe);
+                        results.addAll(source.fetch(dupe));
+                    }
+                    if(order != null) {
+                        results = DatabaseInterface.sort(results,
+                                backwardsCompatible(order));
+                    }
+                    if(page != null) {
+                        results = results.stream().skip(page.skip())
+                                .limit(page.limit()).collect(Collectors
+                                        .toCollection(LinkedHashSet::new));
+                    }
+                    result = (R) results;
+                }
+                else {
+                    throw new IllegalStateException(
+                            "Unsupported Selection type "
+                                    + selection.getClass());
+                }
+            }
+            else if(selection instanceof CountSelection) {
+                result = (R) $selectCount((CountSelection<T>) selection);
+            }
+            else if(selection instanceof LoadRecordSelection) {
+                result = (R) $selectRecord((LoadRecordSelection<T>) selection);
+            }
+            else if(selection instanceof LoadClassSelection) {
+                result = (R) $selectClass((LoadClassSelection<T>) selection);
+            }
+            else if(selection instanceof FindSelection) {
+                result = (R) $selectCriteria((FindSelection<T>) selection);
+            }
+            else if(selection instanceof UniqueSelection) {
+                result = (R) $selectUnique((UniqueSelection<T>) selection);
+            }
+            else {
+                throw new IllegalStateException(
+                        "Unsupported Selection type " + selection.getClass());
+            }
+        }
+        selection.result = result;
+        selection.state = Selection.State.FINISHED;
     }
 
     /**
