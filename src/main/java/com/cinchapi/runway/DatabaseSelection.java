@@ -228,6 +228,15 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
+     * Return {@code true} if this is a unique-result {@link DatabaseSelection}.
+     *
+     * @return {@code true} if unique
+     */
+    boolean isUnique() {
+        return false;
+    }
+
+    /**
      * Return the {@link Reservation} that represents the canonical cache key
      * for this {@link DatabaseSelection}. Two {@link DatabaseSelection
      * DatabaseSelections} with equivalent configuration produce equal
@@ -288,6 +297,11 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
          * Whether this is a counting operation.
          */
         boolean counting;
+
+        /**
+         * Whether this is a unique-result operation.
+         */
+        boolean unique;
 
         /**
          * The {@link Realms} filter.

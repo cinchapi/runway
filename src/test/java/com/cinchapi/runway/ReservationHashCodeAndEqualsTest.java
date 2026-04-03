@@ -195,6 +195,64 @@ public class ReservationHashCodeAndEqualsTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a unique {@link Reservation} is not
+     * equal to a non-unique {@link Reservation} with the same criteria.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build two {@link Reservation Reservations} with identical criteria,
+     * one with {@code unique(true)} and one without.</li>
+     * <li>Compare them with {@code equals}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The two {@link Reservation Reservations} are
+     * not equal.
+     */
+    @Test
+    public void testNotEqualWhenUniqueDiffers() {
+        Reservation a = Reservation
+                .builder(Record.class).criteria(Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("Alice"))
+                .unique(true).build();
+        Reservation b = Reservation.builder(Record.class).criteria(Criteria
+                .where().key("name").operator(Operator.EQUALS).value("Alice"))
+                .build();
+        Assert.assertNotEquals(a, b);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two unique {@link Reservation
+     * Reservations} with identical components are equal.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build two {@link Reservation Reservations} with the same criteria and
+     * both set to {@code unique(true)}.</li>
+     * <li>Compare them with {@code equals}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The two {@link Reservation Reservations} are
+     * equal and have the same hash code.
+     */
+    @Test
+    public void testEqualWhenBothUnique() {
+        Reservation a = Reservation
+                .builder(Record.class).criteria(Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("Alice"))
+                .unique(true).build();
+        Reservation b = Reservation
+                .builder(Record.class).criteria(Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("Alice"))
+                .unique(true).build();
+        Assert.assertEquals(a, b);
+        Assert.assertEquals(a.hashCode(), b.hashCode());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that two logically identical
      * {@link Reservation Reservations} with separately constructed
      * {@link Criteria}, {@link Order}, and {@link Page} produce the same hash

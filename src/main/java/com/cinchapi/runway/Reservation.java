@@ -87,6 +87,11 @@ final class Reservation {
     private final boolean counting;
 
     /**
+     * Whether this is a unique-result reservation.
+     */
+    private final boolean unique;
+
+    /**
      * Construct a new {@link Reservation}.
      *
      * @param builder the {@link Builder}
@@ -100,6 +105,7 @@ final class Reservation {
         this.realms = builder.realms;
         this.any = builder.any;
         this.counting = builder.counting;
+        this.unique = builder.unique;
     }
 
     @Override
@@ -115,7 +121,7 @@ final class Reservation {
                     && Objects.equals(order, other.order)
                     && Objects.equals(page, other.page)
                     && Objects.equals(realms, other.realms) && any == other.any
-                    && counting == other.counting;
+                    && counting == other.counting && unique == other.unique;
         }
         else {
             return false;
@@ -125,7 +131,7 @@ final class Reservation {
     @Override
     public int hashCode() {
         return Objects.hash(clazz, id, criteria, order, page, realms, any,
-                counting);
+                counting, unique);
     }
 
     @Override
@@ -150,6 +156,9 @@ final class Reservation {
         }
         if(counting) {
             sb.append(", counting=true");
+        }
+        if(unique) {
+            sb.append(", unique=true");
         }
         return sb.append('}').toString();
     }
@@ -204,6 +213,11 @@ final class Reservation {
          * Whether this is a counting reservation.
          */
         private boolean counting;
+
+        /**
+         * Whether this is a unique-result reservation.
+         */
+        private boolean unique;
 
         /**
          * Construct a new {@link Builder}.
@@ -288,6 +302,17 @@ final class Reservation {
          */
         Builder counting(boolean counting) {
             this.counting = counting;
+            return this;
+        }
+
+        /**
+         * Set whether this is a unique-result reservation.
+         *
+         * @param unique {@code true} for unique
+         * @return this {@link Builder}
+         */
+        Builder unique(boolean unique) {
+            this.unique = unique;
             return this;
         }
 
