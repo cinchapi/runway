@@ -79,6 +79,7 @@ import com.cinchapi.runway.Record.InvalidRecordException;
 import com.cinchapi.runway.Record.Snapshot;
 import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.cache.CachingConnectionPool;
+import com.cinchapi.runway.util.Obligations;
 import com.cinchapi.runway.util.Pagination;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.annotations.VisibleForTesting;
@@ -585,21 +586,27 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     @Override
     public void close() throws Exception {
-        if(!connections.isClosed()) {
-            connections.close();
-        }
-        instances.remove(this);
-        if(instances.size() == 1) {
-            Record.PINNED_RUNWAY_INSTANCE = instances.iterator().next();
-        }
-        else {
-            Record.PINNED_RUNWAY_INSTANCE = null;
-        }
-        executor.shutdownNow();
-        selector.shutdownNow();
-        if(saveNotificationExecutor != null) {
-            saveNotificationExecutor.shutdownNow();
-        }
+        Obligations.runAll(() -> {
+            if(!connections.isClosed()) {
+                connections.close();
+            }
+        }, () -> {
+            instances.remove(this);
+            if(instances.size() == 1) {
+                Record.PINNED_RUNWAY_INSTANCE = instances.iterator().next();
+            }
+            else {
+                Record.PINNED_RUNWAY_INSTANCE = null;
+            }
+        }, () -> {
+            executor.shutdownNow();
+        }, () -> {
+            selector.shutdownNow();
+        }, () -> {
+            if(saveNotificationExecutor != null) {
+                saveNotificationExecutor.shutdownNow();
+            }
+        });
     }
 
     /**
@@ -1636,6 +1643,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+<<<<<<< Updated upstream
      * Execute a single {@link DatabaseSelection}. This is the canonical
      * dispatch point for all read operations &mdash; cache recall,
      * {@link AdHocDataSource} routing, and database querying all funnel through
@@ -1769,6 +1777,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+=======
+>>>>>>> Stashed changes
      * Partition the results of a combined multi-select query back into a single
      * {@link Selection} and populate its result.
      *
