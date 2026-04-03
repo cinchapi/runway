@@ -370,6 +370,92 @@ public abstract class AbstractRecordTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * A {@link Record} representing a platform member with a unique external
+     * identifier and group memberships. Models the relationship chain: Member
+     * &rarr; groups &rarr; GroupMembership &rarr; member, mirroring a multi-hop
+     * navigation path.
+     */
+    class Member extends Record {
+
+        /**
+         * The external identity provider identifier.
+         */
+        public final String userId;
+
+        /**
+         * The {@link Org Orgs} this {@link Member} belongs to.
+         */
+        public Set<Org> orgs = Sets.newLinkedHashSet();
+
+        /**
+         * Construct a new instance.
+         *
+         * @param userId the external identifier
+         */
+        public Member(String userId) {
+            this.userId = userId;
+        }
+    }
+
+    /**
+     * A {@link Record} representing an organization that groups {@link Member
+     * Members} together through {@link OrgMembership OrgMemberships}.
+     */
+    class Org extends Record {
+
+        /**
+         * The name of this {@link Org}.
+         */
+        public final String name;
+
+        /**
+         * The {@link OrgMembership OrgMemberships} for {@link Member Members}
+         * in this {@link Org}.
+         */
+        public Set<OrgMembership> seats = Sets.newLinkedHashSet();
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the organization name
+         */
+        public Org(String name) {
+            this.name = name;
+        }
+    }
+
+    /**
+     * A {@link Record} representing a {@link Member Member's} membership within
+     * an {@link Org}. Links the {@link Org} to the {@link Member} who occupies
+     * the seat.
+     */
+    class OrgMembership extends Record {
+
+        /**
+         * The {@link Org} this membership belongs to.
+         */
+        public final Org org;
+
+        /**
+         * The {@link Member} who occupies this seat.
+         */
+        public final Member member;
+
+        /**
+         * Construct a new instance and wire up the bidirectional links.
+         *
+         * @param org the {@link Org}
+         * @param member the {@link Member}
+         */
+        public OrgMembership(Org org, Member member) {
+            this.org = org;
+            this.member = member;
+            org.seats.add(this);
+            member.orgs.add(org);
+        }
+    }
+
     class HasBeforeSaveHook extends Record {
 
         String value;

@@ -1231,7 +1231,34 @@ public abstract class Record implements Comparable<Record> {
                     Sequences.forEach(destination, item -> {
                         if(item instanceof Record) {
                             Object next = ((Record) item).get(path, filter);
-                            seq.add(next);
+                            // NOTE: When the remaining path crosses another
+                            // collection-valued field, the recursive call
+                            // returns a collection. Flatten those results into
+                            // this level's sequence so the final return value
+                            // is a flat list of leaf values, not nested
+                            // collections-of-collections.
+                            //
+                            // e.g., for "orgs.seats.member.userId" where "orgs"
+                            // and "seats" are both Sets:
+                            //
+                            // @formatter:off
+                            // depth 0: iterates each Org in "orgs"
+                            // depth 1: iterates each Seat in "seats"
+                            // depth 2: "member" is a single Record
+                            // depth 3: returns scalar "alice123"
+                            // depth 2 collects: {"alice123", ...}
+                            // depth 1 flattens: {"alice123", ...}
+                            // depth 0 flattens: {"alice123", ...}
+                            // @formatter:on
+                            //
+                            // Each level flattens one layer; recursion
+                            // guarantees everything below is already flat.
+                            if(Sequences.isSequence(next)) {
+                                Sequences.forEach(next, seq::add);
+                            }
+                            else if(next != null) {
+                                seq.add(next);
+                            }
                         }
                     });
                     return !seq.isEmpty() ? (T) seq : null;
@@ -2886,10 +2913,46 @@ public abstract class Record implements Comparable<Record> {
         for (String key : keys) {
             Object value = get(key, Predicates.alwaysTrue());
             if(value != null) {
-                data.set(key, value);
+                // NOTE: The resolved value may be a Record or
+                // a collection of Records when the navigation
+                // key terminates at a Record-valued field
+                // (e.g., "orgs.seats.member"). Convert those
+                // to Links so the data mirrors the database
+                // representation that ConcourseCompiler expects
+                // for operators like LINKS_TO.
+                data.set(key, toLinkIfRecord(value));
             }
         }
         return data;
+    }
+
+    /**
+     * Return {@code value} converted to its database
+     * representation: {@link Record Records} become
+     * {@link Link Links}, and collections of
+     * {@link Record Records} become collections of
+     * {@link Link Links}. Scalar values pass through
+     * unchanged.
+     *
+     * @param value the resolved in-memory value
+     * @return the database-equivalent representation
+     */
+    private static Object toLinkIfRecord(Object value) {
+        if(value instanceof Record) {
+            return Link.to(((Record) value).id());
+        }
+        else if(Sequences.isSequence(value)) {
+            Collection<Object> converted = value instanceof Set
+                    ? new LinkedHashSet<>()
+                    : new ArrayList<>();
+            Sequences.forEach(value, item -> {
+                converted.add(toLinkIfRecord(item));
+            });
+            return converted;
+        }
+        else {
+            return value;
+        }
     }
 
     /**

@@ -500,4 +500,364 @@ public class RecordDataAccessTest extends AbstractRecordTest {
         Assert.assertTrue(a.matches(criteria));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * correctly evaluates a 3-hop navigation path through a collection-based
+     * object graph, matching the pattern used by visibility scope filters
+     * (e.g., {@code orgs.seats.member.userId == audienceUserId}).
+     * <p>
+     * <strong>Start state:</strong> Two {@link Member Members} who share an
+     * {@link Org} through {@link OrgMembership OrgMemberships}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create {@link Member} {@code alice} with {@code userId "alice123"}
+     * and {@link Member} {@code bob} with {@code userId "bob456"}.</li>
+     * <li>Create an {@link Org} and add both members via {@link OrgMembership
+     * OrgMemberships}.</li>
+     * <li>Save all records.</li>
+     * <li>Build a {@link Criteria} that matches the visibility scope pattern:
+     * {@code userId == "alice123" OR
+     *     orgs.seats.member.userId == "alice123"}.</li>
+     * <li>Call {@link Record#matches(Criteria)} on {@code bob}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true} because
+     * {@code bob} shares an {@link Org} with {@code alice}, so the 3-hop
+     * navigation {@code orgs.seats.member.userId} resolves to
+     * {@code "alice123"}.
+     */
+    @Test
+    public void testMatchesWithThreeHopNavigationKeyThroughSharedGroup() {
+        Member alice = new Member("alice123");
+        Member bob = new Member("bob456");
+        Org org = new Org("Shared Org");
+        new OrgMembership(org, alice);
+        new OrgMembership(org, bob);
+        runway.save(alice, bob, org);
+        Criteria criteria = Criteria.where().group(Criteria.where()
+                .group(Criteria.where().key("userId").operator(Operator.EQUALS)
+                        .value("alice123"))
+                .or().group(Criteria.where().key("orgs.seats.member.userId")
+                        .operator(Operator.EQUALS).value("alice123")));
+
+        // Verify the database-level query finds bob (proves Concourse can
+        // resolve the 3-hop navigation)
+        Set<Long> dbResults = client.find(criteria);
+        Assert.assertTrue("DB should find bob via the 3-hop path, "
+                + "but got: " + dbResults, dbResults.contains(bob.id()));
+
+        // Now verify Record.matches() agrees with the DB
+        Assert.assertTrue(
+                "bob should match because he shares an Org "
+                        + "with alice via the 3-hop path "
+                        + "orgs.seats.member.userId, but "
+                        + "Record.matches() disagrees with the DB",
+                bob.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * returns {@code true} for a self-match on the simple {@code userId}
+     * disjunct, independent of the 3-hop path.
+     * <p>
+     * <strong>Start state:</strong> A single saved {@link Member}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save {@link Member} {@code alice} with
+     * {@code userId "alice123"}.</li>
+     * <li>Build the same visibility-scope {@link Criteria}:
+     * {@code userId == "alice123" OR
+     *     orgs.seats.member.userId == "alice123"}.</li>
+     * <li>Call {@link Record#matches(Criteria)} on {@code alice}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true} because
+     * the first disjunct ({@code userId == "alice123"}) matches directly.
+     */
+    @Test
+    public void testMatchesWithThreeHopNavigationKeySelfMatch() {
+        Member alice = new Member("alice123");
+        Org org = new Org("Solo Org");
+        new OrgMembership(org, alice);
+        runway.save(alice, org);
+        Criteria criteria = Criteria.where().group(Criteria.where()
+                .group(Criteria.where().key("userId").operator(Operator.EQUALS)
+                        .value("alice123"))
+                .or().group(Criteria.where().key("orgs.seats.member.userId")
+                        .operator(Operator.EQUALS).value("alice123")));
+        Assert.assertTrue(
+                "alice should match on the direct userId " + "disjunct",
+                alice.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * returns {@code false} for a {@link Member} who does NOT share any
+     * {@link Org} with the target.
+     * <p>
+     * <strong>Start state:</strong> Two {@link Member Members} in separate
+     * {@link Org Orgs} with no overlap.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create {@link Member} {@code alice} in {@code "Org A"} and
+     * {@link Member} {@code charlie} in {@code "Org B"}.</li>
+     * <li>Save all records.</li>
+     * <li>Build the visibility-scope {@link Criteria}:
+     * {@code userId == "alice123" OR
+     *     orgs.seats.member.userId == "alice123"}.</li>
+     * <li>Call {@link Record#matches(Criteria)} on {@code charlie}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code false} because
+     * {@code charlie} does not share an {@link Org} with {@code alice} and has
+     * a different {@code userId}.
+     */
+    @Test
+    public void testMatchesWithThreeHopNavigationKeyNoSharedGroup() {
+        Member alice = new Member("alice123");
+        Member charlie = new Member("charlie789");
+        Org orgA = new Org("Org A");
+        Org orgB = new Org("Org B");
+        new OrgMembership(orgA, alice);
+        new OrgMembership(orgB, charlie);
+        runway.save(alice, charlie, orgA, orgB);
+        Criteria criteria = Criteria.where().group(Criteria.where()
+                .group(Criteria.where().key("userId").operator(Operator.EQUALS)
+                        .value("alice123"))
+                .or().group(Criteria.where().key("orgs.seats.member.userId")
+                        .operator(Operator.EQUALS).value("alice123")));
+        Assert.assertFalse(
+                "charlie should not match because he does "
+                        + "not share any Org with alice",
+                charlie.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * correctly resolves a 2-hop navigation path through a collection to a
+     * scalar field on records within a nested collection ({@code orgs.name}).
+     * <p>
+     * <strong>Start state:</strong> A {@link Member} belonging to two
+     * {@link Org Orgs} with distinct names.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create {@link Member} {@code alice} in {@code "Org One"} and
+     * {@code "Org Two"}.</li>
+     * <li>Save all records.</li>
+     * <li>Build a {@link Criteria} matching {@code orgs.name} equals
+     * {@code "Org Two"}.</li>
+     * <li>Call {@link Record#matches(Criteria)} on {@code alice}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true} because
+     * the 2-hop path resolves to a flat collection of org names that includes
+     * {@code "Org Two"}.
+     */
+    @Test
+    public void testMatchesWithTwoHopNavigationKeyCollectionToScalar() {
+        Member alice = new Member("alice123");
+        Org org1 = new Org("Org One");
+        Org org2 = new Org("Org Two");
+        new OrgMembership(org1, alice);
+        new OrgMembership(org2, alice);
+        runway.save(alice, org1, org2);
+        Criteria criteria = Criteria.where().key("orgs.name")
+                .operator(Operator.EQUALS).value("Org Two").build();
+        Assert.assertTrue("alice's orgs.name should contain 'Org Two' "
+                + "via 2-hop navigation", alice.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * correctly resolves a 2-hop navigation path through a collection to a
+     * nested collection using {@link Operator#LINKS_TO}.
+     * <p>
+     * <strong>Start state:</strong> A {@link Member} with one {@link Org}
+     * containing two {@link OrgMembership OrgMemberships}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create {@link Member} {@code alice} and {@code bob} in a shared
+     * {@link Org}.</li>
+     * <li>Save all records.</li>
+     * <li>Build a {@link Criteria} matching {@code orgs.seats} that
+     * {@link Operator#LINKS_TO LINKS_TO} bob's {@link OrgMembership} id.</li>
+     * <li>Call {@link Record#matches(Criteria)} on {@code alice}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true} because
+     * the 2-hop path resolves to a flat collection containing bob's
+     * {@link OrgMembership}.
+     */
+    @Test
+    public void testMatchesWithTwoHopNavigationKeyCollectionToCollection() {
+        Member alice = new Member("alice123");
+        Member bob = new Member("bob456");
+        Org org = new Org("Shared Org");
+        OrgMembership bobSeat = new OrgMembership(org, bob);
+        new OrgMembership(org, alice);
+        runway.save(alice, bob, org);
+        Criteria criteria = Criteria.where().key("orgs.seats")
+                .operator(Operator.LINKS_TO).value(bobSeat.id());
+        Assert.assertTrue(
+                "alice's orgs.seats should contain bob's "
+                        + "membership via 2-hop navigation",
+                alice.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * correctly resolves a 3-hop navigation path from a collection through a
+     * collection to a scalar field on a single {@link Record}
+     * ({@code orgs.seats.member.userId}).
+     * <p>
+     * <strong>Start state:</strong> Two {@link Member Members} in a shared
+     * {@link Org}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create {@link Member} {@code alice} and {@code bob} in a shared
+     * {@link Org}.</li>
+     * <li>Save all records.</li>
+     * <li>Build a {@link Criteria} matching {@code orgs.seats.member.userId}
+     * equals {@code "bob456"}.</li>
+     * <li>Call {@link Record#matches(Criteria)} on {@code alice}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true} because
+     * the 3-hop path resolves to a flat collection of userIds that includes
+     * {@code "bob456"}.
+     */
+    @Test
+    public void testMatchesWithThreeHopNavigationKeyCollectionToScalar() {
+        Member alice = new Member("alice123");
+        Member bob = new Member("bob456");
+        Org org = new Org("Shared Org");
+        new OrgMembership(org, alice);
+        new OrgMembership(org, bob);
+        runway.save(alice, bob, org);
+        Criteria criteria = Criteria.where().key("orgs.seats.member.userId")
+                .operator(Operator.EQUALS).value("bob456").build();
+        Assert.assertTrue(
+                "alice's orgs.seats.member.userId should "
+                        + "include 'bob456' via 3-hop navigation",
+                alice.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * correctly resolves a 3-hop navigation path from a collection through a
+     * collection to a single {@link Record} using {@link Operator#LINKS_TO}
+     * ({@code orgs.seats.member}).
+     * <p>
+     * <strong>Start state:</strong> Two {@link Member Members} in a shared
+     * {@link Org}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create {@link Member} {@code alice} and {@code bob} in a shared
+     * {@link Org}.</li>
+     * <li>Save all records.</li>
+     * <li>Build a {@link Criteria} matching {@code orgs.seats.member} that
+     * {@link Operator#LINKS_TO LINKS_TO} bob's id.</li>
+     * <li>Call {@link Record#matches(Criteria)} on {@code alice}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true} because
+     * the 3-hop path resolves to a flat collection of {@link Member Members}
+     * that includes {@code bob}.
+     */
+    @Test
+    public void testMatchesWithThreeHopNavigationKeyCollectionToRecordLinksTo() {
+        Member alice = new Member("alice123");
+        Member bob = new Member("bob456");
+        Org org = new Org("Shared Org");
+        new OrgMembership(org, alice);
+        new OrgMembership(org, bob);
+        runway.save(alice, bob, org);
+        Criteria criteria = Criteria.where().key("orgs.seats.member")
+                .operator(Operator.LINKS_TO).value(bob.id());
+        Assert.assertTrue("alice's orgs.seats.member should include "
+                + "bob via 3-hop navigation", alice.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * correctly resolves a 5-hop navigation path that traverses multiple
+     * collection boundaries: {@code orgs.seats.member.orgs.name}.
+     * <p>
+     * <strong>Start state:</strong> Two {@link Member Members} in a shared
+     * {@link Org} named {@code "Shared Org"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create {@link Member} {@code alice} and {@code bob} in a shared
+     * {@link Org} named {@code "Shared Org"}.</li>
+     * <li>Save all records.</li>
+     * <li>Build a {@link Criteria} matching {@code orgs.seats.member.orgs.name}
+     * equals {@code "Shared Org"}.</li>
+     * <li>Call {@link Record#matches(Criteria)} on {@code bob}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true} because
+     * the 5-hop path traverses bob's orgs, their seats, those seats' members,
+     * those members' orgs, and finally resolves the org name.
+     */
+    @Test
+    public void testMatchesWithFiveHopNavigationKeyMultipleCollectionBoundaries() {
+        Member alice = new Member("alice123");
+        Member bob = new Member("bob456");
+        Org org = new Org("Shared Org");
+        new OrgMembership(org, alice);
+        new OrgMembership(org, bob);
+        runway.save(alice, bob, org);
+        Criteria criteria = Criteria.where().key("orgs.seats.member.orgs.name")
+                .operator(Operator.EQUALS).value("Shared Org").build();
+        Assert.assertTrue(
+                "5-hop path orgs.seats.member.orgs.name "
+                        + "should resolve to 'Shared Org'",
+                bob.matches(criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#matches(Criteria)}
+     * correctly resolves a 5-hop path across multiple {@link Org Orgs} where a
+     * {@link Member} belongs to two {@link Org Orgs} with different names.
+     * <p>
+     * <strong>Start state:</strong> {@code alice} in {@code "Org Alpha"},
+     * {@code bob} in both {@code "Org Alpha"} and {@code "Org Beta"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create the described {@link Org} and {@link Member} structure.</li>
+     * <li>Save all records.</li>
+     * <li>Build a {@link Criteria} matching {@code orgs.seats.member.orgs.name}
+     * equals {@code "Org Beta"}.</li>
+     * <li>Call {@link Record#matches(Criteria)} on {@code alice}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code matches} returns {@code true} because
+     * the path reaches {@code bob} (a shared member in {@code "Org Alpha"}),
+     * then navigates to bob's other org {@code "Org Beta"}.
+     */
+    @Test
+    public void testMatchesWithFiveHopNavigationKeyCrossOrgReachability() {
+        Member alice = new Member("alice123");
+        Member bob = new Member("bob456");
+        Org orgAlpha = new Org("Org Alpha");
+        Org orgBeta = new Org("Org Beta");
+        new OrgMembership(orgAlpha, alice);
+        new OrgMembership(orgAlpha, bob);
+        new OrgMembership(orgBeta, bob);
+        runway.save(alice, bob, orgAlpha, orgBeta);
+        Criteria criteria = Criteria.where().key("orgs.seats.member.orgs.name")
+                .operator(Operator.EQUALS).value("Org Beta").build();
+        Assert.assertTrue("5-hop path should reach 'Org Beta' through "
+                + "shared member bob", alice.matches(criteria));
+    }
+
 }
