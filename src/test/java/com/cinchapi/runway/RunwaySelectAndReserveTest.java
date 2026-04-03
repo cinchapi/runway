@@ -989,6 +989,41 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that passing duplicate {@link Selection
+     * Selections} (identical class and criteria) to
+     * {@link Runway#select(Selection...)} returns correct results for both
+     * without redundant database queries.
+     * <p>
+     * <strong>Start state:</strong> Multiple saved {@link Widget Widgets}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save three {@link Widget Widgets}.</li>
+     * <li>Build two identical load-all {@link Selection Selections} for
+     * {@link Widget}.</li>
+     * <li>Execute both in a single {@link Runway#select(Selection...)}
+     * call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both {@link Selection Selections} return the
+     * same three {@link Widget Widgets}.
+     */
+    @Test
+    public void testDuplicateSelectionsReturnSameResults() {
+        new Widget("a").save();
+        new Widget("b").save();
+        new Widget("c").save();
+        Selection<Widget> sel1 = Selection.of(Widget.class).build();
+        Selection<Widget> sel2 = Selection.of(Widget.class).build();
+        runway.select(sel1, sel2);
+        Set<Widget> result1 = sel1.get();
+        Set<Widget> result2 = sel2.get();
+        Assert.assertEquals(3, result1.size());
+        Assert.assertEquals(result1, result2);
+        Assert.assertSame(result1, result2);
+    }
+
+    /**
      * A test {@link Record} that implements {@link Audience} for testing the
      * middleware/handler cache pattern.
      */

@@ -25,6 +25,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -972,12 +973,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return new Selections(selections);
         }
         else {
-            // TODO: Check in the server version is 1.0.0+
-            // and, if so, use prepare/submit
+            // TODO: Check if the server version is 1.0.0+ and, if so, use
+            // prepare/submit
+            Map<Reservation, DatabaseSelection<?>> unique = Arrays
+                    .stream(selections)
+                    .collect(Collectors.toMap(DatabaseSelection::reservation,
+                            Function.identity(), (first, dupe) -> first,
+                            LinkedHashMap::new));
             List<DatabaseSelection<?>> isolated = new ArrayList<>();
             List<DatabaseSelection<?>> combinable = new ArrayList<>();
             Set<String> combinedClasses = Sets.newHashSet();
-            outer: for (DatabaseSelection<?> selection : selections) {
+            outer: for (DatabaseSelection<?> selection : unique.values()) {
                 if(selection.state == Selection.State.RESOLVED) {
                     selection.state = Selection.State.FINISHED;
                     continue outer; /* (authorized short circuit) */
@@ -1051,6 +1057,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 // it needs access to the #reservations thread local.
                 for (DatabaseSelection<?> selection : isolated) {
                     reserve(selection);
+                }
+            }
+            // Propagate results to duplicates
+            for (DatabaseSelection<?> selection : selections) {
+                DatabaseSelection<?> canonical = unique
+                        .get(selection.reservation());
+                if(canonical != selection) {
+                    selection.result = canonical.result;
+                    selection.state = Selection.State.FINISHED;
                 }
             }
             return new Selections(selections);
