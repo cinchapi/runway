@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway;
 
+import static com.cinchapi.runway.DatabaseInterface.duplicateEntryException;
+
 import java.util.AbstractMap;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
@@ -23,6 +25,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -970,12 +973,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return new Selections(selections);
         }
         else {
-            // TODO: Check in the server version is 1.0.0+
-            // and, if so, use prepare/submit
+            // TODO: Check if the server version is 1.0.0+ and, if so, use
+            // prepare/submit
+            Map<Reservation, DatabaseSelection<?>> unique = Arrays
+                    .stream(selections)
+                    .collect(Collectors.toMap(DatabaseSelection::reservation,
+                            Function.identity(), (first, dupe) -> first,
+                            LinkedHashMap::new));
             List<DatabaseSelection<?>> isolated = new ArrayList<>();
             List<DatabaseSelection<?>> combinable = new ArrayList<>();
             Set<String> combinedClasses = Sets.newHashSet();
-            outer: for (DatabaseSelection<?> selection : selections) {
+            outer: for (DatabaseSelection<?> selection : unique.values()) {
                 if(selection.state == Selection.State.RESOLVED) {
                     selection.state = Selection.State.FINISHED;
                     continue outer; /* (authorized short circuit) */
@@ -1049,6 +1057,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 // it needs access to the #reservations thread local.
                 for (DatabaseSelection<?> selection : isolated) {
                     reserve(selection);
+                }
+            }
+            // Propagate results to duplicates
+            for (DatabaseSelection<?> selection : selections) {
+                DatabaseSelection<?> canonical = unique
+                        .get(selection.reservation());
+                if(canonical != selection) {
+                    selection.result = canonical.result;
+                    selection.state = Selection.State.FINISHED;
                 }
             }
             return new Selections(selections);
@@ -1356,6 +1373,25 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     }
                     result = (R) loaded;
                 }
+                else if(selection instanceof UniqueSelection) {
+                    T found = null;
+                    for (AdHocDataSource<?> source : sources) {
+                        T candidate = source.fetch(selection.duplicate());
+                        if(candidate != null && found != null) {
+                            // Enforce uniqueness across AdHocDataSources
+                            UniqueSelection<T> us = (UniqueSelection<T>) selection;
+                            throw duplicateEntryException(
+                                    "Multiple records match {} in {}{}",
+                                    us.criteria,
+                                    us.any ? "the hierarchy of " : "",
+                                    selection.clazz);
+                        }
+                        else if(candidate != null) {
+                            found = candidate;
+                        }
+                    }
+                    result = (R) found;
+                }
                 else if(selection instanceof SetBasedSelection) {
                     Order order = ((SetBasedSelection<?>) selection).order;
                     Page page = ((SetBasedSelection<?>) selection).page;
@@ -1396,6 +1432,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             else if(selection instanceof FindSelection) {
                 result = (R) $selectCriteria((FindSelection<T>) selection);
+            }
+            else if(selection instanceof UniqueSelection) {
+                result = (R) $selectUnique((UniqueSelection<T>) selection);
             }
             else {
                 throw new IllegalStateException(
@@ -1587,6 +1626,41 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             if(connection.get() != null) {
                 connections.release(connection.get());
             }
+        }
+    }
+
+    /**
+     * Execute a {@link UniqueSelection} against the database.
+     *
+     * @param selection the {@link UniqueSelection} to execute
+     * @param <T> the {@link Record} type
+     * @return the unique matching {@link Record}, or {@code null} if none match
+     * @throws DuplicateEntryException if more than one {@link Record} matches
+     */
+    private <T extends Record> T $selectUnique(UniqueSelection<T> selection) {
+        DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                selection.clazz, selection.any);
+        state.criteria = selection.criteria;
+        state.page = DatabaseInterface.UNIQUE_PAGINATION;
+        state.filter = selection.filter;
+        state.realms = selection.realms;
+        Set<T> results;
+        if(selection.criteria != null) {
+            results = $selectCriteria(new FindSelection<>(state));
+        }
+        else {
+            results = $selectClass(new LoadClassSelection<>(state));
+        }
+        if(results.isEmpty()) {
+            return null;
+        }
+        else if(results.size() == 1) {
+            return results.iterator().next();
+        }
+        else {
+            throw duplicateEntryException("Multiple records match {} in {}{}",
+                    selection.criteria,
+                    selection.any ? "the hierarchy of " : "", selection.clazz);
         }
     }
 

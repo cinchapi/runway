@@ -1,5 +1,9 @@
 # Changelog
 
+#### Version 1.14.1 (April 2, 2026)
+* Fixed a bug where the Selection API (`Selection.of` and `Selection.ofAny`) did not support unique-result queries, forcing callers to use the legacy `findUnique`/`findAnyUnique` methods instead. Added `Selection.ofUnique(Class)`, `Selection.ofAnyUnique(Class)`, and a chainable `.unique()` method on `InitialBuilder` and `QueryBuilder` that produce a `UniqueSelection` &mdash; returning the single matching record (or `null`) and throwing `DuplicateEntryException` when more than one match exists.
+* Fixed a bug where passing duplicate `Selection` objects to `Runway#select(Selection...)` caused redundant database queries instead of reusing the result from the first occurrence.
+
 #### Version 1.14.0 (April 2, 2026)
 * **Static Visibility Scopes**: Added `Scope` and static scope registration to the `AccessControl` framework as a class-level alternative to instance-based visibility checks. When a `Scope` is registered for an `AccessControl` type, it is applied during `Audience.select()` in place of the per-instance `$isDiscoverableBy` check:
   * `Scope.of(Criteria)` pushes visibility filtering to the database as a query constraint, ensuring only matching records are returned rather than loading all records and filtering post-load. This is significantly more performant when only a small fraction of records for a class are visible to a given audience.
