@@ -1,5 +1,9 @@
 # Changelog
 
+#### Version 1.14.3 (April 3, 2026)
+* Fixed a bug where `AdHocDataSource` records were invisible to `Runway.select()` when executing multiple selections simultaneously, causing count and data queries to return empty results ([GH-86](https://github.com/cinchapi/runway/issues/86))
+* Fixed a bug where `Runway#close()` could leave dangling instances in the static registry if closing the connection pool threw an exception, which could interfere with subsequent implicit saves ([GH-87](https://github.com/cinchapi/runway/issues/87))
+
 #### Version 1.14.2 (April 3, 2026)
 * Fixed a bug where `Record#matches(Criteria)` returned incorrect results for navigation keys that traverse two or more consecutive collection-valued fields (e.g., `tenants.seats.user.userId` where both `tenants` and `seats` are `Set` fields). Only single-hop collection navigation worked correctly; paths with multiple collection hops always failed to match. This caused `Scope`-based visibility rules that use multi-hop navigation to incorrectly filter out records that should have been visible.
 * Fixed a bug where `Record#matches(Criteria)` always returned `false` for `LINKS_TO` queries that use navigation keys terminating at a `Record`-valued field (e.g., `orgs.seats.member LINKS_TO 12345`). These queries now correctly match when the navigated record's id satisfies the `LINKS_TO` condition.

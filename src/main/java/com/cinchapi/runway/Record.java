@@ -2927,12 +2927,10 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code value} converted to its database
-     * representation: {@link Record Records} become
-     * {@link Link Links}, and collections of
-     * {@link Record Records} become collections of
-     * {@link Link Links}. Scalar values pass through
-     * unchanged.
+     * Return {@code value} converted to its database representation:
+     * {@link Record Records} become {@link Link Links}, and collections of
+     * {@link Record Records} become collections of {@link Link Links}. Scalar
+     * values pass through unchanged.
      *
      * @param value the resolved in-memory value
      * @return the database-equivalent representation
