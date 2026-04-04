@@ -203,9 +203,9 @@ public interface Selection<T extends Record> {
                 .resolve(selection);
         resolved = resolved.duplicate();
         resolved.origin = selection;
-        resolved.filter = filter == null || DatabaseSelection.isNoFilter(filter)
-                ? (Predicate<T>) filter
-                : resolved.filter.and(filter);
+        if(filter != null && !DatabaseSelection.isNoFilter(filter)) {
+            resolved.filter = resolved.filter.and(filter);
+        }
         return resolved;
     }
 
