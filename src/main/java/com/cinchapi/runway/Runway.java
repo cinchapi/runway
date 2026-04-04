@@ -25,11 +25,11 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
@@ -982,17 +982,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             // TODO: Check if the server version is 1.0.0+ and, if so, use
             // prepare/submit
-            Map<Reservation, DatabaseSelection<?>> unique = Arrays
-                    .stream(selections)
-                    .collect(Collectors.toMap(DatabaseSelection::reservation,
-                            Function.identity(), (first, dupe) -> first,
-                            LinkedHashMap::new));
+            List<DatabaseSelection<?>> unique = Arrays.stream(selections)
+                    .map(SelectionKey::new).distinct().map(key -> key.selection)
+                    .collect(Collectors.toList());
             List<DatabaseSelection<?>> isolated = new ArrayList<>();
             List<DatabaseSelection<?>> combinable = new ArrayList<>();
             Set<String> combinedClasses = Sets.newHashSet();
-            outer: for (DatabaseSelection<?> selection : unique.values()) {
+            outer: for (DatabaseSelection<?> selection : unique) {
                 if(selection.state == Selection.State.RESOLVED) {
-                    selection.state = Selection.State.FINISHED;
+                    selection.setState(Selection.State.FINISHED);
                     continue outer; /* (authorized short circuit) */
                 }
                 // NOTE: Must manually attempt to recall here because it won't
@@ -1000,15 +998,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 // occurs and gets dispatched
                 Object cached = recallAndPossiblyFilter(selection);
                 if(cached != null) {
-                    selection.state = Selection.State.FINISHED;
-                    selection.result = cached;
+                    selection.setResult(cached);
+                    selection.setState(Selection.State.FINISHED);
                     continue outer;
                 }
                 Set<AdHocDataSource<?>> sources = selection.any
                         ? getAttachedSourcesForHierarchy(selection.clazz)
                         : getAttachedSources(selection.clazz);
                 if(!sources.isEmpty()) {
-                    selection.state = Selection.State.SUBMITTED;
+                    selection.setState(Selection.State.SUBMITTED);
                     $selectWithPossibleSources(selection, sources);
                     reserve(selection);
                     continue outer;
@@ -1077,11 +1075,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             // Propagate results to duplicates
             for (DatabaseSelection<?> selection : selections) {
-                DatabaseSelection<?> canonical = unique
-                        .get(selection.reservation());
-                if(canonical != selection) {
-                    selection.result = canonical.result;
-                    selection.state = Selection.State.FINISHED;
+                if(selection.state != Selection.State.FINISHED) {
+                    if(DatabaseSelection.isNoFilter(selection.filter)) {
+                        DatabaseSelection<?> canonical = unique.stream()
+                                .filter(item -> item.reservation()
+                                        .equals(selection.reservation()))
+                                .findFirst()
+                                .orElseThrow(() -> new IllegalStateException(
+                                        "No canonical selection found for "
+                                                + selection));
+                        selection.setResult(canonical.result);
+                        selection.setState(Selection.State.FINISHED);
+                    }
+                    else {
+                        throw new IllegalStateException(
+                                "Filtered duplicate selection was not "
+                                        + "independently executed: "
+                                        + selection);
+                    }
                 }
             }
             return new Selections(selections);
@@ -1360,9 +1371,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link LoadClassSelection} to execute
      * @param <T> the {@link Record} type
-     * @return the matching {@link Record Records}
+     * @return a {@link SelectResult} containing the matching {@link Record
+     *         Records} and, when a filter is applied without pagination, the
+     *         unfiltered data for caching
      */
-    private <T extends Record> Set<T> $selectClass(
+    private <T extends Record> SelectResult<Set<T>> $selectClass(
             LoadClassSelection<T> selection) {
         AtomicReference<Concourse> connection = new AtomicReference<Concourse>(
                 null);
@@ -1388,9 +1401,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     return any ? instantiateAll(data)
                             : instantiateAll(clazz, data);
                 };
-                return hasFilter
-                        ? Pagination.applyFilterAndPage(retriever, filter, page)
-                        : retriever.apply(page);
+                if(hasFilter && page != null) {
+                    return new SelectResult<>(Pagination
+                            .applyFilterAndPage(retriever, filter, page));
+                }
+                else if(hasFilter) {
+                    Set<T> unfiltered = retriever.apply(page);
+                    return new SelectResult<>(
+                            unfiltered.stream().filter(filter)
+                                    .collect(Collectors
+                                            .toCollection(LinkedHashSet::new)),
+                            unfiltered);
+                }
+                else {
+                    return new SelectResult<>(retriever.apply(page));
+                }
             }
             else {
                 // Legacy servers lack native sorting/pagination, so results
@@ -1408,8 +1433,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 if(page != null) {
                     stream = stream.skip(page.skip()).limit(page.limit());
                 }
-                return stream
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                return new SelectResult<>(stream
+                        .collect(Collectors.toCollection(LinkedHashSet::new)));
             }
         }
         finally {
@@ -1424,9 +1449,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link CountSelection} to execute
      * @param <T> the {@link Record} type
-     * @return the count
+     * @return a {@link SelectResult} containing the count; no
+     *         {@link SelectResult#cacheValue} is provided because the inner
+     *         {@code fetch()} caches the unfiltered set under its own
+     *         {@link Reservation}
      */
-    private <T extends Record> Integer $selectCount(
+    private <T extends Record> SelectResult<Integer> $selectCount(
             CountSelection<T> selection) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
@@ -1435,31 +1463,34 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         Realms realms = selection.realms;
         if(hasFilter) {
+            // Fetch unfiltered so the inner selection caches reusable data,
+            // then count the filtered stream.
             Set<T> records = fetch(Selection.of(clazz).any(any).where(criteria)
-                    .filter(filter).realms(realms));
-            return records.size();
+                    .realms(realms));
+            return new SelectResult<>(
+                    (int) records.stream().filter(filter).count());
         }
         else if(criteria == null) {
             // No criteria means count all records of this class
-            return any
+            return new SelectResult<>(any
                     ? $count($Criteria.amongRealms(realms,
                             $Criteria.forClassHierarchy(clazz)))
                     : $count($Criteria.amongRealms(realms,
-                            $Criteria.forClass(clazz)));
+                            $Criteria.forClass(clazz))));
         }
         else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            return any
+            return new SelectResult<>(any
                     ? $count($Criteria.amongRealms(realms,
                             $Criteria.accrossClassHierachy(clazz, criteria)))
                     : $count($Criteria.amongRealms(realms,
-                            $Criteria.withinClass(clazz, criteria)));
+                            $Criteria.withinClass(clazz, criteria))));
         }
         else {
-            return any
+            return new SelectResult<>(any
                     ? filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION,
                             realms).size()
                     : filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
-                            .size();
+                            .size());
         }
     }
 
@@ -1468,9 +1499,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link FindSelection} to execute
      * @param <T> the {@link Record} type
-     * @return the matching {@link Record Records}
+     * @return a {@link SelectResult} containing the matching {@link Record
+     *         Records} and, when a filter is applied without pagination, the
+     *         unfiltered data for caching
      */
-    private <T extends Record> Set<T> $selectCriteria(
+    private <T extends Record> SelectResult<Set<T>> $selectCriteria(
             FindSelection<T> selection) {
         AtomicReference<Concourse> connection = new AtomicReference<Concourse>(
                 null);
@@ -1507,10 +1540,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 : filter(clazz, criteria, order, $page, realms);
                     }
                 };
-                return hasFilter
-                        ? Pagination.applyFilterAndPage(retriever, filter, page)
-                        : retriever.apply(page);
-
+                if(hasFilter && page != null) {
+                    return new SelectResult<>(Pagination
+                            .applyFilterAndPage(retriever, filter, page));
+                }
+                else if(hasFilter) {
+                    Set<T> unfiltered = retriever.apply(page);
+                    return new SelectResult<>(
+                            unfiltered.stream().filter(filter)
+                                    .collect(Collectors
+                                            .toCollection(LinkedHashSet::new)),
+                            unfiltered);
+                }
+                else {
+                    return new SelectResult<>(retriever.apply(page));
+                }
             }
             else {
                 // Legacy servers lack native sorting/pagination, so results
@@ -1528,8 +1572,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 if(page != null) {
                     stream = stream.skip(page.skip()).limit(page.limit());
                 }
-                return stream
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                return new SelectResult<>(stream
+                        .collect(Collectors.toCollection(LinkedHashSet::new)));
             }
         }
         finally {
@@ -1544,11 +1588,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link LoadRecordSelection} to execute
      * @param <T> the {@link Record} type
-     * @return the loaded {@link Record}, or {@code null} if no matching record
-     *         exists
+     * @return a {@link SelectResult} containing the loaded {@link Record} (or
+     *         {@code null}) and, when a filter is applied, the unfiltered
+     *         record for caching
      */
     @SuppressWarnings("deprecation")
-    private <T extends Record> T $selectRecord(
+    private <T extends Record> SelectResult<T> $selectRecord(
             LoadRecordSelection<T> selection) {
         Concourse connection = null;
         Class<T> clazz = selection.clazz;
@@ -1573,7 +1618,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         connection.select(Record.REALMS_KEY, id),
                         ImmutableSet.of());
                 if(Sets.intersection($realms, realms.names()).isEmpty()) {
-                    return null; // TODO: what to do here?
+                    return new SelectResult<>(null); // TODO: what to do here?
                 }
             }
             Map<String, Set<Object>> data = null;
@@ -1596,9 +1641,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 targets = prefetchLinks(connection, seed);
             }
             T record = instantiate(clazz, id, data, targets);
-            return record != null && (!hasFilter || filter.test(record))
-                    ? record
-                    : null;
+            if(record != null && hasFilter) {
+                return new SelectResult<>(filter.test(record) ? record : null,
+                        record);
+            }
+            else {
+                return new SelectResult<>(record);
+            }
         }
         finally {
             if(connection != null) {
@@ -1612,42 +1661,44 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link UniqueSelection} to execute
      * @param <T> the {@link Record} type
-     * @return the unique matching {@link Record}, or {@code null} if none match
+     * @return a {@link SelectResult} containing the unique matching
+     *         {@link Record} (or {@code null}) and any cache-safe value
+     *         propagated from the inner query
      * @throws DuplicateEntryException if more than one {@link Record} matches
      */
-    private <T extends Record> T $selectUnique(UniqueSelection<T> selection) {
+    private <T extends Record> SelectResult<T> $selectUnique(
+            UniqueSelection<T> selection) {
         DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
                 selection.clazz, selection.any);
         state.criteria = selection.criteria;
         state.page = DatabaseInterface.UNIQUE_PAGINATION;
         state.filter = selection.filter;
         state.realms = selection.realms;
-        Set<T> results;
+        SelectResult<Set<T>> selected;
         if(selection.criteria != null) {
-            results = $selectCriteria(new FindSelection<>(state));
+            selected = $selectCriteria(new FindSelection<>(state));
         }
         else {
-            results = $selectClass(new LoadClassSelection<>(state));
+            selected = $selectClass(new LoadClassSelection<>(state));
         }
+        Set<T> results = selected.result;
+        T result;
         if(results.isEmpty()) {
-            return null;
+            result = null;
         }
         else if(results.size() == 1) {
-            return results.iterator().next();
+            result = results.iterator().next();
         }
         else {
             throw duplicateEntryException("Multiple records match {} in {}{}",
                     selection.criteria,
                     selection.any ? "the hierarchy of " : "", selection.clazz);
         }
+        return new SelectResult<>(result, selected.cacheValue);
     }
 
     /**
-<<<<<<< Updated upstream
-     * Execute a single {@link DatabaseSelection}. This is the canonical
-     * dispatch point for all read operations &mdash; cache recall,
-     * {@link AdHocDataSource} routing, and database querying all funnel through
-     * here.
+     * Execute a single {@link DatabaseSelection}.
      * <p>
      * On completion, {@code selection}'s {@link DatabaseSelection#result
      * result} and {@link DatabaseSelection#state state} are set.
@@ -1667,10 +1718,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             DatabaseSelection<T> selection,
             @Nullable Set<AdHocDataSource<?>> sources) {
         if(selection.state == Selection.State.RESOLVED) {
-            selection.state = Selection.State.FINISHED;
+            selection.setState(Selection.State.FINISHED);
             return; /* (authorized short circuit) */
         }
-        selection.state = Selection.State.SUBMITTED;
+        selection.setState(Selection.State.SUBMITTED);
         R result;
         R cached = recallAndPossiblyFilter(selection);
         if(cached != null) {
@@ -1752,33 +1803,41 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                     + selection.getClass());
                 }
             }
-            else if(selection instanceof CountSelection) {
-                result = (R) $selectCount((CountSelection<T>) selection);
-            }
-            else if(selection instanceof LoadRecordSelection) {
-                result = (R) $selectRecord((LoadRecordSelection<T>) selection);
-            }
-            else if(selection instanceof LoadClassSelection) {
-                result = (R) $selectClass((LoadClassSelection<T>) selection);
-            }
-            else if(selection instanceof FindSelection) {
-                result = (R) $selectCriteria((FindSelection<T>) selection);
-            }
-            else if(selection instanceof UniqueSelection) {
-                result = (R) $selectUnique((UniqueSelection<T>) selection);
-            }
             else {
-                throw new IllegalStateException(
-                        "Unsupported Selection type " + selection.getClass());
+                // Direct-DB path: the $select* methods return a SelectResult
+                // that separates the caller-facing (possibly filtered) result
+                // from the cache-safe (unfiltered) value. Each must be
+                // extracted here and placed on the input #selection
+                SelectResult<?> res;
+                if(selection instanceof CountSelection) {
+                    res = $selectCount((CountSelection<T>) selection);
+                }
+                else if(selection instanceof LoadRecordSelection) {
+                    res = $selectRecord((LoadRecordSelection<T>) selection);
+                }
+                else if(selection instanceof LoadClassSelection) {
+                    res = $selectClass((LoadClassSelection<T>) selection);
+                }
+                else if(selection instanceof FindSelection) {
+                    res = $selectCriteria((FindSelection<T>) selection);
+                }
+                else if(selection instanceof UniqueSelection) {
+                    res = $selectUnique((UniqueSelection<T>) selection);
+                }
+                else {
+                    throw new IllegalStateException(
+                            "Unsupported Selection type "
+                                    + selection.getClass());
+                }
+                result = (R) res.result;
+                selection.cacheValue = res.cacheValue;
             }
         }
-        selection.result = result;
-        selection.state = Selection.State.FINISHED;
+        selection.setResult(result);
+        selection.setState(Selection.State.FINISHED);
     }
 
     /**
-=======
->>>>>>> Stashed changes
      * Partition the results of a combined multi-select query back into a single
      * {@link Selection} and populate its result.
      *
@@ -1828,8 +1887,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             result = selection.any ? instantiateAll(filtered)
                     : instantiateAll((Class) selection.clazz, filtered);
         }
-        selection.result = result;
-        selection.state = Selection.State.FINISHED;
+        selection.setResult(result);
+        selection.setState(Selection.State.FINISHED);
         reserve(selection);
     }
 
@@ -2415,6 +2474,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         cached = null;
                     }
                 }
+                else {
+                    // The cached value is not a type that can be filtered
+                    // (e.g., an Integer from a count query). Force a cache miss
+                    // so the selection re-executes with its own filter logic.
+                    return null;
+                }
             }
             return (R) cached;
         }
@@ -2424,9 +2489,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Store a {@link Selection Selection's} result in the thread-local reserve.
+     * If it exists, store a {@link Selection Selection's} cacheable result in
+     * the thread-local reserve.
+     * <p>
      * This is a no-op if {@link #reserve()} has not been called on the current
      * thread.
+     * </p>
      *
      * @param selection the {@link Selection} to reserve
      */
@@ -2434,7 +2502,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Preconditions.checkState(selection.state == Selection.State.FINISHED);
         Map<Reservation, Object> reservations = this.reservations.get();
         if(reservations != null) {
-            reservations.put(selection.reservation(), selection.result);
+            boolean hasFilter = selection.filter != null
+                    && !DatabaseSelection.isNoFilter(selection.filter);
+            if(selection.cacheValue != null) {
+                reservations.put(selection.reservation(), selection.cacheValue);
+            }
+            else if(!hasFilter) {
+                reservations.put(selection.reservation(), selection.result);
+            }
         }
     }
 
@@ -3111,6 +3186,62 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * {@link Runway#Builder#streamingReadBufferSize(int)}.
          */
         STREAM
+    }
+
+    /**
+     * A dedup key for {@link DatabaseSelection DatabaseSelections} in a batch
+     * {@link #select} call. Two {@link SelectionKey SelectionKeys} are equal
+     * when they have the same {@link Reservation} and the same filter instance.
+     * This ensures that unfiltered selections with identical query parameters
+     * are deduped (since they share the {@link DatabaseSelection#NO_FILTER}
+     * singleton), while filtered selections with different predicates are
+     * always treated as distinct.
+     *
+     * @author Jeff Nelson
+     */
+    private static final class SelectionKey {
+
+        /**
+         * The {@link DatabaseSelection} this key represents.
+         */
+        final DatabaseSelection<?> selection;
+
+        /**
+         * The {@link Reservation} derived from the {@link #selection}.
+         */
+        private final Reservation reservation;
+
+        /**
+         * The filter predicate, compared by identity.
+         */
+        private final Predicate<?> filter;
+
+        /**
+         * Construct a new {@link SelectionKey}.
+         *
+         * @param selection the {@link DatabaseSelection}
+         */
+        SelectionKey(DatabaseSelection<?> selection) {
+            this.selection = selection;
+            this.reservation = selection.reservation();
+            this.filter = selection.filter;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if(obj instanceof SelectionKey) {
+                SelectionKey other = (SelectionKey) obj;
+                return reservation.equals(other.reservation)
+                        && filter == other.filter;
+            }
+            return false;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(reservation, System.identityHashCode(filter));
+        }
+
     }
 
     /**

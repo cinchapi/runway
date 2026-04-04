@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import java.util.function.Predicate;
 
 import com.cinchapi.concourse.lang.Criteria;
@@ -134,7 +136,9 @@ public interface Selection<T extends Record> {
                 state.page = find.page;
                 state.filter = find.filter;
                 state.realms = find.realms;
-                return new FindSelection<>(state);
+                FindSelection<T> result = new FindSelection<>(state);
+                result.origin = selection;
+                return result;
             }
             else if(resolved instanceof CountSelection) {
                 CountSelection<T> count = (CountSelection<T>) resolved;
@@ -147,7 +151,9 @@ public interface Selection<T extends Record> {
                         : injected;
                 state.filter = count.filter;
                 state.realms = count.realms;
-                return new CountSelection<>(state);
+                CountSelection<T> result = new CountSelection<>(state);
+                result.origin = selection;
+                return result;
             }
             else if(resolved instanceof UniqueSelection) {
                 UniqueSelection<T> unique = (UniqueSelection<T>) resolved;
@@ -160,7 +166,9 @@ public interface Selection<T extends Record> {
                         : injected;
                 state.filter = unique.filter;
                 state.realms = unique.realms;
-                return new UniqueSelection<>(state);
+                UniqueSelection<T> result = new UniqueSelection<>(state);
+                result.origin = selection;
+                return result;
             }
             else {
                 // LoadClassSelection — visibility criteria becomes the sole
@@ -173,7 +181,9 @@ public interface Selection<T extends Record> {
                 state.page = set.page;
                 state.filter = resolved.filter;
                 state.realms = resolved.realms;
-                return new FindSelection<>(state);
+                FindSelection<T> result = new FindSelection<>(state);
+                result.origin = selection;
+                return result;
             }
         }
     }
@@ -192,9 +202,10 @@ public interface Selection<T extends Record> {
         DatabaseSelection<T> resolved = (DatabaseSelection<T>) DatabaseSelection
                 .resolve(selection);
         resolved = resolved.duplicate();
-        resolved.filter = filter == null || DatabaseSelection.isNoFilter(filter)
-                ? (Predicate<T>) filter
-                : resolved.filter.and(filter);
+        resolved.origin = selection;
+        if(filter != null && !DatabaseSelection.isNoFilter(filter)) {
+            resolved.filter = resolved.filter.and(filter);
+        }
         return resolved;
     }
 
@@ -304,9 +315,12 @@ public interface Selection<T extends Record> {
             return state.clazz;
         }
 
+        @SuppressWarnings("unchecked")
         @Override
         public <R> R get() {
-            throw new IllegalStateException("Selection has not been executed");
+            checkState(state.state == State.FINISHED,
+                    "Selection has not been executed");
+            return (R) state.result;
         }
 
         /**
@@ -322,7 +336,27 @@ public interface Selection<T extends Record> {
 
         @Override
         public State state() {
-            return State.PENDING;
+            return state.state;
+        }
+
+        /**
+         * Set the execution {@code state} on the shared
+         * {@link DatabaseSelection.BuilderState}.
+         *
+         * @param state the new {@link State}
+         */
+        void setState(Selection.State state) {
+            this.state.state = state;
+        }
+
+        /**
+         * Set the execution {@code result} on the shared
+         * {@link DatabaseSelection.BuilderState}.
+         *
+         * @param result the execution result
+         */
+        void setResult(Object result) {
+            this.state.result = result;
         }
 
         /**

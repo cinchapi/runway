@@ -196,9 +196,9 @@ public abstract class Scope {
             else {
                 result = ImmutableSet.of();
             }
-            Reflection.set("result", result, selection); /* (authorized) */
-            Reflection.set("state", Selection.State.RESOLVED,
-                    selection); /* (authorized) */
+            Reflection.call(selection, "setResult", result); /* (authorized) */
+            Reflection.call(selection, "setState",
+                    Selection.State.RESOLVED); /* (authorized) */
             return selection;
         }
 
