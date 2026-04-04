@@ -25,11 +25,11 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
@@ -982,15 +982,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             // TODO: Check if the server version is 1.0.0+ and, if so, use
             // prepare/submit
-            Map<Reservation, DatabaseSelection<?>> unique = Arrays
-                    .stream(selections)
-                    .collect(Collectors.toMap(DatabaseSelection::reservation,
-                            Function.identity(), (first, dupe) -> first,
-                            LinkedHashMap::new));
+            List<DatabaseSelection<?>> unique = Arrays.stream(selections)
+                    .map(SelectionKey::new).distinct().map(key -> key.selection)
+                    .collect(Collectors.toList());
             List<DatabaseSelection<?>> isolated = new ArrayList<>();
             List<DatabaseSelection<?>> combinable = new ArrayList<>();
             Set<String> combinedClasses = Sets.newHashSet();
-            outer: for (DatabaseSelection<?> selection : unique.values()) {
+            outer: for (DatabaseSelection<?> selection : unique) {
                 if(selection.state == Selection.State.RESOLVED) {
                     selection.setState(Selection.State.FINISHED);
                     continue outer; /* (authorized short circuit) */
@@ -1077,11 +1075,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             // Propagate results to duplicates
             for (DatabaseSelection<?> selection : selections) {
-                DatabaseSelection<?> canonical = unique
-                        .get(selection.reservation());
-                if(canonical != selection) {
-                    selection.setResult(canonical.result);
-                    selection.setState(Selection.State.FINISHED);
+                if(selection.state != Selection.State.FINISHED) {
+                    if(DatabaseSelection.isNoFilter(selection.filter)) {
+                        DatabaseSelection<?> canonical = unique.stream()
+                                .filter(item -> item.reservation()
+                                        .equals(selection.reservation()))
+                                .findFirst()
+                                .orElseThrow(IllegalStateException::new);
+                        selection.setResult(canonical.result);
+                        selection.setState(Selection.State.FINISHED);
+                    }
+                    else {
+                        throw new IllegalStateException();
+                    }
                 }
             }
             return new Selections(selections);
@@ -3175,6 +3181,62 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * {@link Runway#Builder#streamingReadBufferSize(int)}.
          */
         STREAM
+    }
+
+    /**
+     * A dedup key for {@link DatabaseSelection DatabaseSelections} in a batch
+     * {@link #select} call. Two {@link SelectionKey SelectionKeys} are equal
+     * when they have the same {@link Reservation} and the same filter instance.
+     * This ensures that unfiltered selections with identical query parameters
+     * are deduped (since they share the {@link DatabaseSelection#NO_FILTER}
+     * singleton), while filtered selections with different predicates are
+     * always treated as distinct.
+     *
+     * @author Jeff Nelson
+     */
+    private static final class SelectionKey {
+
+        /**
+         * The {@link DatabaseSelection} this key represents.
+         */
+        final DatabaseSelection<?> selection;
+
+        /**
+         * The {@link Reservation} derived from the {@link #selection}.
+         */
+        private final Reservation reservation;
+
+        /**
+         * The filter predicate, compared by identity.
+         */
+        private final Predicate<?> filter;
+
+        /**
+         * Construct a new {@link SelectionKey}.
+         *
+         * @param selection the {@link DatabaseSelection}
+         */
+        SelectionKey(DatabaseSelection<?> selection) {
+            this.selection = selection;
+            this.reservation = selection.reservation();
+            this.filter = selection.filter;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if(obj instanceof SelectionKey) {
+                SelectionKey other = (SelectionKey) obj;
+                return reservation.equals(other.reservation)
+                        && filter == other.filter;
+            }
+            return false;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(reservation, System.identityHashCode(filter));
+        }
+
     }
 
     /**

@@ -400,6 +400,51 @@ public class ReservationFilterPoisoningTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that duplicate unfiltered {@link Selection
+     * Selections} with identical query parameters in a single
+     * {@link Runway#select(Selection...)} call are deduped and both receive the
+     * correct result.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Item Items} in category
+     * "G".
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Item Items} in category "G".</li>
+     * <li>Construct two unfiltered {@link Selection Selections} with the same
+     * criteria.</li>
+     * <li>Pass both to a single {@link Runway#select(Selection...)} call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both {@link Selection Selections} return the
+     * same 2 {@link Item Items}. The duplicate receives its result via
+     * propagation from the canonical.
+     */
+    @Test
+    public void testDuplicateUnfilteredSelectionsAreDedupedAndBothReturnResults() {
+        new Item("g1", "G").save();
+        new Item("g2", "G").save();
+
+        Criteria criteria = Criteria.where().key("category")
+                .operator(Operator.EQUALS).value("G").build();
+
+        Selection<Item> first = Selection.of(Item.class).where(criteria);
+        Selection<Item> second = Selection.of(Item.class).where(criteria);
+
+        runway.select(first, second);
+
+        Set<Item> firstResult = first.get();
+        Set<Item> secondResult = second.get();
+
+        Assert.assertEquals(2, firstResult.size());
+        Assert.assertEquals(
+                "Duplicate selection should receive the "
+                        + "same result via propagation",
+                2, secondResult.size());
+        Assert.assertEquals(firstResult, secondResult);
+    }
+
+    /**
      * A simple test {@link Record} with a name, category, and score.
      */
     class Item extends Record {
