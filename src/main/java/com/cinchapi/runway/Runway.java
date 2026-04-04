@@ -1081,12 +1081,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 .filter(item -> item.reservation()
                                         .equals(selection.reservation()))
                                 .findFirst()
-                                .orElseThrow(IllegalStateException::new);
+                                .orElseThrow(() -> new IllegalStateException(
+                                        "No canonical selection found for "
+                                                + selection));
                         selection.setResult(canonical.result);
                         selection.setState(Selection.State.FINISHED);
                     }
                     else {
-                        throw new IllegalStateException();
+                        throw new IllegalStateException(
+                                "Filtered duplicate selection was not "
+                                        + "independently executed: "
+                                        + selection);
                     }
                 }
             }
