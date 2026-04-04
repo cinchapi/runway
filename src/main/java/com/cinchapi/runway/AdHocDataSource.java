@@ -363,45 +363,45 @@ public class AdHocDataSource<T extends AdHocRecord> implements
                 .toArray(DatabaseSelection[]::new);
         for (DatabaseSelection<?> selection : selections) {
             if(selection.state == Selection.State.RESOLVED) {
-                selection.state = Selection.State.FINISHED;
+                selection.setState(Selection.State.FINISHED);
                 continue; /* (authorized short circuit) */
             }
             selection.ensurePending();
-            selection.state = Selection.State.SUBMITTED;
+            selection.setState(Selection.State.SUBMITTED);
             if(selection instanceof CountSelection) {
                 // NOTE: This path isn't consolidated because #count has
                 // different codepaths with vs without a Criteria
                 CountSelection<?> s = (CountSelection<?>) selection;
                 Predicate filter = s.filter;
                 if(s.criteria != null) {
-                    s.result = s.any
+                    s.setResult(s.any
                             ? countAny(s.clazz, s.criteria, filter, s.realms)
-                            : count(s.clazz, s.criteria, filter, s.realms);
+                            : count(s.clazz, s.criteria, filter, s.realms));
                 }
                 else {
-                    s.result = s.any ? countAny(s.clazz, filter, s.realms)
-                            : count(s.clazz, filter, s.realms);
+                    s.setResult(s.any ? countAny(s.clazz, filter, s.realms)
+                            : count(s.clazz, filter, s.realms));
                 }
             }
             else if(selection instanceof LoadRecordSelection) {
                 LoadRecordSelection<?> s = (LoadRecordSelection<?>) selection;
-                s.result = load(s.clazz, s.id, s.realms);
+                s.setResult(load(s.clazz, s.id, s.realms));
             }
             else if(selection instanceof FindSelection) {
                 FindSelection<?> s = (FindSelection<?>) selection;
                 Predicate filter = s.filter;
-                s.result = s.any
+                s.setResult(s.any
                         ? findAny(s.clazz, s.criteria, s.order, s.page, filter,
                                 s.realms)
                         : find(s.clazz, s.criteria, s.order, s.page, filter,
-                                s.realms);
+                                s.realms));
             }
             else if(selection instanceof LoadClassSelection) {
                 LoadClassSelection<?> s = (LoadClassSelection<?>) selection;
                 Predicate filter = s.filter;
-                s.result = s.any
+                s.setResult(s.any
                         ? loadAny(s.clazz, s.order, s.page, filter, s.realms)
-                        : load(s.clazz, s.order, s.page, filter, s.realms);
+                        : load(s.clazz, s.order, s.page, filter, s.realms));
             }
             else if(selection instanceof UniqueSelection) {
                 UniqueSelection<?> s = (UniqueSelection<?>) selection;
@@ -416,13 +416,13 @@ public class AdHocDataSource<T extends AdHocRecord> implements
                     results = s.any ? loadAny(s.clazz, filter, s.realms)
                             : load(s.clazz, filter, s.realms);
                 }
-                s.result = unique(results, s.clazz, s.criteria, s.any);
+                s.setResult(unique(results, s.clazz, s.criteria, s.any));
             }
             else {
                 throw new UnsupportedOperationException(
                         "Unsupported Selection type " + selection.getClass());
             }
-            selection.state = Selection.State.FINISHED;
+            selection.setState(Selection.State.FINISHED);
         }
         return new Selections(selections);
     }

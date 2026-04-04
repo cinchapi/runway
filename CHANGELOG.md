@@ -1,5 +1,11 @@
 # Changelog
 
+#### Version 1.14.4 (April 4, 2026)
+* Fixed a bug where `Selection` objects passed to the `Runway.select()` method did not track state or results. The results were correctly available on the returned `Selections` container, but the input `Selection` objects should have also tracked this data. ([GH-90](https://github.com/cinchapi/runway/issues/90))
+* Fixed a bug that allowed filtered `Selection` reads to poison the reservation cache and cause subsequent reads with the same parameters but a different or absent filter to return incorrect results. For example, a read through an `Audience` could cause subsequent `Runway`-wide reads to return results that were still narrowed by that audience's visibility rules. ([GH-89](https://github.com/cinchapi/runway/issues/89))
+* Fixed a bug where multiple `Selection` objects with the same query parameters but different filters passed to a single `Runway.select()` call shared results instead of executing independently, causing the second selection to receive the first selection's filtered results. ([GH-92](https://github.com/cinchapi/runway/issues/92))
+* Fixed a bug where injecting a `null` or no-op filter via `Selection.withInjectedFilter()` into a `Selection` that already had a client-side filter would silently discard the original filter, causing the resulting `Selection` to return unfiltered results.
+
 #### Version 1.14.3 (April 3, 2026)
 * Fixed a bug where `AdHocDataSource` records were invisible to `Runway.select()` when executing multiple selections simultaneously, causing count and data queries to return empty results ([GH-86](https://github.com/cinchapi/runway/issues/86))
 * Fixed a bug where `Runway#close()` could leave dangling instances in the static registry if closing the connection pool threw an exception, which could interfere with subsequent implicit saves ([GH-87](https://github.com/cinchapi/runway/issues/87))
