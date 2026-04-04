@@ -77,9 +77,8 @@ public class ReservationFilterPoisoningTest extends RunwayBaseClientServerTest {
 
         runway.reserve();
 
-        // First selection: same criteria, but a filter that
-        // rejects all records (e.g. a bridge audience that
-        // cannot pass any visibility check)
+        // First selection: same criteria, but a filter that rejects all records
+        // (e.g. a bridge audience that cannot pass any visibility check)
         Selection<Item> restrictive = Selection.of(Item.class).where(criteria)
                 .filter(item -> false);
         runway.select(restrictive);
@@ -87,8 +86,8 @@ public class ReservationFilterPoisoningTest extends RunwayBaseClientServerTest {
         Assert.assertEquals("Restrictive filter should produce 0 results", 0,
                 restrictedResult.size());
 
-        // Second selection: same criteria, but a filter that
-        // accepts all records (e.g. the real user audience)
+        // Second selection: same criteria, but a filter that accepts all
+        // records (e.g. the real user audience)
         Selection<Item> permissive = Selection.of(Item.class).where(criteria)
                 .filter(item -> true);
         runway.select(permissive);
@@ -141,9 +140,8 @@ public class ReservationFilterPoisoningTest extends RunwayBaseClientServerTest {
         Set<Item> narrowResult = narrow.get();
         Assert.assertEquals(1, narrowResult.size());
 
-        // Second: broader filter (score > 20) → should get
-        // "mid" and "high", but if the reservation is
-        // poisoned, "mid" was already excluded
+        // Second: broader filter (score > 20) → should get "mid" and "high",
+        // but if the reservation is poisoned, "mid" was already excluded
         Selection<Item> broad = Selection.of(Item.class).where(criteria)
                 .filter(item -> item.score > 20);
         runway.select(broad);
@@ -291,8 +289,7 @@ public class ReservationFilterPoisoningTest extends RunwayBaseClientServerTest {
         Set<Item> unfilteredResult = unfiltered.get();
         Assert.assertEquals(2, unfilteredResult.size());
 
-        // Second: filtered — should apply filter to the
-        // cached unfiltered data
+        // Second: filtered — should apply filter to the cached unfiltered data
         Selection<Item> filtered = Selection.of(Item.class).where(criteria)
                 .filter(item -> item.score > 50);
         runway.select(filtered);
@@ -341,14 +338,65 @@ public class ReservationFilterPoisoningTest extends RunwayBaseClientServerTest {
         int unfiltered = unfilteredCount.get();
         Assert.assertEquals(3, unfiltered);
 
-        // Second: filtered count — must not return
-        // the cached unfiltered count of 3
+        // Second: filtered count — must not return the cached unfiltered count
+        // of 3
         Selection<Item> filteredCount = Selection.of(Item.class).where(criteria)
                 .filter(item -> item.score > 40).count();
         runway.select(filteredCount);
         int filtered = filteredCount.get();
         Assert.assertEquals("Filtered count should return 2, not "
                 + "the cached unfiltered count of 3", 2, filtered);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two {@link Selection Selections} with
+     * the same query parameters but different filters produce independent
+     * results when passed to a single {@link Runway#select(Selection...)} call.
+     * <p>
+     * <strong>Start state:</strong> Three saved {@link Item Items} in category
+     * "F" with different scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save three {@link Item Items} in category "F" with scores 10, 50, and
+     * 90.</li>
+     * <li>Construct two {@link Selection Selections} with the same criteria but
+     * different filters: one that rejects everything and one that accepts
+     * scores above 20.</li>
+     * <li>Pass both to a single {@link Runway#select(Selection...)} call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The restrictive {@link Selection} returns 0
+     * {@link Item Items}. The permissive {@link Selection} returns 2
+     * {@link Item Items} (scores 50 and 90). The permissive result must not be
+     * contaminated by the restrictive filter.
+     */
+    @Test
+    public void testBatchSelectWithDifferentFiltersProducesIndependentResults() {
+        new Item("f1", "F", 10).save();
+        new Item("f2", "F", 50).save();
+        new Item("f3", "F", 90).save();
+
+        Criteria criteria = Criteria.where().key("category")
+                .operator(Operator.EQUALS).value("F").build();
+
+        // Two selections with the same criteria but different filters in a
+        // single select() call
+        Selection<Item> restrictive = Selection.of(Item.class).where(criteria)
+                .filter(item -> false);
+        Selection<Item> permissive = Selection.of(Item.class).where(criteria)
+                .filter(item -> item.score > 20);
+
+        runway.select(restrictive, permissive);
+
+        Set<Item> restrictedResult = restrictive.get();
+        Set<Item> permissiveResult = permissive.get();
+
+        Assert.assertEquals("Restrictive filter should return 0 items", 0,
+                restrictedResult.size());
+        Assert.assertEquals("Permissive filter should return 2 items "
+                + "independently, not the 0 from " + "the restrictive filter",
+                2, permissiveResult.size());
     }
 
     /**
