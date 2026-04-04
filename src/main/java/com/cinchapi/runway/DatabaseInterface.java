@@ -1909,11 +1909,6 @@ public interface DatabaseInterface {
     /**
      * Execute a single {@link Selection} and return the result directly, cast
      * to the appropriate type.
-     * <p>
-     * The return type is inferred from the calling context &mdash; a
-     * {@link java.util.Set Set} for find and load queries, a single
-     * {@link Record} for load-by-id queries, or an {@link Integer} for count
-     * queries.
      *
      * @param selection the {@link Selection} to execute
      * @param <R> the expected result type
@@ -1929,9 +1924,12 @@ public interface DatabaseInterface {
      * Execute one or more {@link Selection Selections} and return a
      * {@link Selections} wrapper for positional access to the results.
      * <p>
-     * This is the single dispatch point for all retrieval operations. Every
-     * other read method on this interface delegates here. Subclasses provide
-     * the actual query execution, caching, and optimization.
+     * Compared to calling individual read methods (e.g., find*, load*), this
+     * method may be more efficient by fetching the results in a single or
+     * parallel database round trips. These benefits are especially compounded
+     * if the {@link Selection selections} happen multiple times during the
+     * process pipeline and the {@link Runway#reserve()} method is called
+     * beforehand.
      * </p>
      *
      * @param selections the {@link Selection Selections} to execute
