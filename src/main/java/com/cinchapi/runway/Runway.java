@@ -1360,9 +1360,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link LoadClassSelection} to execute
      * @param <T> the {@link Record} type
-     * @return the matching {@link Record Records}
+     * @return a {@link SelectResult} containing the matching {@link Record
+     *         Records} and, when a filter is applied without pagination, the
+     *         unfiltered data for caching
      */
-    private <T extends Record> Set<T> $selectClass(
+    private <T extends Record> SelectResult<Set<T>> $selectClass(
             LoadClassSelection<T> selection) {
         AtomicReference<Concourse> connection = new AtomicReference<Concourse>(
                 null);
@@ -1388,9 +1390,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     return any ? instantiateAll(data)
                             : instantiateAll(clazz, data);
                 };
-                return hasFilter
-                        ? Pagination.applyFilterAndPage(retriever, filter, page)
-                        : retriever.apply(page);
+                if(hasFilter && page != null) {
+                    return new SelectResult<>(Pagination
+                            .applyFilterAndPage(retriever, filter, page));
+                }
+                else if(hasFilter) {
+                    Set<T> unfiltered = retriever.apply(page);
+                    return new SelectResult<>(
+                            unfiltered.stream().filter(filter)
+                                    .collect(Collectors
+                                            .toCollection(LinkedHashSet::new)),
+                            unfiltered);
+                }
+                else {
+                    return new SelectResult<>(retriever.apply(page));
+                }
             }
             else {
                 // Legacy servers lack native sorting/pagination, so results
@@ -1408,8 +1422,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 if(page != null) {
                     stream = stream.skip(page.skip()).limit(page.limit());
                 }
-                return stream
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                return new SelectResult<>(stream
+                        .collect(Collectors.toCollection(LinkedHashSet::new)));
             }
         }
         finally {
@@ -1424,9 +1438,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link CountSelection} to execute
      * @param <T> the {@link Record} type
-     * @return the count
+     * @return a {@link SelectResult} containing the count; no
+     *         {@link SelectResult#cacheValue} is provided because the inner
+     *         {@code fetch()} caches the unfiltered set under its own
+     *         {@link Reservation}
      */
-    private <T extends Record> Integer $selectCount(
+    private <T extends Record> SelectResult<Integer> $selectCount(
             CountSelection<T> selection) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
@@ -1435,31 +1452,34 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         Realms realms = selection.realms;
         if(hasFilter) {
+            // Fetch unfiltered so the inner selection caches reusable data,
+            // then count the filtered stream.
             Set<T> records = fetch(Selection.of(clazz).any(any).where(criteria)
-                    .filter(filter).realms(realms));
-            return records.size();
+                    .realms(realms));
+            return new SelectResult<>(
+                    (int) records.stream().filter(filter).count());
         }
         else if(criteria == null) {
             // No criteria means count all records of this class
-            return any
+            return new SelectResult<>(any
                     ? $count($Criteria.amongRealms(realms,
                             $Criteria.forClassHierarchy(clazz)))
                     : $count($Criteria.amongRealms(realms,
-                            $Criteria.forClass(clazz)));
+                            $Criteria.forClass(clazz))));
         }
         else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            return any
+            return new SelectResult<>(any
                     ? $count($Criteria.amongRealms(realms,
                             $Criteria.accrossClassHierachy(clazz, criteria)))
                     : $count($Criteria.amongRealms(realms,
-                            $Criteria.withinClass(clazz, criteria)));
+                            $Criteria.withinClass(clazz, criteria))));
         }
         else {
-            return any
+            return new SelectResult<>(any
                     ? filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION,
                             realms).size()
                     : filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
-                            .size();
+                            .size());
         }
     }
 
@@ -1468,9 +1488,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link FindSelection} to execute
      * @param <T> the {@link Record} type
-     * @return the matching {@link Record Records}
+     * @return a {@link SelectResult} containing the matching {@link Record
+     *         Records} and, when a filter is applied without pagination, the
+     *         unfiltered data for caching
      */
-    private <T extends Record> Set<T> $selectCriteria(
+    private <T extends Record> SelectResult<Set<T>> $selectCriteria(
             FindSelection<T> selection) {
         AtomicReference<Concourse> connection = new AtomicReference<Concourse>(
                 null);
@@ -1507,10 +1529,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 : filter(clazz, criteria, order, $page, realms);
                     }
                 };
-                return hasFilter
-                        ? Pagination.applyFilterAndPage(retriever, filter, page)
-                        : retriever.apply(page);
-
+                if(hasFilter && page != null) {
+                    return new SelectResult<>(Pagination
+                            .applyFilterAndPage(retriever, filter, page));
+                }
+                else if(hasFilter) {
+                    Set<T> unfiltered = retriever.apply(page);
+                    return new SelectResult<>(
+                            unfiltered.stream().filter(filter)
+                                    .collect(Collectors
+                                            .toCollection(LinkedHashSet::new)),
+                            unfiltered);
+                }
+                else {
+                    return new SelectResult<>(retriever.apply(page));
+                }
             }
             else {
                 // Legacy servers lack native sorting/pagination, so results
@@ -1528,8 +1561,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 if(page != null) {
                     stream = stream.skip(page.skip()).limit(page.limit());
                 }
-                return stream
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                return new SelectResult<>(stream
+                        .collect(Collectors.toCollection(LinkedHashSet::new)));
             }
         }
         finally {
@@ -1544,11 +1577,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link LoadRecordSelection} to execute
      * @param <T> the {@link Record} type
-     * @return the loaded {@link Record}, or {@code null} if no matching record
-     *         exists
+     * @return a {@link SelectResult} containing the loaded {@link Record} (or
+     *         {@code null}) and, when a filter is applied, the unfiltered
+     *         record for caching
      */
     @SuppressWarnings("deprecation")
-    private <T extends Record> T $selectRecord(
+    private <T extends Record> SelectResult<T> $selectRecord(
             LoadRecordSelection<T> selection) {
         Concourse connection = null;
         Class<T> clazz = selection.clazz;
@@ -1573,7 +1607,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         connection.select(Record.REALMS_KEY, id),
                         ImmutableSet.of());
                 if(Sets.intersection($realms, realms.names()).isEmpty()) {
-                    return null; // TODO: what to do here?
+                    return new SelectResult<>(null); // TODO: what to do here?
                 }
             }
             Map<String, Set<Object>> data = null;
@@ -1596,9 +1630,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 targets = prefetchLinks(connection, seed);
             }
             T record = instantiate(clazz, id, data, targets);
-            return record != null && (!hasFilter || filter.test(record))
-                    ? record
-                    : null;
+            if(record != null && hasFilter) {
+                return new SelectResult<>(filter.test(record) ? record : null,
+                        record);
+            }
+            else {
+                return new SelectResult<>(record);
+            }
         }
         finally {
             if(connection != null) {
@@ -1612,34 +1650,40 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param selection the {@link UniqueSelection} to execute
      * @param <T> the {@link Record} type
-     * @return the unique matching {@link Record}, or {@code null} if none match
+     * @return a {@link SelectResult} containing the unique matching
+     *         {@link Record} (or {@code null}) and any cache-safe value
+     *         propagated from the inner query
      * @throws DuplicateEntryException if more than one {@link Record} matches
      */
-    private <T extends Record> T $selectUnique(UniqueSelection<T> selection) {
+    private <T extends Record> SelectResult<T> $selectUnique(
+            UniqueSelection<T> selection) {
         DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
                 selection.clazz, selection.any);
         state.criteria = selection.criteria;
         state.page = DatabaseInterface.UNIQUE_PAGINATION;
         state.filter = selection.filter;
         state.realms = selection.realms;
-        Set<T> results;
+        SelectResult<Set<T>> selected;
         if(selection.criteria != null) {
-            results = $selectCriteria(new FindSelection<>(state));
+            selected = $selectCriteria(new FindSelection<>(state));
         }
         else {
-            results = $selectClass(new LoadClassSelection<>(state));
+            selected = $selectClass(new LoadClassSelection<>(state));
         }
+        Set<T> results = selected.result;
+        T result;
         if(results.isEmpty()) {
-            return null;
+            result = null;
         }
         else if(results.size() == 1) {
-            return results.iterator().next();
+            result = results.iterator().next();
         }
         else {
             throw duplicateEntryException("Multiple records match {} in {}{}",
                     selection.criteria,
                     selection.any ? "the hierarchy of " : "", selection.clazz);
         }
+        return new SelectResult<>(result, selected.cacheValue);
     }
 
     /**
@@ -1748,24 +1792,34 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                     + selection.getClass());
                 }
             }
-            else if(selection instanceof CountSelection) {
-                result = (R) $selectCount((CountSelection<T>) selection);
-            }
-            else if(selection instanceof LoadRecordSelection) {
-                result = (R) $selectRecord((LoadRecordSelection<T>) selection);
-            }
-            else if(selection instanceof LoadClassSelection) {
-                result = (R) $selectClass((LoadClassSelection<T>) selection);
-            }
-            else if(selection instanceof FindSelection) {
-                result = (R) $selectCriteria((FindSelection<T>) selection);
-            }
-            else if(selection instanceof UniqueSelection) {
-                result = (R) $selectUnique((UniqueSelection<T>) selection);
-            }
             else {
-                throw new IllegalStateException(
-                        "Unsupported Selection type " + selection.getClass());
+                // Direct-DB path: the $select* methods return a SelectResult
+                // that separates the caller-facing (possibly filtered) result
+                // from the cache-safe (unfiltered) value. Each must be
+                // extracted here and placed on the input #selection
+                SelectResult<?> res;
+                if(selection instanceof CountSelection) {
+                    res = $selectCount((CountSelection<T>) selection);
+                }
+                else if(selection instanceof LoadRecordSelection) {
+                    res = $selectRecord((LoadRecordSelection<T>) selection);
+                }
+                else if(selection instanceof LoadClassSelection) {
+                    res = $selectClass((LoadClassSelection<T>) selection);
+                }
+                else if(selection instanceof FindSelection) {
+                    res = $selectCriteria((FindSelection<T>) selection);
+                }
+                else if(selection instanceof UniqueSelection) {
+                    res = $selectUnique((UniqueSelection<T>) selection);
+                }
+                else {
+                    throw new IllegalStateException(
+                            "Unsupported Selection type "
+                                    + selection.getClass());
+                }
+                result = (R) res.result;
+                selection.cacheValue = res.cacheValue;
             }
         }
         selection.setResult(result);
@@ -2409,6 +2463,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         cached = null;
                     }
                 }
+                else {
+                    // The cached value is not a type that can be filtered
+                    // (e.g., an Integer from a count query). Force a cache miss
+                    // so the selection re-executes with its own filter logic.
+                    return null;
+                }
             }
             return (R) cached;
         }
@@ -2418,9 +2478,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Store a {@link Selection Selection's} result in the thread-local reserve.
+     * If it exists, store a {@link Selection Selection's} cacheable result in
+     * the thread-local reserve.
+     * <p>
      * This is a no-op if {@link #reserve()} has not been called on the current
      * thread.
+     * </p>
      *
      * @param selection the {@link Selection} to reserve
      */
@@ -2428,7 +2491,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Preconditions.checkState(selection.state == Selection.State.FINISHED);
         Map<Reservation, Object> reservations = this.reservations.get();
         if(reservations != null) {
-            reservations.put(selection.reservation(), selection.result);
+            boolean hasFilter = selection.filter != null
+                    && !DatabaseSelection.isNoFilter(selection.filter);
+            if(selection.cacheValue != null) {
+                reservations.put(selection.reservation(), selection.cacheValue);
+            }
+            else if(!hasFilter) {
+                reservations.put(selection.reservation(), selection.result);
+            }
         }
     }
 

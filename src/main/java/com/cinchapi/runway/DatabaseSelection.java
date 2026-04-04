@@ -127,6 +127,19 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     volatile Selection<?> origin;
 
     /**
+     * The unfiltered result to store in the reservation cache. When a
+     * {@link #filter} is applied, the {@link #result} contains filtered data
+     * that must not be cached under a filterless key. This field holds the
+     * pre-filter data so that {@code reserve()} can cache it instead.
+     * <p>
+     * {@code null} means no separate cache value was captured — either because
+     * no filter was applied or because the execution path could not separate
+     * filtered from unfiltered results.
+     */
+    @Nullable
+    Object cacheValue;
+
+    /**
      * Construct a new {@link DatabaseSelection}.
      *
      * @param clazz the target class
