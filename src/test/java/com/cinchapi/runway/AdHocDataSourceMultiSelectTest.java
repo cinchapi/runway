@@ -26,16 +26,15 @@ import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 
 /**
- * Tests that verify {@link AdHocDataSource} records are correctly resolved
- * when {@link Runway#select(Selection...)} executes multiple
- * {@link Selection Selections} simultaneously.
+ * Tests that verify {@link AdHocDataSource} records are correctly resolved when
+ * {@link Runway#select(Selection...)} executes multiple {@link Selection
+ * Selections} simultaneously.
  * <p>
  * These tests reproduce a bug where the multi-selection path in
- * {@link Runway#select} dispatches isolated selections to worker threads
- * via a {@code JoinableExecutorService}. Because attached
- * {@link AdHocDataSource AdHocDataSources} are stored in a
- * {@link ThreadLocal}, worker threads cannot see them, causing count
- * and/or data selections to return empty results.
+ * {@link Runway#select} dispatches isolated selections to worker threads via a
+ * {@code JoinableExecutorService}. Because attached {@link AdHocDataSource
+ * AdHocDataSources} are stored in a {@link ThreadLocal}, worker threads cannot
+ * see them, causing count and/or data selections to return empty results.
  * </p>
  *
  * @author Jeff Nelson
@@ -48,9 +47,9 @@ public class AdHocDataSourceMultiSelectTest extends RunwayBaseClientServerTest {
      * {@link Runway#select}.
      * <p>
      * This is the primary reproduction case: the count selection is dispatched
-     * to a worker thread that lacks the {@link ThreadLocal} attachment,
-     * causing it to query the database (which has no ad-hoc records) and
-     * return 0 instead of the expected count.
+     * to a worker thread that lacks the {@link ThreadLocal} attachment, causing
+     * it to query the database (which has no ad-hoc records) and return 0
+     * instead of the expected count.
      * </p>
      */
     @Test
@@ -84,9 +83,9 @@ public class AdHocDataSourceMultiSelectTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Verify that a count {@link Selection} returns the correct total when
-     * the data {@link Selection} includes pagination, which forces both
-     * selections to be non-combinable and dispatched to the thread pool.
+     * Verify that a count {@link Selection} returns the correct total when the
+     * data {@link Selection} includes pagination, which forces both selections
+     * to be non-combinable and dispatched to the thread pool.
      */
     @Test
     public void testMultiSelectCountWithPaginatedDataAndAttachedAdHocDataSource() {
@@ -119,9 +118,9 @@ public class AdHocDataSourceMultiSelectTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Verify that a count {@link Selection} with a filter returns the
-     * correct total alongside a filtered data {@link Selection} with
-     * pagination and ordering.
+     * Verify that a count {@link Selection} with a filter returns the correct
+     * total alongside a filtered data {@link Selection} with pagination and
+     * ordering.
      * <p>
      * The filter and pagination make both selections non-combinable, which
      * forces them into the isolated (thread pool) path.
@@ -162,8 +161,7 @@ public class AdHocDataSourceMultiSelectTest extends RunwayBaseClientServerTest {
 
     /**
      * Verify that a single count {@link Selection} (not multi-select) works
-     * correctly. This confirms the single-selection fast path is not
-     * affected.
+     * correctly. This confirms the single-selection fast path is not affected.
      */
     @Test
     public void testSingleCountSelectionWithAttachedAdHocDataSource() {

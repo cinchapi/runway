@@ -992,7 +992,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Set<String> combinedClasses = Sets.newHashSet();
             outer: for (DatabaseSelection<?> selection : unique.values()) {
                 if(selection.state == Selection.State.RESOLVED) {
-                    selection.state = Selection.State.FINISHED;
+                    selection.setState(Selection.State.FINISHED);
                     continue outer; /* (authorized short circuit) */
                 }
                 // NOTE: Must manually attempt to recall here because it won't
@@ -1000,15 +1000,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 // occurs and gets dispatched
                 Object cached = recallAndPossiblyFilter(selection);
                 if(cached != null) {
-                    selection.state = Selection.State.FINISHED;
-                    selection.result = cached;
+                    selection.setResult(cached);
+                    selection.setState(Selection.State.FINISHED);
                     continue outer;
                 }
                 Set<AdHocDataSource<?>> sources = selection.any
                         ? getAttachedSourcesForHierarchy(selection.clazz)
                         : getAttachedSources(selection.clazz);
                 if(!sources.isEmpty()) {
-                    selection.state = Selection.State.SUBMITTED;
+                    selection.setState(Selection.State.SUBMITTED);
                     $selectWithPossibleSources(selection, sources);
                     reserve(selection);
                     continue outer;
@@ -1080,8 +1080,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 DatabaseSelection<?> canonical = unique
                         .get(selection.reservation());
                 if(canonical != selection) {
-                    selection.result = canonical.result;
-                    selection.state = Selection.State.FINISHED;
+                    selection.setResult(canonical.result);
+                    selection.setState(Selection.State.FINISHED);
                 }
             }
             return new Selections(selections);
@@ -1643,11 +1643,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-<<<<<<< Updated upstream
-     * Execute a single {@link DatabaseSelection}. This is the canonical
-     * dispatch point for all read operations &mdash; cache recall,
-     * {@link AdHocDataSource} routing, and database querying all funnel through
-     * here.
+     * Execute a single {@link DatabaseSelection}.
      * <p>
      * On completion, {@code selection}'s {@link DatabaseSelection#result
      * result} and {@link DatabaseSelection#state state} are set.
@@ -1667,10 +1663,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             DatabaseSelection<T> selection,
             @Nullable Set<AdHocDataSource<?>> sources) {
         if(selection.state == Selection.State.RESOLVED) {
-            selection.state = Selection.State.FINISHED;
+            selection.setState(Selection.State.FINISHED);
             return; /* (authorized short circuit) */
         }
-        selection.state = Selection.State.SUBMITTED;
+        selection.setState(Selection.State.SUBMITTED);
         R result;
         R cached = recallAndPossiblyFilter(selection);
         if(cached != null) {
@@ -1772,13 +1768,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         "Unsupported Selection type " + selection.getClass());
             }
         }
-        selection.result = result;
-        selection.state = Selection.State.FINISHED;
+        selection.setResult(result);
+        selection.setState(Selection.State.FINISHED);
     }
 
     /**
-=======
->>>>>>> Stashed changes
      * Partition the results of a combined multi-select query back into a single
      * {@link Selection} and populate its result.
      *
@@ -1828,8 +1822,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             result = selection.any ? instantiateAll(filtered)
                     : instantiateAll((Class) selection.clazz, filtered);
         }
-        selection.result = result;
-        selection.state = Selection.State.FINISHED;
+        selection.setResult(result);
+        selection.setState(Selection.State.FINISHED);
         reserve(selection);
     }
 

@@ -69,7 +69,9 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
         }
         else if(selection instanceof Selection.Builder) {
             Selection<?> built = ((Selection.Builder<?, ?>) selection).build();
-            return (DatabaseSelection<?>) built;
+            DatabaseSelection<?> resolved = (DatabaseSelection<?>) built;
+            resolved.origin = selection;
+            return resolved;
         }
         else {
             throw new IllegalArgumentException("Unsupported Selection type: "
@@ -114,6 +116,15 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
      * The result of the selection.
      */
     Object result;
+
+    /**
+     * The original {@link Selection} from which this {@link DatabaseSelection}
+     * was derived, or {@code null} if this is the original. When state or
+     * result are set on this instance, they propagate back through the origin
+     * chain so that the caller's reference reflects execution outcomes.
+     */
+    @Nullable
+    volatile Selection<?> origin;
 
     /**
      * Construct a new {@link DatabaseSelection}.
@@ -207,6 +218,40 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     final void ensurePending() {
         checkState(state == Selection.State.PENDING,
                 "Selection has already been submitted");
+    }
+
+    /**
+     * Set the lifecycle {@code state} of this {@link DatabaseSelection} and
+     * propagate it back through the {@link #origin} chain.
+     *
+     * @param state the new {@link State}
+     */
+    void setState(Selection.State state) {
+        this.state = state;
+        Selection<?> o = this.origin;
+        if(o instanceof DatabaseSelection) {
+            ((DatabaseSelection<?>) o).setState(state);
+        }
+        else if(o instanceof Selection.Builder) {
+            ((Selection.Builder<?, ?>) o).setState(state);
+        }
+    }
+
+    /**
+     * Set the {@code result} of this {@link DatabaseSelection} and propagate it
+     * back through the {@link #origin} chain.
+     *
+     * @param result the execution result
+     */
+    void setResult(Object result) {
+        this.result = result;
+        Selection<?> o = this.origin;
+        if(o instanceof DatabaseSelection) {
+            ((DatabaseSelection<?>) o).setResult(result);
+        }
+        else if(o instanceof Selection.Builder) {
+            ((Selection.Builder<?, ?>) o).setResult(result);
+        }
     }
 
     /**
@@ -307,6 +352,18 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
          * The {@link Realms} filter.
          */
         Realms realms = Realms.any();
+
+        /**
+         * The execution state, propagated back from the resolved
+         * {@link DatabaseSelection} after execution.
+         */
+        volatile Selection.State state = Selection.State.PENDING;
+
+        /**
+         * The execution result, propagated back from the resolved
+         * {@link DatabaseSelection} after execution.
+         */
+        volatile Object result;
 
         /**
          * Construct a new {@link BuilderState}.
