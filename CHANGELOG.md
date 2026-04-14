@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.13.1 (April 14, 2026)
+* Fixed a bug where an anonymous audience could not discover access-controlled records that were readable or writable by anonymous unless discoverability was also explicitly granted, unlike non-anonymous audiences who could implicitly discover any record they were permitted to read or write
+
 #### Version 1.13.0 (March 12, 2026)
 * **Configurable `CollectionPreSelectStrategy`**: Added `CollectionPreSelectStrategy`, a configurable enum that controls how `Runway` pre-selects data for `Collection<Record>` fields (e.g., `List<Dock>`, `Set<Node>`). Previously, loading a Record with a collection of N linked Records issued N individual `select()` calls — one per element — inside `convert()`. Three strategies are now available:
   * `NAVIGATE` — uses Concourse's `navigate()` API to batch-prefetch all destination Record data in a single call with snapshot atomicity. Requires `StaticAnalysis` class-aware path computation.
