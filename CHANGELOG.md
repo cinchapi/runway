@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 1.14.5 (April 14, 2026)
+* Fixed a bug where an anonymous audience could not discover access-controlled records that were readable or writable by anonymous unless discoverability was also explicitly granted, unlike non-anonymous audiences who could implicitly discover any record they were permitted to read or write
+
 #### Version 1.14.4 (April 4, 2026)
 * Fixed a bug where `Selection` objects passed to the `Runway.select()` method did not track state or results. The results were correctly available on the returned `Selections` container, but the input `Selection` objects should have also tracked this data. ([GH-90](https://github.com/cinchapi/runway/issues/90))
 * Fixed a bug that allowed filtered `Selection` reads to poison the reservation cache and cause subsequent reads with the same parameters but a different or absent filter to return incorrect results. For example, a read through an `Audience` could cause subsequent `Runway`-wide reads to return results that were still narrowed by that audience's visibility rules. ([GH-89](https://github.com/cinchapi/runway/issues/89))
