@@ -2,6 +2,9 @@
 
 #### Version 1.15.0 (TBD)
 
+#### Version 1.14.5 (April 14, 2026)
+* Fixed a bug where an anonymous audience could not discover access-controlled records that were readable or writable by anonymous unless discoverability was also explicitly granted, unlike non-anonymous audiences who could implicitly discover any record they were permitted to read or write
+
 #### Version 1.14.4 (April 4, 2026)
 * Fixed a bug where `Selection` objects passed to the `Runway.select()` method did not track state or results. The results were correctly available on the returned `Selections` container, but the input `Selection` objects should have also tracked this data. ([GH-90](https://github.com/cinchapi/runway/issues/90))
 * Fixed a bug that allowed filtered `Selection` reads to poison the reservation cache and cause subsequent reads with the same parameters but a different or absent filter to return incorrect results. For example, a read through an `Audience` could cause subsequent `Runway`-wide reads to return results that were still narrowed by that audience's visibility rules. ([GH-89](https://github.com/cinchapi/runway/issues/89))
@@ -37,6 +40,9 @@
 * Fixed a bug where local `Criteria` evaluation via `ConcourseCompiler` did not account for non-readable fields, producing results that diverged from how Concourse would resolve the same `Criteria` server-side. Non-readable (e.g., private) fields are stored in the database and indexed like any other field, so server-side resolution always considers them. Local evaluation now includes all fields regardless of visibility, matching server-side behavior.
 * Added `Record#matches(Criteria)` to test whether a `Record` satisfies a `Criteria` locally. Navigation keys are fully supported, including traversal through private fields and collections of linked `Records`.
 * Upgraded the `concourse-driver-java` dependency to `0.12.4` to fix a bug that caused local `Criteria` evaluation via `ConcourseCompiler` to provide inconsistent and unexpected results for records that did not contain a value stored under one or more keys in the input `Criteria`.
+
+#### Version 1.13.1 (April 14, 2026)
+* Fixed a bug where an anonymous audience could not discover access-controlled records that were readable or writable by anonymous unless discoverability was also explicitly granted, unlike non-anonymous audiences who could implicitly discover any record they were permitted to read or write
 
 #### Version 1.13.0 (March 12, 2026)
 * **Configurable `CollectionPreSelectStrategy`**: Added `CollectionPreSelectStrategy`, a configurable enum that controls how `Runway` pre-selects data for `Collection<Record>` fields (e.g., `List<Dock>`, `Set<Node>`). Previously, loading a Record with a collection of N linked Records issued N individual `select()` calls — one per element — inside `convert()`. Three strategies are now available:
