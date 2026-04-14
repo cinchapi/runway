@@ -127,16 +127,18 @@ public interface Audience extends DatabaseInterface {
                     return true; // By convention, an Audience always has access
                                  // to itself
                 }
+                // It is assumed that a record that can be read or written is
+                // implicitly discoverable. So, this cascading check protects
+                // against cases where the lower "discover" visibility isn't
+                // explicitly marked for an Audience because the implementing
+                // class assumes that specifying read/write visibility is
+                // enough.
                 else if(this instanceof Anonymous) {
-                    return subject.$isDiscoverableByAnonymous();
+                    return subject.$isDiscoverableByAnonymous()
+                            || subject.$readableByAnonymous() != NO_KEYS
+                            || subject.$writableByAnonymous() != NO_KEYS;
                 }
                 else {
-                    // It is assumed that a record that can be read or written
-                    // is implicitly discoverable. So, this cascading check
-                    // protects against cases where the lower "discover"
-                    // visibility isn't explicitly marked for an Audience
-                    // because the implementing class assumes that specifying
-                    // read/write visibility is enough.
                     return subject.$isDiscoverableBy(this)
                             || subject.$readableBy(this) != NO_KEYS
                             || subject.$writableBy(this) != NO_KEYS;
