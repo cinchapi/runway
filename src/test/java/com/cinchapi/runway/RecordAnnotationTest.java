@@ -49,7 +49,7 @@ public class RecordAnnotationTest extends ClientServerTest {
     }
 
     @Override
-    public void afterEachTest() {
+    public void afterStartedTest() {
         try {
             db.close();
         }

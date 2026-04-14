@@ -43,7 +43,7 @@ public abstract class RunwayBaseClientServerTest extends ClientServerTest {
     }
 
     @Override
-    public void afterEachTest() {
+    public void afterStartedTest() {
         try {
             runway.close();
         }

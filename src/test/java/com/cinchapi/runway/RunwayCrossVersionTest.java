@@ -45,7 +45,7 @@ public class RunwayCrossVersionTest extends CrossVersionTest {
     private Runway runway;
 
     @Override
-    public void afterEachTest() {
+    public void afterStartedTest() {
         try {
             runway.close();
         }
