@@ -2141,8 +2141,8 @@ public abstract class Record implements Comparable<Record> {
                                         Object.class);
                         ArrayBuilder collector = ArrayBuilder.builder();
                         stored.forEach(item -> {
-                            Object converted = convert(path, collectedType,
-                                    item, concourse, existing, targets);
+                            Object converted = convert(key, collectedType, item,
+                                    concourse, existing, targets);
                             if(converted != null) {
                                 collector.add(converted);
                             }
@@ -2205,7 +2205,7 @@ public abstract class Record implements Comparable<Record> {
                             }
                         }
                         else if(first != null) {
-                            value = convert(path, type, first, concourse,
+                            value = convert(key, type, first, concourse,
                                     existing, targets);
                         }
                     }
@@ -2658,8 +2658,16 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Convert the {@code stored} value for {@code key} into the appropriate
      * Java object based on the field {@code type}.
+     * <p>
+     * As ad-hoc cleanup, a dangling {@link Link} (one whose target
+     * {@link Record} no longer exists) is removed from {@code key} on
+     * {@code this} {@link Record} and {@code null} is returned.
      *
-     * @param key
+     * @param key the Concourse field name on {@code this} {@link Record} where
+     *            {@code stored} is held; must be the canonical field name
+     *            (e.g., {@code "pebbles"}), not a navigation path (e.g.,
+     *            {@code "stone.pebbles"}), so that dangling-link cleanup writes
+     *            against a valid Concourse key
      * @param type
      * @param stored
      * @param concourse
