@@ -2690,9 +2690,13 @@ public abstract class Record implements Comparable<Record> {
                     converted = new DeferredReference(target, runway);
                 }
                 else {
-                    Map<String, Set<Object>> data = targets != null
-                            ? targets.get(target)
-                            : concourse.select(target);
+                    Map<String, Set<Object>> data = null;
+                    if(targets != null) {
+                        data = targets.get(target);
+                    }
+                    if(data == null) {
+                        data = concourse.select(target);
+                    }
                     Set<Object> sections = data.getOrDefault(SECTION_KEY,
                             ImmutableSet.of());
                     String section = (String) Iterables.getLast(sections, null);
