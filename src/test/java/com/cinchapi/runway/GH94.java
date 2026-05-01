@@ -107,6 +107,60 @@ public class GH94 extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that loading a {@link Boulder} whose
+     * deeply-nested {@link Stone#core} reference points to a dangling
+     * {@link Pebble} (a {@link Link} whose target has been cleared) does not
+     * throw {@code InvalidArgumentException} from the dangling-link cleanup
+     * logic at the scalar branch.
+     * <p>
+     * The {@link Stone#core} field is loaded under prefix {@code "stone."}, so
+     * the {@code convert(...)} call sees the navigation path
+     * {@code "stone.core"} (a Concourse-invalid key) instead of the canonical
+     * field name {@code "core"}, causing the cleanup of the dangling
+     * {@link Link} to fail.
+     * <p>
+     * <strong>Start state:</strong> A {@link Boulder} &rarr; {@link Stone}
+     * &rarr; {@link Pebble} graph saved with {@link Stone#core} set to a single
+     * pebble, then the pebble record cleared. Concourse permits {@link Link
+     * Links} to empty records, so clearing the target leaves the outgoing
+     * {@link Link} on {@link Stone} intact &mdash; the very condition the
+     * cleanup branch in {@code Record#convert(...)} is supposed to handle.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save the {@link Boulder} graph with a single
+     * {@link Pebble} on {@link Stone#core}.</li>
+     * <li>Call {@code client.clear(...)} on the core pebble's id.</li>
+     * <li>Reload the {@link Boulder} via
+     * {@code runway.load(Boulder.class, id)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The reload completes without throwing,
+     * {@code boulder.stone.core} is {@code null}, and the dangling {@link Link}
+     * has been removed from {@link Stone Stone's} {@code core} stored data.
+     */
+    @Test
+    public void testNestedDanglingScalarFieldClearedOnLoad() {
+        Pebble core = new Pebble();
+        core.label = "delta";
+        Stone stone = new Stone();
+        stone.label = "s";
+        stone.core = core;
+        Boulder boulder = new Boulder();
+        boulder.label = "b";
+        boulder.stone = stone;
+        runway.save(boulder, stone, core);
+
+        client.clear(core.id());
+
+        Boulder loaded = runway.load(Boulder.class, boulder.id());
+        Assert.assertNotNull(loaded);
+        Assert.assertNotNull(loaded.stone);
+        Assert.assertNull(loaded.stone.core);
+        Assert.assertEquals(0, client.select("core", stone.id()).size());
+    }
+
+    /**
      * Leaf-level {@link Record} used as the dangling-link target.
      */
     class Pebble extends Record {
@@ -118,10 +172,11 @@ public class GH94 extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Mid-level {@link Record} that holds a collection of {@link Pebble
-     * Pebbles}. When loaded as a nested {@link Record} of {@link Boulder}, its
-     * fields are processed under prefix {@code "stone."}, which exercises the
-     * path-vs-key conflation in {@code Record#convert(...)}.
+     * Mid-level {@link Record} that holds nested {@link Pebble} references.
+     * When loaded as a nested {@link Record} of {@link Boulder}, its fields are
+     * processed under prefix {@code "stone."}, which exercises the path-vs-key
+     * conflation in {@code Record#convert(...)} on both the collection and
+     * scalar branches of the nested-load logic.
      */
     class Stone extends Record {
 
@@ -135,6 +190,12 @@ public class GH94 extends RunwayBaseClientServerTest {
          * loaded by the collection branch of the nested-load logic.
          */
         List<Pebble> pebbles = new ArrayList<>();
+
+        /**
+         * A scalar nested {@link Pebble} reference loaded by the scalar branch
+         * of the nested-load logic.
+         */
+        Pebble core;
     }
 
     /**
