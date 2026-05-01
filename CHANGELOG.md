@@ -2,6 +2,9 @@
 
 #### Version 1.15.0 (TBD)
 
+#### Version 1.14.6 (TBD)
+* Fixed a bug where loading a `Record` graph that contained a nested `Record` with a dangling `Link` (one whose target had been cleared) inside a `Collection<Record>` field would throw `InvalidArgumentException`, making the entire graph unloadable. Runway optimistically cleans up such dangling `Links` during load &mdash; removing them from storage so the load can proceed &mdash; but this cleanup previously only worked for the top-level `Record` being loaded and failed for any deeper `Record` in the graph. ([GH-94](https://github.com/cinchapi/runway/issues/94))
+
 #### Version 1.14.5 (April 14, 2026)
 * Fixed a bug where an anonymous audience could not discover access-controlled records that were readable or writable by anonymous unless discoverability was also explicitly granted, unlike non-anonymous audiences who could implicitly discover any record they were permitted to read or write
 
