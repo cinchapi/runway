@@ -25,6 +25,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 /**
  * Repro GH-95 https://github.com/cinchapi/runway/issues/95
@@ -105,6 +106,58 @@ public class GH95 extends RunwayBaseClientServerTest {
         Assert.assertTrue(labels.contains("alpha"));
         Assert.assertTrue(labels.contains("beta"));
         Assert.assertTrue(labels.contains("gamma"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that when {@code targets} contains an entry
+     * for a {@link com.cinchapi.concourse.Link Link} target, the pre-fetched
+     * data is used directly and no redundant single-record fetch is issued
+     * &mdash; preserving the optimization that
+     * {@link CollectionPreSelectStrategy} exists to provide. Without this
+     * guard, the missing-entry fallback could regress into an always-fall-back
+     * path that silently doubles the round trips of every pre-selected load.
+     * <p>
+     * <strong>Start state:</strong> A {@link Stone} with one {@link Pebble}
+     * saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Stone} with one {@link Pebble} whose stored
+     * {@code label} is {@code "alpha"}.</li>
+     * <li>Build a {@code targets} map whose entry for the {@link Pebble}
+     * mirrors the actual stored data, except that {@code label} is overridden
+     * to a sentinel value that does not exist in Concourse.</li>
+     * <li>Call the package-private static {@code Record.load(...)} with the
+     * doctored {@code targets} map.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The loaded {@link Pebble Pebble's}
+     * {@code label} is the sentinel from the {@code targets} map &mdash;
+     * proving the fast path was used. If the fast path were bypassed, the
+     * {@code label} would be {@code "alpha"} from Concourse.
+     */
+    @Test
+    public void testLoadUsesPrefetchedDataWhenTargetIsPresent() {
+        Pebble p1 = new Pebble();
+        p1.label = "alpha";
+        Stone stone = new Stone();
+        stone.label = "s";
+        stone.pebbles.add(p1);
+        runway.save(stone, p1);
+
+        Map<Long, Map<String, Set<Object>>> targets = Maps.newHashMap();
+        Map<String, Set<Object>> overridden = Maps
+                .newHashMap(client.select(p1.id()));
+        overridden.put("label", Sets.newHashSet("PREFETCH_SENTINEL"));
+        targets.put(p1.id(), overridden);
+
+        Stone loaded = Record.load(Stone.class, stone.id(),
+                new ConcurrentHashMap<>(), runway.connections, runway, null,
+                targets);
+
+        Assert.assertNotNull(loaded);
+        Assert.assertEquals(1, loaded.pebbles.size());
+        Assert.assertEquals("PREFETCH_SENTINEL", loaded.pebbles.get(0).label);
     }
 
     /**
