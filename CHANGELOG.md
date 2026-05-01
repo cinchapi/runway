@@ -2,7 +2,7 @@
 
 #### Version 1.15.0 (TBD)
 
-#### Version 1.14.6 (TBD)
+#### Version 1.14.6 (May 1, 2026)
 * Fixed a bug where loading a `Record` graph that contained a nested `Record` with a dangling `Link` (one whose target had been cleared) inside a `Collection<Record>` field would throw `InvalidArgumentException`, making the graph unloadable until the dangling `Link` was removed manually. ([GH-94](https://github.com/cinchapi/runway/issues/94))
 * Fixed a bug where loading a `Record` under a non-default `CollectionPreSelectStrategy` would throw `NullPointerException` and abort the entire load whenever a `Link` target was missing from the pre-fetched destination data. ([GH-95](https://github.com/cinchapi/runway/issues/95))
 
