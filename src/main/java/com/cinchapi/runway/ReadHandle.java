@@ -23,8 +23,8 @@ import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 
 /**
- * A {@link ReadHandle} records read operations against a database and
- * returns their results upon {@link #materialize() materialization}.
+ * A {@link ReadHandle} records read operations against a database and returns
+ * their results upon {@link #materialize() materialization}.
  *
  * @author Jeff Nelson
  */
@@ -143,9 +143,7 @@ interface ReadHandle {
     void find(Criteria criteria, Order order, Page page);
 
     /**
-     * Return the results of the reads recorded since this
-     * {@link ReadHandle} was constructed or last materialized, and clear
-     * the recorder.
+     * Return the results of every read recorded on this {@link ReadHandle}.
      * <p>
      * The returned {@link List} contains one entry per recorded read. Entry
      * {@code i} is the value produced by the {@code i}th recorded read &mdash;

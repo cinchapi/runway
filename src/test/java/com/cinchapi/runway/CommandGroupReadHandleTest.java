@@ -26,23 +26,22 @@ import com.cinchapi.concourse.thrift.Operator;
 
 /**
  * Unit tests for {@link CommandGroupReadHandle} that combine the shared
- * {@link ReadHandle} contract with implementation-specific behavior. Pinned
- * to a Concourse version that exposes the {@code prepare()}/{@code submit()}
+ * {@link ReadHandle} contract with implementation-specific behavior. Pinned to
+ * a Concourse version that exposes the {@code prepare()}/{@code submit()}
  * Command API.
  *
  * @author Jeff Nelson
  */
 public class CommandGroupReadHandleTest extends ReadHandleTest {
-    
+
     @Override
     protected ReadHandle newReadHandle() {
         return new CommandGroupReadHandle(concourse);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link CommandGroupReadHandle}
-     * issues each read against the wrapped
-     * {@link com.cinchapi.concourse.Concourse} at
+     * <strong>Goal:</strong> Verify that {@link CommandGroupReadHandle} issues
+     * each read against the wrapped {@link com.cinchapi.concourse.Concourse} at
      * {@link ReadHandle#materialize()} time, so writes that occur after
      * recording but before {@code materialize()} are reflected in the result.
      * <p>

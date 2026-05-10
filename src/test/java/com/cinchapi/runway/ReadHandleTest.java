@@ -38,71 +38,20 @@ import com.google.common.collect.ImmutableSet;
  */
 public abstract class ReadHandleTest extends ClientServerTest {
 
-    @Override
-    protected String getServerVersion() {
-        return Testing.CONCOURSE_VERSION;
-    }
-
     /**
-     * The {@link Concourse} connection passed to every {@link ReadHandle}
-     * under test.
+     * The {@link Concourse} connection passed to every {@link ReadHandle} under
+     * test.
      */
     protected Concourse concourse;
-
-    @Override
-    public void beforeEachTest() {
-        concourse = Concourse.at().port(server.getClientPort()).connect();
-    }
 
     @Override
     public void afterStartedTest() {
         concourse.close();
     }
 
-    /**
-     * Return a fresh {@link ReadHandle} for the implementation under test.
-     *
-     * @return the {@link ReadHandle} under test
-     */
-    protected abstract ReadHandle newReadHandle();
-
-    /**
-     * <strong>Goal:</strong> Verify that a single recorded
-     * {@code select(Criteria)} returns the matching record's data from
-     * {@link ReadHandle#materialize()}.
-     * <p>
-     * <strong>Start state:</strong> Two records are added &mdash; one with
-     * {@code age = 30} and one with {@code age = 40}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Record a {@code select} with a criteria matching only the
-     * {@code age = 40} record.</li>
-     * <li>Call {@code reader.materialize()}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The list returned by {@code materialize()} has
-     * exactly one element &mdash; a {@link Map} keyed by the id of the
-     * {@code age = 40} record.
-     */
-    @SuppressWarnings("unchecked")
-    @Test
-    public void testSelectByCriteriaMaterializesMatchingRecord() {
-        long alice = concourse.add("name", "alice");
-        concourse.add("age", 30, alice);
-        long bob = concourse.add("name", "bob");
-        concourse.add("age", 40, bob);
-
-        ReadHandle reader = newReadHandle();
-        reader.select(Criteria.where().key("age")
-                .operator(Operator.GREATER_THAN).value(35));
-        List<Object> results = reader.materialize();
-
-        Assert.assertEquals(1, results.size());
-        Map<Long, Map<String, Set<Object>>> data = (Map<Long, Map<String, Set<Object>>>) results
-                .get(0);
-        Assert.assertEquals(1, data.size());
-        Assert.assertTrue(data.containsKey(bob));
+    @Override
+    public void beforeEachTest() {
+        concourse = Concourse.at().port(server.getClientPort()).connect();
     }
 
     /**
@@ -139,6 +88,27 @@ public abstract class ReadHandleTest extends ClientServerTest {
         Set<Long> ids = (Set<Long>) results.get(0);
         Assert.assertEquals(ImmutableSet.of(high), ids);
         Assert.assertFalse(ids.contains(low));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that calling
+     * {@link ReadHandle#materialize()} on a reader with no recorded reads
+     * returns an empty list.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link ReadHandle}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code reader.materialize()} without recording any reads
+     * first.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned list is empty.
+     */
+    @Test
+    public void testMaterializeWithNoRecordedReadsReturnsEmptyList() {
+        ReadHandle reader = newReadHandle();
+        Assert.assertTrue(reader.materialize().isEmpty());
     }
 
     /**
@@ -183,10 +153,10 @@ public abstract class ReadHandleTest extends ClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that recording reads after a previous
-     * {@link ReadHandle#materialize()} starts a fresh batch whose results
-     * are produced by the next {@link ReadHandle#materialize()} without
-     * contamination from the prior batch.
+     * <strong>Goal:</strong> Verify that recorded reads accumulate across calls
+     * to {@link ReadHandle#materialize()} &mdash; materialization does not
+     * reset the recorder, so reads recorded after a previous materialization
+     * extend the result list rather than starting a new one.
      * <p>
      * <strong>Start state:</strong> Two records are added &mdash; one with
      * {@code tag = "first"} and one with {@code tag = "second"}.
@@ -199,13 +169,13 @@ public abstract class ReadHandleTest extends ClientServerTest {
      * capture results.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The first {@code materialize} returns the
-     * "first" record's id; the second {@code materialize} returns the "second"
-     * record's id; neither list contains the other.
+     * <strong>Expected:</strong> The first materialization returns one entry
+     * containing the "first" id. The second materialization returns two entries
+     * &mdash; the "first" id at index 0 and the "second" id at index 1.
      */
     @SuppressWarnings("unchecked")
     @Test
-    public void testReuseAfterMaterializeStartsFreshBatch() {
+    public void testRecordsAccumulateAcrossMaterializations() {
         long first = concourse.add("tag", "first");
         long second = concourse.add("tag", "second");
 
@@ -220,9 +190,50 @@ public abstract class ReadHandleTest extends ClientServerTest {
         reader.find(Criteria.where().key("tag").operator(Operator.EQUALS)
                 .value("second"));
         List<Object> secondBatch = reader.materialize();
-        Assert.assertEquals(1, secondBatch.size());
-        Assert.assertEquals(ImmutableSet.of(second),
+        Assert.assertEquals(2, secondBatch.size());
+        Assert.assertEquals(ImmutableSet.of(first),
                 (Set<Long>) secondBatch.get(0));
+        Assert.assertEquals(ImmutableSet.of(second),
+                (Set<Long>) secondBatch.get(1));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a single recorded
+     * {@code select(Criteria)} returns the matching record's data from
+     * {@link ReadHandle#materialize()}.
+     * <p>
+     * <strong>Start state:</strong> Two records are added &mdash; one with
+     * {@code age = 30} and one with {@code age = 40}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Record a {@code select} with a criteria matching only the
+     * {@code age = 40} record.</li>
+     * <li>Call {@code reader.materialize()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The list returned by {@code materialize()} has
+     * exactly one element &mdash; a {@link Map} keyed by the id of the
+     * {@code age = 40} record.
+     */
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testSelectByCriteriaMaterializesMatchingRecord() {
+        long alice = concourse.add("name", "alice");
+        concourse.add("age", 30, alice);
+        long bob = concourse.add("name", "bob");
+        concourse.add("age", 40, bob);
+
+        ReadHandle reader = newReadHandle();
+        reader.select(Criteria.where().key("age")
+                .operator(Operator.GREATER_THAN).value(35));
+        List<Object> results = reader.materialize();
+
+        Assert.assertEquals(1, results.size());
+        Map<Long, Map<String, Set<Object>>> data = (Map<Long, Map<String, Set<Object>>>) results
+                .get(0);
+        Assert.assertEquals(1, data.size());
+        Assert.assertTrue(data.containsKey(bob));
     }
 
     /**
@@ -261,26 +272,21 @@ public abstract class ReadHandleTest extends ClientServerTest {
         Assert.assertEquals(ImmutableSet.of("name", "city"), entry.keySet());
     }
 
+    @Override
+    protected String getServerVersion() {
+        return Testing.CONCOURSE_VERSION;
+    }
+
     /**
-     * <strong>Goal:</strong> Verify that calling
-     * {@link ReadHandle#materialize()} on a reader with no recorded reads
-     * returns an empty list.
-     * <p>
-     * <strong>Start state:</strong> A freshly constructed
-     * {@link ReadHandle}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Call {@code reader.materialize()} without recording any reads
-     * first.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The returned list is empty.
+     * Return a fresh {@link ReadHandle} for the implementation under test.
+     *
+     * @return the {@link ReadHandle} under test
      */
-    @Test
-    public void testMaterializeWithNoRecordedReadsReturnsEmptyList() {
-        ReadHandle reader = newReadHandle();
-        Assert.assertTrue(reader.materialize().isEmpty());
+    protected abstract ReadHandle newReadHandle();
+
+    @Override
+    protected boolean reuseServerAcrossTests() {
+        return true;
     }
 
 }

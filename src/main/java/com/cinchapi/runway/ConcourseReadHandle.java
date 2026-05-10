@@ -41,8 +41,8 @@ class ConcourseReadHandle implements ReadHandle {
     protected final Concourse concourse;
 
     /**
-     * The values produced by reads recorded since this
-     * {@link ConcourseReadHandle} was constructed or last materialized.
+     * The values produced by reads recorded on this
+     * {@link ConcourseReadHandle}.
      */
     private List<Object> results;
 

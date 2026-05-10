@@ -38,10 +38,9 @@ public class ConcourseReadHandleTest extends ReadHandleTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link ConcourseReadHandle}
-     * issues each read against the wrapped
-     * {@link com.cinchapi.concourse.Concourse} at recording time, so writes
-     * that occur after recording but before
+     * <strong>Goal:</strong> Verify that {@link ConcourseReadHandle} issues
+     * each read against the wrapped {@link com.cinchapi.concourse.Concourse} at
+     * recording time, so writes that occur after recording but before
      * {@link ReadHandle#materialize()} do not affect the result.
      * <p>
      * <strong>Start state:</strong> One record is added with
