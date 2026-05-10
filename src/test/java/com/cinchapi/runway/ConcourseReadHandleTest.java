@@ -15,8 +15,8 @@
  */
 package com.cinchapi.runway;
 
-import java.util.List;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -40,8 +40,8 @@ public class ConcourseReadHandleTest extends ReadHandleTest {
     /**
      * <strong>Goal:</strong> Verify that {@link ConcourseReadHandle} issues
      * each read against the wrapped {@link com.cinchapi.concourse.Concourse} at
-     * recording time, so writes that occur after recording but before
-     * {@link ReadHandle#materialize()} do not affect the result.
+     * recording time, so writes that occur after recording but before the
+     * {@link Supplier} is resolved do not affect the result.
      * <p>
      * <strong>Start state:</strong> One record is added with
      * {@code flag = true}.
@@ -51,24 +51,22 @@ public class ConcourseReadHandleTest extends ReadHandleTest {
      * <li>Record a {@code find} for {@code flag = true}.</li>
      * <li>Add another {@code flag = true} record directly via the underlying
      * {@link com.cinchapi.concourse.Concourse}.</li>
-     * <li>Call {@code reader.materialize()}.</li>
+     * <li>Resolve the {@link Supplier}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The materialized result contains only the
-     * original id; the post-recording add does not appear.
+     * <strong>Expected:</strong> The resolved result contains only the original
+     * id; the post-recording add does not appear.
      */
-    @SuppressWarnings("unchecked")
     @Test
     public void testReadIsIssuedAtRecordingTime() {
         long original = concourse.add("flag", true);
 
         ReadHandle reader = newReadHandle();
-        reader.find(Criteria.where().key("flag").operator(Operator.EQUALS)
-                .value(true));
+        Supplier<Set<Long>> supplier = reader.find(Criteria.where().key("flag")
+                .operator(Operator.EQUALS).value(true));
         long postRecording = concourse.add("flag", true);
-        List<Object> results = reader.materialize();
 
-        Set<Long> ids = (Set<Long>) results.get(0);
+        Set<Long> ids = supplier.get();
         Assert.assertTrue(ids.contains(original));
         Assert.assertFalse(ids.contains(postRecording));
     }

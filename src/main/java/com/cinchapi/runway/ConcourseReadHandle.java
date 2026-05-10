@@ -15,9 +15,9 @@
  */
 package com.cinchapi.runway;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import javax.annotation.concurrent.NotThreadSafe;
 
@@ -28,7 +28,8 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.google.common.base.Preconditions;
 
 /**
- * A {@link ReadHandle} for {@link Concourse}.
+ * A {@link ReadHandle} that issues each read against the wrapped
+ * {@link Concourse} at recording time.
  *
  * @author Jeff Nelson
  */
@@ -41,12 +42,6 @@ class ConcourseReadHandle implements ReadHandle {
     protected final Concourse concourse;
 
     /**
-     * The values produced by reads recorded on this
-     * {@link ConcourseReadHandle}.
-     */
-    private List<Object> results;
-
-    /**
      * Construct a new {@link ConcourseReadHandle}.
      *
      * @param concourse the {@link Concourse} connection against which reads are
@@ -54,80 +49,132 @@ class ConcourseReadHandle implements ReadHandle {
      */
     ConcourseReadHandle(Concourse concourse) {
         this.concourse = Preconditions.checkNotNull(concourse);
-        this.results = null;
     }
 
     @Override
-    public void select(Criteria criteria) {
-        results().add(concourse.select(criteria));
+    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria) {
+        Map<Long, Map<String, Set<Object>>> result = concourse.select(criteria);
+        return () -> result;
     }
 
     @Override
-    public void select(Set<String> keys, Criteria criteria) {
-        results().add(concourse.select(keys, criteria));
+    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+            Set<String> keys, Criteria criteria) {
+        Map<Long, Map<String, Set<Object>>> result = concourse.select(keys,
+                criteria);
+        return () -> result;
     }
 
     @Override
-    public void select(Criteria criteria, Order order) {
-        results().add(concourse.select(criteria, order));
+    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria, Order order) {
+        Map<Long, Map<String, Set<Object>>> result = concourse.select(criteria,
+                order);
+        return () -> result;
     }
 
     @Override
-    public void select(Set<String> keys, Criteria criteria, Order order) {
-        results().add(concourse.select(keys, criteria, order));
+    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+            Set<String> keys, Criteria criteria, Order order) {
+        Map<Long, Map<String, Set<Object>>> result = concourse.select(keys,
+                criteria, order);
+        return () -> result;
     }
 
     @Override
-    public void select(Criteria criteria, Page page) {
-        results().add(concourse.select(criteria, page));
+    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria, Page page) {
+        Map<Long, Map<String, Set<Object>>> result = concourse.select(criteria,
+                page);
+        return () -> result;
     }
 
     @Override
-    public void select(Set<String> keys, Criteria criteria, Page page) {
-        results().add(concourse.select(keys, criteria, page));
+    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+            Set<String> keys, Criteria criteria, Page page) {
+        Map<Long, Map<String, Set<Object>>> result = concourse.select(keys,
+                criteria, page);
+        return () -> result;
     }
 
     @Override
-    public void select(Criteria criteria, Order order, Page page) {
-        results().add(concourse.select(criteria, order, page));
+    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria, Order order, Page page) {
+        Map<Long, Map<String, Set<Object>>> result = concourse.select(criteria,
+                order, page);
+        return () -> result;
     }
 
     @Override
-    public void select(Set<String> keys, Criteria criteria, Order order,
-            Page page) {
-        results().add(concourse.select(keys, criteria, order, page));
+    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+            Set<String> keys, Criteria criteria, Order order, Page page) {
+        Map<Long, Map<String, Set<Object>>> result = concourse.select(keys,
+                criteria, order, page);
+        return () -> result;
     }
 
     @Override
-    public void find(Criteria criteria) {
-        results().add(concourse.find(criteria));
+    public Supplier<Set<Long>> find(Criteria criteria) {
+        Set<Long> result = concourse.find(criteria);
+        return () -> result;
     }
 
     @Override
-    public void find(Criteria criteria, Order order) {
-        results().add(concourse.find(criteria, order));
+    public Supplier<Set<Long>> find(Criteria criteria, Order order) {
+        Set<Long> result = concourse.find(criteria, order);
+        return () -> result;
     }
 
     @Override
-    public void find(Criteria criteria, Page page) {
-        results().add(concourse.find(criteria, page));
+    public Supplier<Set<Long>> find(Criteria criteria, Page page) {
+        Set<Long> result = concourse.find(criteria, page);
+        return () -> result;
     }
 
     @Override
-    public void find(Criteria criteria, Order order, Page page) {
-        results().add(concourse.find(criteria, order, page));
+    public Supplier<Set<Long>> find(Criteria criteria, Order order, Page page) {
+        Set<Long> result = concourse.find(criteria, order, page);
+        return () -> result;
     }
 
     @Override
-    public List<Object> materialize() {
-        return results();
+    public Supplier<Map<String, Set<Object>>> select(long record) {
+        Map<String, Set<Object>> result = concourse.select(record);
+        return () -> result;
     }
 
-    private List<Object> results() {
-        if(results == null) {
-            results = new ArrayList<>();
-        }
-        return results;
+    @Override
+    public Supplier<Map<String, Set<Object>>> select(Set<String> keys,
+            long record) {
+        Map<String, Set<Object>> result = concourse.select(keys, record);
+        return () -> result;
+    }
+
+    @Override
+    public Supplier<Set<Object>> select(String key, long record) {
+        Set<Object> result = concourse.select(key, record);
+        return () -> result;
+    }
+
+    @Override
+    public Supplier<Object> get(String key, long record) {
+        Object result = concourse.get(key, record);
+        return () -> result;
+    }
+
+    @Override
+    public Supplier<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, long record) {
+        Map<Long, Map<String, Set<Object>>> result = concourse.navigate(keys,
+                record);
+        return () -> result;
+    }
+
+    @Override
+    public Supplier<Long> count(String key, Criteria criteria) {
+        long result = concourse.calculate().count(key, criteria);
+        return () -> result;
     }
 
 }

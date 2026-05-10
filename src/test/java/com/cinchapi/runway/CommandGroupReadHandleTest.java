@@ -15,8 +15,8 @@
  */
 package com.cinchapi.runway;
 
-import java.util.List;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -40,10 +40,9 @@ public class CommandGroupReadHandleTest extends ReadHandleTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link CommandGroupReadHandle} issues
-     * each read against the wrapped {@link com.cinchapi.concourse.Concourse} at
-     * {@link ReadHandle#materialize()} time, so writes that occur after
-     * recording but before {@code materialize()} are reflected in the result.
+     * <strong>Goal:</strong> Verify that {@link CommandGroupReadHandle} defers
+     * each read until the returned {@link Supplier} is resolved, so writes that
+     * occur after recording but before resolution are reflected in the result.
      * <p>
      * <strong>Start state:</strong> One record is added with
      * {@code flag = true}.
@@ -53,27 +52,30 @@ public class CommandGroupReadHandleTest extends ReadHandleTest {
      * <li>Record a {@code find} for {@code flag = true}.</li>
      * <li>Add another {@code flag = true} record directly via the underlying
      * {@link com.cinchapi.concourse.Concourse}.</li>
-     * <li>Call {@code reader.materialize()}.</li>
+     * <li>Resolve the {@link Supplier}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The materialized result contains both the
-     * original id and the post-recording id, because the find is issued at
-     * materialize time after the add has landed.
+     * <strong>Expected:</strong> The resolved result contains both the original
+     * id and the post-recording id, because the find is issued at resolution
+     * time after the add has landed.
      */
-    @SuppressWarnings("unchecked")
     @Test
-    public void testReadIsIssuedAtMaterializeTime() {
+    public void testReadIsIssuedAtSupplierResolution() {
         long original = concourse.add("flag", true);
 
         ReadHandle reader = newReadHandle();
-        reader.find(Criteria.where().key("flag").operator(Operator.EQUALS)
-                .value(true));
+        Supplier<Set<Long>> supplier = reader.find(Criteria.where().key("flag")
+                .operator(Operator.EQUALS).value(true));
         long postRecording = concourse.add("flag", true);
-        List<Object> results = reader.materialize();
 
-        Set<Long> ids = (Set<Long>) results.get(0);
+        Set<Long> ids = supplier.get();
         Assert.assertTrue(ids.contains(original));
         Assert.assertTrue(ids.contains(postRecording));
+    }
+
+    @Override
+    protected String getServerVersion() {
+        return "1.0.0-rc1778433818";
     }
 
 }

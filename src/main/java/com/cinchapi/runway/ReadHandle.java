@@ -15,16 +15,26 @@
  */
 package com.cinchapi.runway;
 
-import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 
 /**
- * A {@link ReadHandle} records read operations against a database and returns
- * their results upon {@link #materialize() materialization}.
+ * A {@link ReadHandle} records reads against a database and returns a
+ * {@link Supplier} for each one.
+ * <p>
+ * The first call to {@link Supplier#get()} on any {@link Supplier} returned
+ * from this {@link ReadHandle} guarantees that the underlying read has been
+ * executed against the database and yields its result. Implementations decide
+ * <em>when</em> the underlying read is executed &mdash; eagerly at recording
+ * time, batched and submitted on first resolution, or by some other strategy
+ * &mdash; but the contract from a caller's perspective is the same: record,
+ * then {@code get()}.
+ * </p>
  *
  * @author Jeff Nelson
  */
@@ -34,8 +44,9 @@ interface ReadHandle {
      * Record a select for every record matching the {@code criteria}.
      *
      * @param criteria the {@link Criteria} that identifies the records
+     * @return a {@link Supplier} that yields the matching records' data
      */
-    void select(Criteria criteria);
+    Supplier<Map<Long, Map<String, Set<Object>>>> select(Criteria criteria);
 
     /**
      * Record a select for the {@code keys} on every record matching the
@@ -43,8 +54,10 @@ interface ReadHandle {
      *
      * @param keys the field names whose values should be returned
      * @param criteria the {@link Criteria} that identifies the records
+     * @return a {@link Supplier} that yields the matching records' data
      */
-    void select(Set<String> keys, Criteria criteria);
+    Supplier<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria);
 
     /**
      * Record a select for every record matching the {@code criteria}, sorted by
@@ -52,8 +65,10 @@ interface ReadHandle {
      *
      * @param criteria the {@link Criteria} that identifies the records
      * @param order the {@link Order} that determines the sort
+     * @return a {@link Supplier} that yields the matching records' data
      */
-    void select(Criteria criteria, Order order);
+    Supplier<Map<Long, Map<String, Set<Object>>>> select(Criteria criteria,
+            Order order);
 
     /**
      * Record a select for the {@code keys} on every record matching the
@@ -62,8 +77,10 @@ interface ReadHandle {
      * @param keys the field names whose values should be returned
      * @param criteria the {@link Criteria} that identifies the records
      * @param order the {@link Order} that determines the sort
+     * @return a {@link Supplier} that yields the matching records' data
      */
-    void select(Set<String> keys, Criteria criteria, Order order);
+    Supplier<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Order order);
 
     /**
      * Record a select for every record matching the {@code criteria}, limited
@@ -71,8 +88,10 @@ interface ReadHandle {
      *
      * @param criteria the {@link Criteria} that identifies the records
      * @param page the {@link Page} that limits the result set
+     * @return a {@link Supplier} that yields the matching records' data
      */
-    void select(Criteria criteria, Page page);
+    Supplier<Map<Long, Map<String, Set<Object>>>> select(Criteria criteria,
+            Page page);
 
     /**
      * Record a select for the {@code keys} on every record matching the
@@ -82,8 +101,10 @@ interface ReadHandle {
      * @param keys the field names whose values should be returned
      * @param criteria the {@link Criteria} that identifies the records
      * @param page the {@link Page} that limits the result set
+     * @return a {@link Supplier} that yields the matching records' data
      */
-    void select(Set<String> keys, Criteria criteria, Page page);
+    Supplier<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Page page);
 
     /**
      * Record a select for every record matching the {@code criteria}, sorted by
@@ -92,8 +113,10 @@ interface ReadHandle {
      * @param criteria the {@link Criteria} that identifies the records
      * @param order the {@link Order} that determines the sort
      * @param page the {@link Page} that limits the result set
+     * @return a {@link Supplier} that yields the matching records' data
      */
-    void select(Criteria criteria, Order order, Page page);
+    Supplier<Map<Long, Map<String, Set<Object>>>> select(Criteria criteria,
+            Order order, Page page);
 
     /**
      * Record a select for the {@code keys} on every record matching the
@@ -104,56 +127,108 @@ interface ReadHandle {
      * @param criteria the {@link Criteria} that identifies the records
      * @param order the {@link Order} that determines the sort
      * @param page the {@link Page} that limits the result set
+     * @return a {@link Supplier} that yields the matching records' data
      */
-    void select(Set<String> keys, Criteria criteria, Order order, Page page);
+    Supplier<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Order order, Page page);
 
     /**
-     * Record a find for the records matching the {@code criteria}.
+     * Record a select for all values stored in {@code record}.
+     *
+     * @param record the record id
+     * @return a {@link Supplier} that yields the record's data
+     */
+    Supplier<Map<String, Set<Object>>> select(long record);
+
+    /**
+     * Record a select for the {@code keys} stored in {@code record}.
+     *
+     * @param keys the field names whose values should be returned
+     * @param record the record id
+     * @return a {@link Supplier} that yields the record's data
+     */
+    Supplier<Map<String, Set<Object>>> select(Set<String> keys, long record);
+
+    /**
+     * Record a select for the values stored under {@code key} in
+     * {@code record}.
+     *
+     * @param key the field name whose values should be returned
+     * @param record the record id
+     * @return a {@link Supplier} that yields the values for {@code key}
+     */
+    Supplier<Set<Object>> select(String key, long record);
+
+    /**
+     * Record a get for the most recent value stored under {@code key} in
+     * {@code record}.
+     *
+     * @param key the field name whose value should be returned
+     * @param record the record id
+     * @return a {@link Supplier} that yields the most recent value, or
+     *         {@code null} if no value exists
+     */
+    Supplier<Object> get(String key, long record);
+
+    /**
+     * Record a navigate that traverses the {@code keys} starting from
+     * {@code record}.
+     *
+     * @param keys the link traversal paths
+     * @param record the starting record id
+     * @return a {@link Supplier} that yields the navigation result keyed by
+     *         destination record id
+     */
+    Supplier<Map<Long, Map<String, Set<Object>>>> navigate(Set<String> keys,
+            long record);
+
+    /**
+     * Record a find for the ids of every record matching the {@code criteria}.
      *
      * @param criteria the {@link Criteria} that identifies the records
+     * @return a {@link Supplier} that yields the matching record ids
      */
-    void find(Criteria criteria);
+    Supplier<Set<Long>> find(Criteria criteria);
 
     /**
-     * Record a find for the records matching the {@code criteria}, sorted by
-     * {@code order}.
+     * Record a find for the ids of every record matching the {@code criteria},
+     * sorted by {@code order}.
      *
      * @param criteria the {@link Criteria} that identifies the records
      * @param order the {@link Order} that determines the sort
+     * @return a {@link Supplier} that yields the matching record ids
      */
-    void find(Criteria criteria, Order order);
+    Supplier<Set<Long>> find(Criteria criteria, Order order);
 
     /**
-     * Record a find for the records matching the {@code criteria}, limited to
-     * the requested {@code page}.
+     * Record a find for the ids of every record matching the {@code criteria},
+     * limited to the requested {@code page}.
      *
      * @param criteria the {@link Criteria} that identifies the records
      * @param page the {@link Page} that limits the result set
+     * @return a {@link Supplier} that yields the matching record ids
      */
-    void find(Criteria criteria, Page page);
+    Supplier<Set<Long>> find(Criteria criteria, Page page);
 
     /**
-     * Record a find for the records matching the {@code criteria}, sorted by
-     * {@code order} and limited to the requested {@code page}.
+     * Record a find for the ids of every record matching the {@code criteria},
+     * sorted by {@code order} and limited to the requested {@code page}.
      *
      * @param criteria the {@link Criteria} that identifies the records
      * @param order the {@link Order} that determines the sort
      * @param page the {@link Page} that limits the result set
+     * @return a {@link Supplier} that yields the matching record ids
      */
-    void find(Criteria criteria, Order order, Page page);
+    Supplier<Set<Long>> find(Criteria criteria, Order order, Page page);
 
     /**
-     * Return the results of every read recorded on this {@link ReadHandle}.
-     * <p>
-     * The returned {@link List} contains one entry per recorded read. Entry
-     * {@code i} is the value produced by the {@code i}th recorded read &mdash;
-     * a {@link java.util.Map Map&lt;Long, Map&lt;String,
-     * Set&lt;Object&gt;&gt;&gt;} for a select, a {@link java.util.Set
-     * Set&lt;Long&gt;} for a find. Callers cast each entry to the type of the
-     * read they recorded at that index.
+     * Record a count of the values stored under {@code key} in every record
+     * matching the {@code criteria}.
      *
-     * @return the recorded reads' results
+     * @param key the field name whose values should be counted
+     * @param criteria the {@link Criteria} that identifies the records
+     * @return a {@link Supplier} that yields the count
      */
-    List<Object> materialize();
+    Supplier<Long> count(String key, Criteria criteria);
 
 }
