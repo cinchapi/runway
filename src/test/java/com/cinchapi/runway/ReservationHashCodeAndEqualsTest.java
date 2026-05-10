@@ -53,15 +53,15 @@ public class ReservationHashCodeAndEqualsTest {
         Reservation a = Reservation.builder(Record.class).id(42L)
                 .criteria(Criteria.where().key("name").operator(Operator.EQUALS)
                         .value("Alice"))
-                .order(Order.by("name").ascending()).page(Page.limit(10).goTo(1))
-                .realms(Realms.only("production")).any(true).counting(false)
-                .build();
+                .order(Order.by("name").ascending())
+                .page(Page.limit(10).goTo(1)).realms(Realms.only("production"))
+                .any(true).counting(false).build();
         Reservation b = Reservation.builder(Record.class).id(42L)
                 .criteria(Criteria.where().key("name").operator(Operator.EQUALS)
                         .value("Alice"))
-                .order(Order.by("name").ascending()).page(Page.limit(10).goTo(1))
-                .realms(Realms.only("production")).any(true).counting(false)
-                .build();
+                .order(Order.by("name").ascending())
+                .page(Page.limit(10).goTo(1)).realms(Realms.only("production"))
+                .any(true).counting(false).build();
         Assert.assertEquals(a, b);
         Assert.assertEquals(a.hashCode(), b.hashCode());
     }

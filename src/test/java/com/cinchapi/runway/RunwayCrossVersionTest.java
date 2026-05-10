@@ -96,7 +96,8 @@ public class RunwayCrossVersionTest extends CrossVersionTest {
 
             @Override
             public void action() {
-                runway.loadAny(A.class, Order.by("ts"), Page.skipLimit(100, 238));
+                runway.loadAny(A.class, Order.by("ts"),
+                        Page.skipLimit(100, 238));
             }
 
         };
