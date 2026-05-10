@@ -968,13 +968,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 .toArray(DatabaseSelection[]::new);
         if(selections.length == 1) {
             DatabaseSelection<?> selection = selections[0];
-            Concourse concourse = connections.request();
-            try {
-                ReadHandle handle = new ConcourseReadHandle(concourse);
-                $select(handle, selection).run();
+            if(selection.state == Selection.State.RESOLVED) {
+                selection.setState(Selection.State.FINISHED);
             }
-            finally {
-                connections.release(concourse);
+            else {
+                Concourse concourse = connections.request();
+                try {
+                    ReadHandle handle = new ConcourseReadHandle(concourse);
+                    complete(selection, $select(handle, selection));
+                }
+                finally {
+                    connections.release(concourse);
+                }
             }
             reserve(selection);
             return new Selections(selections);
@@ -987,12 +992,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 Concourse concourse = connections.request();
                 try {
                     ReadHandle handle = new CommandGroupReadHandle(concourse);
-                    List<Runnable> finishers = new ArrayList<>(unique.size());
+                    LinkedHashMap<DatabaseSelection<?>, Supplier<? extends SelectResult<?>>> suppliers = new LinkedHashMap<>();
                     for (DatabaseSelection<?> selection : unique) {
-                        finishers.add($select(handle, selection));
+                        if(selection.state == Selection.State.RESOLVED) {
+                            selection.setState(Selection.State.FINISHED);
+                        }
+                        else {
+                            suppliers.put(selection,
+                                    $select(handle, selection));
+                        }
                     }
-                    for (Runnable finisher : finishers) {
-                        finisher.run();
+                    for (Map.Entry<DatabaseSelection<?>, Supplier<? extends SelectResult<?>>> entry : suppliers
+                            .entrySet()) {
+                        complete(entry.getKey(), entry.getValue());
                     }
                 }
                 finally {
@@ -1030,8 +1042,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         try {
                             ReadHandle handle = new ConcourseReadHandle(
                                     concourse);
-                            $selectWithPossibleSources(handle, selection,
-                                    sources).run();
+                            complete(selection, $selectWithPossibleSources(
+                                    handle, selection, sources));
                         }
                         finally {
                             connections.release(concourse);
@@ -1097,7 +1109,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             try {
                                 ReadHandle handle = new ConcourseReadHandle(
                                         concourse);
-                                $select(handle, selection).run();
+                                complete(selection, $select(handle, selection));
                             }
                             finally {
                                 connections.release(concourse);
@@ -1394,9 +1406,26 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param <T> the {@link Record} type
      * @param <R> the result type
      */
-    private <T extends Record, R> Runnable $select(ReadHandle handle,
-            DatabaseSelection<T> selection) {
+    private <T extends Record, R> Supplier<SelectResult<R>> $select(
+            ReadHandle handle, DatabaseSelection<T> selection) {
         return $selectWithPossibleSources(handle, selection, null);
+    }
+
+    /**
+     * Apply the {@code supplier}'s {@link SelectResult} to {@code selection}
+     * and transition it to {@link Selection.State#FINISHED}.
+     *
+     * @param selection the {@link DatabaseSelection} to populate
+     * @param supplier the {@link Supplier} produced by {@link #$select} or
+     *            {@link #$selectWithPossibleSources}
+     */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private void complete(DatabaseSelection<?> selection,
+            Supplier<? extends SelectResult<?>> supplier) {
+        SelectResult<?> res = supplier.get();
+        ((DatabaseSelection) selection).setResult(res.result);
+        selection.cacheValue = res.cacheValue;
+        selection.setState(Selection.State.FINISHED);
     }
 
     /**
@@ -1807,20 +1836,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param <R> the result type
      */
     @SuppressWarnings("unchecked")
-    private <T extends Record, R> Runnable $selectWithPossibleSources(
+    private <T extends Record, R> Supplier<SelectResult<R>> $selectWithPossibleSources(
             ReadHandle handle, DatabaseSelection<T> selection,
             @Nullable Set<AdHocDataSource<?>> sources) {
-        if(selection.state == Selection.State.RESOLVED) {
-            return () -> selection.setState(Selection.State.FINISHED);
-        }
+        Preconditions.checkState(selection.state != Selection.State.RESOLVED,
+                "RESOLVED selections must be handled by the caller before "
+                        + "invoking $selectWithPossibleSources");
         selection.setState(Selection.State.SUBMITTED);
         R cached = recallAndPossiblyFilter(selection);
         if(cached != null) {
             R finalCached = cached;
-            return () -> {
-                selection.setResult(finalCached);
-                selection.setState(Selection.State.FINISHED);
-            };
+            return () -> new SelectResult<>(finalCached);
         }
         Set<AdHocDataSource<?>> resolvedSources = sources == null
                 ? (selection.any
@@ -1829,10 +1855,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 : sources;
         if(!resolvedSources.isEmpty()) {
             R result = $selectFromSources(selection, resolvedSources);
-            return () -> {
-                selection.setResult(result);
-                selection.setState(Selection.State.FINISHED);
-            };
+            return () -> new SelectResult<>(result);
         }
         Supplier<? extends SelectResult<?>> resSupplier;
         if(selection instanceof CountSelection) {
@@ -1856,12 +1879,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             throw new IllegalStateException(
                     "Unsupported Selection type " + selection.getClass());
         }
-        return () -> {
-            SelectResult<?> res = resSupplier.get();
-            selection.setResult((R) res.result);
-            selection.cacheValue = res.cacheValue;
-            selection.setState(Selection.State.FINISHED);
-        };
+        Supplier<? extends SelectResult<?>> finalSupplier = resSupplier;
+        return () -> (SelectResult<R>) finalSupplier.get();
     }
 
     /**
