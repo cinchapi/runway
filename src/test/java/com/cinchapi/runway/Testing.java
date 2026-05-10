@@ -25,7 +25,7 @@ public final class Testing {
     /**
      * The version of Concourse to use in all tests.
      */
-    public static final String CONCOURSE_VERSION = "0.12.5";
+    public static final String CONCOURSE_VERSION = "latest";
 
     private Testing() {/* no-init */}
 
