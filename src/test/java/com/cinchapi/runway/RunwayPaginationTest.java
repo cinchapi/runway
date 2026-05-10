@@ -39,7 +39,7 @@ public class RunwayPaginationTest extends RunwayBaseClientServerTest {
             Player player = new Player(name, score);
             player.save();
         }
-        Page page = Page.of(2, 5);
+        Page page = Page.skipLimit(2, 5);
         Predicate<Player> filter = player -> player.get("isAllstar");
         Set<Player> expected = runway.load(Player.class, Order.by("name"))
                 .stream().filter(filter).skip(page.skip()).limit(page.limit())
@@ -57,7 +57,7 @@ public class RunwayPaginationTest extends RunwayBaseClientServerTest {
             Player player = new Player(name, score);
             player.save();
         }
-        Page page = Page.of(2, 5);
+        Page page = Page.skipLimit(2, 5);
         Criteria condition = Criteria.where().key("isAllstar")
                 .operator(Operator.EQUALS).value(true);
         Set<Player> expected = runway

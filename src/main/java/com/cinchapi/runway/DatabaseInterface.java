@@ -59,7 +59,7 @@ public interface DatabaseInterface {
      * A {@link Page} that retrieves at most two results, used by unique-result
      * queries to detect duplicates without fetching the entire result set.
      */
-    static final Page UNIQUE_PAGINATION = Page.sized(2);
+    static final Page UNIQUE_PAGINATION = Page.limit(2);
 
     /**
      * Return the {@code records} in sorted {@code order}.

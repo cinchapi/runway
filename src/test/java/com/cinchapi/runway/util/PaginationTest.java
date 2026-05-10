@@ -51,7 +51,7 @@ public class PaginationTest {
             return items;
         };
         Predicate<Long> filter = item -> item % 2 == 0;
-        Page page = Page.of(6, 20);
+        Page page = Page.skipLimit(6, 20);
         Set<Long> actual;
         do {
             actual = Pagination.applyFilterAndPage(function, filter, page);

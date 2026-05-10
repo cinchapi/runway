@@ -70,7 +70,7 @@ public interface Metadata {
                         record);
                 Concourse concourse = connections.request();
                 try {
-                    _audit = concourse.review(record.id());
+                    _audit = concourse.audit(record.id());
                 }
                 finally {
                     connections.release(concourse);
@@ -124,7 +124,7 @@ public interface Metadata {
                 Concourse concourse = connections.request();
                 String key = keys[0];
                 try {
-                    Map<Timestamp, List<String>> audit = concourse.review(key,
+                    Map<Timestamp, List<String>> audit = concourse.audit(key,
                             record.id());
                     return Iterables.getLast(audit.keySet(), null);
                 }
@@ -138,7 +138,7 @@ public interface Metadata {
                 if(_audit == null) {
                     Concourse concourse = connections.request();
                     try {
-                        _audit = concourse.review(record.id());
+                        _audit = concourse.audit(record.id());
                     }
                     finally {
                         connections.release(concourse);

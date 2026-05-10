@@ -65,7 +65,7 @@ public final class Pagination {
             int limit = page.limit();
             int count = 0;
             int skipped = 0;
-            page = Page.of(0, limit);
+            page = Page.skipLimit(0, limit);
             int surplusFactor = 1;
             outer: while (count < limit) {
                 int prevCount = count;
@@ -98,7 +98,7 @@ public final class Pagination {
                     else {
                         surplusFactor = Math.max(1, --surplusFactor);
                     }
-                    page = page.size(limit * surplusFactor);
+                    page = page.resize(limit * surplusFactor);
                 }
             }
             return records;

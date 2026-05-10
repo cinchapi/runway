@@ -1592,7 +1592,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *         {@code null}) and, when a filter is applied, the unfiltered
      *         record for caching
      */
-    @SuppressWarnings("deprecation")
     private <T extends Record> SelectResult<T> $selectRecord(
             LoadRecordSelection<T> selection) {
         Concourse connection = null;
@@ -2565,7 +2564,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            discover {@link Link} targets)
      * @return pre-fetched targets keyed by record ID, or {@code null}
      */
-    @SuppressWarnings("deprecation")
     private Map<Long, Map<String, Set<Object>>> resolveLinkedCollections(
             @Nullable Class<? extends Record> clazz, boolean hierarchy,
             Set<Long> navigateIds, Map<Long, Map<String, Set<Object>>> data) {

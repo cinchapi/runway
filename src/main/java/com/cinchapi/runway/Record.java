@@ -1016,7 +1016,7 @@ public abstract class Record implements Comparable<Record> {
         try {
             Map<Long, DeferredReference<Record>> authors = new HashMap<>();
             if(_audit == null) {
-                _audit = concourse.review(id);
+                _audit = concourse.audit(id);
             }
             Map<Timestamp, Map<String, Revision>> audit = new LinkedHashMap<>();
             Map<String, Object> previous = ImmutableMap.of();
@@ -2016,7 +2016,7 @@ public abstract class Record implements Comparable<Record> {
             return false;
         }
         else {
-            for (Timestamp ts : concourse.review(id).keySet()) {
+            for (Timestamp ts : concourse.audit(id).keySet()) {
                 if(ts.getMicros() > checkpointTs) {
                     return true;
                 }

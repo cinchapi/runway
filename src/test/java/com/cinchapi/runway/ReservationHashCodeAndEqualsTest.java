@@ -53,13 +53,13 @@ public class ReservationHashCodeAndEqualsTest {
         Reservation a = Reservation.builder(Record.class).id(42L)
                 .criteria(Criteria.where().key("name").operator(Operator.EQUALS)
                         .value("Alice"))
-                .order(Order.by("name").ascending()).page(Page.sized(10).go(1))
+                .order(Order.by("name").ascending()).page(Page.limit(10).goTo(1))
                 .realms(Realms.only("production")).any(true).counting(false)
                 .build();
         Reservation b = Reservation.builder(Record.class).id(42L)
                 .criteria(Criteria.where().key("name").operator(Operator.EQUALS)
                         .value("Alice"))
-                .order(Order.by("name").ascending()).page(Page.sized(10).go(1))
+                .order(Order.by("name").ascending()).page(Page.limit(10).goTo(1))
                 .realms(Realms.only("production")).any(true).counting(false)
                 .build();
         Assert.assertEquals(a, b);
@@ -166,9 +166,9 @@ public class ReservationHashCodeAndEqualsTest {
      */
     @Test
     public void testEqualWhenPageMatch() {
-        Reservation a = Reservation.builder(Record.class).page(Page.sized(10))
+        Reservation a = Reservation.builder(Record.class).page(Page.limit(10))
                 .build();
-        Reservation b = Reservation.builder(Record.class).page(Page.sized(10))
+        Reservation b = Reservation.builder(Record.class).page(Page.limit(10))
                 .build();
         Assert.assertEquals(a, b);
         Assert.assertEquals(a.hashCode(), b.hashCode());
@@ -274,11 +274,11 @@ public class ReservationHashCodeAndEqualsTest {
         Reservation a = Reservation.builder(Record.class).id(7L)
                 .criteria(Criteria.where().key("name").operator(Operator.EQUALS)
                         .value("Alice"))
-                .order(Order.by("name")).page(Page.sized(10)).any(true).build();
+                .order(Order.by("name")).page(Page.limit(10)).any(true).build();
         Reservation b = Reservation.builder(Record.class).id(7L)
                 .criteria(Criteria.where().key("name").operator(Operator.EQUALS)
                         .value("Alice"))
-                .order(Order.by("name")).page(Page.sized(10)).any(true).build();
+                .order(Order.by("name")).page(Page.limit(10)).any(true).build();
         Assert.assertEquals(a.hashCode(), b.hashCode());
     }
 

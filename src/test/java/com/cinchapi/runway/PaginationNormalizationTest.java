@@ -46,7 +46,7 @@ public class PaginationNormalizationTest extends RunwayBaseClientServerTest {
         Criteria criteria = Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN_OR_EQUALS).value(0);
         Order order = Order.by("score").ascending();
-        Page page = Page.of(2, 3);
+        Page page = Page.skipLimit(2, 3);
 
         Set<Player> expected = runway.find(Player.class, criteria, order)
                 .stream().skip(page.skip()).limit(page.limit())
@@ -65,7 +65,7 @@ public class PaginationNormalizationTest extends RunwayBaseClientServerTest {
         }
 
         Order order = Order.by("score").ascending();
-        Page page = Page.of(2, 3);
+        Page page = Page.skipLimit(2, 3);
 
         Set<Player> expected = runway.load(Player.class, order).stream()
                 .skip(page.skip()).limit(page.limit())
@@ -88,7 +88,7 @@ public class PaginationNormalizationTest extends RunwayBaseClientServerTest {
         }
 
         Order order = Order.by("score").ascending();
-        Page page = Page.of(2, 3);
+        Page page = Page.skipLimit(2, 3);
 
         Set<Player> expected = runway.loadAny(Player.class, order).stream()
                 .skip(page.skip()).limit(page.limit())
@@ -113,7 +113,7 @@ public class PaginationNormalizationTest extends RunwayBaseClientServerTest {
         Criteria criteria = Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN_OR_EQUALS).value(0);
         Order order = Order.by("score").ascending();
-        Page page = Page.of(2, 3);
+        Page page = Page.skipLimit(2, 3);
 
         Set<Player> expected = runway.findAny(Player.class, criteria, order)
                 .stream().skip(page.skip()).limit(page.limit())

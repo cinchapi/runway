@@ -20,6 +20,7 @@ import java.util.Set;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 
 /**
@@ -77,8 +78,7 @@ public class LoadAnyHierarchyTest extends RunwayBaseClientServerTest {
 
         runway.save(player1, player2, pg1, pg2);
 
-        com.cinchapi.concourse.lang.paginate.Page page = com.cinchapi.concourse.lang.paginate.Page
-                .sized(2);
+        Page page = Page.limit(2);
         Set<Player> pagedPlayers = runway.loadAny(Player.class, page);
 
         Assert.assertEquals(2, pagedPlayers.size());
@@ -94,8 +94,7 @@ public class LoadAnyHierarchyTest extends RunwayBaseClientServerTest {
         runway.save(player1, player2, pg1, pg2);
 
         Order order = Order.by("name").ascending();
-        com.cinchapi.concourse.lang.paginate.Page page = com.cinchapi.concourse.lang.paginate.Page
-                .sized(2);
+        Page page = Page.limit(2);
         Set<Player> pagedPlayers = runway.loadAny(Player.class, order, page);
 
         Assert.assertEquals(2, pagedPlayers.size());
