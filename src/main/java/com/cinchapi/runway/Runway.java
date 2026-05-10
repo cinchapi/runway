@@ -441,6 +441,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean supportsNativeCount;
 
     /**
+     * A flag that indicates if the connected server supports the
+     * {@code prepare()}/{@code submit()} Command API for batched round trips.
+     * <p>
+     * This functionality is supported in Concourse 1.0.0+
+     * </p>
+     */
+    private final boolean supportsBulkCommands;
+
+    /**
      * The strategy for pre-selecting data for {@link Collection
      * Collection&lt;Record&gt;} fields.
      */
@@ -526,6 +535,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
             target = Version.forIntegers(0, 12, 2);
             this.supportsNativeCount = actual.greaterThanOrEqualTo(target)
+                    || actual.equals(
+                            Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
+            target = Version.forIntegers(1, 0, 0);
+            this.supportsBulkCommands = actual.greaterThanOrEqualTo(target)
                     || actual.equals(
                             Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
         }
