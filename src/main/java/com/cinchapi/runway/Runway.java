@@ -312,6 +312,83 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Record on {@code handle} the read described by {@code paths},
+     * {@code criteria}, {@code order}, and {@code page} using the supplied
+     * {@code readStrategy}.
+     * <p>
+     * A {@link ReadStrategy#BULK BULK} strategy records a {@code select}; any
+     * other strategy records a {@code find}.
+     *
+     * @param readStrategy the {@link ReadStrategy} that determines whether a
+     *            {@code select} or a {@code find} is recorded
+     * @param handle the {@link ReadHandle} on which to record the read
+     * @param paths the field names whose values should be returned, or
+     *            {@code null} to return every field
+     * @param criteria the {@link Criteria} that identifies the records
+     * @param order the sort {@link Order} to apply, or {@code null} for an
+     *            unsorted result
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     */
+    private static void readWithStrategy(ReadStrategy readStrategy,
+            ReadHandle handle, @Nullable Set<String> paths, Criteria criteria,
+            @Nullable Order order, @Nullable Page page) {
+        // Define the execution paths
+        if(order != null && page != null) {
+            if(readStrategy == ReadStrategy.BULK) {
+                if(paths != null) {
+                    handle.select(paths, criteria, order, page);
+                }
+                else {
+                    handle.select(criteria, order, page);
+                }
+            }
+            else {
+                handle.find(criteria, order, page);
+            }
+        }
+        else if(order == null && page == null) {
+            if(readStrategy == ReadStrategy.BULK) {
+                if(paths != null) {
+                    handle.select(paths, criteria);
+                }
+                else {
+                    handle.select(criteria);
+                }
+            }
+            else {
+                handle.find(criteria);
+            }
+        }
+        else if(order != null) {
+            if(readStrategy == ReadStrategy.BULK) {
+                if(paths != null) {
+                    handle.select(paths, criteria, order);
+                }
+                else {
+                    handle.select(criteria, order);
+                }
+            }
+            else {
+                handle.find(criteria, order);
+            }
+        }
+        else { // page != null
+            if(readStrategy == ReadStrategy.BULK) {
+                if(paths != null) {
+                    handle.select(paths, criteria, page);
+                }
+                else {
+                    handle.select(criteria, page);
+                }
+            }
+            else {
+                handle.find(criteria, page);
+            }
+        }
+    }
+
+    /**
      * Restore the mutable metadata on each {@link Record} from a previously
      * captured snapshot.
      * <p>
@@ -1272,6 +1349,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
         return read(concourse, paths, criteria, order, page);
     }
+
+    /*
+     * TODO: next steps
+     * - find the methods like $findAny, will need to call the new read method.
+     * The handling for AUTO will need to be at a different layer. Basically the
+     * materialization needs to be owned by select. I think the new approach is
+     * that all the methods call into select (except search
+     */
 
     /**
      * Return the ids of all the {@code Record}s in the {@code clazz}, using the
@@ -2343,58 +2428,38 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return pool;
     }
 
+    // TODO: deprecate the AUTO strategy
+
     /**
-     * Internal utility method to dispatch a "select" request" for a
-     * {@code criteria} based on whether the {@code order} and/or {@code page}
-     * params are non-null.
+     * Return the data for every record matching {@code criteria} from
+     * {@code concourse}, restricted to {@code paths} when non-{@code null} and
+     * shaped by the configured {@link #readStrategy}.
      *
-     * @param concourse
-     * @param criteria
-     * @param order
-     * @param page
-     * @return the data for the matching records
+     * @param concourse the {@link Concourse} connection against which the read
+     *            is issued
+     * @param paths the field names whose values should be returned, or
+     *            {@code null} to return every field
+     * @param criteria the {@link Criteria} that identifies the records
+     * @param order the sort {@link Order} to apply, or {@code null} for an
+     *            unsorted result
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     * @return the matching record data
      */
     @SuppressWarnings("unchecked")
     private Map<Long, Map<String, Set<Object>>> read(Concourse concourse,
             @Nullable Set<String> paths, Criteria criteria,
             @Nullable Order order, @Nullable Page page) {
-        // Define the execution paths
-        Function<Concourse, Map<Long, Map<String, Set<Object>>>> select;
-        Function<Concourse, Set<Long>> find;
-        if(order != null && page != null) {
-            select = c -> paths != null ? c.select(paths, criteria, order, page)
-                    : c.select(criteria, order, page);
-            find = c -> c.find(criteria, order, page);
-        }
-        else if(order == null && page == null) {
-            select = c -> paths != null ? c.select(paths, criteria)
-                    : c.select(criteria);
-            find = c -> c.find(criteria);
-        }
-        else if(order != null) {
-            select = c -> paths != null ? c.select(paths, criteria, order)
-                    : c.select(criteria, order);
-            find = c -> c.find(criteria, order);
-        }
-        else { // page != null
-            select = c -> paths != null ? c.select(paths, criteria, page)
-                    : c.select(criteria, page);
-            find = c -> c.find(criteria, page);
-        }
-        // Choose the execution path based on the #readStrategy
         Map<Long, Map<String, Set<Object>>> data;
-        if(readStrategy == ReadStrategy.BULK) {
-            data = select.apply(concourse);
-        }
-        else if(readStrategy == ReadStrategy.STREAM) {
-            Set<Long> ids = find.apply(concourse);
-            data = stream(paths, ids);
-        }
-        else { // ReadStrategy.AUTO
+        if(readStrategy == ReadStrategy.AUTO) {
             Callable<Map<Long, Map<String, Set<Object>>>> bulk = () -> {
                 Concourse backup = Concourse.copyExistingConnection(concourse);
                 try {
-                    return select.apply(backup);
+                    ReadHandle handle = new ConcourseReadHandle(backup);
+                    readWithStrategy(ReadStrategy.BULK, handle, paths, criteria,
+                            order, page);
+                    return (Map<Long, Map<String, Set<Object>>>) handle
+                            .materialize().get(0);
                 }
                 finally {
                     backup.close();
@@ -2406,7 +2471,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 // stream the result set.
                 Concourse backup = Concourse.copyExistingConnection(concourse);
                 try {
-                    Set<Long> ids = find.apply(backup);
+                    ReadHandle handle = new ConcourseReadHandle(backup);
+                    readWithStrategy(ReadStrategy.STREAM, handle, paths,
+                            criteria, order, page);
+                    Set<Long> ids = (Set<Long>) handle.materialize().get(0);
                     return stream(paths, ids);
                 }
                 finally {
@@ -2427,7 +2495,37 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 throw CheckedExceptions.wrapAsRuntimeException(e);
             }
         }
+        else {
+            ReadHandle handle = new ConcourseReadHandle(concourse);
+            read(handle, paths, criteria, order, page);
+            Object result = handle.materialize().get(0);
+            if(readStrategy == ReadStrategy.BULK) {
+                data = (Map<Long, Map<String, Set<Object>>>) result;
+            }
+            else { // STREAM
+                data = stream(paths, (Set<Long>) result);
+            }
+        }
         return data;
+    }
+
+    /**
+     * Use the {@code handle} to record the read described by {@code paths},
+     * {@code criteria}, {@code order}, and {@code page} using this
+     * {@link Runway Runway's} configured {@link #readStrategy}.
+     *
+     * @param handle the {@link ReadHandle} on which to record the read
+     * @param paths the field names whose values should be returned, or
+     *            {@code null} to return every field
+     * @param criteria the {@link Criteria} that identifies the records
+     * @param order the sort {@link Order} to apply, or {@code null} for an
+     *            unsorted result
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     */
+    private void read(ReadHandle handle, @Nullable Set<String> paths,
+            Criteria criteria, @Nullable Order order, @Nullable Page page) {
+        readWithStrategy(readStrategy, handle, paths, criteria, order, page);
     }
 
     /**
@@ -3200,62 +3298,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * A dedup key for {@link DatabaseSelection DatabaseSelections} in a batch
-     * {@link #select} call. Two {@link SelectionKey SelectionKeys} are equal
-     * when they have the same {@link Reservation} and the same filter instance.
-     * This ensures that unfiltered selections with identical query parameters
-     * are deduped (since they share the {@link DatabaseSelection#NO_FILTER}
-     * singleton), while filtered selections with different predicates are
-     * always treated as distinct.
-     *
-     * @author Jeff Nelson
-     */
-    private static final class SelectionKey {
-
-        /**
-         * The {@link DatabaseSelection} this key represents.
-         */
-        final DatabaseSelection<?> selection;
-
-        /**
-         * The {@link Reservation} derived from the {@link #selection}.
-         */
-        private final Reservation reservation;
-
-        /**
-         * The filter predicate, compared by identity.
-         */
-        private final Predicate<?> filter;
-
-        /**
-         * Construct a new {@link SelectionKey}.
-         *
-         * @param selection the {@link DatabaseSelection}
-         */
-        SelectionKey(DatabaseSelection<?> selection) {
-            this.selection = selection;
-            this.reservation = selection.reservation();
-            this.filter = selection.filter;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if(obj instanceof SelectionKey) {
-                SelectionKey other = (SelectionKey) obj;
-                return reservation.equals(other.reservation)
-                        && filter == other.filter;
-            }
-            return false;
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(reservation, System.identityHashCode(filter));
-        }
-
-    }
-
-    /**
      * Internal utility class for Database {@link Criteria} with support for
      * {@link Runway} specific semantics.
      *
@@ -3351,6 +3393,62 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 Criteria criteria) {
             return Criteria.where().group(forClass(clazz)).and().group(criteria)
                     .build();
+        }
+
+    }
+
+    /**
+     * A dedup key for {@link DatabaseSelection DatabaseSelections} in a batch
+     * {@link #select} call. Two {@link SelectionKey SelectionKeys} are equal
+     * when they have the same {@link Reservation} and the same filter instance.
+     * This ensures that unfiltered selections with identical query parameters
+     * are deduped (since they share the {@link DatabaseSelection#NO_FILTER}
+     * singleton), while filtered selections with different predicates are
+     * always treated as distinct.
+     *
+     * @author Jeff Nelson
+     */
+    private static final class SelectionKey {
+
+        /**
+         * The {@link DatabaseSelection} this key represents.
+         */
+        final DatabaseSelection<?> selection;
+
+        /**
+         * The {@link Reservation} derived from the {@link #selection}.
+         */
+        private final Reservation reservation;
+
+        /**
+         * The filter predicate, compared by identity.
+         */
+        private final Predicate<?> filter;
+
+        /**
+         * Construct a new {@link SelectionKey}.
+         *
+         * @param selection the {@link DatabaseSelection}
+         */
+        SelectionKey(DatabaseSelection<?> selection) {
+            this.selection = selection;
+            this.reservation = selection.reservation();
+            this.filter = selection.filter;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if(obj instanceof SelectionKey) {
+                SelectionKey other = (SelectionKey) obj;
+                return reservation.equals(other.reservation)
+                        && filter == other.filter;
+            }
+            return false;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(reservation, System.identityHashCode(filter));
         }
 
     }
