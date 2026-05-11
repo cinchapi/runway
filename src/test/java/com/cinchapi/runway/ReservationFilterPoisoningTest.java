@@ -488,7 +488,8 @@ public class ReservationFilterPoisoningTest extends RunwayBaseClientServerTest {
         Selection<Item> scoped = (Selection<Item>) Scope.none()
                 .apply(Selection.of(Item.class).where(criteria));
         runway.select(scoped);
-        Assert.assertEquals(0, scoped.get().size());
+        Set<Item> scopedResult = scoped.get();
+        Assert.assertEquals(0, scopedResult.size());
 
         Set<Item> unscoped = runway.find(Item.class, criteria);
         Assert.assertEquals(
@@ -543,7 +544,8 @@ public class ReservationFilterPoisoningTest extends RunwayBaseClientServerTest {
         Selection<Item> sibling = Selection.of(Item.class)
                 .where(siblingCriteria);
         runway.select(scoped, sibling);
-        Assert.assertEquals(0, scoped.get().size());
+        Set<Item> scopedResult = scoped.get();
+        Assert.assertEquals(0, scopedResult.size());
 
         Set<Item> unscoped = runway.find(Item.class, criteria);
         Assert.assertEquals("Scope.none() RESOLVED selection in a multi-select "
@@ -598,8 +600,10 @@ public class ReservationFilterPoisoningTest extends RunwayBaseClientServerTest {
         Selection<Item> normal = Selection.of(Item.class).where(criteria);
         runway.select(scoped, normal);
 
-        Assert.assertEquals(0, scoped.get().size());
-        Assert.assertEquals(2, normal.get().size());
+        Set<Item> scopedResult = scoped.get();
+        Set<Item> normalResult = normal.get();
+        Assert.assertEquals(0, scopedResult.size());
+        Assert.assertEquals(2, normalResult.size());
 
         new Item("c", "U").save();
 
