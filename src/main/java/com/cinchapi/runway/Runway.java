@@ -25,6 +25,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -975,7 +976,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 Concourse concourse = connections.request();
                 try {
                     ReadHandle handle = new ConcourseReadHandle(concourse);
-                    complete(selection, $select(handle, selection));
+                    bindSelectionResult(selection, $select(handle, selection));
                 }
                 finally {
                     connections.release(concourse);
@@ -992,7 +993,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 Concourse concourse = connections.request();
                 try {
                     ReadHandle handle = new CommandGroupReadHandle(concourse);
-                    LinkedHashMap<DatabaseSelection<?>, Supplier<? extends SelectResult<?>>> suppliers = new LinkedHashMap<>();
+                    Map<DatabaseSelection<?>, Supplier<? extends SelectResult<?>>> suppliers = new LinkedHashMap<>();
                     for (DatabaseSelection<?> selection : unique) {
                         if(selection.state == Selection.State.RESOLVED) {
                             selection.setState(Selection.State.FINISHED);
@@ -1002,14 +1003,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                     $select(handle, selection));
                         }
                     }
-                    for (Map.Entry<DatabaseSelection<?>, Supplier<? extends SelectResult<?>>> entry : suppliers
-                            .entrySet()) {
-                        complete(entry.getKey(), entry.getValue());
-                    }
+                    suppliers.forEach(Runway::bindSelectionResult);
                 }
                 finally {
                     connections.release(concourse);
                 }
+
+                // At this point, each Selection's result is bound so handle
+                // final reservations.
                 for (DatabaseSelection<?> selection : unique) {
                     if(selection.state == Selection.State.FINISHED) {
                         reserve(selection);
@@ -1042,8 +1043,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         try {
                             ReadHandle handle = new ConcourseReadHandle(
                                     concourse);
-                            complete(selection, $selectWithPossibleSources(
-                                    handle, selection, sources));
+                            bindSelectionResult(selection,
+                                    $selectWithPossibleSources(handle,
+                                            selection, sources));
                         }
                         finally {
                             connections.release(concourse);
@@ -1109,7 +1111,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             try {
                                 ReadHandle handle = new ConcourseReadHandle(
                                         concourse);
-                                complete(selection, $select(handle, selection));
+                                bindSelectionResult(selection,
+                                        $select(handle, selection));
                             }
                             finally {
                                 connections.release(concourse);
@@ -1122,6 +1125,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     }
                 }
             }
+
             // Propagate results to duplicates
             for (DatabaseSelection<?> selection : selections) {
                 if(selection.state != Selection.State.FINISHED) {
@@ -1247,11 +1251,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return the number of {@link Record records} that match the
+     * Record on {@code handle} a count of the {@link Record Records} matching
      * {@code criteria}.
      *
-     * @param criteria
-     * @return the number of matching records
+     * @param handle the {@link ReadHandle} that records the count operation
+     * @param criteria the {@link Criteria} that identifies the records
+     * @return a {@link Supplier} that yields the count
      */
     private Supplier<Integer> $count(ReadHandle handle, Criteria criteria) {
         if(supportsNativeCount) {
@@ -1266,12 +1271,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Perform the find operation using the {@code concourse} handler.
+     * Record on {@code handle} a read for the {@link Record Records} of
+     * {@code clazz} that match {@code criteria}, scoped to {@code realms} and
+     * shaped by {@code order} and {@code page}.
      *
-     * @param concourse
-     * @param clazz
-     * @param criteria
-     * @return the result set
+     * @param handle the {@link ReadHandle} that records the read
+     * @param clazz the target {@link Record} class (used to scope the lookup to
+     *            instances of exactly this class)
+     * @param criteria the {@link Criteria} that identifies the records
+     * @param order the {@link Order} to apply to the result set, or
+     *            {@code null} for unsorted results
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     * @param realms the {@link Realms} that scope the lookup
+     * @param <T> the {@link Record} type
+     * @return a {@link Supplier} that yields the matching records' data
      */
     private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $find(
             ReadHandle handle, Class<T> clazz, Criteria criteria,
@@ -1284,14 +1298,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Perform the "find any" operation, recording the read on {@code handle}.
+     * Record on {@code handle} a read for the {@link Record Records} across
+     * {@code clazz}'s hierarchy that match {@code criteria}, scoped to
+     * {@code realms} and shaped by {@code order} and {@code page}.
      *
-     * @param handle
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @param page
-     * @param realms
+     * @param handle the {@link ReadHandle} that records the read
+     * @param clazz the {@link Record} class whose hierarchy is queried
+     * @param criteria the {@link Criteria} that identifies the records
+     * @param order the {@link Order} to apply to the result set, or
+     *            {@code null} for unsorted results
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     * @param realms the {@link Realms} that scope the lookup
+     * @param <T> the {@link Record} type
      * @return a {@link Supplier} that yields the matching records' data
      */
     private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $findAny(
@@ -1305,15 +1324,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return the ids of all the {@code Record}s in the {@code clazz}, recording
-     * the read on {@code handle}.
+     * Record on {@code handle} a read for every {@link Record} of
+     * {@code clazz}, scoped to {@code realms} and shaped by {@code order} and
+     * {@code page}.
      *
-     * @param handle
-     * @param clazz
-     * @param order
-     * @param page
-     * @param realms
-     * @return a {@link Supplier} that yields the records in the class
+     * @param handle the {@link ReadHandle} that records the read
+     * @param clazz the target {@link Record} class (used to scope the lookup to
+     *            instances of exactly this class)
+     * @param order the {@link Order} to apply to the result set, or
+     *            {@code null} for unsorted results
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     * @param realms the {@link Realms} that scope the lookup
+     * @param <T> the {@link Record} type
+     * @return a {@link Supplier} that yields the records' data
      */
     private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $load(
             ReadHandle handle, Class<T> clazz, @Nullable Order order,
@@ -1325,15 +1349,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return the ids of all the {@code Record}s in the {@code clazz} hierarchy,
-     * recording the read on {@code handle}.
+     * Record on {@code handle} a read for every {@link Record} in
+     * {@code clazz}'s hierarchy, scoped to {@code realms} and shaped by
+     * {@code order} and {@code page}.
      *
-     * @param handle
-     * @param clazz
-     * @param order
-     * @param page
-     * @param realms
-     * @return a {@link Supplier} that yields the records in the class hierarchy
+     * @param handle the {@link ReadHandle} that records the read
+     * @param clazz the {@link Record} class whose hierarchy is queried
+     * @param order the {@link Order} to apply to the result set, or
+     *            {@code null} for unsorted results
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     * @param realms the {@link Realms} that scope the lookup
+     * @param <T> the {@link Record} type
+     * @return a {@link Supplier} that yields the records' data
      */
     private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $loadAny(
             ReadHandle handle, Class<T> clazz, @Nullable Order order,
@@ -1394,17 +1422,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Execute a single {@link DatabaseSelection}. This is the canonical
-     * dispatch point for all read operations &mdash; cache recall,
-     * {@link AdHocDataSource} routing, and database querying all funnel through
-     * here.
+     * Record on {@code handle} the read(s) required to resolve
+     * {@code selection} and return a {@link Supplier} that yields its
+     * {@link SelectResult}. Equivalent to invoking
+     * {@link #$selectWithPossibleSources(ReadHandle, DatabaseSelection, Set)}
+     * with no pre-supplied {@link AdHocDataSource} set.
      * <p>
-     * On completion, {@code selection}'s {@link DatabaseSelection#result
-     * result} and {@link DatabaseSelection#state state} are set.
+     * The returned {@link Supplier} must be passed to
+     * {@link #bindSelectionResult(DatabaseSelection, Supplier)} to populate
+     * {@code selection}'s result and transition it to
+     * {@link Selection.State#FINISHED}.
      *
-     * @param selection the {@link DatabaseSelection} to execute
+     * @param handle the {@link ReadHandle} that records any required reads
+     * @param selection the {@link DatabaseSelection} to resolve; must not be in
+     *            {@link Selection.State#RESOLVED}
      * @param <T> the {@link Record} type
-     * @param <R> the result type
+     * @param <R> the {@link SelectResult} result type
+     * @return a {@link Supplier} that yields the {@link SelectResult}
      */
     private <T extends Record, R> Supplier<SelectResult<R>> $select(
             ReadHandle handle, DatabaseSelection<T> selection) {
@@ -1412,15 +1446,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Apply the {@code supplier}'s {@link SelectResult} to {@code selection}
-     * and transition it to {@link Selection.State#FINISHED}.
+     * Pull the {@link SelectResult} from {@code supplier} and bind its primary
+     * value (along with any companion value carried by the
+     * {@link SelectResult}) onto {@code selection}, then transition
+     * {@code selection} to {@link Selection.State#FINISHED}.
+     * <p>
+     * Pulling the {@link Supplier} is the point at which any deferred read
+     * recorded on a {@link ReadHandle} (e.g., a batched
+     * {@link CommandGroupReadHandle}) is actually issued against the database.
      *
-     * @param selection the {@link DatabaseSelection} to populate
-     * @param supplier the {@link Supplier} produced by {@link #$select} or
-     *            {@link #$selectWithPossibleSources}
+     * @param selection the {@link DatabaseSelection} whose result, companion
+     *            value, and state will be written
+     * @param supplier a {@link Supplier} produced by
+     *            {@link #$select(ReadHandle, DatabaseSelection)} or
+     *            {@link #$selectWithPossibleSources(ReadHandle, DatabaseSelection, Set)}
      */
     @SuppressWarnings({ "unchecked", "rawtypes" })
-    private void complete(DatabaseSelection<?> selection,
+    private static void bindSelectionResult(DatabaseSelection<?> selection,
             Supplier<? extends SelectResult<?>> supplier) {
         SelectResult<?> res = supplier.get();
         ((DatabaseSelection) selection).setResult(res.result);
@@ -1429,13 +1471,28 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Execute a {@link LoadClassSelection} against the database.
+     * Record on {@code handle} the read required to resolve {@code selection}
+     * and return a {@link Supplier} that yields a {@link SelectResult} holding
+     * the matching {@link Record Records}.
+     * <p>
+     * When the server supports native sorting/pagination (or none is requested)
+     * and the selection has no client-side filter combined with a page, exactly
+     * one read is recorded on {@code handle} and the returned {@link Supplier}
+     * simply instantiates the {@link Record Records} from that read's result.
+     * When the selection requires both a client-side filter and a page, the
+     * iterative paging happens inside the returned {@link Supplier} on a
+     * private connection so it does not interfere with other recordings on
+     * {@code handle}. When the server lacks native sorting/pagination the work
+     * happens inside the returned {@link Supplier} via
+     * {@link #fetch(Selection)}.
      *
-     * @param selection the {@link LoadClassSelection} to execute
+     * @param handle the {@link ReadHandle} that records the read when the
+     *            selection can be resolved with a single recorded query
+     * @param selection the {@link LoadClassSelection} to resolve
      * @param <T> the {@link Record} type
-     * @return a {@link SelectResult} containing the matching {@link Record
-     *         Records} and, when a filter is applied without pagination, the
-     *         unfiltered data for caching
+     * @return a {@link Supplier} that yields the {@link SelectResult}, whose
+     *         companion value (when a filter without pagination is applied)
+     *         carries the unfiltered records
      */
     private <T extends Record> Supplier<SelectResult<Set<T>>> $selectClass(
             ReadHandle handle, LoadClassSelection<T> selection) {
@@ -1520,14 +1577,25 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Execute a {@link CountSelection} against the database.
+     * Record on {@code handle} the count required to resolve {@code selection}
+     * and return a {@link Supplier} that yields a {@link SelectResult} holding
+     * the matching count.
+     * <p>
+     * When the selection has no client-side filter, exactly one count is
+     * recorded on {@code handle} (using a native count command if the server
+     * supports it, otherwise a find whose size is taken at resolution time).
+     * When the selection has a client-side filter, the count is computed inside
+     * the returned {@link Supplier} via {@link #fetch(Selection)} (no read is
+     * recorded on {@code handle}).
      *
-     * @param selection the {@link CountSelection} to execute
+     * @param handle the {@link ReadHandle} that records the count when the
+     *            selection can be resolved with a single recorded query
+     * @param selection the {@link CountSelection} to resolve
      * @param <T> the {@link Record} type
-     * @return a {@link SelectResult} containing the count; no
-     *         {@link SelectResult#cacheValue} is provided because the inner
-     *         {@code fetch()} caches the unfiltered set under its own
-     *         {@link Reservation}
+     * @return a {@link Supplier} that yields the {@link SelectResult}; no
+     *         companion value is carried because the underlying
+     *         {@link #fetch(Selection)} (when used) covers the unfiltered set
+     *         under its own {@link Reservation}
      */
     private <T extends Record> Supplier<SelectResult<Integer>> $selectCount(
             ReadHandle handle, CountSelection<T> selection) {
@@ -1572,13 +1640,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Execute a {@link FindSelection} against the database.
+     * Record on {@code handle} the read required to resolve {@code selection}
+     * and return a {@link Supplier} that yields a {@link SelectResult} holding
+     * the matching {@link Record Records}.
+     * <p>
+     * When the criteria can be resolved by the database and the selection has
+     * no client-side filter combined with a page, exactly one read is recorded
+     * on {@code handle} and the returned {@link Supplier} instantiates the
+     * {@link Record Records} from that read's result. When the criteria cannot
+     * be resolved by the database (e.g., touches fields with client-side
+     * predicates) the work happens inside the returned {@link Supplier} via
+     * {@link #filter} / {@link #filterAny} and no read is recorded on
+     * {@code handle}. When the selection requires both a client-side filter and
+     * a page, the iterative paging happens inside the returned {@link Supplier}
+     * on a private connection. When the server lacks native sorting/pagination
+     * the work happens inside the returned {@link Supplier} via
+     * {@link #fetch(Selection)}.
      *
-     * @param selection the {@link FindSelection} to execute
+     * @param handle the {@link ReadHandle} that records the read when the
+     *            selection can be resolved with a single recorded query
+     * @param selection the {@link FindSelection} to resolve
      * @param <T> the {@link Record} type
-     * @return a {@link SelectResult} containing the matching {@link Record
-     *         Records} and, when a filter is applied without pagination, the
-     *         unfiltered data for caching
+     * @return a {@link Supplier} that yields the {@link SelectResult}, whose
+     *         companion value (when a filter without pagination is applied)
+     *         carries the unfiltered records
      */
     private <T extends Record> Supplier<SelectResult<Set<T>>> $selectCriteria(
             ReadHandle handle, FindSelection<T> selection) {
@@ -1693,13 +1778,25 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Execute a {@link LoadRecordSelection} against the database.
+     * Record on {@code handle} the first read required to resolve
+     * {@code selection} and return a {@link Supplier} that yields a
+     * {@link SelectResult} holding the loaded {@link Record} (or {@code null}
+     * when the realm gate excludes it).
+     * <p>
+     * Up to one preparatory read is recorded on {@code handle}: when
+     * {@link DatabaseSelection#clazz} has descendants the section lookup for
+     * the requested id is recorded; otherwise, when realms are configured the
+     * realms field for the requested id is recorded. Any remaining reads
+     * required to assemble the final {@link Record} (further realm checks,
+     * navigate, bulk-select prefetch) happen inside the returned
+     * {@link Supplier}.
      *
-     * @param selection the {@link LoadRecordSelection} to execute
+     * @param handle the {@link ReadHandle} that records the first read
+     * @param selection the {@link LoadRecordSelection} to resolve
      * @param <T> the {@link Record} type
-     * @return a {@link SelectResult} containing the loaded {@link Record} (or
-     *         {@code null}) and, when a filter is applied, the unfiltered
-     *         record for caching
+     * @return a {@link Supplier} that yields the {@link SelectResult}, whose
+     *         companion value (when a filter is applied) carries the unfiltered
+     *         loaded {@link Record}
      */
     @SuppressWarnings("unchecked")
     private <T extends Record> Supplier<SelectResult<T>> $selectRecord(
@@ -1773,14 +1870,26 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Execute a {@link UniqueSelection} against the database.
+     * Record on {@code handle} the read required to resolve {@code selection}
+     * and return a {@link Supplier} that yields a {@link SelectResult} holding
+     * the unique matching {@link Record} (or {@code null} when no record
+     * matches).
+     * <p>
+     * Composes either {@link #$selectCriteria(ReadHandle, FindSelection)} (when
+     * {@code selection} carries a criteria) or
+     * {@link #$selectClass(ReadHandle, LoadClassSelection)} (otherwise) with a
+     * {@link DatabaseInterface#UNIQUE_PAGINATION page-of-two}, and adapts the
+     * {@link Set} of matches to a single record (or throws if more than one is
+     * found).
      *
-     * @param selection the {@link UniqueSelection} to execute
+     * @param handle the {@link ReadHandle} that records the underlying read
+     * @param selection the {@link UniqueSelection} to resolve
      * @param <T> the {@link Record} type
-     * @return a {@link SelectResult} containing the unique matching
-     *         {@link Record} (or {@code null}) and any cache-safe value
-     *         propagated from the inner query
-     * @throws DuplicateEntryException if more than one {@link Record} matches
+     * @return a {@link Supplier} that yields the {@link SelectResult}, whose
+     *         companion value carries any companion value produced by the inner
+     *         query
+     * @throws DuplicateEntryException from the returned {@link Supplier} when
+     *             more than one {@link Record} matches
      */
     private <T extends Record> Supplier<SelectResult<T>> $selectUnique(
             ReadHandle handle, UniqueSelection<T> selection) {
@@ -1820,20 +1929,48 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Execute a single {@link DatabaseSelection}.
+     * Plan the resolution of {@code selection}, recording any required reads on
+     * {@code handle} and returning a {@link Supplier} that yields its
+     * {@link SelectResult}.
      * <p>
-     * On completion, {@code selection}'s {@link DatabaseSelection#result
-     * result} and {@link DatabaseSelection#state state} are set.
+     * This is the canonical dispatch point for resolving a single
+     * {@link DatabaseSelection}. The control flow is:
+     * <ul>
+     * <li>If a previously reserved result exists for {@code selection}, no
+     * reads are recorded; the returned {@link Supplier} yields the reserved
+     * value.</li>
+     * <li>If one or more {@link AdHocDataSource AdHocDataSources} match
+     * {@code selection}'s class, the result is computed synchronously against
+     * those sources (no reads recorded on {@code handle}); the returned
+     * {@link Supplier} yields that result.</li>
+     * <li>Otherwise the type-specific {@code $select*} helper (e.g.,
+     * {@link #$selectClass}, {@link #$selectCriteria}, {@link #$selectCount},
+     * {@link #$selectRecord}, {@link #$selectUnique}) records the required
+     * read(s) on {@code handle}; the returned {@link Supplier} yields the
+     * {@link SelectResult} once the underlying read is issued.</li>
+     * </ul>
+     * <p>
+     * As a side effect of calling this method, {@code selection}'s state is
+     * transitioned to {@link Selection.State#SUBMITTED}. The final transition
+     * to {@link Selection.State#FINISHED} (along with writing the result and
+     * companion value onto {@code selection}) happens when the returned
+     * {@link Supplier} is passed to
+     * {@link #bindSelectionResult(DatabaseSelection, Supplier)}.
      *
-     * @param selection the {@link DatabaseSelection} to execute
-     * @param sources known {@link AdHocDataSource AdHocDataSources} that may
-     *            have data relevant {@link Selection}; typically provided if
-     *            the {@link Selection#clazz()} is a subclass of
-     *            {@link AdHocRecord} and prior work to
-     *            {@link #getAttachedSources(Class) get attached sources}
-     *            preceded this method call
+     * @param handle the {@link ReadHandle} that records any required reads
+     * @param selection the {@link DatabaseSelection} to resolve; must not be in
+     *            {@link Selection.State#RESOLVED} (the caller is responsible
+     *            for filtering those out)
+     * @param sources a pre-resolved {@link Set} of {@link AdHocDataSource
+     *            AdHocDataSources} for {@code selection}'s class, or
+     *            {@code null} to have this method look them up from
+     *            {@link #getAttachedSources(Class)} /
+     *            {@link #getAttachedSourcesForHierarchy(Class)}
      * @param <T> the {@link Record} type
-     * @param <R> the result type
+     * @param <R> the {@link SelectResult} result type
+     * @return a {@link Supplier} that yields the {@link SelectResult}
+     * @throws IllegalStateException if {@code selection} is in
+     *             {@link Selection.State#RESOLVED}
      */
     @SuppressWarnings("unchecked")
     private <T extends Record, R> Supplier<SelectResult<R>> $selectWithPossibleSources(
@@ -1884,14 +2021,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Resolve {@code selection} against the supplied {@code sources}.
+     * Resolve {@code selection} against the supplied {@code sources} by
+     * dispatching {@link AdHocDataSource#fetch(DatabaseSelection)} to each
+     * source and combining the results.
+     * <p>
+     * For multi-source selections, results are combined per
+     * {@link DatabaseSelection} subtype: counts are summed,
+     * {@link LoadRecordSelection} returns the first non-{@code null} record,
+     * {@link UniqueSelection} enforces at-most-one across sources, and
+     * {@link SetBasedSelection} flattens, sorts, and pages the union.
      *
      * @param selection the {@link DatabaseSelection} to resolve
-     * @param sources the non-empty {@link AdHocDataSource AdHocDataSources} to
-     *            consult
+     * @param sources the non-empty {@link AdHocDataSource AdHocDataSources}
+     *            against which {@code selection} is dispatched
      * @param <T> the {@link Record} type
-     * @param <R> the result type
-     * @return the resolved result
+     * @param <R> the {@link DatabaseSelection} result type
+     * @return the resolved result combined from {@code sources}
      */
     @SuppressWarnings("unchecked")
     private <T extends Record, R> R $selectFromSources(
