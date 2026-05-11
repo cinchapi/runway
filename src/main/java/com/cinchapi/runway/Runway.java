@@ -998,11 +998,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(selections.length == 1) {
             DatabaseSelection<?> selection = selections[0];
             if(selection.state == Selection.State.RESOLVED) {
-                // NOTE: A RESOLVED selection (e.g., from a static visibility
-                // Scope.none()) is intentionally not reserved. Caching a
-                // scope-restricted empty result under the filterless
-                // Reservation key would poison subsequent same-key reads
-                // performed under a different scope.
                 selection.setState(Selection.State.FINISHED);
             }
             else {
@@ -1041,11 +1036,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 finally {
                     connections.release(concourse);
                 }
-                // NOTE: RESOLVED selections (e.g., from a static visibility
-                // Scope.none()) are intentionally not reserved. Caching a
-                // scope-restricted empty result under the filterless
-                // Reservation key would poison subsequent same-key reads
-                // performed under a different scope.
                 for (DatabaseSelection<?> selection : suppliers.keySet()) {
                     reserve(selection);
                 }
