@@ -35,10 +35,10 @@ import com.google.common.collect.ImmutableList;
  * <h2>Batch lifecycle</h2>
  * <p>
  * This {@link ReadHandle} maintains a current <em>batch</em> &mdash; the
- * {@link CommandGroup} that subsequent record calls append to. Each record call
- * (e.g. {@link #select(Criteria)}, {@link #find(Criteria)},
+ * {@link CommandGroup} that subsequent recording calls append to. Each
+ * recording call (e.g. {@link #select(Criteria)}, {@link #find(Criteria)},
  * {@link #count(String, Criteria)}) appends a single command to the current
- * batch and returns a {@link Supplier} bound to that batch. The record call
+ * batch and returns a {@link Supplier} bound to that batch. The recording call
  * itself does not contact the database; it only mutates the batch's command
  * list.
  * </p>
@@ -46,34 +46,35 @@ import com.google.common.collect.ImmutableList;
  * The first {@link Supplier#get()} call on any {@link Supplier} bound to the
  * current batch <em>flushes</em> that batch via
  * {@link Concourse#submit(CommandGroup)} &mdash; a single round trip that
- * executes every command recorded so far. The flushed submission result is
+ * executes every command appended so far. The flushed submission result is
  * shared with every {@link Supplier} bound to that batch, so any subsequent
  * {@code get()} call on a sibling {@link Supplier} returns its value from the
  * already-submitted result without issuing further database work.
  * </p>
  * <p>
- * Any record call made after the current batch has been flushed opens a fresh
- * batch with a new {@link CommandGroup}. The boundary between batches is
+ * Any recording call made after the current batch has been flushed opens a
+ * fresh batch with a new {@link CommandGroup}. The boundary between batches is
  * therefore controlled by the caller: callers that want N reads issued in a
- * single round trip must record all N before invoking {@link Supplier#get()} on
- * any of the returned {@link Supplier Suppliers}.
+ * single round trip must record all N reads before invoking
+ * {@link Supplier#get()} on any of the returned {@link Supplier Suppliers}.
  * </p>
  *
  * <h2>Supplier guarantees</h2>
  * <p>
- * The {@link Supplier} returned by each record method is bound to the batch
- * that was current when the record was made. Calling its {@link Supplier#get()
- * get()} guarantees that, by the time the call returns, the underlying read has
- * been issued and its result is available. The {@link Supplier} is idempotent:
- * repeated invocations return the same value without further database work.
+ * The {@link Supplier} returned by each recording method is bound to the batch
+ * that was current when the read was recorded. Calling its
+ * {@link Supplier#get() get()} guarantees that, by the time the call returns,
+ * the underlying read has been issued and its result is available. The
+ * {@link Supplier} is idempotent: repeated invocations return the same value
+ * without further database work.
  * </p>
  *
  * <h2>Thread safety</h2>
  * <p>
  * Recording (every public method on this class) is <strong>not</strong>
  * thread-safe and must be performed on a single thread. After recording
- * completes, the {@link Supplier Suppliers} produced by the record calls may be
- * invoked from any thread to which they are safely published. The
+ * completes, the {@link Supplier Suppliers} produced by the recording calls may
+ * be invoked from any thread to which they are safely published. The
  * {@code volatile} submission-result reference on the underlying batch
  * guarantees that the null-to-non-null transition that occurs during a flush is
  * visible across threads. Concurrent invocation of {@link Supplier#get()} on
@@ -257,11 +258,11 @@ final class CommandGroupReadHandle extends ConcourseReadHandle {
     }
 
     /**
-     * Return the {@link Batch} that subsequent records should append to,
+     * Return the {@link Batch} that subsequent recordings should append to,
      * starting a fresh one if the active {@link Batch} has already been
      * flushed.
      *
-     * @return the {@link Batch} that should receive the next record
+     * @return the {@link Batch} that should receive the next recording
      */
     private Batch batch() {
         if(current.flushed()) {
