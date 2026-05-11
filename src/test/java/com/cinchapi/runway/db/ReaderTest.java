@@ -13,7 +13,7 @@
  * License for the specific language governing permissions and limitations under
  * the License.
  */
-package com.cinchapi.runway;
+package com.cinchapi.runway.db;
 
 import java.util.Map;
 import java.util.Set;
@@ -26,20 +26,21 @@ import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.Testing;
 import com.google.common.collect.ImmutableSet;
 
 /**
- * Behavioral contract tests for {@link ReadHandle} implementations.
+ * Behavioral contract tests for {@link Reader} implementations.
  * <p>
  * Concrete subclasses supply the implementation under test by overriding
- * {@link #newReadHandle()} and inherit the full suite of behavioral tests.
+ * {@link #newReader()} and inherit the full suite of behavioral tests.
  *
  * @author Jeff Nelson
  */
-public abstract class ReadHandleTest extends ClientServerTest {
+public abstract class ReaderTest extends ClientServerTest {
 
     /**
-     * The {@link Concourse} connection passed to every {@link ReadHandle} under
+     * The {@link Concourse} connection passed to every {@link Reader} under
      * test.
      */
     protected Concourse concourse;
@@ -76,7 +77,7 @@ public abstract class ReadHandleTest extends ClientServerTest {
         long low = concourse.add("score", 5);
         long high = concourse.add("score", 10);
 
-        ReadHandle reader = newReadHandle();
+        Reader reader = newReader();
         Supplier<Set<Long>> supplier = reader.find(Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(7));
         Set<Long> ids = supplier.get();
@@ -109,7 +110,7 @@ public abstract class ReadHandleTest extends ClientServerTest {
         long b = concourse.add("active", true);
         long c = concourse.add("active", false);
 
-        ReadHandle reader = newReadHandle();
+        Reader reader = newReader();
         Supplier<Map<Long, Map<String, Set<Object>>>> active = reader
                 .select(Criteria.where().key("active").operator(Operator.EQUALS)
                         .value(true));
@@ -144,7 +145,7 @@ public abstract class ReadHandleTest extends ClientServerTest {
         long first = concourse.add("tag", "first");
         long second = concourse.add("tag", "second");
 
-        ReadHandle reader = newReadHandle();
+        Reader reader = newReader();
         Supplier<Set<Long>> firstSupplier = reader.find(Criteria.where()
                 .key("tag").operator(Operator.EQUALS).value("first"));
         Assert.assertEquals(ImmutableSet.of(first), firstSupplier.get());
@@ -178,7 +179,7 @@ public abstract class ReadHandleTest extends ClientServerTest {
         long bob = concourse.add("name", "bob");
         concourse.add("age", 40, bob);
 
-        ReadHandle reader = newReadHandle();
+        Reader reader = newReader();
         Supplier<Map<Long, Map<String, Set<Object>>>> supplier = reader
                 .select(Criteria.where().key("age")
                         .operator(Operator.GREATER_THAN).value(35));
@@ -212,7 +213,7 @@ public abstract class ReadHandleTest extends ClientServerTest {
         concourse.add("age", 32, jeff);
         concourse.add("city", "Atlanta", jeff);
 
-        ReadHandle reader = newReadHandle();
+        Reader reader = newReader();
         Supplier<Map<Long, Map<String, Set<Object>>>> supplier = reader
                 .select(ImmutableSet.of("name", "city"), Criteria.where()
                         .key("name").operator(Operator.EQUALS).value("jeff"));
@@ -244,7 +245,7 @@ public abstract class ReadHandleTest extends ClientServerTest {
         concourse.add("score", 5);
         concourse.add("score", 10);
 
-        ReadHandle reader = newReadHandle();
+        Reader reader = newReader();
         Supplier<Long> supplier = reader.count("score", Criteria.where()
                 .key("score").operator(Operator.GREATER_THAN).value(3));
 
@@ -272,7 +273,7 @@ public abstract class ReadHandleTest extends ClientServerTest {
         long id = concourse.add("name", "jeff");
         concourse.add("age", 32, id);
 
-        ReadHandle reader = newReadHandle();
+        Reader reader = newReader();
         Supplier<Map<String, Set<Object>>> supplier = reader.select(id);
         Map<String, Set<Object>> data = supplier.get();
 
@@ -302,7 +303,7 @@ public abstract class ReadHandleTest extends ClientServerTest {
         concourse.add("age", 32, id);
         concourse.add("city", "Atlanta", id);
 
-        ReadHandle reader = newReadHandle();
+        Reader reader = newReader();
         Supplier<Map<String, Set<Object>>> supplier = reader
                 .select(ImmutableSet.of("name", "city"), id);
         Map<String, Set<Object>> data = supplier.get();
@@ -333,7 +334,7 @@ public abstract class ReadHandleTest extends ClientServerTest {
         concourse.add("tag", "beta", id);
         concourse.add("tag", "gamma", id);
 
-        ReadHandle reader = newReadHandle();
+        Reader reader = newReader();
         Supplier<Set<Object>> supplier = reader.select("tag", id);
 
         Assert.assertEquals(ImmutableSet.of("alpha", "beta", "gamma"),
@@ -362,7 +363,7 @@ public abstract class ReadHandleTest extends ClientServerTest {
         long id = concourse.add("status", "pending");
         concourse.add("status", "approved", id);
 
-        ReadHandle reader = newReadHandle();
+        Reader reader = newReader();
         Supplier<Object> supplier = reader.get("status", id);
 
         Assert.assertEquals("approved", supplier.get());
@@ -374,11 +375,11 @@ public abstract class ReadHandleTest extends ClientServerTest {
     }
 
     /**
-     * Return a fresh {@link ReadHandle} for the implementation under test.
+     * Return a fresh {@link Reader} for the implementation under test.
      *
-     * @return the {@link ReadHandle} under test
+     * @return the {@link Reader} under test
      */
-    protected abstract ReadHandle newReadHandle();
+    protected abstract Reader newReader();
 
     @Override
     protected boolean reuseServerAcrossTests() {

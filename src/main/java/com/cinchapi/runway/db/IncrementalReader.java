@@ -13,7 +13,7 @@
  * License for the specific language governing permissions and limitations under
  * the License.
  */
-package com.cinchapi.runway;
+package com.cinchapi.runway.db;
 
 import java.util.Map;
 import java.util.Set;
@@ -28,13 +28,13 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.google.common.base.Preconditions;
 
 /**
- * A {@link ReadHandle} that issues each read against the wrapped
- * {@link Concourse} at recording time.
+ * A {@link Reader} that issues each read against the wrapped {@link Concourse}
+ * at recording time.
  *
  * @author Jeff Nelson
  */
 @NotThreadSafe
-class ConcourseReadHandle implements ReadHandle {
+public class IncrementalReader implements Reader {
 
     /**
      * The {@link Concourse} connection against which reads are issued.
@@ -42,12 +42,12 @@ class ConcourseReadHandle implements ReadHandle {
     protected final Concourse concourse;
 
     /**
-     * Construct a new {@link ConcourseReadHandle}.
+     * Construct a new {@link IncrementalReader}.
      *
      * @param concourse the {@link Concourse} connection against which reads are
      *            issued; must not be {@code null}
      */
-    ConcourseReadHandle(Concourse concourse) {
+    public IncrementalReader(Concourse concourse) {
         this.concourse = Preconditions.checkNotNull(concourse);
     }
 

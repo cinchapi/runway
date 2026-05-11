@@ -13,7 +13,7 @@
  * License for the specific language governing permissions and limitations under
  * the License.
  */
-package com.cinchapi.runway;
+package com.cinchapi.runway.db;
 
 import java.util.Map;
 import java.util.Set;
@@ -24,11 +24,11 @@ import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 
 /**
- * A {@link ReadHandle} records reads against a database and returns a
+ * A {@link Reader} records reads against a database and returns a
  * {@link Supplier} for each one.
  * <p>
  * The first call to {@link Supplier#get()} on any {@link Supplier} returned
- * from this {@link ReadHandle} guarantees that the underlying read has been
+ * from this {@link Reader} guarantees that the underlying read has been
  * executed against the database and yields its result. Implementations decide
  * <em>when</em> the underlying read is executed &mdash; eagerly at recording
  * time, batched and submitted on first resolution, or by some other strategy
@@ -38,7 +38,7 @@ import com.cinchapi.concourse.lang.sort.Order;
  *
  * @author Jeff Nelson
  */
-interface ReadHandle {
+public interface Reader {
 
     /**
      * Record a select for every record matching the {@code criteria}.

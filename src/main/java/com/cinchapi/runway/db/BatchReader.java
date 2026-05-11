@@ -13,7 +13,7 @@
  * License for the specific language governing permissions and limitations under
  * the License.
  */
-package com.cinchapi.runway;
+package com.cinchapi.runway.db;
 
 import java.util.List;
 import java.util.Map;
@@ -28,13 +28,13 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.google.common.collect.ImmutableList;
 
 /**
- * A {@link ReadHandle} that batches recorded reads into a {@link CommandGroup}
- * and submits them via {@link Concourse#submit(CommandGroup)} in a single round
+ * A {@link Reader} that batches recorded reads into a {@link CommandGroup} and
+ * submits them via {@link Concourse#submit(CommandGroup)} in a single round
  * trip.
  *
  * <h2>Batch lifecycle</h2>
  * <p>
- * This {@link ReadHandle} maintains a current <em>batch</em> &mdash; the
+ * This {@link Reader} maintains a current <em>batch</em> &mdash; the
  * {@link CommandGroup} that subsequent recording calls append to. Each
  * recording call (e.g. {@link #select(Criteria)}, {@link #find(Criteria)},
  * {@link #count(String, Criteria)}) appends a single command to the current
@@ -85,7 +85,7 @@ import com.google.common.collect.ImmutableList;
  *
  * @author Jeff Nelson
  */
-final class CommandGroupReadHandle extends ConcourseReadHandle {
+public final class BatchReader extends IncrementalReader {
 
     /**
      * The active recording batch.
@@ -93,12 +93,12 @@ final class CommandGroupReadHandle extends ConcourseReadHandle {
     private Batch current;
 
     /**
-     * Construct a new {@link CommandGroupReadHandle}.
+     * Construct a new {@link BatchReader}.
      *
      * @param concourse the {@link Concourse} connection against which reads are
      *            submitted; must not be {@code null}
      */
-    CommandGroupReadHandle(Concourse concourse) {
+    public BatchReader(Concourse concourse) {
         super(concourse);
         rollover();
     }
