@@ -28,9 +28,59 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.google.common.collect.ImmutableList;
 
 /**
- * A {@link ReadHandle} that batches reads into a {@link CommandGroup} and
- * submits them via {@link Concourse#submit(CommandGroup)} in a single round
+ * A {@link ReadHandle} that batches recorded reads into a {@link CommandGroup}
+ * and submits them via {@link Concourse#submit(CommandGroup)} in a single round
  * trip.
+ *
+ * <h2>Batch lifecycle</h2>
+ * <p>
+ * This {@link ReadHandle} maintains a current <em>batch</em> &mdash; the
+ * {@link CommandGroup} that subsequent record calls append to. Each record call
+ * (e.g. {@link #select(Criteria)}, {@link #find(Criteria)},
+ * {@link #count(String, Criteria)}) appends a single command to the current
+ * batch and returns a {@link Supplier} bound to that batch. The record call
+ * itself does not contact the database; it only mutates the batch's command
+ * list.
+ * </p>
+ * <p>
+ * The first {@link Supplier#get()} call on any {@link Supplier} bound to the
+ * current batch <em>flushes</em> that batch via
+ * {@link Concourse#submit(CommandGroup)} &mdash; a single round trip that
+ * executes every command recorded so far. The flushed submission result is
+ * shared with every {@link Supplier} bound to that batch, so any subsequent
+ * {@code get()} call on a sibling {@link Supplier} returns its value from the
+ * already-submitted result without issuing further database work.
+ * </p>
+ * <p>
+ * Any record call made after the current batch has been flushed opens a fresh
+ * batch with a new {@link CommandGroup}. The boundary between batches is
+ * therefore controlled by the caller: callers that want N reads issued in a
+ * single round trip must record all N before invoking {@link Supplier#get()} on
+ * any of the returned {@link Supplier Suppliers}.
+ * </p>
+ *
+ * <h2>Supplier guarantees</h2>
+ * <p>
+ * The {@link Supplier} returned by each record method is bound to the batch
+ * that was current when the record was made. Calling its {@link Supplier#get()
+ * get()} guarantees that, by the time the call returns, the underlying read has
+ * been issued and its result is available. The {@link Supplier} is idempotent:
+ * repeated invocations return the same value without further database work.
+ * </p>
+ *
+ * <h2>Thread safety</h2>
+ * <p>
+ * Recording (every public method on this class) is <strong>not</strong>
+ * thread-safe and must be performed on a single thread. After recording
+ * completes, the {@link Supplier Suppliers} produced by the record calls may be
+ * invoked from any thread to which they are safely published. The
+ * {@code volatile} submission-result reference on the underlying batch
+ * guarantees that the null-to-non-null transition that occurs during a flush is
+ * visible across threads. Concurrent invocation of {@link Supplier#get()} on
+ * multiple {@link Supplier Suppliers} bound to the same unflushed batch is
+ * undefined and may produce duplicate {@link Concourse#submit(CommandGroup)
+ * submit} calls.
+ * </p>
  *
  * @author Jeff Nelson
  */
@@ -298,9 +348,12 @@ final class CommandGroupReadHandle extends ConcourseReadHandle {
 
         /**
          * The submission result; {@code null} until {@link #flush(Concourse)}
-         * has been called.
+         * has been called. Declared {@code volatile} so the null-to-non-null
+         * transition is visible to threads that invoke {@link Supplier#get()}
+         * on a {@link Supplier} bound to this {@link Batch} after the recording
+         * thread has handed it off.
          */
-        List<Object> results;
+        volatile List<Object> results;
 
         /**
          * Construct a new {@link Batch} that accumulates reads on
@@ -314,7 +367,10 @@ final class CommandGroupReadHandle extends ConcourseReadHandle {
         }
 
         /**
-         * Return the result of submitting {@link #group} via {@code concourse}.
+         * Submit {@link #group} via {@code concourse} the first time this is
+         * called and return the submission result. Subsequent invocations
+         * return the same {@link List} reference without issuing further
+         * database calls.
          *
          * @param concourse the {@link Concourse} connection to submit against
          * @return the submission result
