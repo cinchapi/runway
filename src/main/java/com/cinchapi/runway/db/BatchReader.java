@@ -68,6 +68,14 @@ import com.google.common.collect.ImmutableList;
  * {@link Supplier} is idempotent: repeated invocations return the same value
  * without further database work.
  * </p>
+ * <p>
+ * If {@link Concourse#submit(CommandGroup)} throws during a flush, the
+ * exception is latched onto the batch and rethrown on every subsequent
+ * {@link Supplier#get()} call against any {@link Supplier} bound to that batch.
+ * This preserves the supplier-idempotence contract: sibling {@link Supplier
+ * Suppliers} cannot observe divergent outcomes (one succeeding and another
+ * failing) because the batch is never re-submitted after a failure.
+ * </p>
  *
  * <h2>Thread safety</h2>
  * <p>
@@ -75,17 +83,17 @@ import com.google.common.collect.ImmutableList;
  * thread-safe and must be performed on a single thread. After recording
  * completes, the {@link Supplier Suppliers} produced by the recording calls may
  * be invoked from any thread to which they are safely published. The
- * {@code volatile} submission-result reference on the underlying batch
- * guarantees that the null-to-non-null transition that occurs during a flush is
- * visible across threads. Concurrent invocation of {@link Supplier#get()} on
- * multiple {@link Supplier Suppliers} bound to the same unflushed batch is
- * undefined and may produce duplicate {@link Concourse#submit(CommandGroup)
- * submit} calls.
+ * {@code volatile} submission-result and failure references on the underlying
+ * batch guarantee that the null-to-non-null transition that occurs during a
+ * flush is visible across threads. Concurrent invocation of
+ * {@link Supplier#get()} on multiple {@link Supplier Suppliers} bound to the
+ * same unflushed batch is undefined and may produce duplicate
+ * {@link Concourse#submit(CommandGroup) submit} calls.
  * </p>
  *
  * @author Jeff Nelson
  */
-public final class BatchReader extends IncrementalReader {
+public final class BatchReader extends AbstractReader {
 
     /**
      * The active recording batch.
@@ -349,12 +357,21 @@ public final class BatchReader extends IncrementalReader {
 
         /**
          * The submission result; {@code null} until {@link #flush(Concourse)}
-         * has been called. Declared {@code volatile} so the null-to-non-null
-         * transition is visible to threads that invoke {@link Supplier#get()}
-         * on a {@link Supplier} bound to this {@link Batch} after the recording
-         * thread has handed it off.
+         * has been called successfully. Declared {@code volatile} so the
+         * null-to-non-null transition is visible to threads that invoke
+         * {@link Supplier#get()} on a {@link Supplier} bound to this
+         * {@link Batch} after the recording thread has handed it off.
          */
         volatile List<Object> results;
+
+        /**
+         * The latched failure from a prior {@link #flush(Concourse)} attempt,
+         * or {@code null} if no flush has failed. Declared {@code volatile} for
+         * the same cross-thread visibility reason as {@link #results}. Once
+         * non-{@code null}, every subsequent {@link #flush(Concourse)} call
+         * rethrows this exception without re-submitting.
+         */
+        volatile RuntimeException failure;
 
         /**
          * Construct a new {@link Batch} that accumulates reads on
@@ -365,6 +382,7 @@ public final class BatchReader extends IncrementalReader {
         Batch(CommandGroup group) {
             this.group = group;
             this.results = null;
+            this.failure = null;
         }
 
         /**
@@ -372,24 +390,46 @@ public final class BatchReader extends IncrementalReader {
          * called and return the submission result. Subsequent invocations
          * return the same {@link List} reference without issuing further
          * database calls.
+         * <p>
+         * If the submission throws, the {@link RuntimeException} is latched
+         * onto this {@link Batch} and rethrown on every subsequent invocation;
+         * {@link Concourse#submit(CommandGroup)} is never called a second time.
+         * This preserves {@link Supplier#get() Supplier#get()}'s idempotence:
+         * every {@link Supplier} bound to a failed {@link Batch} sees the same
+         * exception rather than racing the network.
          *
          * @param concourse the {@link Concourse} connection to submit against
          * @return the submission result
+         * @throws RuntimeException the original failure, if a prior
+         *             {@link #flush(Concourse)} invocation against this
+         *             {@link Batch} threw
          */
         List<Object> flush(Concourse concourse) {
+            if(failure != null) {
+                throw failure;
+            }
             if(results == null) {
-                results = concourse.submit(group);
+                try {
+                    results = concourse.submit(group);
+                }
+                catch (RuntimeException e) {
+                    failure = e;
+                    throw e;
+                }
             }
             return results;
         }
 
         /**
-         * Return {@code true} if this {@link Batch} has already been flushed.
+         * Return {@code true} if this {@link Batch} has been flushed, either
+         * successfully (a result is available) or unsuccessfully (a failure has
+         * been latched). In both cases the {@link Batch} is terminal:
+         * subsequent recordings must roll over to a fresh {@link Batch}.
          *
-         * @return whether this {@link Batch} has been flushed
+         * @return whether this {@link Batch} is terminal
          */
         boolean flushed() {
-            return results != null;
+            return results != null || failure != null;
         }
 
         /**

@@ -25,7 +25,6 @@ import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
-import com.google.common.base.Preconditions;
 
 /**
  * A {@link Reader} that issues each read against the wrapped {@link Concourse}
@@ -34,12 +33,7 @@ import com.google.common.base.Preconditions;
  * @author Jeff Nelson
  */
 @NotThreadSafe
-public class IncrementalReader implements Reader {
-
-    /**
-     * The {@link Concourse} connection against which reads are issued.
-     */
-    protected final Concourse concourse;
+public class IncrementalReader extends AbstractReader {
 
     /**
      * Construct a new {@link IncrementalReader}.
@@ -48,7 +42,7 @@ public class IncrementalReader implements Reader {
      *            issued; must not be {@code null}
      */
     public IncrementalReader(Concourse concourse) {
-        this.concourse = Preconditions.checkNotNull(concourse);
+        super(concourse);
     }
 
     @Override
