@@ -27,7 +27,7 @@ import com.cinchapi.concourse.thrift.Operator;
 
 /**
  * Unit tests for {@link BatchReader} that combine the shared {@link Reader}
- * contract with implementation-specific behavior. Pinned to a Concourse version
+ * contract with implementation-specific behavior. Requires a Concourse server
  * that exposes the {@code prepare()}/{@code submit()} Command API.
  *
  * @author Jeff Nelson
@@ -134,11 +134,6 @@ public class BatchReaderTest extends ReaderTest {
         if(!closed) {
             super.afterStartedTest();
         }
-    }
-
-    @Override
-    protected String getServerVersion() {
-        return "1.0.0-rc1778433818";
     }
 
     /**

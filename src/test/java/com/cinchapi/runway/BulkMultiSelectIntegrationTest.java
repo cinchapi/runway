@@ -41,11 +41,6 @@ import com.cinchapi.concourse.thrift.Operator;
  */
 public class BulkMultiSelectIntegrationTest extends RunwayBaseClientServerTest {
 
-    @Override
-    protected String getServerVersion() {
-        return "1.0.0-rc1778433818";
-    }
-
     /**
      * <strong>Goal:</strong> Verify that a multi-selection call that mixes
      * every {@link DatabaseSelection} subtype the dispatch can handle &mdash;
