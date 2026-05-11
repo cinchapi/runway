@@ -22,6 +22,7 @@ import org.junit.Test;
 
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.access.Scope;
 
 /**
  * Tests that verify the reservation cache does not return stale filtered
@@ -442,6 +443,251 @@ public class ReservationFilterPoisoningTest extends RunwayBaseClientServerTest {
                         + "same result via propagation",
                 2, secondResult.size());
         Assert.assertEquals(firstResult, secondResult);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Selection} pre-resolved via
+     * {@link Scope#none()} &mdash; state {@code RESOLVED}, injected reject-all
+     * filter, empty result installed in place &mdash; does not seed the
+     * reservation cache when passed to a single-selection
+     * {@link Runway#select(Selection...)} call. A subsequent unscoped
+     * {@link Runway#find(Class, Criteria) find} with the same criteria must
+     * return the real data.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Item Items} in category
+     * "S".
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Item Items} with {@code category = "S"}.</li>
+     * <li>Open a reservation via {@link Runway#reserve()}.</li>
+     * <li>Build a {@link Selection} for {@code category = "S"} and apply
+     * {@link Scope#none()} to install an empty {@code RESOLVED} result.</li>
+     * <li>Pass the {@code RESOLVED} {@link Selection} through
+     * {@link Runway#select(Selection...)}.</li>
+     * <li>Invoke {@link Runway#find(Class, Criteria) find} for the same
+     * criteria with no scope.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first call returns 0 {@link Item Items}.
+     * The subsequent {@link Runway#find(Class, Criteria) find} returns both
+     * {@link Item Items} &mdash; the {@link Scope#none()} result does not
+     * poison the reservation.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testScopeNoneResolvedDoesNotPoisonSingleSelectionReservation() {
+        new Item("a", "S").save();
+        new Item("b", "S").save();
+
+        Criteria criteria = Criteria.where().key("category")
+                .operator(Operator.EQUALS).value("S").build();
+
+        runway.reserve();
+
+        Selection<Item> scoped = (Selection<Item>) Scope.none()
+                .apply(Selection.of(Item.class).where(criteria));
+        runway.select(scoped);
+        Assert.assertEquals(0, scoped.get().size());
+
+        Set<Item> unscoped = runway.find(Item.class, criteria);
+        Assert.assertEquals(
+                "Scope.none() RESOLVED selection must not poison "
+                        + "the reservation for a same-key unscoped read",
+                2, unscoped.size());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Selection} pre-resolved via
+     * {@link Scope#none()} passed alongside other {@link Selection Selections}
+     * to a single multi-selection {@link Runway#select(Selection...)} call does
+     * not seed the reservation cache, so a subsequent unscoped
+     * {@link Runway#find(Class, Criteria) find} with the same criteria still
+     * returns the real data.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Item Items} in category
+     * "T".
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Item Items} with {@code category = "T"}.</li>
+     * <li>Open a reservation via {@link Runway#reserve()}.</li>
+     * <li>Build a {@link Scope#none()}-resolved {@link Selection} for
+     * {@code category = "T"} and a sibling {@link Selection} for an unrelated
+     * criteria.</li>
+     * <li>Pass both to a single {@link Runway#select(Selection...)} call.</li>
+     * <li>Invoke {@link Runway#find(Class, Criteria) find} for the
+     * {@code category = "T"} criteria with no scope.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Scope#none()} {@link Selection}
+     * returns 0 {@link Item Items}. The subsequent
+     * {@link Runway#find(Class, Criteria) find} returns both {@link Item
+     * Items}.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testScopeNoneResolvedDoesNotPoisonMultiSelectionReservation() {
+        new Item("a", "T").save();
+        new Item("b", "T").save();
+
+        Criteria criteria = Criteria.where().key("category")
+                .operator(Operator.EQUALS).value("T").build();
+        Criteria siblingCriteria = Criteria.where().key("category")
+                .operator(Operator.EQUALS).value("nonexistent").build();
+
+        runway.reserve();
+
+        Selection<Item> scoped = (Selection<Item>) Scope.none()
+                .apply(Selection.of(Item.class).where(criteria));
+        Selection<Item> sibling = Selection.of(Item.class)
+                .where(siblingCriteria);
+        runway.select(scoped, sibling);
+        Assert.assertEquals(0, scoped.get().size());
+
+        Set<Item> unscoped = runway.find(Item.class, criteria);
+        Assert.assertEquals("Scope.none() RESOLVED selection in a multi-select "
+                + "must not poison the reservation for a "
+                + "same-key unscoped read", 2, unscoped.size());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an unscoped {@link Selection} passed
+     * alongside a {@link Scope#none()}-resolved {@link Selection} in the same
+     * multi-selection {@link Runway#select(Selection...)} call <em>does</em>
+     * seed the reservation cache for its own query parameters.
+     * <p>
+     * Skipping the reservation for {@code RESOLVED} {@link Selection
+     * Selections} must not regress reservation seeding for the unscoped
+     * siblings in the batch.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Item Items} in category
+     * "U".
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Item Items} with {@code category = "U"}.</li>
+     * <li>Open a reservation via {@link Runway#reserve()}.</li>
+     * <li>Build a {@link Scope#none()}-resolved {@link Selection} and a normal
+     * {@link Selection} for {@code category = "U"}.</li>
+     * <li>Pass both to a single {@link Runway#select(Selection...)} call.</li>
+     * <li>Save a third {@link Item} with {@code category = "U"} &mdash; this
+     * mutation must not be visible through the reservation.</li>
+     * <li>Invoke {@link Runway#find(Class, Criteria) find} for
+     * {@code category = "U"}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The normal {@link Selection} returns 2
+     * {@link Item Items}. The subsequent {@link Runway#find(Class, Criteria)
+     * find} also returns 2 (the seeded reservation), not 3 (a fresh database
+     * read).
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testUnscopedSiblingOfScopeNoneStillSeedsReservation() {
+        new Item("a", "U").save();
+        new Item("b", "U").save();
+
+        Criteria criteria = Criteria.where().key("category")
+                .operator(Operator.EQUALS).value("U").build();
+
+        runway.reserve();
+
+        Selection<Item> scoped = (Selection<Item>) Scope.none()
+                .apply(Selection.of(Item.class).where(criteria));
+        Selection<Item> normal = Selection.of(Item.class).where(criteria);
+        runway.select(scoped, normal);
+
+        Assert.assertEquals(0, scoped.get().size());
+        Assert.assertEquals(2, normal.get().size());
+
+        new Item("c", "U").save();
+
+        Set<Item> reserved = runway.find(Item.class, criteria);
+        Assert.assertEquals(
+                "Unscoped sibling of a RESOLVED selection must seed "
+                        + "the reservation; a same-key follow-up should "
+                        + "see the cached two items, not the three now "
+                        + "stored",
+                2, reserved.size());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Scope#none()} applied to every
+     * {@link Selection} subtype the dispatch handles (find, load-class,
+     * load-by-id, count) inside a single multi-selection call preserves each
+     * subtype's pre-installed scoped-empty result and does not poison the
+     * reservation cache for any of them.
+     * <p>
+     * The reservation cache key is shared across subtypes for a given query
+     * signature, but {@link Scope#none()} produces different result shapes
+     * (empty set / 0 / {@code null}). This test exercises each shape in a
+     * single dispatch so any cross-subtype regression in the
+     * {@code RESOLVED}-handling branches surfaces here.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Item Items} in category
+     * "W".
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Item Items} with {@code category = "W"}.</li>
+     * <li>Open a reservation via {@link Runway#reserve()}.</li>
+     * <li>Build a find, a load-class, a load-by-id, and a count
+     * {@link Selection} for the {@link Item Items} and apply
+     * {@link Scope#none()} to each.</li>
+     * <li>Pass all four to a single {@link Runway#select(Selection...)}
+     * call.</li>
+     * <li>Invoke {@link Runway#find(Class, Criteria) find},
+     * {@link Runway#load(Class) load}, {@link Runway#load(Class, long) load by
+     * id}, and {@link Runway#count(Class, Criteria) count} with the same query
+     * parameters but no scope.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The find, load-class, and load-by-id scoped
+     * {@link Selection Selections} return their empty/{@code null} results and
+     * the count scoped {@link Selection} returns {@code 0}. The subsequent
+     * unscoped reads return real data: 2 items for find and load-class, the
+     * {@link Item} for load-by-id, and {@code 2} for count.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    public void testScopeNoneAcrossSelectionSubtypesPreservesResultsAndDoesNotPoison() {
+        Item one = new Item("a", "W");
+        one.save();
+        Item two = new Item("b", "W");
+        two.save();
+
+        Criteria criteria = Criteria.where().key("category")
+                .operator(Operator.EQUALS).value("W").build();
+
+        runway.reserve();
+
+        Selection<Item> findScoped = (Selection<Item>) Scope.none()
+                .apply(Selection.of(Item.class).where(criteria));
+        Selection<Item> loadClassScoped = (Selection<Item>) Scope.none()
+                .apply(Selection.of(Item.class));
+        Selection<Item> loadRecordScoped = (Selection<Item>) Scope.none()
+                .apply(Selection.of(Item.class).id(one.id()));
+        Selection<Item> countScoped = (Selection<Item>) Scope.none()
+                .apply(Selection.of(Item.class).where(criteria).count());
+
+        runway.select(findScoped, loadClassScoped, loadRecordScoped,
+                countScoped);
+
+        Set<Item> findResult = findScoped.get();
+        Set<Item> loadClassResult = loadClassScoped.get();
+        Item loadRecordResult = loadRecordScoped.get();
+        int countResult = countScoped.get();
+
+        Assert.assertEquals(0, findResult.size());
+        Assert.assertEquals(0, loadClassResult.size());
+        Assert.assertNull(loadRecordResult);
+        Assert.assertEquals(0, countResult);
+
+        Assert.assertEquals(2, runway.find(Item.class, criteria).size());
+        Assert.assertEquals(2, runway.load(Item.class).size());
+        Assert.assertNotNull(runway.load(Item.class, one.id()));
+        Assert.assertEquals(2, runway.count(Item.class, criteria));
     }
 
     /**

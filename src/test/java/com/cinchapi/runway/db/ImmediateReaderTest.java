@@ -25,20 +25,20 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 
 /**
- * Unit tests for {@link IncrementalReader} that combine the shared
- * {@link Reader} contract with implementation-specific behavior.
+ * Unit tests for {@link ImmediateReader} that combine the shared {@link Reader}
+ * contract with implementation-specific behavior.
  *
  * @author Jeff Nelson
  */
-public class IncrementalReaderTest extends ReaderTest {
+public class ImmediateReaderTest extends ReaderTest {
 
     @Override
     protected Reader newReader() {
-        return new IncrementalReader(concourse);
+        return new ImmediateReader(concourse);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link IncrementalReader} issues each
+     * <strong>Goal:</strong> Verify that {@link ImmediateReader} issues each
      * read against the wrapped {@link com.cinchapi.concourse.Concourse} at
      * recording time, so writes that occur after recording but before the
      * {@link Supplier} is resolved do not affect the result.

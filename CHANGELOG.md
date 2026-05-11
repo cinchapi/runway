@@ -3,7 +3,6 @@
 #### Version 2.0.0 (TBD)
 * **Breaking change:** Removed the `ReadStrategy.AUTO` enum constant. Callers that explicitly configured `Runway.builder().readStrategy(ReadStrategy.AUTO)` must switch to `ReadStrategy.BULK` (the new default when no cache is set) or `ReadStrategy.STREAM`. The auto-racing behavior could not be preserved alongside the bulk-command batching introduced in this release because the two race lanes cannot share a `CommandGroup`. ([GH-103](https://github.com/cinchapi/runway/issues/103))
 * When the connected server supports the Concourse Command API (1.0.0+), `Runway.select(Selection...)` now collapses an N-selection call into a single `prepare()`/`submit()` round trip, regardless of whether the selections target the same or different classes. Replaces the prior combinable/isolated dispatch that issued one round trip per isolated selection plus one for the OR-merged combinable batch. ([GH-103](https://github.com/cinchapi/runway/issues/103))
-* Fixed a bug where a pre-resolved `Selection` (e.g., one whose result was supplied by a static visibility `Scope.none()`) passed alongside other selections to a single `Runway.select(Selection...)` call was not added to the thread-local reservation cache, so subsequent same-key reads via `find`, `count`, or `load` on the same thread missed the cache. Single-selection calls were not affected; the discrepancy was confined to the multi-selection dispatch.
 
 #### Version 1.15.0 (TBD)
 

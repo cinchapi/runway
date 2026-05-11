@@ -30,12 +30,12 @@ import com.cinchapi.concourse.thrift.Operator;
  * <p>
  * The bulk path collapses an N-selection call into a single
  * {@code prepare()}/{@code submit()} round trip via the supplier-pipeline
- * {@link com.cinchapi.runway.db.BatchReader BatchReader}. These tests verify
- * that the dispatch produces the same results as the legacy combinable/isolated
- * path for every {@link DatabaseSelection} subtype the dispatch can hand to
- * {@code $select} &mdash; including mixed-subtype batches, same-class
- * selections with divergent criteria (which the legacy path would isolate), and
- * cache short-circuits inside the batch.
+ * {@link com.cinchapi.runway.db.EventualReader EventualReader}. These tests
+ * verify that the dispatch produces the same results as the legacy
+ * combinable/isolated path for every {@link DatabaseSelection} subtype the
+ * dispatch can hand to {@code $select} &mdash; including mixed-subtype batches,
+ * same-class selections with divergent criteria (which the legacy path would
+ * isolate), and cache short-circuits inside the batch.
  *
  * @author Jeff Nelson
  */
@@ -254,6 +254,96 @@ public class BulkMultiSelectIntegrationTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(1, resultB.size());
         Assert.assertEquals("high", resultA.iterator().next().name);
         Assert.assertEquals("high", resultB.iterator().next().name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that multiple load-by-id {@link Selection
+     * Selections} that target a {@link Record} class with descendants &mdash;
+     * forcing the section-lookup branch &mdash; and that are scoped by
+     * {@link Realms} resolve to the correct records when dispatched in a single
+     * bulk batch alongside an unrelated {@link Selection}.
+     * <p>
+     * Covers the case where {@code $selectRecord} must derive the actual class
+     * from the recorded data, apply the realm gate, and pre-supply the data to
+     * {@code instantiate} &mdash; all while sharing a batch with other
+     * {@link Selection Selections}.
+     * <p>
+     * <strong>Start state:</strong> Two {@link SuperWidget} records saved under
+     * realm "alpha" and one {@link SubWidget} saved under realm "beta".
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save the three hierarchy {@link Record Records}.</li>
+     * <li>Build two load-by-id {@link Selection Selections} typed as
+     * {@link SuperWidget} with {@link Realms#only(String) realms("alpha")},
+     * targeting one in-realm record and one out-of-realm
+     * {@link SubWidget}.</li>
+     * <li>Build a third unrelated load-class {@link Selection} to confirm
+     * shared-batch behavior.</li>
+     * <li>Execute all three in a single
+     * {@link Runway#select(Selection...)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The in-realm load returns the
+     * {@link SuperWidget}; the out-of-realm load returns {@code null}; the
+     * load-class returns all three hierarchy records.
+     */
+    @Test
+    public void testBulkMultiSelectRecordWithHierarchyAndRealms() {
+        SuperWidget alphaOne = new SuperWidget("alphaOne");
+        alphaOne.addRealm("alpha");
+        alphaOne.save();
+        SuperWidget alphaTwo = new SuperWidget("alphaTwo");
+        alphaTwo.addRealm("alpha");
+        alphaTwo.save();
+        SubWidget betaSub = new SubWidget("betaSub", "extra");
+        betaSub.addRealm("beta");
+        betaSub.save();
+
+        Selection<SuperWidget> inRealm = Selection.of(SuperWidget.class)
+                .id(alphaOne.id()).realms(Realms.only("alpha")).build();
+        Selection<SuperWidget> outOfRealm = Selection.of(SuperWidget.class)
+                .id(betaSub.id()).realms(Realms.only("alpha")).build();
+        Selection<SuperWidget> all = Selection.of(SuperWidget.class).any()
+                .build();
+
+        runway.select(inRealm, outOfRealm, all);
+
+        SuperWidget inRealmResult = inRealm.get();
+        SuperWidget outOfRealmResult = outOfRealm.get();
+        Set<SuperWidget> allResult = all.get();
+
+        Assert.assertNotNull(inRealmResult);
+        Assert.assertEquals("alphaOne", inRealmResult.name);
+        Assert.assertNull(outOfRealmResult);
+        Assert.assertEquals(3, allResult.size());
+    }
+
+    /**
+     * A {@link Record} class with at least one descendant so that loading by id
+     * triggers the section-lookup branch in {@code $selectRecord}.
+     */
+    class SuperWidget extends Record {
+
+        String name;
+
+        SuperWidget(String name) {
+            this.name = name;
+        }
+    }
+
+    /**
+     * A subclass of {@link SuperWidget} that gives the hierarchy more than one
+     * section.
+     */
+    class SubWidget extends SuperWidget {
+
+        String extra;
+
+        SubWidget(String name, String extra) {
+            super(name);
+            this.extra = extra;
+        }
     }
 
     /**

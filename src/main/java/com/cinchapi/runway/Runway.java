@@ -75,8 +75,8 @@ import com.cinchapi.runway.Record.InvalidRecordException;
 import com.cinchapi.runway.Record.Snapshot;
 import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.cache.CachingConnectionPool;
-import com.cinchapi.runway.db.BatchReader;
-import com.cinchapi.runway.db.IncrementalReader;
+import com.cinchapi.runway.db.EventualReader;
+import com.cinchapi.runway.db.ImmediateReader;
 import com.cinchapi.runway.db.Reader;
 import com.cinchapi.runway.util.Obligations;
 import com.cinchapi.runway.util.Pagination;
@@ -231,7 +231,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * {@code selection} to {@link Selection.State#FINISHED}.
      * <p>
      * Pulling the {@link Supplier} is the point at which any deferred read
-     * recorded on a {@link Reader} (e.g., a batched {@link BatchReader}) is
+     * recorded on a {@link Reader} (e.g., a batched {@link EventualReader}) is
      * actually issued against the database.
      *
      * @param selection the {@link DatabaseSelection} whose result, companion
@@ -998,19 +998,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(selections.length == 1) {
             DatabaseSelection<?> selection = selections[0];
             if(selection.state == Selection.State.RESOLVED) {
+                // NOTE: A RESOLVED selection (e.g., from a static visibility
+                // Scope.none()) is intentionally not reserved. Caching a
+                // scope-restricted empty result under the filterless
+                // Reservation key would poison subsequent same-key reads
+                // performed under a different scope.
                 selection.setState(Selection.State.FINISHED);
             }
             else {
                 Concourse concourse = connections.request();
                 try {
-                    Reader handle = new IncrementalReader(concourse);
+                    Reader handle = new ImmediateReader(concourse);
                     bindSelectionResult(selection, $select(handle, selection));
                 }
                 finally {
                     connections.release(concourse);
                 }
+                reserve(selection);
             }
-            reserve(selection);
             return new Selections(selections);
         }
         else {
@@ -1018,10 +1023,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     .map(SelectionKey::new).distinct().map(key -> key.selection)
                     .collect(Collectors.toList());
             if(supportsBulkCommands) {
+                Map<DatabaseSelection<?>, Supplier<? extends SelectResult<?>>> suppliers = new LinkedHashMap<>();
                 Concourse concourse = connections.request();
                 try {
-                    Reader handle = new BatchReader(concourse);
-                    Map<DatabaseSelection<?>, Supplier<? extends SelectResult<?>>> suppliers = new LinkedHashMap<>();
+                    Reader handle = new EventualReader(concourse);
                     for (DatabaseSelection<?> selection : unique) {
                         if(selection.state == Selection.State.RESOLVED) {
                             selection.setState(Selection.State.FINISHED);
@@ -1036,13 +1041,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 finally {
                     connections.release(concourse);
                 }
-
-                // At this point, each Selection's result is bound so handle
-                // final reservations.
-                for (DatabaseSelection<?> selection : unique) {
-                    if(selection.state == Selection.State.FINISHED) {
-                        reserve(selection);
-                    }
+                // NOTE: RESOLVED selections (e.g., from a static visibility
+                // Scope.none()) are intentionally not reserved. Caching a
+                // scope-restricted empty result under the filterless
+                // Reservation key would poison subsequent same-key reads
+                // performed under a different scope.
+                for (DatabaseSelection<?> selection : suppliers.keySet()) {
+                    reserve(selection);
                 }
             }
             else {
@@ -1069,7 +1074,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     if(!sources.isEmpty()) {
                         Concourse concourse = connections.request();
                         try {
-                            Reader handle = new IncrementalReader(concourse);
+                            Reader handle = new ImmediateReader(concourse);
                             bindSelectionResult(selection,
                                     $selectWithPossibleSources(handle,
                                             selection, sources));
@@ -1118,7 +1123,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 if(combined != null) {
                     Concourse concourse = connections.request();
                     try {
-                        Reader handle = new IncrementalReader(concourse);
+                        Reader handle = new ImmediateReader(concourse);
                         Map<Long, Map<String, Set<Object>>> data = read(handle,
                                 null, combined, null, null).get();
                         for (DatabaseSelection<?> selection : combinable) {
@@ -1136,8 +1141,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         tasks[i] = () -> {
                             Concourse concourse = connections.request();
                             try {
-                                Reader handle = new IncrementalReader(
-                                        concourse);
+                                Reader handle = new ImmediateReader(concourse);
                                 bindSelectionResult(selection,
                                         $select(handle, selection));
                             }
@@ -1515,7 +1519,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         Function<Page, Set<T>> retriever = $page -> {
                             Concourse concourse = ensureValidConnection(
                                     connection);
-                            Reader privateHandle = new IncrementalReader(
+                            Reader privateHandle = new ImmediateReader(
                                     concourse);
                             Map<Long, Map<String, Set<Object>>> data = any
                                     ? $loadAny(privateHandle, clazz, order,
@@ -1689,7 +1693,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             if(dbResolvable) {
                                 Concourse concourse = ensureValidConnection(
                                         connection);
-                                Reader privateHandle = new IncrementalReader(
+                                Reader privateHandle = new ImmediateReader(
                                         concourse);
                                 Map<Long, Map<String, Set<Object>>> data = any
                                         ? $findAny(privateHandle, clazz,
@@ -1862,20 +1866,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} the first read required to resolve
-     * {@code selection} and return a {@link Supplier} that yields a
-     * {@link SelectResult} holding the loaded {@link Record} (or {@code null}
-     * when the realm gate excludes it).
+     * Record on {@code handle} the read required to resolve {@code selection}
+     * and return a {@link Supplier} that yields a {@link SelectResult} holding
+     * the loaded {@link Record} (or {@code null} when the realm gate excludes
+     * it).
      * <p>
-     * Up to one preparatory read is recorded on {@code handle}: when
-     * {@link DatabaseSelection#clazz} has descendants the section lookup for
-     * the requested id is recorded; otherwise, when realms are configured the
-     * realms field for the requested id is recorded. Any remaining reads
-     * required to assemble the final {@link Record} (further realm checks,
-     * navigate, bulk-select prefetch) happen inside the returned
-     * {@link Supplier}.
+     * The {@link Record Record's} data is recorded as a single {@code select}
+     * on {@code handle} so the load participates in batching. The result
+     * carries the section key (used to refine {@link DatabaseSelection#clazz}
+     * when its hierarchy has descendants), the realms key (used for the realm
+     * gate), and the field values {@link #instantiate(Class, long, Map, Map)
+     * instantiation} consumes without re-fetching from the database. Additional
+     * reads required to complete the load (navigate prefetch, bulk-select link
+     * prefetch) happen inside the returned {@link Supplier}.
      *
-     * @param handle the {@link Reader} that records the first read
+     * @param handle the {@link Reader} that records the read
      * @param selection the {@link LoadRecordSelection} to resolve
      * @param <T> the {@link Record} type
      * @return a {@link Supplier} that yields the {@link SelectResult}, whose
@@ -1892,34 +1897,32 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         boolean needsSectionLookup = StaticAnalysis.instance()
                 .getClassHierarchy(initialClazz).size() > 1;
-        Supplier<Object> sectionSupplier = needsSectionLookup
-                ? handle.get(Record.SECTION_KEY, id)
-                : null;
-        Supplier<Set<Object>> firstReadRealmsSupplier = (!needsSectionLookup
-                && !realms.names().isEmpty())
-                        ? handle.select(Record.REALMS_KEY, id)
-                        : null;
+        Set<String> paths = needsSectionLookup ? null
+                : getPathsForClassIfSupported(initialClazz);
+        Supplier<Map<String, Set<Object>>> dataSupplier = paths != null
+                ? handle.select(paths, id)
+                : handle.select(id);
         return () -> {
+            Map<String, Set<Object>> data = dataSupplier.get();
+            if(data == null || data.isEmpty()) {
+                return new SelectResult<>(null);
+            }
             Class<T> clazz = initialClazz;
-            if(sectionSupplier != null) {
-                String section = (String) sectionSupplier.get();
-                if(section != null) {
+            if(needsSectionLookup) {
+                Set<Object> sections = data.get(Record.SECTION_KEY);
+                if(sections != null && !sections.isEmpty()) {
+                    String section = (String) Iterables.getLast(sections);
                     clazz = Reflection.getClassCasted(section);
                 }
             }
-            Supplier<Set<Object>> realmsSupplier = firstReadRealmsSupplier;
-            if(realmsSupplier == null && !realms.names().isEmpty()) {
-                realmsSupplier = handle.select(Record.REALMS_KEY, id);
-            }
-            if(realmsSupplier != null) {
-                Set<Object> $realmsRaw = realmsSupplier.get();
-                Set<String> $realms = $realmsRaw == null ? ImmutableSet.of()
-                        : (Set<String>) (Set<?>) $realmsRaw;
+            if(!realms.names().isEmpty()) {
+                Set<Object> $realmsRaw = data.getOrDefault(Record.REALMS_KEY,
+                        ImmutableSet.of());
+                Set<String> $realms = (Set<String>) (Set<?>) $realmsRaw;
                 if(Sets.intersection($realms, realms.names()).isEmpty()) {
                     return new SelectResult<>(null);
                 }
             }
-            Map<String, Set<Object>> data = null;
             Map<Long, Map<String, Set<Object>>> targets = null;
             if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE) {
                 Set<String> navigatePaths = getNavigatePathsForClassIfSupported(
@@ -1929,9 +1932,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
-                Set<String> paths = getPathsForClassIfSupported(clazz);
-                data = paths != null ? handle.select(paths, id).get()
-                        : handle.select(id).get();
                 Map<Long, Map<String, Set<Object>>> seed = Maps.newHashMap();
                 seed.put(id, data);
                 Concourse concourse = connections.request();

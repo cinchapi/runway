@@ -20,6 +20,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 
+import javax.annotation.concurrent.NotThreadSafe;
+
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.lang.CommandGroup;
 import com.cinchapi.concourse.lang.Criteria;
@@ -76,24 +78,16 @@ import com.google.common.collect.ImmutableList;
  * Suppliers} cannot observe divergent outcomes (one succeeding and another
  * failing) because the batch is never re-submitted after a failure.
  * </p>
- *
- * <h2>Thread safety</h2>
  * <p>
- * Recording (every public method on this class) is <strong>not</strong>
- * thread-safe and must be performed on a single thread. After recording
- * completes, the {@link Supplier Suppliers} produced by the recording calls may
- * be invoked from any thread to which they are safely published. The
- * {@code volatile} submission-result and failure references on the underlying
- * batch guarantee that the null-to-non-null transition that occurs during a
- * flush is visible across threads. Concurrent invocation of
- * {@link Supplier#get()} on multiple {@link Supplier Suppliers} bound to the
- * same unflushed batch is undefined and may produce duplicate
- * {@link Concourse#submit(CommandGroup) submit} calls.
+ * This {@link Reader} is <strong>not thread-safe</strong>: every interaction
+ * &mdash; recording, resolving any returned {@link Supplier}, or both &mdash;
+ * must be performed on a single thread.
  * </p>
  *
  * @author Jeff Nelson
  */
-public final class BatchReader extends AbstractReader {
+@NotThreadSafe
+public final class EventualReader extends AbstractReader {
 
     /**
      * The active recording batch.
@@ -101,12 +95,12 @@ public final class BatchReader extends AbstractReader {
     private Batch current;
 
     /**
-     * Construct a new {@link BatchReader}.
+     * Construct a new {@link EventualReader}.
      *
      * @param concourse the {@link Concourse} connection against which reads are
      *            submitted; must not be {@code null}
      */
-    public BatchReader(Concourse concourse) {
+    public EventualReader(Concourse concourse) {
         super(concourse);
         rollover();
     }
@@ -357,21 +351,17 @@ public final class BatchReader extends AbstractReader {
 
         /**
          * The submission result; {@code null} until {@link #flush(Concourse)}
-         * has been called successfully. Declared {@code volatile} so the
-         * null-to-non-null transition is visible to threads that invoke
-         * {@link Supplier#get()} on a {@link Supplier} bound to this
-         * {@link Batch} after the recording thread has handed it off.
+         * has been called successfully.
          */
-        volatile List<Object> results;
+        List<Object> results;
 
         /**
          * The latched failure from a prior {@link #flush(Concourse)} attempt,
-         * or {@code null} if no flush has failed. Declared {@code volatile} for
-         * the same cross-thread visibility reason as {@link #results}. Once
-         * non-{@code null}, every subsequent {@link #flush(Concourse)} call
-         * rethrows this exception without re-submitting.
+         * or {@code null} if no flush has failed. Once non-{@code null}, every
+         * subsequent {@link #flush(Concourse)} call rethrows this exception
+         * without re-submitting.
          */
-        volatile RuntimeException failure;
+        RuntimeException failure;
 
         /**
          * Construct a new {@link Batch} that accumulates reads on
