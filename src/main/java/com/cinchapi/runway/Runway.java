@@ -1994,30 +1994,28 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             R result = $selectFromSources(selection, resolvedSources);
             return () -> new SelectResult<>(result);
         }
-        Supplier<? extends SelectResult<?>> resSupplier;
+        Supplier<? extends SelectResult<?>> supplier;
         if(selection instanceof CountSelection) {
-            resSupplier = $selectCount(handle, (CountSelection<T>) selection);
+            supplier = $selectCount(handle, (CountSelection<T>) selection);
         }
         else if(selection instanceof LoadRecordSelection) {
-            resSupplier = $selectRecord(handle,
+            supplier = $selectRecord(handle,
                     (LoadRecordSelection<T>) selection);
         }
         else if(selection instanceof LoadClassSelection) {
-            resSupplier = $selectClass(handle,
-                    (LoadClassSelection<T>) selection);
+            supplier = $selectClass(handle, (LoadClassSelection<T>) selection);
         }
         else if(selection instanceof FindSelection) {
-            resSupplier = $selectCriteria(handle, (FindSelection<T>) selection);
+            supplier = $selectCriteria(handle, (FindSelection<T>) selection);
         }
         else if(selection instanceof UniqueSelection) {
-            resSupplier = $selectUnique(handle, (UniqueSelection<T>) selection);
+            supplier = $selectUnique(handle, (UniqueSelection<T>) selection);
         }
         else {
             throw new IllegalStateException(
                     "Unsupported Selection type " + selection.getClass());
         }
-        Supplier<? extends SelectResult<?>> finalSupplier = resSupplier;
-        return () -> (SelectResult<R>) finalSupplier.get();
+        return () -> (SelectResult<R>) supplier.get();
     }
 
     /**
