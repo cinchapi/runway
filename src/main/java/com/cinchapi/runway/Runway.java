@@ -969,6 +969,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         "Selection has already been submitted"))
                 .map(DatabaseSelection::resolve)
                 .toArray(DatabaseSelection[]::new);
+        // NOTE: Pre-resolved selections are excluded from `pending` so they
+        // never reach reserve(). Their result is tied to a specific scope,
+        // and reserving it under the filterless reservation key would taint
+        // subsequent same-key reads under a different scope.
         List<DatabaseSelection<?>> pending = new ArrayList<>();
         for (DatabaseSelection<?> selection : selections) {
             if(selection.state == Selection.State.RESOLVED) {
