@@ -31,9 +31,15 @@ import com.cinchapi.concourse.lang.sort.Order;
  * from this {@link Reader} guarantees that the underlying read has been
  * executed against the database and yields its result. Implementations decide
  * <em>when</em> the underlying read is executed &mdash; eagerly at recording
- * time, batched and submitted on first resolution, or by some other strategy
+ * time, batched and submitted on {@link #drain()}, or by some other strategy
  * &mdash; but the contract from a caller's perspective is the same: record,
  * then {@code get()}.
+ * </p>
+ * <p>
+ * Callers that record multiple reads and want to fan out the resolution work
+ * register completion {@link Runnable Runnables} via
+ * {@link #onDrain(Runnable)}. {@link #drain()} issues any deferred reads and
+ * then runs every registered completion in registration order.
  * </p>
  *
  * @author Jeff Nelson
@@ -230,5 +236,27 @@ public interface Reader {
      * @return a {@link Supplier} that yields the count
      */
     Supplier<Long> count(String key, Criteria criteria);
+
+    /**
+     * Register a completion {@link Runnable} to run inside {@link #drain()}.
+     * Completions run in registration order, after any deferred reads have been
+     * issued.
+     *
+     * @param completion the work to run when this {@link Reader} drains
+     */
+    void onDrain(Runnable completion);
+
+    /**
+     * Issue any deferred reads recorded on this {@link Reader} and run every
+     * {@link #onDrain registered completion} in registration order.
+     * <p>
+     * This method is idempotent; subsequent calls after the first successful
+     * drain are no-ops.
+     * </p>
+     *
+     * @throws RuntimeException if a deferred submission fails; no completions
+     *             run in that case
+     */
+    void drain();
 
 }

@@ -25,7 +25,6 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -222,32 +221,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         return components;
-    }
-
-    /**
-     * Pull the {@link SelectResult} from {@code supplier} and bind its primary
-     * value (along with any companion value carried by the
-     * {@link SelectResult}) onto {@code selection}, then transition
-     * {@code selection} to {@link Selection.State#FINISHED}.
-     * <p>
-     * Pulling the {@link Supplier} is the point at which any deferred read
-     * recorded on a {@link Reader} (e.g., a batched {@link EventualReader}) is
-     * actually issued against the database.
-     *
-     * @param selection the {@link DatabaseSelection} whose result, companion
-     *            value, and state will be written
-     * @param supplier a {@link Supplier} produced by
-     *            {@link #$select(Reader, DatabaseSelection)} or
-     *            {@link #$selectWithPossibleSources(Reader, DatabaseSelection, Set)}
-     */
-    @SuppressWarnings({ "rawtypes" })
-    private static void bindEventualSelectionResult(
-            DatabaseSelection<?> selection,
-            Supplier<? extends SelectResult<?>> supplier) {
-        SelectResult<?> res = supplier.get();
-        ((DatabaseSelection) selection).setResult(res.result);
-        selection.cacheValue = res.cacheValue;
-        selection.setState(Selection.State.FINISHED);
     }
 
     /**
@@ -996,17 +969,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         "Selection has already been submitted"))
                 .map(DatabaseSelection::resolve)
                 .toArray(DatabaseSelection[]::new);
-        if(selections.length == 1) {
-            DatabaseSelection<?> selection = selections[0];
+        List<DatabaseSelection<?>> pending = new ArrayList<>();
+        for (DatabaseSelection<?> selection : selections) {
             if(selection.state == Selection.State.RESOLVED) {
                 selection.setState(Selection.State.FINISHED);
             }
             else {
+                pending.add(selection);
+            }
+        }
+        if(selections.length == 1) {
+            DatabaseSelection<?> selection = selections[0];
+            if(!pending.isEmpty()) {
                 Concourse concourse = connections.request();
                 try {
                     Reader reader = new ImmediateReader(concourse);
-                    bindEventualSelectionResult(selection,
-                            $select(reader, selection));
+                    $select(reader, selection);
+                    reader.drain();
                 }
                 finally {
                     connections.release(concourse);
@@ -1016,139 +995,133 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return new Selections(selections);
         }
         else {
-            List<DatabaseSelection<?>> unique = Arrays.stream(selections)
+            List<DatabaseSelection<?>> unique = pending.stream()
                     .map(SelectionKey::new).distinct().map(key -> key.selection)
                     .collect(Collectors.toList());
-            if(supportsBulkCommands) {
-                Map<DatabaseSelection<?>, Supplier<? extends SelectResult<?>>> suppliers = new LinkedHashMap<>();
-                Concourse concourse = connections.request();
-                try {
-                    Reader reader = new EventualReader(concourse);
-                    for (DatabaseSelection<?> selection : unique) {
-                        if(selection.state == Selection.State.RESOLVED) {
-                            selection.setState(Selection.State.FINISHED);
-                        }
-                        else {
-                            suppliers.put(selection,
-                                    $select(reader, selection));
-                        }
-                    }
-                    suppliers.forEach(Runway::bindEventualSelectionResult);
-                }
-                finally {
-                    connections.release(concourse);
-                }
-                for (DatabaseSelection<?> selection : suppliers.keySet()) {
-                    reserve(selection);
-                }
-            }
-            else {
-                List<DatabaseSelection<?>> isolated = new ArrayList<>();
-                List<DatabaseSelection<?>> combinable = new ArrayList<>();
-                Set<String> combinedClasses = Sets.newHashSet();
-                outer: for (DatabaseSelection<?> selection : unique) {
-                    if(selection.state == Selection.State.RESOLVED) {
-                        selection.setState(Selection.State.FINISHED);
-                        continue outer; /* (authorized short circuit) */
-                    }
-                    // NOTE: Must manually attempt to recall here because it
-                    // won't register as cached when dispatching route if a
-                    // combination occurs and gets dispatched
-                    Object cached = recallAndPossiblyFilter(selection);
-                    if(cached != null) {
-                        selection.setResult(cached);
-                        selection.setState(Selection.State.FINISHED);
-                        continue outer;
-                    }
-                    Set<AdHocDataSource<?>> sources = selection.any
-                            ? getAttachedSourcesForHierarchy(selection.clazz)
-                            : getAttachedSources(selection.clazz);
-                    if(!sources.isEmpty()) {
-                        Concourse concourse = connections.request();
-                        try {
-                            Reader reader = new ImmediateReader(concourse);
-                            bindEventualSelectionResult(selection,
-                                    $selectWithPossibleSources(reader,
-                                            selection, sources));
-                        }
-                        finally {
-                            connections.release(concourse);
-                        }
-                        reserve(selection);
-                        continue outer;
-                    }
-                    else if(selection.isCombinable()) {
-                        // NOTE: #demux partitions combined results by class
-                        // name only, so same-class selections with different
-                        // criteria would each receive the union. Isolate
-                        // conflicting ones to ensure correct per-criteria
-                        // filtering.
-                        Set<String> classes = selection.any
-                                ? StaticAnalysis.instance()
-                                        .getClassHierarchy(selection.clazz)
-                                        .stream().map(Class::getName)
-                                        .collect(Collectors.toSet())
-                                : ImmutableSet.of(selection.clazz.getName());
-                        boolean conflict = false;
-                        for (String clazz : classes) {
-                            if(combinedClasses.contains(clazz)) {
-                                conflict = true;
-                                break;
-                            }
-                        }
-                        if(!conflict) {
-                            combinedClasses.addAll(classes);
-                            combinable.add(selection);
-                            continue outer;
-                        }
-                    }
-                    isolated.add(selection);
-                }
-                BuildableState combined = null;
-                for (DatabaseSelection<?> selection : combinable) {
-                    selection.ensurePending();
-                    Criteria criteria = buildSelectionCriteria(selection);
-                    combined = combined == null
-                            ? Criteria.where().group(criteria)
-                            : combined.or().group(criteria);
-                }
-                if(combined != null) {
+            if(!unique.isEmpty()) {
+                if(supportsBulkCommands) {
                     Concourse concourse = connections.request();
                     try {
-                        Reader reader = new ImmediateReader(concourse);
-                        Map<Long, Map<String, Set<Object>>> data = read(reader,
-                                null, combined, null, null).get();
-                        for (DatabaseSelection<?> selection : combinable) {
-                            demux(selection, data);
+                        Reader reader = new EventualReader(concourse);
+                        for (DatabaseSelection<?> selection : unique) {
+                            $select(reader, selection);
                         }
+                        reader.drain();
                     }
                     finally {
                         connections.release(concourse);
                     }
+                    for (DatabaseSelection<?> selection : unique) {
+                        reserve(selection);
+                    }
                 }
-                if(!isolated.isEmpty()) {
-                    Runnable[] tasks = new Runnable[isolated.size()];
-                    for (int i = 0; i < isolated.size(); i++) {
-                        DatabaseSelection<?> selection = isolated.get(i);
-                        tasks[i] = () -> {
+                else {
+                    List<DatabaseSelection<?>> isolated = new ArrayList<>();
+                    List<DatabaseSelection<?>> combinable = new ArrayList<>();
+                    Set<String> combinedClasses = Sets.newHashSet();
+                    outer: for (DatabaseSelection<?> selection : unique) {
+                        // NOTE: Must manually attempt to recall here because it
+                        // won't register as cached when dispatching route if a
+                        // combination occurs and gets dispatched
+                        Object cached = recallAndPossiblyFilter(selection);
+                        if(cached != null) {
+                            selection.setResult(cached);
+                            selection.setState(Selection.State.FINISHED);
+                            continue outer;
+                        }
+                        Set<AdHocDataSource<?>> sources = selection.any
+                                ? getAttachedSourcesForHierarchy(
+                                        selection.clazz)
+                                : getAttachedSources(selection.clazz);
+                        if(!sources.isEmpty()) {
                             Concourse concourse = connections.request();
                             try {
                                 Reader reader = new ImmediateReader(concourse);
-                                bindEventualSelectionResult(selection,
-                                        $select(reader, selection));
+                                $selectWithPossibleSources(reader, selection,
+                                        sources);
+                                reader.drain();
                             }
                             finally {
                                 connections.release(concourse);
                             }
-                        };
+                            reserve(selection);
+                            continue outer;
+                        }
+                        else if(selection.isCombinable()) {
+                            // NOTE: #demux partitions combined results by class
+                            // name only, so same-class selections with
+                            // different criteria would each receive the union.
+                            // Isolate conflicting ones to ensure correct
+                            // per-criteria filtering.
+                            Set<String> classes = selection.any
+                                    ? StaticAnalysis.instance()
+                                            .getClassHierarchy(selection.clazz)
+                                            .stream().map(Class::getName)
+                                            .collect(Collectors.toSet())
+                                    : ImmutableSet
+                                            .of(selection.clazz.getName());
+                            boolean conflict = false;
+                            for (String clazz : classes) {
+                                if(combinedClasses.contains(clazz)) {
+                                    conflict = true;
+                                    break;
+                                }
+                            }
+                            if(!conflict) {
+                                combinedClasses.addAll(classes);
+                                combinable.add(selection);
+                                continue outer;
+                            }
+                        }
+                        isolated.add(selection);
                     }
-                    selector.join(tasks);
+                    BuildableState combined = null;
+                    for (DatabaseSelection<?> selection : combinable) {
+                        selection.ensurePending();
+                        Criteria criteria = buildSelectionCriteria(selection);
+                        combined = combined == null
+                                ? Criteria.where().group(criteria)
+                                : combined.or().group(criteria);
+                    }
+                    if(combined != null) {
+                        Concourse concourse = connections.request();
+                        try {
+                            Reader reader = new ImmediateReader(concourse);
+                            Map<Long, Map<String, Set<Object>>> data = read(
+                                    reader, null, combined, null, null).get();
+                            for (DatabaseSelection<?> selection : combinable) {
+                                demux(selection, data);
+                            }
+                        }
+                        finally {
+                            connections.release(concourse);
+                        }
+                    }
+                    if(!isolated.isEmpty()) {
+                        Runnable[] tasks = new Runnable[isolated.size()];
+                        for (int i = 0; i < isolated.size(); i++) {
+                            DatabaseSelection<?> selection = isolated.get(i);
+                            tasks[i] = () -> {
+                                Concourse concourse = connections.request();
+                                try {
+                                    Reader reader = new ImmediateReader(
+                                            concourse);
+                                    $select(reader, selection);
+                                    reader.drain();
+                                }
+                                finally {
+                                    connections.release(concourse);
+                                }
+                            };
+                        }
+                        selector.join(tasks);
 
-                    // Reservation cannot happen in the async threads above
-                    // because it needs access to the #reservations thread
-                    // local.
-                    for (DatabaseSelection<?> selection : isolated) {
-                        reserve(selection);
+                        // Reservation cannot happen in the async threads above
+                        // because it needs access to the #reservations thread
+                        // local.
+                        for (DatabaseSelection<?> selection : isolated) {
+                            reserve(selection);
+                        }
                     }
                 }
             }
@@ -1278,10 +1251,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} a count of the {@link Record Records} matching
+     * Record on {@code reader} a count of the {@link Record Records} matching
      * {@code criteria}.
      *
-     * @param handle the {@link Reader} that records the count operation
+     * @param reader the {@link Reader} that records the count operation
      * @param criteria the {@link Criteria} that identifies the records
      * @return a {@link Supplier} that yields the count
      */
@@ -1298,11 +1271,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} a read for the {@link Record Records} of
+     * Record on {@code reader} a read for the {@link Record Records} of
      * {@code clazz} that match {@code criteria}, scoped to {@code realms} and
      * shaped by {@code order} and {@code page}.
      *
-     * @param handle the {@link Reader} that records the read
+     * @param reader the {@link Reader} that records the read
      * @param clazz the target {@link Record} class (used to scope the lookup to
      *            instances of exactly this class)
      * @param criteria the {@link Criteria} that identifies the records
@@ -1325,11 +1298,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} a read for the {@link Record Records} across
+     * Record on {@code reader} a read for the {@link Record Records} across
      * {@code clazz}'s hierarchy that match {@code criteria}, scoped to
      * {@code realms} and shaped by {@code order} and {@code page}.
      *
-     * @param handle the {@link Reader} that records the read
+     * @param reader the {@link Reader} that records the read
      * @param clazz the {@link Record} class whose hierarchy is queried
      * @param criteria the {@link Criteria} that identifies the records
      * @param order the {@link Order} to apply to the result set, or
@@ -1351,11 +1324,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} a read for every {@link Record} of
+     * Record on {@code reader} a read for every {@link Record} of
      * {@code clazz}, scoped to {@code realms} and shaped by {@code order} and
      * {@code page}.
      *
-     * @param handle the {@link Reader} that records the read
+     * @param reader the {@link Reader} that records the read
      * @param clazz the target {@link Record} class (used to scope the lookup to
      *            instances of exactly this class)
      * @param order the {@link Order} to apply to the result set, or
@@ -1376,11 +1349,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} a read for every {@link Record} in
+     * Record on {@code reader} a read for every {@link Record} in
      * {@code clazz}'s hierarchy, scoped to {@code realms} and shaped by
      * {@code order} and {@code page}.
      *
-     * @param handle the {@link Reader} that records the read
+     * @param reader the {@link Reader} that records the read
      * @param clazz the {@link Record} class whose hierarchy is queried
      * @param order the {@link Order} to apply to the result set, or
      *            {@code null} for unsorted results
@@ -1449,47 +1422,39 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} the read(s) required to resolve
-     * {@code selection} and return a {@link Supplier} that yields its
-     * {@link SelectResult}. Equivalent to invoking
+     * Resolve {@code selection} against the database (or any matching
+     * {@link AdHocDataSource AdHocDataSources}), recording any required reads
+     * on {@code reader} and mutating {@code selection} with its result.
+     * Equivalent to invoking
      * {@link #$selectWithPossibleSources(Reader, DatabaseSelection, Set)} with
      * no pre-supplied {@link AdHocDataSource} set.
-     * <p>
-     * The returned {@link Supplier} must be passed to
-     * {@link #bindEventualSelectionResult(DatabaseSelection, Supplier)} to
-     * populate
-     * {@code selection}'s result and transition it to
-     * {@link Selection.State#FINISHED}.
      *
-     * @param handle the {@link Reader} that records any required reads
-     * @param selection the {@link DatabaseSelection} to resolve; must not be in
-     *            {@link Selection.State#RESOLVED}
+     * @param reader the {@link Reader} that records any required reads
+     * @param selection the {@link DatabaseSelection} to resolve
      * @param <T> the {@link Record} type
-     * @param <R> the {@link SelectResult} result type
-     * @return a {@link Supplier} that yields the {@link SelectResult}
      */
-    private <T extends Record, R> Supplier<SelectResult<R>> $select(
-            Reader reader, DatabaseSelection<T> selection) {
-        return $selectWithPossibleSources(reader, selection, null);
+    private <T extends Record> void $select(Reader reader,
+            DatabaseSelection<T> selection) {
+        $selectWithPossibleSources(reader, selection, null);
     }
 
     /**
-     * Record on {@code handle} the read required to resolve {@code selection}
+     * Record on {@code reader} the read required to resolve {@code selection}
      * and return a {@link Supplier} that yields a {@link SelectResult} holding
      * the matching {@link Record Records}.
      * <p>
      * When the server supports native sorting/pagination (or none is requested)
      * and the selection has no client-side filter combined with a page, exactly
-     * one read is recorded on {@code handle} and the returned {@link Supplier}
+     * one read is recorded on {@code reader} and the returned {@link Supplier}
      * simply instantiates the {@link Record Records} from that read's result.
      * When the selection requires both a client-side filter and a page, the
      * iterative paging happens inside the returned {@link Supplier} on a
      * private connection so it does not interfere with other recordings on
-     * {@code handle}. When the server lacks native sorting/pagination the work
+     * {@code reader}. When the server lacks native sorting/pagination the work
      * happens inside the returned {@link Supplier} via
      * {@link #fetch(Selection)}.
      *
-     * @param handle the {@link Reader} that records the read when the selection
+     * @param reader the {@link Reader} that records the read when the selection
      *            can be resolved with a single recorded query
      * @param selection the {@link LoadClassSelection} to resolve
      * @param <T> the {@link Record} type
@@ -1578,18 +1543,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} the count required to resolve {@code selection}
+     * Record on {@code reader} the count required to resolve {@code selection}
      * and return a {@link Supplier} that yields a {@link SelectResult} holding
      * the matching count.
      * <p>
      * When the selection has no client-side filter, exactly one count is
-     * recorded on {@code handle} (using a native count command if the server
+     * recorded on {@code reader} (using a native count command if the server
      * supports it, otherwise a find whose size is taken at resolution time).
      * When the selection has a client-side filter, the count is computed inside
      * the returned {@link Supplier} via {@link #fetch(Selection)} (no read is
-     * recorded on {@code handle}).
+     * recorded on {@code reader}).
      *
-     * @param handle the {@link Reader} that records the count when the
+     * @param reader the {@link Reader} that records the count when the
      *            selection can be resolved with a single recorded query
      * @param selection the {@link CountSelection} to resolve
      * @param <T> the {@link Record} type
@@ -1641,24 +1606,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} the read required to resolve {@code selection}
+     * Record on {@code reader} the read required to resolve {@code selection}
      * and return a {@link Supplier} that yields a {@link SelectResult} holding
      * the matching {@link Record Records}.
      * <p>
      * When the criteria can be resolved by the database and the selection has
      * no client-side filter combined with a page, exactly one read is recorded
-     * on {@code handle} and the returned {@link Supplier} instantiates the
+     * on {@code reader} and the returned {@link Supplier} instantiates the
      * {@link Record Records} from that read's result. When the criteria cannot
      * be resolved by the database (e.g., touches fields with client-side
      * predicates) the work happens inside the returned {@link Supplier} via
      * {@link #filter} / {@link #filterAny} and no read is recorded on
-     * {@code handle}. When the selection requires both a client-side filter and
+     * {@code reader}. When the selection requires both a client-side filter and
      * a page, the iterative paging happens inside the returned {@link Supplier}
      * on a private connection. When the server lacks native sorting/pagination
      * the work happens inside the returned {@link Supplier} via
      * {@link #fetch(Selection)}.
      *
-     * @param handle the {@link Reader} that records the read when the selection
+     * @param reader the {@link Reader} that records the read when the selection
      *            can be resolved with a single recorded query
      * @param selection the {@link FindSelection} to resolve
      * @param <T> the {@link Record} type
@@ -1860,13 +1825,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} the read required to resolve {@code selection}
+     * Record on {@code reader} the read required to resolve {@code selection}
      * and return a {@link Supplier} that yields a {@link SelectResult} holding
      * the loaded {@link Record} (or {@code null} when the realm gate excludes
      * it).
      * <p>
      * The {@link Record Record's} data is recorded as a single {@code select}
-     * on {@code handle} so the load participates in batching. The result
+     * on {@code reader} so the load participates in batching. The result
      * carries the section key (used to refine {@link DatabaseSelection#clazz}
      * when its hierarchy has descendants), the realms key (used for the realm
      * gate), and the field values {@link #instantiate(Class, long, Map, Map)
@@ -1874,7 +1839,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * reads required to complete the load (navigate prefetch, bulk-select link
      * prefetch) happen inside the returned {@link Supplier}.
      *
-     * @param handle the {@link Reader} that records the read
+     * @param reader the {@link Reader} that records the read
      * @param selection the {@link LoadRecordSelection} to resolve
      * @param <T> the {@link Record} type
      * @return a {@link Supplier} that yields the {@link SelectResult}, whose
@@ -1948,7 +1913,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} the read required to resolve {@code selection}
+     * Record on {@code reader} the read required to resolve {@code selection}
      * and return a {@link Supplier} that yields a {@link SelectResult} holding
      * the unique matching {@link Record} (or {@code null} when no record
      * matches).
@@ -1960,7 +1925,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * {@link Set} of matches to a single record (or throws if more than one is
      * found).
      *
-     * @param handle the {@link Reader} that records the underlying read
+     * @param reader the {@link Reader} that records the underlying read
      * @param selection the {@link UniqueSelection} to resolve
      * @param <T> the {@link Record} type
      * @return a {@link Supplier} that yields the {@link SelectResult}, whose
@@ -2005,61 +1970,32 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Plan the resolution of {@code selection}, recording any required reads on
-     * {@code handle} and returning a {@link Supplier} that yields its
-     * {@link SelectResult}.
-     * <p>
-     * This is the canonical dispatch point for resolving a single
-     * {@link DatabaseSelection}. The control flow is:
-     * <ul>
-     * <li>If a previously reserved result exists for {@code selection}, no
-     * reads are recorded; the returned {@link Supplier} yields the reserved
-     * value.</li>
-     * <li>If one or more {@link AdHocDataSource AdHocDataSources} match
-     * {@code selection}'s class, the result is computed synchronously against
-     * those sources (no reads recorded on {@code handle}); the returned
-     * {@link Supplier} yields that result.</li>
-     * <li>Otherwise the type-specific {@code $select*} helper (e.g.,
-     * {@link #$selectClass}, {@link #$selectCriteria}, {@link #$selectCount},
-     * {@link #$selectRecord}, {@link #$selectUnique}) records the required
-     * read(s) on {@code handle}; the returned {@link Supplier} yields the
-     * {@link SelectResult} once the underlying read is issued.</li>
-     * </ul>
-     * <p>
-     * As a side effect of calling this method, {@code selection}'s state is
-     * transitioned to {@link Selection.State#SUBMITTED}. The final transition
-     * to {@link Selection.State#FINISHED} (along with writing the result and
-     * companion value onto {@code selection}) happens when the returned
-     * {@link Supplier} is passed to
-     * {@link #bindEventualSelectionResult(DatabaseSelection, Supplier)}.
+     * Resolve {@code selection}, recording any required reads on {@code reader}
+     * and mutating {@code selection} with its result. Database-bound resolution
+     * is deferred to {@link Reader#drain() reader.drain()}; all other paths
+     * mutate {@code selection} immediately.
      *
-     * @param handle the {@link Reader} that records any required reads
-     * @param selection the {@link DatabaseSelection} to resolve; must not be in
-     *            {@link Selection.State#RESOLVED} (the caller is responsible
-     *            for filtering those out)
+     * @param reader the {@link Reader} that records any required reads
+     * @param selection the {@link DatabaseSelection} to resolve
      * @param sources a pre-resolved {@link Set} of {@link AdHocDataSource
      *            AdHocDataSources} for {@code selection}'s class, or
-     *            {@code null} to have this method look them up from
-     *            {@link #getAttachedSources(Class)} /
-     *            {@link #getAttachedSourcesForHierarchy(Class)}
+     *            {@code null} to have this method look them up
      * @param <T> the {@link Record} type
-     * @param <R> the {@link SelectResult} result type
-     * @return a {@link Supplier} that yields the {@link SelectResult}
-     * @throws IllegalStateException if {@code selection} is in
-     *             {@link Selection.State#RESOLVED}
+     * @param <R> the result type
      */
-    @SuppressWarnings("unchecked")
-    private <T extends Record, R> Supplier<SelectResult<R>> $selectWithPossibleSources(
-            Reader reader, DatabaseSelection<T> selection,
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private <T extends Record, R> void $selectWithPossibleSources(Reader reader,
+            DatabaseSelection<T> selection,
             @Nullable Set<AdHocDataSource<?>> sources) {
-        Preconditions.checkState(selection.state != Selection.State.RESOLVED,
-                "RESOLVED selections must be handled by the caller before "
-                        + "invoking $selectWithPossibleSources");
+        Preconditions.checkState(selection.state == Selection.State.PENDING,
+                "Selection must be PENDING; pre-resolved selections must be "
+                        + "handled by the caller before dispatch");
         selection.setState(Selection.State.SUBMITTED);
         R cached = recallAndPossiblyFilter(selection);
         if(cached != null) {
-            R finalCached = cached;
-            return () -> new SelectResult<>(finalCached);
+            ((DatabaseSelection) selection).setResult(cached);
+            selection.setState(Selection.State.FINISHED);
+            return;
         }
         Set<AdHocDataSource<?>> resolvedSources = sources == null
                 ? (selection.any
@@ -2068,7 +2004,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 : sources;
         if(!resolvedSources.isEmpty()) {
             R result = $selectFromSources(selection, resolvedSources);
-            return () -> new SelectResult<>(result);
+            ((DatabaseSelection) selection).setResult(result);
+            selection.setState(Selection.State.FINISHED);
+            return;
         }
         Supplier<? extends SelectResult<?>> supplier;
         if(selection instanceof CountSelection) {
@@ -2091,7 +2029,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             throw new IllegalStateException(
                     "Unsupported Selection type " + selection.getClass());
         }
-        return () -> (SelectResult<R>) supplier.get();
+        reader.onDrain(() -> {
+            SelectResult<?> res = supplier.get();
+            ((DatabaseSelection) selection).setResult(res.result);
+            selection.cacheValue = res.cacheValue;
+            selection.setState(Selection.State.FINISHED);
+        });
     }
 
     /**
@@ -2589,11 +2532,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record a read on {@code handle} for every record matching
+     * Record a read on {@code reader} for every record matching
      * {@code criteria}, restricted to {@code paths} when non-{@code null} and
      * shaped by the configured {@link #readStrategy}.
      *
-     * @param handle the {@link Reader} on which to record the read
+     * @param reader the {@link Reader} on which to record the read
      * @param paths the field names whose values should be returned, or
      *            {@code null} to return every field
      * @param criteria the {@link Criteria} that identifies the records
