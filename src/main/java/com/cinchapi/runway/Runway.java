@@ -1474,6 +1474,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         if(hasNativeSortingAndPagination
                 || doesNotRequireSortingOrPagination(order, page)) {
+            // When native sorting/pagination is supported OR no
+            // sorting/pagination is requested, the database can handle the
+            // query directly without client-side stream manipulation.
             if(hasFilter && page != null) {
                 return () -> {
                     AtomicReference<Concourse> connection = new AtomicReference<>(
@@ -1523,6 +1526,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
+            // Legacy servers lack native sorting/pagination, so results must
+            // be fetched and processed client-side.
             return () -> {
                 Set<T> records = fetch(
                         Selection.of(clazz).any(any).realms(realms));
@@ -1573,6 +1578,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         Realms realms = selection.realms;
         if(hasFilter) {
+            // Fetch unfiltered so the inner selection caches reusable data,
+            // then count the filtered stream.
             return () -> {
                 Set<T> records = fetch(Selection.of(clazz).any(any)
                         .where(criteria).realms(realms));
@@ -1581,6 +1588,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             };
         }
         else if(criteria == null) {
+            // No criteria means count all records of this class
             Supplier<Integer> supplier = $count(reader, any
                     ? $Criteria.amongRealms(realms,
                             $Criteria.forClassHierarchy(clazz))
@@ -1644,6 +1652,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
         if(hasNativeSortingAndPagination
                 || doesNotRequireSortingOrPagination(order, page)) {
+            // When native sorting/pagination is supported OR no
+            // sorting/pagination is requested, the database can handle the
+            // query directly without client-side stream manipulation.
             boolean dbResolvable = Record.isDatabaseResolvableCondition(clazz,
                     criteria);
             if(hasFilter && page != null) {
@@ -1721,6 +1732,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
         }
         else {
+            // Legacy servers lack native sorting/pagination, so results must
+            // be fetched and processed client-side.
             return () -> {
                 Set<T> records = fetch(
                         Selection.of(clazz).any(any).where(criteria));
@@ -1787,6 +1800,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             for (AdHocDataSource<?> source : sources) {
                 T candidate = source.fetch(selection.duplicate());
                 if(candidate != null && found != null) {
+                    // Enforce uniqueness across AdHocDataSources
                     UniqueSelection<T> us = (UniqueSelection<T>) selection;
                     throw duplicateEntryException(
                             "Multiple records match {} in {}{}", us.criteria,
@@ -1855,6 +1869,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Realms realms = selection.realms;
         Predicate<T> filter = selection.filter;
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
+        // The provided clazz has descendants, so it is possible that the
+        // Record with the #id is actually a member of a subclass.
         boolean needsSectionLookup = StaticAnalysis.instance()
                 .getClassHierarchy(initialClazz).size() > 1;
         Set<String> paths = needsSectionLookup ? null
