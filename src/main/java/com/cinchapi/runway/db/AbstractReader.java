@@ -45,8 +45,9 @@ public abstract class AbstractReader implements Reader {
     private final List<Runnable> completions;
 
     /**
-     * Whether {@link #drain()} has completed (successfully or partially); when
-     * {@code true}, subsequent {@link #drain()} calls are no-ops.
+     * Whether the deferred reads have been issued (drained); when {@code true},
+     * subsequent {@link #drain()} calls are no-ops regardless of whether every
+     * completion ran.
      */
     private boolean drained;
 

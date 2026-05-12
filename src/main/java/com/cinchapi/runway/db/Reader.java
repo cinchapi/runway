@@ -259,8 +259,11 @@ public interface Reader {
      * Issue any deferred reads recorded on this {@link Reader} and run every
      * {@link #onDrain registered completion} in registration order.
      * <p>
-     * This method is idempotent; subsequent calls after the first successful
-     * drain are no-ops.
+     * Once the deferred reads have been issued this {@link Reader} is drained;
+     * subsequent calls are no-ops even when a completion threw mid-iteration,
+     * in which case the remaining completions are discarded. If the deferred
+     * read submission itself fails, this {@link Reader} is not marked drained
+     * and a subsequent call may retry.
      * </p>
      *
      * @throws RuntimeException if a deferred submission fails; no completions
