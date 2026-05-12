@@ -1910,13 +1910,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
                 Map<Long, Map<String, Set<Object>>> seed = Maps.newHashMap();
                 seed.put(id, data);
-                Concourse concourse = connections.request();
-                try {
-                    targets = prefetchLinks(concourse, seed);
-                }
-                finally {
-                    connections.release(concourse);
-                }
+                targets = prefetchLinks(reader.concourse(), seed);
             }
             T record = instantiate(clazz, id, data, targets);
             if(record != null && hasFilter) {

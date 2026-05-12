@@ -63,6 +63,11 @@ public abstract class AbstractReader implements Reader {
     }
 
     @Override
+    public final Concourse concourse() {
+        return concourse;
+    }
+
+    @Override
     public final void onDrain(Runnable completion) {
         completions.add(Preconditions.checkNotNull(completion));
     }

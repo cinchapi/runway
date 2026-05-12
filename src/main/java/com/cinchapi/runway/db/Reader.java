@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 
+import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -236,6 +237,14 @@ public interface Reader {
      * @return a {@link Supplier} that yields the count
      */
     Supplier<Long> count(String key, Criteria criteria);
+
+    /**
+     * Return the underlying {@link Concourse} connection that this
+     * {@link Reader} wraps.
+     *
+     * @return the {@link Concourse} connection
+     */
+    Concourse concourse();
 
     /**
      * Register a completion {@link Runnable} to run inside {@link #drain()}.
