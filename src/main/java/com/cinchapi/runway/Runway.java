@@ -383,8 +383,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = DEFAULT_ON_LOAD_FAILURE_HANDLER;
 
     /**
-     * The strategy for {@link #read(Concourse, Criteria, Order, Page) loading}
-     * data from the database.
+     * The strategy for loading data from the database.
      */
     private ReadStrategy readStrategy = ReadStrategy.BULK;
 
@@ -999,9 +998,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         else {
                             if(reader == null) {
                                 concourse = ensureValidConnection(concourse);
-                                reader = new EventualReader(
-                                        concourse = ensureValidConnection(
-                                                concourse));
+                                reader = new EventualReader(concourse);
                             }
                             $select(reader, selection);
                             dispatched.add(selection);
@@ -3336,8 +3333,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * The {@link ReadStrategy} determines how {@link Runway}
-     * {@link Runway#read(Concourse, Criteria, Order, Page) reads} data from
+     * The {@link ReadStrategy} determines how {@link Runway} reads data from
      * Concourse in response to a request.
      *
      * @author Jeff Nelson
