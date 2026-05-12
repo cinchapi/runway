@@ -33,16 +33,12 @@ import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -56,7 +52,6 @@ import javax.annotation.Nullable;
 
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
-import com.cinchapi.common.concurrent.ExecutorRaceService;
 import com.cinchapi.common.concurrent.JoinableExecutorService;
 import com.cinchapi.common.function.TriConsumer;
 import com.cinchapi.common.reflect.Reflection;
@@ -79,10 +74,12 @@ import com.cinchapi.runway.Record.InvalidRecordException;
 import com.cinchapi.runway.Record.Snapshot;
 import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.cache.CachingConnectionPool;
+import com.cinchapi.runway.db.EventualReader;
+import com.cinchapi.runway.db.ImmediateReader;
+import com.cinchapi.runway.db.Reader;
 import com.cinchapi.runway.util.Obligations;
 import com.cinchapi.runway.util.Pagination;
 import com.github.zafarkhaja.semver.Version;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.cache.Cache;
@@ -312,83 +309,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code handle} the read described by {@code paths},
-     * {@code criteria}, {@code order}, and {@code page} using the supplied
-     * {@code readStrategy}.
-     * <p>
-     * A {@link ReadStrategy#BULK BULK} strategy records a {@code select}; any
-     * other strategy records a {@code find}.
-     *
-     * @param readStrategy the {@link ReadStrategy} that determines whether a
-     *            {@code select} or a {@code find} is recorded
-     * @param handle the {@link ReadHandle} on which to record the read
-     * @param paths the field names whose values should be returned, or
-     *            {@code null} to return every field
-     * @param criteria the {@link Criteria} that identifies the records
-     * @param order the sort {@link Order} to apply, or {@code null} for an
-     *            unsorted result
-     * @param page the {@link Page} that limits the result set, or {@code null}
-     *            for the full result set
-     */
-    private static void readWithStrategy(ReadStrategy readStrategy,
-            ReadHandle handle, @Nullable Set<String> paths, Criteria criteria,
-            @Nullable Order order, @Nullable Page page) {
-        // Define the execution paths
-        if(order != null && page != null) {
-            if(readStrategy == ReadStrategy.BULK) {
-                if(paths != null) {
-                    handle.select(paths, criteria, order, page);
-                }
-                else {
-                    handle.select(criteria, order, page);
-                }
-            }
-            else {
-                handle.find(criteria, order, page);
-            }
-        }
-        else if(order == null && page == null) {
-            if(readStrategy == ReadStrategy.BULK) {
-                if(paths != null) {
-                    handle.select(paths, criteria);
-                }
-                else {
-                    handle.select(criteria);
-                }
-            }
-            else {
-                handle.find(criteria);
-            }
-        }
-        else if(order != null) {
-            if(readStrategy == ReadStrategy.BULK) {
-                if(paths != null) {
-                    handle.select(paths, criteria, order);
-                }
-                else {
-                    handle.select(criteria, order);
-                }
-            }
-            else {
-                handle.find(criteria, order);
-            }
-        }
-        else { // page != null
-            if(readStrategy == ReadStrategy.BULK) {
-                if(paths != null) {
-                    handle.select(paths, criteria, page);
-                }
-                else {
-                    handle.select(criteria, page);
-                }
-            }
-            else {
-                handle.find(criteria, page);
-            }
-        }
-    }
-
-    /**
      * Restore the mutable metadata on each {@link Record} from a previously
      * captured snapshot.
      * <p>
@@ -445,21 +365,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * The amount of time to wait for a bulk select to complete before streaming
-     * the data.
-     */
-    @VisibleForTesting
-    protected int bulkSelectTimeoutMillis = 0; // make configurable?
-
-    /**
      * A connection pool to the underlying Concourse database.
      */
     /* package */ final ConnectionPool connections;
-
-    /**
-     * An {@link ExecutorService} for async tasks.
-     */
-    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     /**
      * A flag that indicates whether the connected server supports result set
@@ -475,10 +383,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = DEFAULT_ON_LOAD_FAILURE_HANDLER;
 
     /**
-     * The strategy for {@link #read(Concourse, Criteria, Order, Page) loading}
-     * data from the database.
+     * The strategy for loading data from the database.
      */
-    private ReadStrategy readStrategy = ReadStrategy.AUTO;
+    private ReadStrategy readStrategy = ReadStrategy.BULK;
 
     /**
      * The strategy for handling spurious {@link TransactionException
@@ -688,8 +595,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             else {
                 Record.PINNED_RUNWAY_INSTANCE = null;
             }
-        }, () -> {
-            executor.shutdownNow();
         }, () -> {
             selector.shutdownNow();
         }, () -> {
@@ -1063,129 +968,185 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         "Selection has already been submitted"))
                 .map(DatabaseSelection::resolve)
                 .toArray(DatabaseSelection[]::new);
-        if(selections.length == 1) {
-            DatabaseSelection<?> selection = selections[0];
-            $select(selection);
-            reserve(selection);
-            return new Selections(selections);
-        }
-        else {
-            // TODO: Check if the server version is 1.0.0+ and, if so, use
-            // prepare/submit
-            List<DatabaseSelection<?>> unique = Arrays.stream(selections)
-                    .map(SelectionKey::new).distinct().map(key -> key.selection)
-                    .collect(Collectors.toList());
-            List<DatabaseSelection<?>> isolated = new ArrayList<>();
-            List<DatabaseSelection<?>> combinable = new ArrayList<>();
-            Set<String> combinedClasses = Sets.newHashSet();
-            outer: for (DatabaseSelection<?> selection : unique) {
+        Concourse concourse = null;
+        try {
+            if(selections.length == 1) {
+                DatabaseSelection<?> selection = selections[0];
                 if(selection.state == Selection.State.RESOLVED) {
                     selection.setState(Selection.State.FINISHED);
-                    continue outer; /* (authorized short circuit) */
                 }
-                // NOTE: Must manually attempt to recall here because it won't
-                // register as cached when dispatching route if a combination
-                // occurs and gets dispatched
-                Object cached = recallAndPossiblyFilter(selection);
-                if(cached != null) {
-                    selection.setResult(cached);
-                    selection.setState(Selection.State.FINISHED);
-                    continue outer;
-                }
-                Set<AdHocDataSource<?>> sources = selection.any
-                        ? getAttachedSourcesForHierarchy(selection.clazz)
-                        : getAttachedSources(selection.clazz);
-                if(!sources.isEmpty()) {
-                    selection.setState(Selection.State.SUBMITTED);
-                    $selectWithPossibleSources(selection, sources);
+                else {
+                    concourse = ensureValidConnection(concourse);
+                    Reader reader = new ImmediateReader(concourse);
+                    $select(reader, selection);
+                    reader.drain();
                     reserve(selection);
-                    continue outer;
                 }
-                else if(selection.isCombinable()) {
-                    // NOTE: #demux partitions combined results by class name
-                    // only, so same-class selections with different criteria
-                    // would each receive the union. Isolate conflicting ones to
-                    // ensure correct per-criteria filtering.
-                    Set<String> classes = selection.any
-                            ? StaticAnalysis.instance()
-                                    .getClassHierarchy(selection.clazz).stream()
-                                    .map(Class::getName)
-                                    .collect(Collectors.toSet())
-                            : ImmutableSet.of(selection.clazz.getName());
-                    boolean conflict = false;
-                    for (String clazz : classes) {
-                        if(combinedClasses.contains(clazz)) {
-                            conflict = true;
-                            break;
+                return new Selections(selections);
+            }
+            else {
+                List<DatabaseSelection<?>> unique = Arrays.stream(selections)
+                        .map(SelectionKey::new).distinct()
+                        .map(key -> key.selection).collect(Collectors.toList());
+                if(supportsBulkCommands) {
+                    Reader reader = null;
+                    List<DatabaseSelection<?>> dispatched = new ArrayList<>();
+                    for (DatabaseSelection<?> selection : unique) {
+                        if(selection.state == Selection.State.RESOLVED) {
+                            selection.setState(Selection.State.FINISHED);
+                        }
+                        else {
+                            if(reader == null) {
+                                concourse = ensureValidConnection(concourse);
+                                reader = new EventualReader(concourse);
+                            }
+                            $select(reader, selection);
+                            dispatched.add(selection);
                         }
                     }
-                    if(!conflict) {
-                        combinedClasses.addAll(classes);
-                        combinable.add(selection);
-                        continue outer;
+                    if(reader != null) {
+                        reader.drain();
+                    }
+                    for (DatabaseSelection<?> selection : dispatched) {
+                        reserve(selection);
                     }
                 }
-                isolated.add(selection);
-            }
-            BuildableState combined = null;
-            for (DatabaseSelection<?> selection : combinable) {
-                selection.ensurePending();
-                Criteria criteria = buildSelectionCriteria(selection);
-                combined = combined == null ? Criteria.where().group(criteria)
-                        : combined.or().group(criteria);
-            }
-            if(combined != null) {
-                Concourse concourse = connections.request();
-                try {
-                    Map<Long, Map<String, Set<Object>>> data = this
-                            .read(concourse, null, combined, null, null);
+                else {
+                    List<DatabaseSelection<?>> isolated = new ArrayList<>();
+                    List<DatabaseSelection<?>> combinable = new ArrayList<>();
+                    Set<String> combinedClasses = Sets.newHashSet();
+                    outer: for (DatabaseSelection<?> selection : unique) {
+                        if(selection.state == Selection.State.RESOLVED) {
+                            selection.setState(Selection.State.FINISHED);
+                            continue outer; /* (authorized short circuit) */
+                        }
+                        // NOTE: Must manually attempt to recall here because it
+                        // won't register as cached when dispatching route if a
+                        // combination occurs and gets dispatched
+                        Object cached = recallAndPossiblyFilter(selection);
+                        if(cached != null) {
+                            selection.setResult(cached);
+                            selection.setState(Selection.State.FINISHED);
+                            continue outer;
+                        }
+                        Set<AdHocDataSource<?>> sources = selection.any
+                                ? getAttachedSourcesForHierarchy(
+                                        selection.clazz)
+                                : getAttachedSources(selection.clazz);
+                        if(!sources.isEmpty()) {
+                            concourse = ensureValidConnection(concourse);
+                            Reader reader = new ImmediateReader(concourse);
+                            $selectWithPossibleSources(reader, selection,
+                                    sources);
+                            reader.drain();
+                            reserve(selection);
+                            continue outer;
+                        }
+                        else if(selection.isCombinable()) {
+                            // NOTE: #demux partitions combined results by class
+                            // name only, so same-class selections with
+                            // different criteria would each receive the union.
+                            // Isolate conflicting ones to ensure correct
+                            // per-criteria filtering.
+                            Set<String> classes = selection.any
+                                    ? StaticAnalysis.instance()
+                                            .getClassHierarchy(selection.clazz)
+                                            .stream().map(Class::getName)
+                                            .collect(Collectors.toSet())
+                                    : ImmutableSet
+                                            .of(selection.clazz.getName());
+                            boolean conflict = false;
+                            for (String clazz : classes) {
+                                if(combinedClasses.contains(clazz)) {
+                                    conflict = true;
+                                    break;
+                                }
+                            }
+                            if(!conflict) {
+                                combinedClasses.addAll(classes);
+                                combinable.add(selection);
+                                continue outer;
+                            }
+                        }
+                        isolated.add(selection);
+                    }
+                    BuildableState combined = null;
                     for (DatabaseSelection<?> selection : combinable) {
-                        demux(selection, data);
+                        selection.ensurePending();
+                        Criteria criteria = buildSelectionCriteria(selection);
+                        combined = combined == null
+                                ? Criteria.where().group(criteria)
+                                : combined.or().group(criteria);
+                    }
+                    if(combined != null) {
+                        concourse = ensureValidConnection(concourse);
+                        Reader reader = new ImmediateReader(concourse);
+                        Map<Long, Map<String, Set<Object>>> data = read(reader,
+                                null, combined, null, null).get();
+                        for (DatabaseSelection<?> selection : combinable) {
+                            demux(selection, data);
+                        }
+                    }
+                    if(!isolated.isEmpty()) {
+                        Runnable[] tasks = new Runnable[isolated.size()];
+                        for (int i = 0; i < isolated.size(); i++) {
+                            DatabaseSelection<?> selection = isolated.get(i);
+                            tasks[i] = () -> {
+                                Concourse _concourse = connections.request();
+                                try {
+                                    Reader reader = new ImmediateReader(
+                                            _concourse);
+                                    $select(reader, selection);
+                                    reader.drain();
+                                }
+                                finally {
+                                    connections.release(_concourse);
+                                }
+                            };
+                        }
+                        selector.join(tasks);
+
+                        // Reservation cannot happen in the async threads above
+                        // because it needs access to the #reservations thread
+                        // local.
+                        for (DatabaseSelection<?> selection : isolated) {
+                            reserve(selection);
+                        }
                     }
                 }
-                finally {
-                    connections.release(concourse);
-                }
-            }
-            if(!isolated.isEmpty()) {
-                Runnable[] tasks = new Runnable[isolated.size()];
-                for (int i = 0; i < isolated.size(); i++) {
-                    DatabaseSelection<?> selection = isolated.get(i);
-                    tasks[i] = () -> {
-                        $select(selection);
-                    };
-                }
-                selector.join(tasks);
 
-                // Reservation cannot happen in the async threads above because
-                // it needs access to the #reservations thread local.
-                for (DatabaseSelection<?> selection : isolated) {
-                    reserve(selection);
-                }
-            }
-            // Propagate results to duplicates
-            for (DatabaseSelection<?> selection : selections) {
-                if(selection.state != Selection.State.FINISHED) {
-                    if(DatabaseSelection.isNoFilter(selection.filter)) {
-                        DatabaseSelection<?> canonical = unique.stream()
-                                .filter(item -> item.reservation()
-                                        .equals(selection.reservation()))
-                                .findFirst()
-                                .orElseThrow(() -> new IllegalStateException(
-                                        "No canonical selection found for "
-                                                + selection));
-                        selection.setResult(canonical.result);
+                // Propagate results to duplicates
+                for (DatabaseSelection<?> selection : selections) {
+                    if(selection.state == Selection.State.RESOLVED) {
                         selection.setState(Selection.State.FINISHED);
                     }
-                    else {
-                        throw new IllegalStateException(
-                                "Filtered duplicate selection was not "
-                                        + "independently executed: "
-                                        + selection);
+                    else if(selection.state != Selection.State.FINISHED) {
+                        if(DatabaseSelection.isNoFilter(selection.filter)) {
+                            DatabaseSelection<?> canonical = unique.stream()
+                                    .filter(item -> item.reservation()
+                                            .equals(selection.reservation()))
+                                    .findFirst().orElseThrow(
+                                            () -> new IllegalStateException(
+                                                    "No canonical selection found for "
+                                                            + selection));
+                            selection.setResult(canonical.result);
+                            selection.setState(Selection.State.FINISHED);
+                        }
+                        else {
+                            throw new IllegalStateException(
+                                    "Filtered duplicate selection was not "
+                                            + "independently executed: "
+                                            + selection);
+                        }
                     }
                 }
+                return new Selections(selections);
             }
-            return new Selections(selections);
+        }
+        finally {
+            if(concourse != null) {
+                connections.release(concourse);
+            }
         }
     }
 
@@ -1288,114 +1249,125 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return the number of {@link Record records} that match the
+     * Record on {@code reader} a count of the {@link Record Records} matching
      * {@code criteria}.
      *
-     * @param criteria
-     * @return the number of matching records
+     * @param reader the {@link Reader} that records the count operation
+     * @param criteria the {@link Criteria} that identifies the records
+     * @return a {@link Supplier} that yields the count
      */
-    private int $count(Criteria criteria) {
-        Concourse concourse = connections.request();
-        try {
-            if(supportsNativeCount) {
-                return (int) concourse.calculate().count(Record.IDENTIFIER_KEY,
-                        criteria);
-            }
-            else {
-                return concourse.find(criteria).size();
-            }
+    private Supplier<Integer> $count(Reader reader, Criteria criteria) {
+        if(supportsNativeCount) {
+            Supplier<Long> supplier = reader.count(Record.IDENTIFIER_KEY,
+                    criteria);
+            return () -> supplier.get().intValue();
         }
-        finally {
-            connections.release(concourse);
+        else {
+            Supplier<Set<Long>> supplier = reader.find(criteria);
+            return () -> supplier.get().size();
         }
     }
 
     /**
-     * Perform the find operation using the {@code concourse} handler.
+     * Record on {@code reader} a read for the {@link Record Records} of
+     * {@code clazz} that match {@code criteria}, scoped to {@code realms} and
+     * shaped by {@code order} and {@code page}.
      *
-     * @param concourse
-     * @param clazz
-     * @param criteria
-     * @return the result set
+     * @param reader the {@link Reader} that records the read
+     * @param clazz the target {@link Record} class (used to scope the lookup to
+     *            instances of exactly this class)
+     * @param criteria the {@link Criteria} that identifies the records
+     * @param order the {@link Order} to apply to the result set, or
+     *            {@code null} for unsorted results
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     * @param realms the {@link Realms} that scope the lookup
+     * @param <T> the {@link Record} type
+     * @return a {@link Supplier} that yields the matching records' data
      */
-    private <T extends Record> Map<Long, Map<String, Set<Object>>> $find(
-            Concourse concourse, Class<T> clazz, Criteria criteria,
+    private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $find(
+            Reader reader, Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
         criteria = $Criteria.amongRealms(realms,
                 $Criteria.withinClass(clazz, criteria));
         Set<String> paths = getPathsForClassIfSupported(clazz);
-        return read(concourse, paths, criteria, order, page);
+        return read(reader, paths, criteria, order, page);
     }
 
     /**
-     * Perform the "find any" operation using the {@code concourse} handler.
+     * Record on {@code reader} a read for the {@link Record Records} across
+     * {@code clazz}'s hierarchy that match {@code criteria}, scoped to
+     * {@code realms} and shaped by {@code order} and {@code page}.
      *
-     * @param concourse
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @param page
-     * @param realms
-     * @return the result set
+     * @param reader the {@link Reader} that records the read
+     * @param clazz the {@link Record} class whose hierarchy is queried
+     * @param criteria the {@link Criteria} that identifies the records
+     * @param order the {@link Order} to apply to the result set, or
+     *            {@code null} for unsorted results
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     * @param realms the {@link Realms} that scope the lookup
+     * @param <T> the {@link Record} type
+     * @return a {@link Supplier} that yields the matching records' data
      */
-
-    private <T extends Record> Map<Long, Map<String, Set<Object>>> $findAny(
-            Concourse concourse, Class<T> clazz, Criteria criteria,
+    private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $findAny(
+            Reader reader, Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
         criteria = $Criteria.amongRealms(realms,
                 $Criteria.accrossClassHierachy(clazz, criteria));
         Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-        return read(concourse, paths, criteria, order, page);
+        return read(reader, paths, criteria, order, page);
     }
 
-    /*
-     * TODO: next steps
-     * - find the methods like $findAny, will need to call the new read method.
-     * The handling for AUTO will need to be at a different layer. Basically the
-     * materialization needs to be owned by select. I think the new approach is
-     * that all the methods call into select (except search
-     */
-
     /**
-     * Return the ids of all the {@code Record}s in the {@code clazz}, using the
-     * provided {@code concourse} connection.
+     * Record on {@code reader} a read for every {@link Record} of
+     * {@code clazz}, scoped to {@code realms} and shaped by {@code order} and
+     * {@code page}.
      *
-     * @param concourse
-     * @param clazz
-     * @param order
-     * @param page
-     * @param realms
-     * @return the records in the class
+     * @param reader the {@link Reader} that records the read
+     * @param clazz the target {@link Record} class (used to scope the lookup to
+     *            instances of exactly this class)
+     * @param order the {@link Order} to apply to the result set, or
+     *            {@code null} for unsorted results
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     * @param realms the {@link Realms} that scope the lookup
+     * @param <T> the {@link Record} type
+     * @return a {@link Supplier} that yields the records' data
      */
-    private <T extends Record> Map<Long, Map<String, Set<Object>>> $load(
-            Concourse concourse, Class<T> clazz, @Nullable Order order,
+    private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $load(
+            Reader reader, Class<T> clazz, @Nullable Order order,
             @Nullable Page page, @Nonnull Realms realms) {
         Criteria criteria = $Criteria.amongRealms(realms,
                 $Criteria.forClass(clazz));
         Set<String> paths = getPathsForClassIfSupported(clazz);
-        return read(concourse, paths, criteria, order, page);
+        return read(reader, paths, criteria, order, page);
     }
 
     /**
-     * Return the ids of all the {@code Record}s in the {@code clazz} hierarchy,
-     * using the provided {@code concourse} connection.
+     * Record on {@code reader} a read for every {@link Record} in
+     * {@code clazz}'s hierarchy, scoped to {@code realms} and shaped by
+     * {@code order} and {@code page}.
      *
-     * @param concourse
-     * @param clazz
-     * @param order
-     * @param page
-     * @param realms
-     * @return the records in the class hierarchy
+     * @param reader the {@link Reader} that records the read
+     * @param clazz the {@link Record} class whose hierarchy is queried
+     * @param order the {@link Order} to apply to the result set, or
+     *            {@code null} for unsorted results
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     * @param realms the {@link Realms} that scope the lookup
+     * @param <T> the {@link Record} type
+     * @return a {@link Supplier} that yields the records' data
      */
-    private <T extends Record> Map<Long, Map<String, Set<Object>>> $loadAny(
-            Concourse concourse, Class<T> clazz, @Nullable Order order,
+    private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $loadAny(
+            Reader reader, Class<T> clazz, @Nullable Order order,
             @Nullable Page page, Realms realms) {
         Criteria criteria = $Criteria.amongRealms(realms,
                 $Criteria.forClassHierarchy(clazz));
         Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-        return read(concourse, paths, criteria, order, page);
+        return read(reader, paths, criteria, order, page);
     }
 
     /**
@@ -1448,35 +1420,48 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Execute a single {@link DatabaseSelection}. This is the canonical
-     * dispatch point for all read operations &mdash; cache recall,
-     * {@link AdHocDataSource} routing, and database querying all funnel through
-     * here.
-     * <p>
-     * On completion, {@code selection}'s {@link DatabaseSelection#result
-     * result} and {@link DatabaseSelection#state state} are set.
+     * Resolve {@code selection} against the database (or any matching
+     * {@link AdHocDataSource AdHocDataSources}), recording any required reads
+     * on {@code reader} and mutating {@code selection} with its result.
+     * Equivalent to invoking
+     * {@link #$selectWithPossibleSources(Reader, DatabaseSelection, Set)} with
+     * no pre-supplied {@link AdHocDataSource} set.
      *
-     * @param selection the {@link DatabaseSelection} to execute
+     * @param reader the {@link Reader} that records any required reads
+     * @param selection the {@link DatabaseSelection} to resolve
      * @param <T> the {@link Record} type
-     * @param <R> the result type
      */
-    private <T extends Record, R> void $select(DatabaseSelection<T> selection) {
-        $selectWithPossibleSources(selection, null);
+    private <T extends Record> void $select(Reader reader,
+            DatabaseSelection<T> selection) {
+        $selectWithPossibleSources(reader, selection, null);
     }
 
     /**
-     * Execute a {@link LoadClassSelection} against the database.
+     * Record on {@code reader} the read required to resolve {@code selection}
+     * and return a {@link Supplier} that yields a {@link SelectResult} holding
+     * the matching {@link Record Records}.
+     * <p>
+     * When the server supports native sorting/pagination (or none is requested)
+     * and the selection has no client-side filter combined with a page, exactly
+     * one read is recorded on {@code reader} and the returned {@link Supplier}
+     * simply instantiates the {@link Record Records} from that read's result.
+     * When the selection requires both a client-side filter and a page, the
+     * iterative paging happens inside the returned {@link Supplier} on a
+     * private connection so it does not interfere with other recordings on
+     * {@code reader}. When the server lacks native sorting/pagination the work
+     * happens inside the returned {@link Supplier} via
+     * {@link #fetch(Selection)}.
      *
-     * @param selection the {@link LoadClassSelection} to execute
+     * @param reader the {@link Reader} that records the read when the selection
+     *            can be resolved with a single recorded query
+     * @param selection the {@link LoadClassSelection} to resolve
      * @param <T> the {@link Record} type
-     * @return a {@link SelectResult} containing the matching {@link Record
-     *         Records} and, when a filter is applied without pagination, the
-     *         unfiltered data for caching
+     * @return a {@link Supplier} that yields the {@link SelectResult}, whose
+     *         companion value (when a filter without pagination is applied)
+     *         carries the unfiltered records
      */
-    private <T extends Record> SelectResult<Set<T>> $selectClass(
-            LoadClassSelection<T> selection) {
-        AtomicReference<Concourse> connection = new AtomicReference<Concourse>(
-                null);
+    private <T extends Record> Supplier<SelectResult<Set<T>>> $selectClass(
+            Reader reader, LoadClassSelection<T> selection) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Order order = selection.order;
@@ -1484,40 +1469,63 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Realms realms = selection.realms;
         Predicate<T> filter = selection.filter;
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
-        try {
-            if(hasNativeSortingAndPagination
-                    || doesNotRequireSortingOrPagination(order, page)) {
-                Function<Page, Set<T>> retriever = $page -> {
-                    // When native sorting/pagination is supported OR no
-                    // sorting/pagination is requested, the database can handle
-                    // the query directly without client-side stream
-                    // manipulation.
-                    Concourse concourse = ensureValidConnection(connection);
-                    Map<Long, Map<String, Set<Object>>> data = any
-                            ? $loadAny(concourse, clazz, order, $page, realms)
-                            : $load(concourse, clazz, order, $page, realms);
-                    return any ? instantiateAll(data)
-                            : instantiateAll(clazz, data);
+        if(hasNativeSortingAndPagination
+                || doesNotRequireSortingOrPagination(order, page)) {
+            // When native sorting/pagination is supported OR no
+            // sorting/pagination is requested, the database can handle the
+            // query directly without client-side stream manipulation.
+            if(hasFilter && page != null) {
+                return () -> {
+                    AtomicReference<Concourse> connection = new AtomicReference<>(
+                            null);
+                    try {
+                        Function<Page, Set<T>> retriever = $page -> {
+                            Concourse concourse = ensureValidConnection(
+                                    connection);
+                            Reader _reader = new ImmediateReader(concourse);
+                            Map<Long, Map<String, Set<Object>>> data = any
+                                    ? $loadAny(_reader, clazz, order, $page,
+                                            realms).get()
+                                    : $load(_reader, clazz, order, $page,
+                                            realms).get();
+                            return any ? instantiateAll(data)
+                                    : instantiateAll(clazz, data);
+                        };
+                        return new SelectResult<>(Pagination
+                                .applyFilterAndPage(retriever, filter, page));
+                    }
+                    finally {
+                        if(connection.get() != null) {
+                            connections.release(connection.get());
+                        }
+                    }
                 };
-                if(hasFilter && page != null) {
-                    return new SelectResult<>(Pagination
-                            .applyFilterAndPage(retriever, filter, page));
-                }
-                else if(hasFilter) {
-                    Set<T> unfiltered = retriever.apply(page);
-                    return new SelectResult<>(
-                            unfiltered.stream().filter(filter)
-                                    .collect(Collectors
-                                            .toCollection(LinkedHashSet::new)),
-                            unfiltered);
-                }
-                else {
-                    return new SelectResult<>(retriever.apply(page));
-                }
             }
             else {
-                // Legacy servers lack native sorting/pagination, so results
-                // must be fetched and processed client-side.
+                Supplier<Map<Long, Map<String, Set<Object>>>> supplier = any
+                        ? $loadAny(reader, clazz, order, page, realms)
+                        : $load(reader, clazz, order, page, realms);
+                return () -> {
+                    Map<Long, Map<String, Set<Object>>> data = supplier.get();
+                    Set<T> records = any ? instantiateAll(data)
+                            : instantiateAll(clazz, data);
+                    if(hasFilter) {
+                        return new SelectResult<>(records.stream()
+                                .filter(filter)
+                                .collect(Collectors
+                                        .toCollection(LinkedHashSet::new)),
+                                records);
+                    }
+                    else {
+                        return new SelectResult<>(records);
+                    }
+                };
+            }
+        }
+        else {
+            // Legacy servers lack native sorting/pagination, so results must
+            // be fetched and processed client-side.
+            return () -> {
                 Set<T> records = fetch(
                         Selection.of(clazz).any(any).realms(realms));
                 if(order != null) {
@@ -1533,27 +1541,33 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 return new SelectResult<>(stream
                         .collect(Collectors.toCollection(LinkedHashSet::new)));
-            }
-        }
-        finally {
-            if(connection.get() != null) {
-                connections.release(connection.get());
-            }
+            };
         }
     }
 
     /**
-     * Execute a {@link CountSelection} against the database.
+     * Record on {@code reader} the count required to resolve {@code selection}
+     * and return a {@link Supplier} that yields a {@link SelectResult} holding
+     * the matching count.
+     * <p>
+     * When the selection has no client-side filter, exactly one count is
+     * recorded on {@code reader} (using a native count command if the server
+     * supports it, otherwise a find whose size is taken at resolution time).
+     * When the selection has a client-side filter, the count is computed inside
+     * the returned {@link Supplier} via {@link #fetch(Selection)} (no read is
+     * recorded on {@code reader}).
      *
-     * @param selection the {@link CountSelection} to execute
+     * @param reader the {@link Reader} that records the count when the
+     *            selection can be resolved with a single recorded query
+     * @param selection the {@link CountSelection} to resolve
      * @param <T> the {@link Record} type
-     * @return a {@link SelectResult} containing the count; no
-     *         {@link SelectResult#cacheValue} is provided because the inner
-     *         {@code fetch()} caches the unfiltered set under its own
-     *         {@link Reservation}
+     * @return a {@link Supplier} that yields the {@link SelectResult}; no
+     *         companion value is carried because the underlying
+     *         {@link #fetch(Selection)} (when used) covers the unfiltered set
+     *         under its own {@link Reservation}
      */
-    private <T extends Record> SelectResult<Integer> $selectCount(
-            CountSelection<T> selection) {
+    private <T extends Record> Supplier<SelectResult<Integer>> $selectCount(
+            Reader reader, CountSelection<T> selection) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Criteria criteria = selection.criteria;
@@ -1563,28 +1577,33 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasFilter) {
             // Fetch unfiltered so the inner selection caches reusable data,
             // then count the filtered stream.
-            Set<T> records = fetch(Selection.of(clazz).any(any).where(criteria)
-                    .realms(realms));
-            return new SelectResult<>(
-                    (int) records.stream().filter(filter).count());
+            return () -> {
+                Set<T> records = fetch(Selection.of(clazz).any(any)
+                        .where(criteria).realms(realms));
+                return new SelectResult<>(
+                        (int) records.stream().filter(filter).count());
+            };
         }
         else if(criteria == null) {
             // No criteria means count all records of this class
-            return new SelectResult<>(any
-                    ? $count($Criteria.amongRealms(realms,
-                            $Criteria.forClassHierarchy(clazz)))
-                    : $count($Criteria.amongRealms(realms,
-                            $Criteria.forClass(clazz))));
+            Supplier<Integer> supplier = $count(reader, any
+                    ? $Criteria.amongRealms(realms,
+                            $Criteria.forClassHierarchy(clazz))
+                    : $Criteria.amongRealms(realms, $Criteria.forClass(clazz)));
+            return () -> new SelectResult<>(supplier.get());
         }
         else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-            return new SelectResult<>(any
-                    ? $count($Criteria.amongRealms(realms,
-                            $Criteria.accrossClassHierachy(clazz, criteria)))
-                    : $count($Criteria.amongRealms(realms,
-                            $Criteria.withinClass(clazz, criteria))));
+            Supplier<Integer> supplier = $count(
+                    reader, any
+                            ? $Criteria.amongRealms(realms,
+                                    $Criteria.accrossClassHierachy(clazz,
+                                            criteria))
+                            : $Criteria.amongRealms(realms,
+                                    $Criteria.withinClass(clazz, criteria)));
+            return () -> new SelectResult<>(supplier.get());
         }
         else {
-            return new SelectResult<>(any
+            return () -> new SelectResult<>(any
                     ? filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION,
                             realms).size()
                     : filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms)
@@ -1593,18 +1612,33 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Execute a {@link FindSelection} against the database.
+     * Record on {@code reader} the read required to resolve {@code selection}
+     * and return a {@link Supplier} that yields a {@link SelectResult} holding
+     * the matching {@link Record Records}.
+     * <p>
+     * When the criteria can be resolved by the database and the selection has
+     * no client-side filter combined with a page, exactly one read is recorded
+     * on {@code reader} and the returned {@link Supplier} instantiates the
+     * {@link Record Records} from that read's result. When the criteria cannot
+     * be resolved by the database (e.g., touches fields with client-side
+     * predicates) the work happens inside the returned {@link Supplier} via
+     * {@link #filter} / {@link #filterAny} and no read is recorded on
+     * {@code reader}. When the selection requires both a client-side filter and
+     * a page, the iterative paging happens inside the returned {@link Supplier}
+     * on a private connection. When the server lacks native sorting/pagination
+     * the work happens inside the returned {@link Supplier} via
+     * {@link #fetch(Selection)}.
      *
-     * @param selection the {@link FindSelection} to execute
+     * @param reader the {@link Reader} that records the read when the selection
+     *            can be resolved with a single recorded query
+     * @param selection the {@link FindSelection} to resolve
      * @param <T> the {@link Record} type
-     * @return a {@link SelectResult} containing the matching {@link Record
-     *         Records} and, when a filter is applied without pagination, the
-     *         unfiltered data for caching
+     * @return a {@link Supplier} that yields the {@link SelectResult}, whose
+     *         companion value (when a filter without pagination is applied)
+     *         carries the unfiltered records
      */
-    private <T extends Record> SelectResult<Set<T>> $selectCriteria(
-            FindSelection<T> selection) {
-        AtomicReference<Concourse> connection = new AtomicReference<Concourse>(
-                null);
+    private <T extends Record> Supplier<SelectResult<Set<T>>> $selectCriteria(
+            Reader reader, FindSelection<T> selection) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Criteria criteria = selection.criteria;
@@ -1613,50 +1647,91 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Realms realms = selection.realms;
         Predicate<T> filter = selection.filter;
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
-        try {
-            if(hasNativeSortingAndPagination
-                    || doesNotRequireSortingOrPagination(order, page)) {
-                Function<Page, Set<T>> retriever = $page -> {
-                    if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
-                        // When native sorting/pagination is supported OR no
-                        // sorting/pagination is requested, the database can
-                        // handle the query directly without client-side stream
-                        // manipulation.
-                        Concourse concourse = ensureValidConnection(connection);
-                        Map<Long, Map<String, Set<Object>>> data = any
-                                ? $findAny(concourse, clazz, criteria, order,
-                                        $page, realms)
-                                : $find(concourse, clazz, criteria, order,
-                                        $page, realms);
-                        return any ? instantiateAll(data)
-                                : instantiateAll(clazz, data);
+        if(hasNativeSortingAndPagination
+                || doesNotRequireSortingOrPagination(order, page)) {
+            // When native sorting/pagination is supported OR no
+            // sorting/pagination is requested, the database can handle the
+            // query directly without client-side stream manipulation.
+            boolean dbResolvable = Record.isDatabaseResolvableCondition(clazz,
+                    criteria);
+            if(hasFilter && page != null) {
+                return () -> {
+                    AtomicReference<Concourse> connection = new AtomicReference<>(
+                            null);
+                    try {
+                        Function<Page, Set<T>> retriever = $page -> {
+                            if(dbResolvable) {
+                                Concourse concourse = ensureValidConnection(
+                                        connection);
+                                Reader _reader = new ImmediateReader(concourse);
+                                Map<Long, Map<String, Set<Object>>> data = any
+                                        ? $findAny(_reader, clazz, criteria,
+                                                order, $page, realms).get()
+                                        : $find(_reader, clazz, criteria, order,
+                                                $page, realms).get();
+                                return any ? instantiateAll(data)
+                                        : instantiateAll(clazz, data);
+                            }
+                            else {
+                                return any
+                                        ? filterAny(clazz, criteria, order,
+                                                $page, realms)
+                                        : filter(clazz, criteria, order, $page,
+                                                realms);
+                            }
+                        };
+                        return new SelectResult<>(Pagination
+                                .applyFilterAndPage(retriever, filter, page));
                     }
-                    else {
-                        return any
-                                ? filterAny(clazz, criteria, order, $page,
-                                        realms)
-                                : filter(clazz, criteria, order, $page, realms);
+                    finally {
+                        if(connection.get() != null) {
+                            connections.release(connection.get());
+                        }
                     }
                 };
-                if(hasFilter && page != null) {
-                    return new SelectResult<>(Pagination
-                            .applyFilterAndPage(retriever, filter, page));
-                }
-                else if(hasFilter) {
-                    Set<T> unfiltered = retriever.apply(page);
-                    return new SelectResult<>(
-                            unfiltered.stream().filter(filter)
-                                    .collect(Collectors
-                                            .toCollection(LinkedHashSet::new)),
-                            unfiltered);
-                }
-                else {
-                    return new SelectResult<>(retriever.apply(page));
-                }
+            }
+            else if(dbResolvable) {
+                Supplier<Map<Long, Map<String, Set<Object>>>> supplier = any
+                        ? $findAny(reader, clazz, criteria, order, page, realms)
+                        : $find(reader, clazz, criteria, order, page, realms);
+                return () -> {
+                    Map<Long, Map<String, Set<Object>>> data = supplier.get();
+                    Set<T> records = any ? instantiateAll(data)
+                            : instantiateAll(clazz, data);
+                    if(hasFilter) {
+                        return new SelectResult<>(records.stream()
+                                .filter(filter)
+                                .collect(Collectors
+                                        .toCollection(LinkedHashSet::new)),
+                                records);
+                    }
+                    else {
+                        return new SelectResult<>(records);
+                    }
+                };
             }
             else {
-                // Legacy servers lack native sorting/pagination, so results
-                // must be fetched and processed client-side.
+                return () -> {
+                    Set<T> records = any
+                            ? filterAny(clazz, criteria, order, page, realms)
+                            : filter(clazz, criteria, order, page, realms);
+                    if(hasFilter) {
+                        return new SelectResult<>(records.stream()
+                                .filter(filter)
+                                .collect(Collectors
+                                        .toCollection(LinkedHashSet::new)),
+                                records);
+                    }
+                    else {
+                        return new SelectResult<>(records);
+                    }
+                };
+            }
+        }
+        else {
+            // Legacy servers lack native sorting/pagination, so results must
+            // be fetched and processed client-side.
+            return () -> {
                 Set<T> records = fetch(
                         Selection.of(clazz).any(any).where(criteria));
                 if(order != null) {
@@ -1672,70 +1747,167 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 return new SelectResult<>(stream
                         .collect(Collectors.toCollection(LinkedHashSet::new)));
-            }
-        }
-        finally {
-            if(connection.get() != null) {
-                connections.release(connection.get());
-            }
+            };
         }
     }
 
     /**
-     * Execute a {@link LoadRecordSelection} against the database.
+     * Resolve {@code selection} against the supplied {@code sources} by
+     * dispatching {@link AdHocDataSource#fetch(DatabaseSelection)} to each
+     * source and combining the results.
+     * <p>
+     * For multi-source selections, results are combined per
+     * {@link DatabaseSelection} subtype: counts are summed,
+     * {@link LoadRecordSelection} returns the first non-{@code null} record,
+     * {@link UniqueSelection} enforces at-most-one across sources, and
+     * {@link SetBasedSelection} flattens, sorts, and pages the union.
      *
-     * @param selection the {@link LoadRecordSelection} to execute
+     * @param selection the {@link DatabaseSelection} to resolve
+     * @param sources the non-empty {@link AdHocDataSource AdHocDataSources}
+     *            against which {@code selection} is dispatched
      * @param <T> the {@link Record} type
-     * @return a {@link SelectResult} containing the loaded {@link Record} (or
-     *         {@code null}) and, when a filter is applied, the unfiltered
-     *         record for caching
+     * @param <R> the {@link DatabaseSelection} result type
+     * @return the resolved result combined from {@code sources}
      */
-    private <T extends Record> SelectResult<T> $selectRecord(
-            LoadRecordSelection<T> selection) {
-        Concourse connection = null;
-        Class<T> clazz = selection.clazz;
+    @SuppressWarnings("unchecked")
+    private <T extends Record, R> R $selectFromSources(
+            DatabaseSelection<T> selection, Set<AdHocDataSource<?>> sources) {
+        if(sources.size() == 1) {
+            return (R) sources.iterator().next().fetch(selection.duplicate());
+        }
+        if(selection instanceof CountSelection) {
+            Integer count = 0;
+            for (AdHocDataSource<?> source : sources) {
+                count += (int) source.fetch(selection.duplicate());
+            }
+            return (R) count;
+        }
+        else if(selection instanceof LoadRecordSelection) {
+            T loaded = null;
+            for (AdHocDataSource<?> source : sources) {
+                loaded = source.fetch(selection.duplicate());
+                if(loaded != null) {
+                    break;
+                }
+            }
+            return (R) loaded;
+        }
+        else if(selection instanceof UniqueSelection) {
+            T found = null;
+            for (AdHocDataSource<?> source : sources) {
+                T candidate = source.fetch(selection.duplicate());
+                if(candidate != null && found != null) {
+                    // Enforce uniqueness across AdHocDataSources
+                    UniqueSelection<T> us = (UniqueSelection<T>) selection;
+                    throw duplicateEntryException(
+                            "Multiple records match {} in {}{}", us.criteria,
+                            us.any ? "the hierarchy of " : "", selection.clazz);
+                }
+                else if(candidate != null) {
+                    found = candidate;
+                }
+            }
+            return (R) found;
+        }
+        else if(selection instanceof SetBasedSelection) {
+            Order order = ((SetBasedSelection<?>) selection).order;
+            Page page = ((SetBasedSelection<?>) selection).page;
+            Set<T> results = new LinkedHashSet<>();
+            for (AdHocDataSource<?> source : sources) {
+                SetBasedSelection<?> dupe = (SetBasedSelection<?>) selection
+                        .duplicate();
+                Reflection.set("order", null, dupe);
+                Reflection.set("page", null, dupe);
+                results.addAll(source.fetch(dupe));
+            }
+            if(order != null) {
+                results = DatabaseInterface.sort(results,
+                        backwardsCompatible(order));
+            }
+            if(page != null) {
+                results = results.stream().skip(page.skip()).limit(page.limit())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+            }
+            return (R) results;
+        }
+        else {
+            throw new IllegalStateException(
+                    "Unsupported Selection type " + selection.getClass());
+        }
+    }
+
+    /**
+     * Record on {@code reader} the read required to resolve {@code selection}
+     * and return a {@link Supplier} that yields a {@link SelectResult} holding
+     * the loaded {@link Record} (or {@code null} when the realm gate excludes
+     * it).
+     * <p>
+     * The {@link Record Record's} data is recorded as a single {@code select}
+     * on {@code reader} so the load participates in batching. The result
+     * carries the section key (used to refine {@link DatabaseSelection#clazz}
+     * when its hierarchy has descendants), the realms key (used for the realm
+     * gate), and the field values {@link #instantiate(Class, long, Map, Map)
+     * instantiation} consumes without re-fetching from the database. Additional
+     * reads required to complete the load (navigate prefetch, bulk-select link
+     * prefetch) happen inside the returned {@link Supplier}.
+     *
+     * @param reader the {@link Reader} that records the read
+     * @param selection the {@link LoadRecordSelection} to resolve
+     * @param <T> the {@link Record} type
+     * @return a {@link Supplier} that yields the {@link SelectResult}, whose
+     *         companion value (when a filter is applied) carries the unfiltered
+     *         loaded {@link Record}
+     */
+    @SuppressWarnings("unchecked")
+    private <T extends Record> Supplier<SelectResult<T>> $selectRecord(
+            Reader reader, LoadRecordSelection<T> selection) {
+        Class<T> initialClazz = selection.clazz;
         long id = selection.id;
         Realms realms = selection.realms;
         Predicate<T> filter = selection.filter;
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
-        try {
-            if(StaticAnalysis.instance().getClassHierarchy(clazz).size() > 1) {
-                // The provided clazz has descendants, so it is possible
-                // that the Record with the #id is actually a member of a
-                // subclass
-                connection = ensureValidConnection(connection);
-                String section = connection.get(Record.SECTION_KEY, id);
-                if(section != null) {
+        // The provided clazz has descendants, so it is possible that the
+        // Record with the #id is actually a member of a subclass.
+        boolean needsSectionLookup = StaticAnalysis.instance()
+                .getClassHierarchy(initialClazz).size() > 1;
+        Set<String> paths = needsSectionLookup ? null
+                : getPathsForClassIfSupported(initialClazz);
+        Supplier<Map<String, Set<Object>>> dataSupplier = paths != null
+                ? reader.select(paths, id)
+                : reader.select(id);
+        return () -> {
+            Map<String, Set<Object>> data = dataSupplier.get();
+            if(data == null || data.isEmpty()) {
+                return new SelectResult<>(null);
+            }
+            Class<T> clazz = initialClazz;
+            if(needsSectionLookup) {
+                Set<Object> sections = data.get(Record.SECTION_KEY);
+                if(sections != null && !sections.isEmpty()) {
+                    String section = (String) Iterables.getLast(sections);
                     clazz = Reflection.getClassCasted(section);
                 }
             }
             if(!realms.names().isEmpty()) {
-                connection = ensureValidConnection(connection);
-                Set<String> $realms = MoreObjects.firstNonNull(
-                        connection.select(Record.REALMS_KEY, id),
+                Set<Object> $realmsRaw = data.getOrDefault(Record.REALMS_KEY,
                         ImmutableSet.of());
+                Set<String> $realms = (Set<String>) (Set<?>) $realmsRaw;
                 if(Sets.intersection($realms, realms.names()).isEmpty()) {
-                    return new SelectResult<>(null); // TODO: what to do here?
+                    return new SelectResult<>(null);
                 }
             }
-            Map<String, Set<Object>> data = null;
             Map<Long, Map<String, Set<Object>>> targets = null;
             if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE) {
                 Set<String> navigatePaths = getNavigatePathsForClassIfSupported(
                         clazz);
                 if(navigatePaths != null) {
-                    connection = ensureValidConnection(connection);
-                    targets = connection.navigate(navigatePaths, id);
+                    targets = reader.navigate(navigatePaths, id).get();
                 }
             }
             else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
-                connection = ensureValidConnection(connection);
-                Set<String> paths = getPathsForClassIfSupported(clazz);
-                data = paths != null ? connection.select(paths, id)
-                        : connection.select(id);
                 Map<Long, Map<String, Set<Object>>> seed = Maps.newHashMap();
                 seed.put(id, data);
-                targets = prefetchLinks(connection, seed);
+                targets = prefetchLinks(reader.concourse(), seed);
             }
             T record = instantiate(clazz, id, data, targets);
             if(record != null && hasFilter) {
@@ -1745,193 +1917,132 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             else {
                 return new SelectResult<>(record);
             }
-        }
-        finally {
-            if(connection != null) {
-                connections.release(connection);
-            }
-        }
+        };
     }
 
     /**
-     * Execute a {@link UniqueSelection} against the database.
+     * Record on {@code reader} the read required to resolve {@code selection}
+     * and return a {@link Supplier} that yields a {@link SelectResult} holding
+     * the unique matching {@link Record} (or {@code null} when no record
+     * matches).
+     * <p>
+     * Composes either {@link #$selectCriteria(Reader, FindSelection)} (when
+     * {@code selection} carries a criteria) or
+     * {@link #$selectClass(Reader, LoadClassSelection)} (otherwise) with a
+     * {@link DatabaseInterface#UNIQUE_PAGINATION page-of-two}, and adapts the
+     * {@link Set} of matches to a single record (or throws if more than one is
+     * found).
      *
-     * @param selection the {@link UniqueSelection} to execute
+     * @param reader the {@link Reader} that records the underlying read
+     * @param selection the {@link UniqueSelection} to resolve
      * @param <T> the {@link Record} type
-     * @return a {@link SelectResult} containing the unique matching
-     *         {@link Record} (or {@code null}) and any cache-safe value
-     *         propagated from the inner query
-     * @throws DuplicateEntryException if more than one {@link Record} matches
+     * @return a {@link Supplier} that yields the {@link SelectResult}, whose
+     *         companion value carries any companion value produced by the inner
+     *         query
+     * @throws DuplicateEntryException from the returned {@link Supplier} when
+     *             more than one {@link Record} matches
      */
-    private <T extends Record> SelectResult<T> $selectUnique(
-            UniqueSelection<T> selection) {
+    private <T extends Record> Supplier<SelectResult<T>> $selectUnique(
+            Reader reader, UniqueSelection<T> selection) {
         DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
                 selection.clazz, selection.any);
         state.criteria = selection.criteria;
         state.page = DatabaseInterface.UNIQUE_PAGINATION;
         state.filter = selection.filter;
         state.realms = selection.realms;
-        SelectResult<Set<T>> selected;
+        Supplier<SelectResult<Set<T>>> supplier;
         if(selection.criteria != null) {
-            selected = $selectCriteria(new FindSelection<>(state));
+            supplier = $selectCriteria(reader, new FindSelection<>(state));
         }
         else {
-            selected = $selectClass(new LoadClassSelection<>(state));
+            supplier = $selectClass(reader, new LoadClassSelection<>(state));
         }
-        Set<T> results = selected.result;
-        T result;
-        if(results.isEmpty()) {
-            result = null;
-        }
-        else if(results.size() == 1) {
-            result = results.iterator().next();
-        }
-        else {
-            throw duplicateEntryException("Multiple records match {} in {}{}",
-                    selection.criteria,
-                    selection.any ? "the hierarchy of " : "", selection.clazz);
-        }
-        return new SelectResult<>(result, selected.cacheValue);
+        return () -> {
+            SelectResult<Set<T>> selected = supplier.get();
+            Set<T> results = selected.result;
+            T result;
+            if(results.isEmpty()) {
+                result = null;
+            }
+            else if(results.size() == 1) {
+                result = results.iterator().next();
+            }
+            else {
+                throw duplicateEntryException(
+                        "Multiple records match {} in {}{}", selection.criteria,
+                        selection.any ? "the hierarchy of " : "",
+                        selection.clazz);
+            }
+            return new SelectResult<>(result, selected.cacheValue);
+        };
     }
 
     /**
-     * Execute a single {@link DatabaseSelection}.
-     * <p>
-     * On completion, {@code selection}'s {@link DatabaseSelection#result
-     * result} and {@link DatabaseSelection#state state} are set.
+     * Resolve {@code selection}, recording any required reads on {@code reader}
+     * and mutating {@code selection} with its result. Database-bound resolution
+     * is deferred to {@link Reader#drain() reader.drain()}; all other paths
+     * mutate {@code selection} immediately.
      *
-     * @param selection the {@link DatabaseSelection} to execute
-     * @param sources known {@link AdHocDataSource AdHocDataSources} that may
-     *            have data relevant {@link Selection}; typically provided if
-     *            the {@link Selection#clazz()} is a subclass of
-     *            {@link AdHocRecord} and prior work to
-     *            {@link #getAttachedSources(Class) get attached sources}
-     *            preceded this method call
+     * @param reader the {@link Reader} that records any required reads
+     * @param selection the {@link DatabaseSelection} to resolve
+     * @param sources a pre-resolved {@link Set} of {@link AdHocDataSource
+     *            AdHocDataSources} for {@code selection}'s class, or
+     *            {@code null} to have this method look them up
      * @param <T> the {@link Record} type
      * @param <R> the result type
      */
-    @SuppressWarnings("unchecked")
-    private <T extends Record, R> void $selectWithPossibleSources(
+    @SuppressWarnings({ "rawtypes" })
+    private <T extends Record, R> void $selectWithPossibleSources(Reader reader,
             DatabaseSelection<T> selection,
             @Nullable Set<AdHocDataSource<?>> sources) {
-        if(selection.state == Selection.State.RESOLVED) {
-            selection.setState(Selection.State.FINISHED);
-            return; /* (authorized short circuit) */
-        }
+        Preconditions.checkState(selection.state == Selection.State.PENDING,
+                "Selection must be PENDING; pre-resolved selections must be "
+                        + "handled by the caller before dispatch");
         selection.setState(Selection.State.SUBMITTED);
-        R result;
         R cached = recallAndPossiblyFilter(selection);
         if(cached != null) {
-            result = cached;
+            ((DatabaseSelection) selection).setResult(cached);
+            selection.setState(Selection.State.FINISHED);
+            return;
+        }
+        Set<AdHocDataSource<?>> resolvedSources = sources == null
+                ? (selection.any
+                        ? getAttachedSourcesForHierarchy(selection.clazz)
+                        : getAttachedSources(selection.clazz))
+                : sources;
+        if(!resolvedSources.isEmpty()) {
+            R result = $selectFromSources(selection, resolvedSources);
+            ((DatabaseSelection) selection).setResult(result);
+            selection.setState(Selection.State.FINISHED);
+            return;
+        }
+        Supplier<? extends SelectResult<?>> supplier;
+        if(selection instanceof CountSelection) {
+            supplier = $selectCount(reader, (CountSelection<T>) selection);
+        }
+        else if(selection instanceof LoadRecordSelection) {
+            supplier = $selectRecord(reader,
+                    (LoadRecordSelection<T>) selection);
+        }
+        else if(selection instanceof LoadClassSelection) {
+            supplier = $selectClass(reader, (LoadClassSelection<T>) selection);
+        }
+        else if(selection instanceof FindSelection) {
+            supplier = $selectCriteria(reader, (FindSelection<T>) selection);
+        }
+        else if(selection instanceof UniqueSelection) {
+            supplier = $selectUnique(reader, (UniqueSelection<T>) selection);
         }
         else {
-            sources = sources == null
-                    ? (selection.any
-                            ? getAttachedSourcesForHierarchy(selection.clazz)
-                            : getAttachedSources(selection.clazz))
-                    : sources;
-            if(sources.size() == 1) {
-                result = (R) sources.iterator().next()
-                        .fetch(selection.duplicate());
-            }
-            else if(!sources.isEmpty()) {
-                if(selection instanceof CountSelection) {
-                    Integer count = 0;
-                    for (AdHocDataSource<?> source : sources) {
-                        count += (int) source.fetch(selection.duplicate());
-                    }
-                    result = (R) count;
-                }
-                else if(selection instanceof LoadRecordSelection) {
-                    T loaded = null;
-                    for (AdHocDataSource<?> source : sources) {
-                        loaded = source.fetch(selection.duplicate());
-                        if(loaded != null) {
-                            break;
-                        }
-                    }
-                    result = (R) loaded;
-                }
-                else if(selection instanceof UniqueSelection) {
-                    T found = null;
-                    for (AdHocDataSource<?> source : sources) {
-                        T candidate = source.fetch(selection.duplicate());
-                        if(candidate != null && found != null) {
-                            // Enforce uniqueness across AdHocDataSources
-                            UniqueSelection<T> us = (UniqueSelection<T>) selection;
-                            throw duplicateEntryException(
-                                    "Multiple records match {} in {}{}",
-                                    us.criteria,
-                                    us.any ? "the hierarchy of " : "",
-                                    selection.clazz);
-                        }
-                        else if(candidate != null) {
-                            found = candidate;
-                        }
-                    }
-                    result = (R) found;
-                }
-                else if(selection instanceof SetBasedSelection) {
-                    Order order = ((SetBasedSelection<?>) selection).order;
-                    Page page = ((SetBasedSelection<?>) selection).page;
-                    Set<T> results = new LinkedHashSet<>();
-
-                    for (AdHocDataSource<?> source : sources) {
-                        SetBasedSelection<?> dupe = (SetBasedSelection<?>) selection
-                                .duplicate();
-                        Reflection.set("order", null, dupe);
-                        Reflection.set("page", null, dupe);
-                        results.addAll(source.fetch(dupe));
-                    }
-                    if(order != null) {
-                        results = DatabaseInterface.sort(results,
-                                backwardsCompatible(order));
-                    }
-                    if(page != null) {
-                        results = results.stream().skip(page.skip())
-                                .limit(page.limit()).collect(Collectors
-                                        .toCollection(LinkedHashSet::new));
-                    }
-                    result = (R) results;
-                }
-                else {
-                    throw new IllegalStateException(
-                            "Unsupported Selection type "
-                                    + selection.getClass());
-                }
-            }
-            else {
-                // Direct-DB path: the $select* methods return a SelectResult
-                // that separates the caller-facing (possibly filtered) result
-                // from the cache-safe (unfiltered) value. Each must be
-                // extracted here and placed on the input #selection
-                SelectResult<?> res;
-                if(selection instanceof CountSelection) {
-                    res = $selectCount((CountSelection<T>) selection);
-                }
-                else if(selection instanceof LoadRecordSelection) {
-                    res = $selectRecord((LoadRecordSelection<T>) selection);
-                }
-                else if(selection instanceof LoadClassSelection) {
-                    res = $selectClass((LoadClassSelection<T>) selection);
-                }
-                else if(selection instanceof FindSelection) {
-                    res = $selectCriteria((FindSelection<T>) selection);
-                }
-                else if(selection instanceof UniqueSelection) {
-                    res = $selectUnique((UniqueSelection<T>) selection);
-                }
-                else {
-                    throw new IllegalStateException(
-                            "Unsupported Selection type "
-                                    + selection.getClass());
-                }
-                result = (R) res.result;
-                selection.cacheValue = res.cacheValue;
-            }
+            throw new IllegalStateException(
+                    "Unsupported Selection type " + selection.getClass());
         }
-        selection.setResult(result);
-        selection.setState(Selection.State.FINISHED);
+        reader.onDrain(() -> {
+            SelectResult<?> res = supplier.get();
+            ((DatabaseSelection) selection).setResult(res.result);
+            selection.cacheValue = res.cacheValue;
+            selection.setState(Selection.State.FINISHED);
+        });
     }
 
     /**
@@ -2428,15 +2539,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return pool;
     }
 
-    // TODO: deprecate the AUTO strategy
-
     /**
-     * Return the data for every record matching {@code criteria} from
-     * {@code concourse}, restricted to {@code paths} when non-{@code null} and
+     * Record a read on {@code reader} for every record matching
+     * {@code criteria}, restricted to {@code paths} when non-{@code null} and
      * shaped by the configured {@link #readStrategy}.
      *
-     * @param concourse the {@link Concourse} connection against which the read
-     *            is issued
+     * @param reader the {@link Reader} on which to record the read
      * @param paths the field names whose values should be returned, or
      *            {@code null} to return every field
      * @param criteria the {@link Criteria} that identifies the records
@@ -2444,88 +2552,46 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            unsorted result
      * @param page the {@link Page} that limits the result set, or {@code null}
      *            for the full result set
-     * @return the matching record data
+     * @return a {@link Supplier} that yields the matching record data
      */
-    @SuppressWarnings("unchecked")
-    private Map<Long, Map<String, Set<Object>>> read(Concourse concourse,
+    private Supplier<Map<Long, Map<String, Set<Object>>>> read(Reader reader,
             @Nullable Set<String> paths, Criteria criteria,
             @Nullable Order order, @Nullable Page page) {
-        Map<Long, Map<String, Set<Object>>> data;
-        if(readStrategy == ReadStrategy.AUTO) {
-            Callable<Map<Long, Map<String, Set<Object>>>> bulk = () -> {
-                Concourse backup = Concourse.copyExistingConnection(concourse);
-                try {
-                    ReadHandle handle = new ConcourseReadHandle(backup);
-                    readWithStrategy(ReadStrategy.BULK, handle, paths, criteria,
-                            order, page);
-                    return (Map<Long, Map<String, Set<Object>>>) handle
-                            .materialize().get(0);
-                }
-                finally {
-                    backup.close();
-                }
-            };
-            Callable<Map<Long, Map<String, Set<Object>>>> stream = () -> {
-                // In case the bulk select takes too long or an error occurs,
-                // fall back to finding the matching ids and incrementally
-                // stream the result set.
-                Concourse backup = Concourse.copyExistingConnection(concourse);
-                try {
-                    ReadHandle handle = new ConcourseReadHandle(backup);
-                    readWithStrategy(ReadStrategy.STREAM, handle, paths,
-                            criteria, order, page);
-                    Set<Long> ids = (Set<Long>) handle.materialize().get(0);
-                    return stream(paths, ids);
-                }
-                finally {
-                    backup.close();
-                }
-            };
-            ExecutorRaceService<Map<Long, Map<String, Set<Object>>>> track = new ExecutorRaceService<>(
-                    executor);
-            Future<Map<Long, Map<String, Set<Object>>>> future;
-            try {
-                future = bulkSelectTimeoutMillis > 0
-                        ? track.raceWithHeadStart(bulkSelectTimeoutMillis,
-                                TimeUnit.MILLISECONDS, bulk, stream)
-                        : track.race(bulk, stream);
-                data = future.get();
+        if(readStrategy == ReadStrategy.BULK) {
+            if(order != null && page != null) {
+                return paths != null
+                        ? reader.select(paths, criteria, order, page)
+                        : reader.select(criteria, order, page);
             }
-            catch (InterruptedException | ExecutionException e) {
-                throw CheckedExceptions.wrapAsRuntimeException(e);
+            else if(order != null) {
+                return paths != null ? reader.select(paths, criteria, order)
+                        : reader.select(criteria, order);
+            }
+            else if(page != null) {
+                return paths != null ? reader.select(paths, criteria, page)
+                        : reader.select(criteria, page);
+            }
+            else {
+                return paths != null ? reader.select(paths, criteria)
+                        : reader.select(criteria);
             }
         }
-        else {
-            ReadHandle handle = new ConcourseReadHandle(concourse);
-            read(handle, paths, criteria, order, page);
-            Object result = handle.materialize().get(0);
-            if(readStrategy == ReadStrategy.BULK) {
-                data = (Map<Long, Map<String, Set<Object>>>) result;
+        else { // STREAM
+            Supplier<Set<Long>> ids;
+            if(order != null && page != null) {
+                ids = reader.find(criteria, order, page);
             }
-            else { // STREAM
-                data = stream(paths, (Set<Long>) result);
+            else if(order != null) {
+                ids = reader.find(criteria, order);
             }
+            else if(page != null) {
+                ids = reader.find(criteria, page);
+            }
+            else {
+                ids = reader.find(criteria);
+            }
+            return () -> stream(paths, ids.get());
         }
-        return data;
-    }
-
-    /**
-     * Use the {@code handle} to record the read described by {@code paths},
-     * {@code criteria}, {@code order}, and {@code page} using this
-     * {@link Runway Runway's} configured {@link #readStrategy}.
-     *
-     * @param handle the {@link ReadHandle} on which to record the read
-     * @param paths the field names whose values should be returned, or
-     *            {@code null} to return every field
-     * @param criteria the {@link Criteria} that identifies the records
-     * @param order the sort {@link Order} to apply, or {@code null} for an
-     *            unsorted result
-     * @param page the {@link Page} that limits the result set, or {@code null}
-     *            for the full result set
-     */
-    private void read(ReadHandle handle, @Nullable Set<String> paths,
-            Criteria criteria, @Nullable Order order, @Nullable Page page) {
-        readWithStrategy(readStrategy, handle, paths, criteria, order, page);
     }
 
     /**
@@ -2840,7 +2906,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Runway db = new Runway(connections);
             db.streamingReadBufferSize = streamingReadBufferSize;
             db.readStrategy = MoreObjects.firstNonNull(readStrategy,
-                    cache != null ? ReadStrategy.STREAM : ReadStrategy.AUTO);
+                    cache != null ? ReadStrategy.STREAM : ReadStrategy.BULK);
             db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
@@ -3267,20 +3333,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * The {@link ReadStrategy} determines how {@link Runway}
-     * {@link Runway#read(Concourse, Criteria, Order, Page) reads} data from
+     * The {@link ReadStrategy} determines how {@link Runway} reads data from
      * Concourse in response to a request.
      *
      * @author Jeff Nelson
      */
     public enum ReadStrategy {
-        /**
-         * Select the {@link #BULK} or {@link #STREAM} strategy on a
-         * read-by-read basis (usually depending upon which will return results
-         * faster).
-         */
-        AUTO,
-
         /**
          * Use Concourse's {@code select} method to read all the data for all
          * the records that match a request, at once.
