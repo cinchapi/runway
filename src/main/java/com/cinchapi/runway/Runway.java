@@ -969,53 +969,48 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         "Selection has already been submitted"))
                 .map(DatabaseSelection::resolve)
                 .toArray(DatabaseSelection[]::new);
-        // NOTE: Pre-resolved selections are excluded from `pending` so they
-        // never reach reserve(). Their result is tied to a specific scope,
-        // and reserving it under the filterless reservation key would taint
-        // subsequent same-key reads under a different scope.
-        List<DatabaseSelection<?>> pending = new ArrayList<>();
-        for (DatabaseSelection<?> selection : selections) {
-            if(selection.state == Selection.State.RESOLVED) {
-                selection.setState(Selection.State.FINISHED);
-            }
-            else {
-                pending.add(selection);
-            }
-        }
-        if(selections.length == 1) {
-            DatabaseSelection<?> selection = selections[0];
-            if(!pending.isEmpty()) {
-                Concourse concourse = connections.request();
-                try {
+        Concourse concourse = null;
+        try {
+            if(selections.length == 1) {
+                DatabaseSelection<?> selection = selections[0];
+                if(selection.state == Selection.State.RESOLVED) {
+                    selection.setState(Selection.State.FINISHED);
+                }
+                else {
+                    concourse = ensureValidConnection(concourse);
                     Reader reader = new ImmediateReader(concourse);
                     $select(reader, selection);
                     reader.drain();
+                    reserve(selection);
                 }
-                finally {
-                    connections.release(concourse);
-                }
-                reserve(selection);
+                return new Selections(selections);
             }
-            return new Selections(selections);
-        }
-        else {
-            List<DatabaseSelection<?>> unique = pending.stream()
-                    .map(SelectionKey::new).distinct().map(key -> key.selection)
-                    .collect(Collectors.toList());
-            if(!unique.isEmpty()) {
+            else {
+                List<DatabaseSelection<?>> unique = Arrays.stream(selections)
+                        .map(SelectionKey::new).distinct()
+                        .map(key -> key.selection).collect(Collectors.toList());
                 if(supportsBulkCommands) {
-                    Concourse concourse = connections.request();
-                    try {
-                        Reader reader = new EventualReader(concourse);
-                        for (DatabaseSelection<?> selection : unique) {
-                            $select(reader, selection);
+                    Reader reader = null;
+                    List<DatabaseSelection<?>> dispatched = new ArrayList<>();
+                    for (DatabaseSelection<?> selection : unique) {
+                        if(selection.state == Selection.State.RESOLVED) {
+                            selection.setState(Selection.State.FINISHED);
                         }
+                        else {
+                            if(reader == null) {
+                                concourse = ensureValidConnection(concourse);
+                                reader = new EventualReader(
+                                        concourse = ensureValidConnection(
+                                                concourse));
+                            }
+                            $select(reader, selection);
+                            dispatched.add(selection);
+                        }
+                    }
+                    if(reader != null) {
                         reader.drain();
                     }
-                    finally {
-                        connections.release(concourse);
-                    }
-                    for (DatabaseSelection<?> selection : unique) {
+                    for (DatabaseSelection<?> selection : dispatched) {
                         reserve(selection);
                     }
                 }
@@ -1024,6 +1019,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     List<DatabaseSelection<?>> combinable = new ArrayList<>();
                     Set<String> combinedClasses = Sets.newHashSet();
                     outer: for (DatabaseSelection<?> selection : unique) {
+                        if(selection.state == Selection.State.RESOLVED) {
+                            selection.setState(Selection.State.FINISHED);
+                            continue outer; /* (authorized short circuit) */
+                        }
                         // NOTE: Must manually attempt to recall here because it
                         // won't register as cached when dispatching route if a
                         // combination occurs and gets dispatched
@@ -1038,16 +1037,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                         selection.clazz)
                                 : getAttachedSources(selection.clazz);
                         if(!sources.isEmpty()) {
-                            Concourse concourse = connections.request();
-                            try {
-                                Reader reader = new ImmediateReader(concourse);
-                                $selectWithPossibleSources(reader, selection,
-                                        sources);
-                                reader.drain();
-                            }
-                            finally {
-                                connections.release(concourse);
-                            }
+                            concourse = ensureValidConnection(concourse);
+                            Reader reader = new ImmediateReader(concourse);
+                            $selectWithPossibleSources(reader, selection,
+                                    sources);
+                            reader.drain();
                             reserve(selection);
                             continue outer;
                         }
@@ -1088,17 +1082,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 : combined.or().group(criteria);
                     }
                     if(combined != null) {
-                        Concourse concourse = connections.request();
-                        try {
-                            Reader reader = new ImmediateReader(concourse);
-                            Map<Long, Map<String, Set<Object>>> data = read(
-                                    reader, null, combined, null, null).get();
-                            for (DatabaseSelection<?> selection : combinable) {
-                                demux(selection, data);
-                            }
-                        }
-                        finally {
-                            connections.release(concourse);
+                        concourse = ensureValidConnection(concourse);
+                        Reader reader = new ImmediateReader(concourse);
+                        Map<Long, Map<String, Set<Object>>> data = read(reader,
+                                null, combined, null, null).get();
+                        for (DatabaseSelection<?> selection : combinable) {
+                            demux(selection, data);
                         }
                     }
                     if(!isolated.isEmpty()) {
@@ -1106,15 +1095,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         for (int i = 0; i < isolated.size(); i++) {
                             DatabaseSelection<?> selection = isolated.get(i);
                             tasks[i] = () -> {
-                                Concourse concourse = connections.request();
+                                Concourse _concourse = connections.request();
                                 try {
                                     Reader reader = new ImmediateReader(
-                                            concourse);
+                                            _concourse);
                                     $select(reader, selection);
                                     reader.drain();
                                 }
                                 finally {
-                                    connections.release(concourse);
+                                    connections.release(_concourse);
                                 }
                             };
                         }
@@ -1128,31 +1117,39 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         }
                     }
                 }
-            }
 
-            // Propagate results to duplicates
-            for (DatabaseSelection<?> selection : selections) {
-                if(selection.state != Selection.State.FINISHED) {
-                    if(DatabaseSelection.isNoFilter(selection.filter)) {
-                        DatabaseSelection<?> canonical = unique.stream()
-                                .filter(item -> item.reservation()
-                                        .equals(selection.reservation()))
-                                .findFirst()
-                                .orElseThrow(() -> new IllegalStateException(
-                                        "No canonical selection found for "
-                                                + selection));
-                        selection.setResult(canonical.result);
+                // Propagate results to duplicates
+                for (DatabaseSelection<?> selection : selections) {
+                    if(selection.state == Selection.State.RESOLVED) {
                         selection.setState(Selection.State.FINISHED);
                     }
-                    else {
-                        throw new IllegalStateException(
-                                "Filtered duplicate selection was not "
-                                        + "independently executed: "
-                                        + selection);
+                    else if(selection.state != Selection.State.FINISHED) {
+                        if(DatabaseSelection.isNoFilter(selection.filter)) {
+                            DatabaseSelection<?> canonical = unique.stream()
+                                    .filter(item -> item.reservation()
+                                            .equals(selection.reservation()))
+                                    .findFirst().orElseThrow(
+                                            () -> new IllegalStateException(
+                                                    "No canonical selection found for "
+                                                            + selection));
+                            selection.setResult(canonical.result);
+                            selection.setState(Selection.State.FINISHED);
+                        }
+                        else {
+                            throw new IllegalStateException(
+                                    "Filtered duplicate selection was not "
+                                            + "independently executed: "
+                                            + selection);
+                        }
                     }
                 }
+                return new Selections(selections);
             }
-            return new Selections(selections);
+        }
+        finally {
+            if(concourse != null) {
+                connections.release(concourse);
+            }
         }
     }
 
@@ -1987,7 +1984,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param <T> the {@link Record} type
      * @param <R> the result type
      */
-    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @SuppressWarnings({ "rawtypes" })
     private <T extends Record, R> void $selectWithPossibleSources(Reader reader,
             DatabaseSelection<T> selection,
             @Nullable Set<AdHocDataSource<?>> sources) {
