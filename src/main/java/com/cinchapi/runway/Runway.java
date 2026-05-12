@@ -241,7 +241,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            {@link #$selectWithPossibleSources(Reader, DatabaseSelection, Set)}
      */
     @SuppressWarnings({ "rawtypes" })
-    private static void bindSelectionResult(DatabaseSelection<?> selection,
+    private static void bindEventualSelectionResult(
+            DatabaseSelection<?> selection,
             Supplier<? extends SelectResult<?>> supplier) {
         SelectResult<?> res = supplier.get();
         ((DatabaseSelection) selection).setResult(res.result);
@@ -1003,8 +1004,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             else {
                 Concourse concourse = connections.request();
                 try {
-                    Reader handle = new ImmediateReader(concourse);
-                    bindSelectionResult(selection, $select(handle, selection));
+                    Reader reader = new ImmediateReader(concourse);
+                    bindEventualSelectionResult(selection,
+                            $select(reader, selection));
                 }
                 finally {
                     connections.release(concourse);
@@ -1021,17 +1023,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 Map<DatabaseSelection<?>, Supplier<? extends SelectResult<?>>> suppliers = new LinkedHashMap<>();
                 Concourse concourse = connections.request();
                 try {
-                    Reader handle = new EventualReader(concourse);
+                    Reader reader = new EventualReader(concourse);
                     for (DatabaseSelection<?> selection : unique) {
                         if(selection.state == Selection.State.RESOLVED) {
                             selection.setState(Selection.State.FINISHED);
                         }
                         else {
                             suppliers.put(selection,
-                                    $select(handle, selection));
+                                    $select(reader, selection));
                         }
                     }
-                    suppliers.forEach(Runway::bindSelectionResult);
+                    suppliers.forEach(Runway::bindEventualSelectionResult);
                 }
                 finally {
                     connections.release(concourse);
@@ -1064,9 +1066,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     if(!sources.isEmpty()) {
                         Concourse concourse = connections.request();
                         try {
-                            Reader handle = new ImmediateReader(concourse);
-                            bindSelectionResult(selection,
-                                    $selectWithPossibleSources(handle,
+                            Reader reader = new ImmediateReader(concourse);
+                            bindEventualSelectionResult(selection,
+                                    $selectWithPossibleSources(reader,
                                             selection, sources));
                         }
                         finally {
@@ -1113,8 +1115,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 if(combined != null) {
                     Concourse concourse = connections.request();
                     try {
-                        Reader handle = new ImmediateReader(concourse);
-                        Map<Long, Map<String, Set<Object>>> data = read(handle,
+                        Reader reader = new ImmediateReader(concourse);
+                        Map<Long, Map<String, Set<Object>>> data = read(reader,
                                 null, combined, null, null).get();
                         for (DatabaseSelection<?> selection : combinable) {
                             demux(selection, data);
@@ -1131,9 +1133,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         tasks[i] = () -> {
                             Concourse concourse = connections.request();
                             try {
-                                Reader handle = new ImmediateReader(concourse);
-                                bindSelectionResult(selection,
-                                        $select(handle, selection));
+                                Reader reader = new ImmediateReader(concourse);
+                                bindEventualSelectionResult(selection,
+                                        $select(reader, selection));
                             }
                             finally {
                                 connections.release(concourse);
@@ -1141,6 +1143,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         };
                     }
                     selector.join(tasks);
+
+                    // Reservation cannot happen in the async threads above
+                    // because it needs access to the #reservations thread
+                    // local.
                     for (DatabaseSelection<?> selection : isolated) {
                         reserve(selection);
                     }
@@ -1279,14 +1285,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param criteria the {@link Criteria} that identifies the records
      * @return a {@link Supplier} that yields the count
      */
-    private Supplier<Integer> $count(Reader handle, Criteria criteria) {
+    private Supplier<Integer> $count(Reader reader, Criteria criteria) {
         if(supportsNativeCount) {
-            Supplier<Long> supplier = handle.count(Record.IDENTIFIER_KEY,
+            Supplier<Long> supplier = reader.count(Record.IDENTIFIER_KEY,
                     criteria);
             return () -> supplier.get().intValue();
         }
         else {
-            Supplier<Set<Long>> supplier = handle.find(criteria);
+            Supplier<Set<Long>> supplier = reader.find(criteria);
             return () -> supplier.get().size();
         }
     }
@@ -1309,13 +1315,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return a {@link Supplier} that yields the matching records' data
      */
     private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $find(
-            Reader handle, Class<T> clazz, Criteria criteria,
+            Reader reader, Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
         criteria = $Criteria.amongRealms(realms,
                 $Criteria.withinClass(clazz, criteria));
         Set<String> paths = getPathsForClassIfSupported(clazz);
-        return read(handle, paths, criteria, order, page);
+        return read(reader, paths, criteria, order, page);
     }
 
     /**
@@ -1335,13 +1341,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return a {@link Supplier} that yields the matching records' data
      */
     private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $findAny(
-            Reader handle, Class<T> clazz, Criteria criteria,
+            Reader reader, Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
         criteria = $Criteria.amongRealms(realms,
                 $Criteria.accrossClassHierachy(clazz, criteria));
         Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-        return read(handle, paths, criteria, order, page);
+        return read(reader, paths, criteria, order, page);
     }
 
     /**
@@ -1361,12 +1367,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return a {@link Supplier} that yields the records' data
      */
     private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $load(
-            Reader handle, Class<T> clazz, @Nullable Order order,
+            Reader reader, Class<T> clazz, @Nullable Order order,
             @Nullable Page page, @Nonnull Realms realms) {
         Criteria criteria = $Criteria.amongRealms(realms,
                 $Criteria.forClass(clazz));
         Set<String> paths = getPathsForClassIfSupported(clazz);
-        return read(handle, paths, criteria, order, page);
+        return read(reader, paths, criteria, order, page);
     }
 
     /**
@@ -1385,12 +1391,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return a {@link Supplier} that yields the records' data
      */
     private <T extends Record> Supplier<Map<Long, Map<String, Set<Object>>>> $loadAny(
-            Reader handle, Class<T> clazz, @Nullable Order order,
+            Reader reader, Class<T> clazz, @Nullable Order order,
             @Nullable Page page, Realms realms) {
         Criteria criteria = $Criteria.amongRealms(realms,
                 $Criteria.forClassHierarchy(clazz));
         Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-        return read(handle, paths, criteria, order, page);
+        return read(reader, paths, criteria, order, page);
     }
 
     /**
@@ -1450,7 +1456,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * no pre-supplied {@link AdHocDataSource} set.
      * <p>
      * The returned {@link Supplier} must be passed to
-     * {@link #bindSelectionResult(DatabaseSelection, Supplier)} to populate
+     * {@link #bindEventualSelectionResult(DatabaseSelection, Supplier)} to
+     * populate
      * {@code selection}'s result and transition it to
      * {@link Selection.State#FINISHED}.
      *
@@ -1462,8 +1469,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return a {@link Supplier} that yields the {@link SelectResult}
      */
     private <T extends Record, R> Supplier<SelectResult<R>> $select(
-            Reader handle, DatabaseSelection<T> selection) {
-        return $selectWithPossibleSources(handle, selection, null);
+            Reader reader, DatabaseSelection<T> selection) {
+        return $selectWithPossibleSources(reader, selection, null);
     }
 
     /**
@@ -1491,7 +1498,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *         carries the unfiltered records
      */
     private <T extends Record> Supplier<SelectResult<Set<T>>> $selectClass(
-            Reader handle, LoadClassSelection<T> selection) {
+            Reader reader, LoadClassSelection<T> selection) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Order order = selection.order;
@@ -1509,12 +1516,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         Function<Page, Set<T>> retriever = $page -> {
                             Concourse concourse = ensureValidConnection(
                                     connection);
-                            Reader privateHandle = new ImmediateReader(
-                                    concourse);
+                            Reader _reader = new ImmediateReader(concourse);
                             Map<Long, Map<String, Set<Object>>> data = any
-                                    ? $loadAny(privateHandle, clazz, order,
-                                            $page, realms).get()
-                                    : $load(privateHandle, clazz, order, $page,
+                                    ? $loadAny(_reader, clazz, order, $page,
+                                            realms).get()
+                                    : $load(_reader, clazz, order, $page,
                                             realms).get();
                             return any ? instantiateAll(data)
                                     : instantiateAll(clazz, data);
@@ -1531,8 +1537,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             else {
                 Supplier<Map<Long, Map<String, Set<Object>>>> supplier = any
-                        ? $loadAny(handle, clazz, order, page, realms)
-                        : $load(handle, clazz, order, page, realms);
+                        ? $loadAny(reader, clazz, order, page, realms)
+                        : $load(reader, clazz, order, page, realms);
                 return () -> {
                     Map<Long, Map<String, Set<Object>>> data = supplier.get();
                     Set<T> records = any ? instantiateAll(data)
@@ -1593,7 +1599,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *         under its own {@link Reservation}
      */
     private <T extends Record> Supplier<SelectResult<Integer>> $selectCount(
-            Reader handle, CountSelection<T> selection) {
+            Reader reader, CountSelection<T> selection) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Criteria criteria = selection.criteria;
@@ -1609,7 +1615,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             };
         }
         else if(criteria == null) {
-            Supplier<Integer> supplier = $count(handle, any
+            Supplier<Integer> supplier = $count(reader, any
                     ? $Criteria.amongRealms(realms,
                             $Criteria.forClassHierarchy(clazz))
                     : $Criteria.amongRealms(realms, $Criteria.forClass(clazz)));
@@ -1617,7 +1623,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
         else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
             Supplier<Integer> supplier = $count(
-                    handle, any
+                    reader, any
                             ? $Criteria.amongRealms(realms,
                                     $Criteria.accrossClassHierachy(clazz,
                                             criteria))
@@ -1661,7 +1667,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *         carries the unfiltered records
      */
     private <T extends Record> Supplier<SelectResult<Set<T>>> $selectCriteria(
-            Reader handle, FindSelection<T> selection) {
+            Reader reader, FindSelection<T> selection) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Criteria criteria = selection.criteria;
@@ -1683,14 +1689,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             if(dbResolvable) {
                                 Concourse concourse = ensureValidConnection(
                                         connection);
-                                Reader privateHandle = new ImmediateReader(
-                                        concourse);
+                                Reader _reader = new ImmediateReader(concourse);
                                 Map<Long, Map<String, Set<Object>>> data = any
-                                        ? $findAny(privateHandle, clazz,
-                                                criteria, order, $page, realms)
-                                                        .get()
-                                        : $find(privateHandle, clazz, criteria,
-                                                order, $page, realms).get();
+                                        ? $findAny(_reader, clazz, criteria,
+                                                order, $page, realms).get()
+                                        : $find(_reader, clazz, criteria, order,
+                                                $page, realms).get();
                                 return any ? instantiateAll(data)
                                         : instantiateAll(clazz, data);
                             }
@@ -1714,8 +1718,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             else if(dbResolvable) {
                 Supplier<Map<Long, Map<String, Set<Object>>>> supplier = any
-                        ? $findAny(handle, clazz, criteria, order, page, realms)
-                        : $find(handle, clazz, criteria, order, page, realms);
+                        ? $findAny(reader, clazz, criteria, order, page, realms)
+                        : $find(reader, clazz, criteria, order, page, realms);
                 return () -> {
                     Map<Long, Map<String, Set<Object>>> data = supplier.get();
                     Set<T> records = any ? instantiateAll(data)
@@ -1879,7 +1883,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     @SuppressWarnings("unchecked")
     private <T extends Record> Supplier<SelectResult<T>> $selectRecord(
-            Reader handle, LoadRecordSelection<T> selection) {
+            Reader reader, LoadRecordSelection<T> selection) {
         Class<T> initialClazz = selection.clazz;
         long id = selection.id;
         Realms realms = selection.realms;
@@ -1890,8 +1894,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Set<String> paths = needsSectionLookup ? null
                 : getPathsForClassIfSupported(initialClazz);
         Supplier<Map<String, Set<Object>>> dataSupplier = paths != null
-                ? handle.select(paths, id)
-                : handle.select(id);
+                ? reader.select(paths, id)
+                : reader.select(id);
         return () -> {
             Map<String, Set<Object>> data = dataSupplier.get();
             if(data == null || data.isEmpty()) {
@@ -1918,7 +1922,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 Set<String> navigatePaths = getNavigatePathsForClassIfSupported(
                         clazz);
                 if(navigatePaths != null) {
-                    targets = handle.navigate(navigatePaths, id).get();
+                    targets = reader.navigate(navigatePaths, id).get();
                 }
             }
             else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
@@ -1966,7 +1970,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *             more than one {@link Record} matches
      */
     private <T extends Record> Supplier<SelectResult<T>> $selectUnique(
-            Reader handle, UniqueSelection<T> selection) {
+            Reader reader, UniqueSelection<T> selection) {
         DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
                 selection.clazz, selection.any);
         state.criteria = selection.criteria;
@@ -1975,10 +1979,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         state.realms = selection.realms;
         Supplier<SelectResult<Set<T>>> supplier;
         if(selection.criteria != null) {
-            supplier = $selectCriteria(handle, new FindSelection<>(state));
+            supplier = $selectCriteria(reader, new FindSelection<>(state));
         }
         else {
-            supplier = $selectClass(handle, new LoadClassSelection<>(state));
+            supplier = $selectClass(reader, new LoadClassSelection<>(state));
         }
         return () -> {
             SelectResult<Set<T>> selected = supplier.get();
@@ -2027,7 +2031,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * to {@link Selection.State#FINISHED} (along with writing the result and
      * companion value onto {@code selection}) happens when the returned
      * {@link Supplier} is passed to
-     * {@link #bindSelectionResult(DatabaseSelection, Supplier)}.
+     * {@link #bindEventualSelectionResult(DatabaseSelection, Supplier)}.
      *
      * @param handle the {@link Reader} that records any required reads
      * @param selection the {@link DatabaseSelection} to resolve; must not be in
@@ -2046,7 +2050,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     @SuppressWarnings("unchecked")
     private <T extends Record, R> Supplier<SelectResult<R>> $selectWithPossibleSources(
-            Reader handle, DatabaseSelection<T> selection,
+            Reader reader, DatabaseSelection<T> selection,
             @Nullable Set<AdHocDataSource<?>> sources) {
         Preconditions.checkState(selection.state != Selection.State.RESOLVED,
                 "RESOLVED selections must be handled by the caller before "
@@ -2068,20 +2072,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
         Supplier<? extends SelectResult<?>> supplier;
         if(selection instanceof CountSelection) {
-            supplier = $selectCount(handle, (CountSelection<T>) selection);
+            supplier = $selectCount(reader, (CountSelection<T>) selection);
         }
         else if(selection instanceof LoadRecordSelection) {
-            supplier = $selectRecord(handle,
+            supplier = $selectRecord(reader,
                     (LoadRecordSelection<T>) selection);
         }
         else if(selection instanceof LoadClassSelection) {
-            supplier = $selectClass(handle, (LoadClassSelection<T>) selection);
+            supplier = $selectClass(reader, (LoadClassSelection<T>) selection);
         }
         else if(selection instanceof FindSelection) {
-            supplier = $selectCriteria(handle, (FindSelection<T>) selection);
+            supplier = $selectCriteria(reader, (FindSelection<T>) selection);
         }
         else if(selection instanceof UniqueSelection) {
-            supplier = $selectUnique(handle, (UniqueSelection<T>) selection);
+            supplier = $selectUnique(reader, (UniqueSelection<T>) selection);
         }
         else {
             throw new IllegalStateException(
@@ -2599,41 +2603,41 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            for the full result set
      * @return a {@link Supplier} that yields the matching record data
      */
-    private Supplier<Map<Long, Map<String, Set<Object>>>> read(Reader handle,
+    private Supplier<Map<Long, Map<String, Set<Object>>>> read(Reader reader,
             @Nullable Set<String> paths, Criteria criteria,
             @Nullable Order order, @Nullable Page page) {
         if(readStrategy == ReadStrategy.BULK) {
             if(order != null && page != null) {
                 return paths != null
-                        ? handle.select(paths, criteria, order, page)
-                        : handle.select(criteria, order, page);
+                        ? reader.select(paths, criteria, order, page)
+                        : reader.select(criteria, order, page);
             }
             else if(order != null) {
-                return paths != null ? handle.select(paths, criteria, order)
-                        : handle.select(criteria, order);
+                return paths != null ? reader.select(paths, criteria, order)
+                        : reader.select(criteria, order);
             }
             else if(page != null) {
-                return paths != null ? handle.select(paths, criteria, page)
-                        : handle.select(criteria, page);
+                return paths != null ? reader.select(paths, criteria, page)
+                        : reader.select(criteria, page);
             }
             else {
-                return paths != null ? handle.select(paths, criteria)
-                        : handle.select(criteria);
+                return paths != null ? reader.select(paths, criteria)
+                        : reader.select(criteria);
             }
         }
         else { // STREAM
             Supplier<Set<Long>> ids;
             if(order != null && page != null) {
-                ids = handle.find(criteria, order, page);
+                ids = reader.find(criteria, order, page);
             }
             else if(order != null) {
-                ids = handle.find(criteria, order);
+                ids = reader.find(criteria, order);
             }
             else if(page != null) {
-                ids = handle.find(criteria, page);
+                ids = reader.find(criteria, page);
             }
             else {
-                ids = handle.find(criteria);
+                ids = reader.find(criteria);
             }
             return () -> stream(paths, ids.get());
         }
