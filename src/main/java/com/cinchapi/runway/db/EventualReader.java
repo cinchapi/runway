@@ -31,24 +31,8 @@ import com.google.common.collect.ImmutableList;
 
 /**
  * A {@link Reader} that batches recorded reads into a single
- * {@link Concourse#submit(CommandGroup) submission}.
- * <p>
- * Each recording method appends a command to the active batch and returns a
- * {@link Supplier} bound to it; the call does not contact the database. The
- * batch is submitted &mdash; in a single round trip &mdash; on {@link #drain()}
- * or on the first {@link Supplier#get()} against any of the bound
- * {@link Supplier Suppliers}, whichever comes first. After submission, every
- * bound {@link Supplier} yields its corresponding result.
- * </p>
- * <p>
- * If submission fails, the exception is rethrown on every subsequent
- * {@link Supplier#get()} call against any {@link Supplier} bound to the failed
- * batch, so sibling {@link Supplier Suppliers} cannot observe divergent
- * outcomes.
- * </p>
- * <p>
- * Recording calls made after a submission start a fresh batch.
- * </p>
+ * {@link Concourse#submit(CommandGroup) submission} so that all reads recorded
+ * against the same batch share a single round trip.
  * <p>
  * This {@link Reader} is <strong>not thread-safe</strong>.
  * </p>
@@ -226,13 +210,6 @@ public final class EventualReader extends AbstractReader {
         int slot = batch.size();
         batch.group.count(key, criteria);
         return () -> ((Number) batch.flush(concourse).get(slot)).longValue();
-    }
-
-    @Override
-    protected void prepareDrain() {
-        if(!current.flushed() && current.size() > 0) {
-            current.flush(concourse);
-        }
     }
 
     /**

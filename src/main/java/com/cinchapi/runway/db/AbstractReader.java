@@ -15,41 +15,21 @@
  */
 package com.cinchapi.runway.db;
 
-import java.util.ArrayList;
-import java.util.List;
-
 import com.cinchapi.concourse.Concourse;
 import com.google.common.base.Preconditions;
 
 /**
  * Base class for {@link Reader} implementations that wrap a single
- * {@link Concourse} connection. Provides shared bookkeeping for completions
- * registered via {@link #onDrain(Runnable)} and a {@link #drain()} template
- * that delegates the implementation-specific flush step to
- * {@link #prepareDrain()}.
+ * {@link Concourse} connection.
  *
  * @author Jeff Nelson
  */
 public abstract class AbstractReader implements Reader {
 
     /**
-     * The {@link Concourse} connection against which reads are issued or
-     * submitted.
+     * The {@link Concourse} connection against which reads are issued.
      */
     protected final Concourse concourse;
-
-    /**
-     * Completions registered via {@link #onDrain(Runnable)} and run by
-     * {@link #drain()} in registration order.
-     */
-    private final List<Runnable> completions;
-
-    /**
-     * Whether the deferred reads have been issued (drained); when {@code true},
-     * subsequent {@link #drain()} calls are no-ops regardless of whether every
-     * completion ran.
-     */
-    private boolean drained;
 
     /**
      * Construct a new {@link AbstractReader}.
@@ -59,42 +39,11 @@ public abstract class AbstractReader implements Reader {
      */
     protected AbstractReader(Concourse concourse) {
         this.concourse = Preconditions.checkNotNull(concourse);
-        this.completions = new ArrayList<>();
-        this.drained = false;
     }
 
     @Override
     public final Concourse concourse() {
         return concourse;
     }
-
-    @Override
-    public final void onDrain(Runnable completion) {
-        completions.add(Preconditions.checkNotNull(completion));
-    }
-
-    @Override
-    public final void drain() {
-        if(drained) {
-            return;
-        }
-        prepareDrain();
-        drained = true;
-        try {
-            for (Runnable completion : completions) {
-                completion.run();
-            }
-        }
-        finally {
-            completions.clear();
-        }
-    }
-
-    /**
-     * Issue any deferred work (e.g., submit a batched
-     * {@link com.cinchapi.concourse.lang.CommandGroup CommandGroup}) before
-     * {@link #onDrain registered completions} run.
-     */
-    protected abstract void prepareDrain();
 
 }

@@ -127,17 +127,21 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     volatile Selection<?> origin;
 
     /**
-     * The unfiltered result to store in the reservation cache. When a
-     * {@link #filter} is applied, the {@link #result} contains filtered data
-     * that must not be cached under a filterless key. This field holds the
-     * pre-filter data so that {@code reserve()} can cache it instead.
-     * <p>
-     * {@code null} means no separate cache value was captured — either because
-     * no filter was applied or because the execution path could not separate
-     * filtered from unfiltered results.
+     * The unfiltered companion to {@link #result}, populated when a client-side
+     * {@link #filter} has narrowed {@link #result} but the pre-filter value is
+     * still required downstream. {@code null} when no separate unfiltered value
+     * was captured.
      */
     @Nullable
     Object cacheValue;
+
+    /**
+     * The finisher attached during dispatch that applies this
+     * {@link DatabaseSelection DatabaseSelection's} read result to its state.
+     * {@code null} before dispatch and after {@link #drain()} has run.
+     */
+    @Nullable
+    private Runnable finisher;
 
     /**
      * Construct a new {@link DatabaseSelection}.
@@ -268,6 +272,30 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
+     * Attach the {@code finisher} that {@link #drain()} will run to apply this
+     * {@link DatabaseSelection DatabaseSelection's} read result to its state.
+     * Replaces any previously attached finisher.
+     *
+     * @param finisher the work that materializes this {@link DatabaseSelection}
+     */
+    void attach(Runnable finisher) {
+        this.finisher = finisher;
+    }
+
+    /**
+     * Run the attached finisher, applying this {@link DatabaseSelection
+     * DatabaseSelection's} read result to its state. No-op when no finisher is
+     * attached or when this {@link DatabaseSelection} has already been drained.
+     */
+    void drain() {
+        Runnable f = finisher;
+        if(f != null) {
+            finisher = null;
+            f.run();
+        }
+    }
+
+    /**
      * Return {@code true} if this {@link DatabaseSelection} can be combined
      * with other {@link DatabaseSelection Selections} in a single database
      * call.
@@ -295,10 +323,9 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
-     * Return the {@link Reservation} that represents the canonical cache key
-     * for this {@link DatabaseSelection}. Two {@link DatabaseSelection
-     * DatabaseSelections} with equivalent configuration produce equal
-     * {@link Reservation Reservations}.
+     * Return the {@link Reservation} for this {@link DatabaseSelection}. Two
+     * {@link DatabaseSelection DatabaseSelections} with equivalent
+     * configuration produce equal {@link Reservation Reservations}.
      *
      * @return the {@link Reservation} for this {@link DatabaseSelection}
      */

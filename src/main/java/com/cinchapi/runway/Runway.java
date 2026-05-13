@@ -979,7 +979,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     concourse = ensureValidConnection(concourse);
                     Reader reader = new ImmediateReader(concourse);
                     $select(reader, selection);
-                    reader.drain();
+                    selection.drain();
                     reserve(selection);
                 }
                 return new Selections(selections);
@@ -1004,10 +1004,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             dispatched.add(selection);
                         }
                     }
-                    if(reader != null) {
-                        reader.drain();
-                    }
                     for (DatabaseSelection<?> selection : dispatched) {
+                        selection.drain();
                         reserve(selection);
                     }
                 }
@@ -1038,7 +1036,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             Reader reader = new ImmediateReader(concourse);
                             $selectWithPossibleSources(reader, selection,
                                     sources);
-                            reader.drain();
+                            selection.drain();
                             reserve(selection);
                             continue outer;
                         }
@@ -1097,7 +1095,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                     Reader reader = new ImmediateReader(
                                             _concourse);
                                     $select(reader, selection);
-                                    reader.drain();
+                                    selection.drain();
                                 }
                                 finally {
                                     connections.release(_concourse);
@@ -1980,8 +1978,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Resolve {@code selection}, recording any required reads on {@code reader}
      * and mutating {@code selection} with its result. Database-bound resolution
-     * is deferred to {@link Reader#drain() reader.drain()}; all other paths
-     * mutate {@code selection} immediately.
+     * is deferred to {@link DatabaseSelection#drain() selection.drain()}; all
+     * other paths mutate {@code selection} immediately.
      *
      * @param reader the {@link Reader} that records any required reads
      * @param selection the {@link DatabaseSelection} to resolve
@@ -2037,7 +2035,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             throw new IllegalStateException(
                     "Unsupported Selection type " + selection.getClass());
         }
-        reader.onDrain(() -> {
+        selection.attach(() -> {
             SelectResult<?> res = supplier.get();
             ((DatabaseSelection) selection).setResult(res.result);
             selection.cacheValue = res.cacheValue;

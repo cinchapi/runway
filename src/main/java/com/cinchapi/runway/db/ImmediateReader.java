@@ -171,7 +171,4 @@ public class ImmediateReader extends AbstractReader {
         return () -> result;
     }
 
-    @Override
-    protected void prepareDrain() {/* no-op */}
-
 }

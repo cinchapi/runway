@@ -26,22 +26,7 @@ import com.cinchapi.concourse.lang.sort.Order;
 
 /**
  * A {@link Reader} records reads against a database and returns a
- * {@link Supplier} for each one.
- * <p>
- * The first call to {@link Supplier#get()} on any {@link Supplier} returned
- * from this {@link Reader} guarantees that the underlying read has been
- * executed against the database and yields its result. Implementations decide
- * <em>when</em> the underlying read is executed &mdash; eagerly at recording
- * time, batched and submitted on {@link #drain()}, or by some other strategy
- * &mdash; but the contract from a caller's perspective is the same: record,
- * then {@code get()}.
- * </p>
- * <p>
- * Callers that record multiple reads and want to fan out the resolution work
- * register completion {@link Runnable Runnables} via
- * {@link #onDrain(Runnable)}. {@link #drain()} issues any deferred reads and
- * then runs every registered completion in registration order.
- * </p>
+ * {@link Supplier} for each one that yields the read's result.
  *
  * @author Jeff Nelson
  */
@@ -245,30 +230,5 @@ public interface Reader {
      * @return the {@link Concourse} connection
      */
     Concourse concourse();
-
-    /**
-     * Register a completion {@link Runnable} to run inside {@link #drain()}.
-     * Completions run in registration order, after any deferred reads have been
-     * issued.
-     *
-     * @param completion the work to run when this {@link Reader} drains
-     */
-    void onDrain(Runnable completion);
-
-    /**
-     * Issue any deferred reads recorded on this {@link Reader} and run every
-     * {@link #onDrain registered completion} in registration order.
-     * <p>
-     * Once the deferred reads have been issued this {@link Reader} is drained;
-     * subsequent calls are no-ops even when a completion threw mid-iteration,
-     * in which case the remaining completions are discarded. If the deferred
-     * read submission itself fails, this {@link Reader} is not marked drained
-     * and a subsequent call may retry.
-     * </p>
-     *
-     * @throws RuntimeException if a deferred submission fails; no completions
-     *             run in that case
-     */
-    void drain();
 
 }
