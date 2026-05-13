@@ -2038,6 +2038,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     "Unsupported Selection type " + selection.getClass());
         }
         reader.onDrain(() -> {
+            // NOTE: supplier.get() yields the read result for this slot.
+            // For batching Readers, the round trip is submitted by
+            // drain()'s prepareDrain step before this completion runs, so
+            // .get() here reads from the already-flushed batch result
+            // list. For eagerly-issued Readers the value was computed at
+            // recording time. In both cases the underlying read has
+            // completed by the time .get() returns.
             SelectResult<?> res = supplier.get();
             ((DatabaseSelection) selection).setResult(res.result);
             selection.cacheValue = res.cacheValue;
