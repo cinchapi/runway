@@ -16,6 +16,7 @@
 package com.cinchapi.runway.db;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -162,7 +163,7 @@ public final class EventualSaver implements Saver {
 
     @Override
     public void reconcile(String key, long record, Object[] values) {
-        writes.reconcile(key, record, values);
+        writes.reconcile(key, record, Arrays.asList(values));
     }
 
     @Override
