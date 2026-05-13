@@ -68,6 +68,9 @@ import com.cinchapi.concourse.lang.sort.Direction;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.lang.sort.OrderComponent;
 import com.cinchapi.concourse.server.plugin.util.Versions;
+import com.cinchapi.runway.db.EventualSaver;
+import com.cinchapi.runway.db.ImmediateSaver;
+import com.cinchapi.runway.db.Saver;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.Record.InvalidRecordException;
@@ -313,8 +316,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * captured snapshot.
      * <p>
      * This is used during spurious save failure retry to undo the side effects
-     * that {@link Record#saveWithinTransaction(Concourse, Map, Map, boolean)
-     * saveWithinTransaction} performs on metadata fields (checksum, realm
+     * that {@link Record#saveWithinTransaction saveWithinTransaction}
+     * performs on metadata fields (checksum, realm
      * flags, author), since the transaction was aborted and none of those
      * mutations should persist.
      * </p>
@@ -820,15 +823,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Record, Boolean> seen = new HashMap<>();
             int attempts = 0;
             while (true) {
+                Saver saver = supportsBulkCommands
+                        ? new EventualSaver(concourse)
+                        : new ImmediateSaver(concourse);
                 try {
                     seen.clear();
-                    concourse.stage();
+                    saver.stage();
                     for (Record record : records) {
                         Supplier<Boolean> override = record.overrideSave();
                         if(override != null && !override.get()) {
-                            // Early exit the entire transaction because an
-                            // overriden save has failed.
-                            concourse.abort();
+                            saver.abort();
                             return false;
                         }
                         else if(override != null) {
@@ -837,11 +841,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         else {
                             current = record;
                             record.assign(this);
-                            record.saveWithinTransaction(concourse, seen,
+                            record.saveWithinTransaction(saver, seen,
                                     snapshots, preventStaleWrites);
                         }
                     }
-                    if(concourse.commit()) {
+                    if(saver.commit()) {
                         seen.entrySet().stream().filter(e -> e.getValue())
                                 .map(e -> e.getKey()).forEach(record -> {
                                     enqueueSaveNotification(record);
@@ -853,12 +857,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return false;
                     }
                     else {
-                        // Trigger catch block below for potential retry
                         throw new TransactionException();
                     }
                 }
                 catch (Throwable t) {
-                    concourse.abort();
+                    saver.abort();
                     if(t instanceof TransactionException
                             && retrySpuriousSaveFailure
                             && ++attempts <= MAX_SPURIOUS_SAVE_RETRIES

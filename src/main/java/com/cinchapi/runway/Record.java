@@ -93,6 +93,7 @@ import com.cinchapi.concourse.util.Numbers;
 import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.concourse.validate.Keys;
+import com.cinchapi.runway.db.Saver;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.util.ComputedEntry;
@@ -513,13 +514,13 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("rawtypes")
     private static void saveModifiedReferenceWithinTransaction(Object value,
-            Concourse concourse, Map<Record, Boolean> seen,
+            Saver saver, Map<Record, Boolean> seen,
             @Nullable Map<Record, Snapshot> snapshots,
             boolean preventStaleWrite) {
         if(Sequences.isSequence(value)) {
             Sequences.forEach(value,
                     item -> saveModifiedReferenceWithinTransaction(item,
-                            concourse, seen, snapshots, preventStaleWrite));
+                            saver, seen, snapshots, preventStaleWrite));
         }
         else {
             Record record = null;
@@ -532,7 +533,7 @@ public abstract class Record implements Comparable<Record> {
             }
 
             if(record != null && !seen.containsKey(record)) {
-                record.saveWithinTransaction(concourse, seen, snapshots,
+                record.saveWithinTransaction(saver, seen, snapshots,
                         preventStaleWrite);
             }
         }
@@ -2249,8 +2250,7 @@ public abstract class Record implements Comparable<Record> {
      * enforcing field constraints and recursively saving linked {@link Record
      * Records}.
      *
-     * @param concourse the {@link Concourse} connection for the active
-     *            transaction
+     * @param saver the {@link Saver} that owns the active transaction
      * @param seen {@link Record Records} already processed in this save
      * @param snapshots if non-{@code null}, each {@link Record} self-snapshots
      *            its metadata before mutation for retry support
@@ -2260,58 +2260,57 @@ public abstract class Record implements Comparable<Record> {
      *             and this {@link Record} has stale data
      * @throws IllegalStateException if field constraints are violated
      */
-    void saveWithinTransaction(final Concourse concourse,
-            Map<Record, Boolean> seen,
+    void saveWithinTransaction(final Saver saver, Map<Record, Boolean> seen,
             @Nullable Map<Record, Snapshot> snapshots,
             boolean preventStaleWrite) {
         if(snapshots != null) {
             snapshots.putIfAbsent(this, snapshot());
         }
         Preconditions.checkState(!inViolation);
-        if(preventStaleWrite && hasStaleDataWithinTransaction(concourse)) {
-            throw new StaleDataException(id);
+        if(preventStaleWrite && checkpointTs != 0) {
+            saver.audit(id, audit -> {
+                for (Timestamp ts : audit.keySet()) {
+                    if(ts.getMicros() > checkpointTs) {
+                        throw new StaleDataException(id);
+                    }
+                }
+            });
         }
         errors.clear();
         seen.put(this, true);
         if(_hasModifiedRealms) {
-            concourse.reconcile(REALMS_KEY, id, _realms);
+            saver.reconcile(REALMS_KEY, id, _realms.toArray());
             _hasModifiedRealms = false;
         }
         if(_author != null) {
-            // Check for self-authorship: if this record is its own author,
-            // use the sentinel ID to avoid self-referential links in Concourse
             long authorId = _author.id == this.id ? SELF_AUTHOR_SENTINEL_ID
                     : _author.id;
-            concourse.set(AUTHOR_KEY, Link.to(authorId), id);
+            saver.set(AUTHOR_KEY, Link.to(authorId), id);
             _author = null;
         }
         else {
-            concourse.clear(AUTHOR_KEY, id);
+            saver.clear(AUTHOR_KEY, id);
         }
         if(deleted) {
-            deleteWithinTransaction(concourse, preventStaleWrite);
+            deleteWithinTransaction(saver, preventStaleWrite);
         }
         else if(!hasUnsavedChanges()) {
-            // This Record hasn't been modified, so simply go through each
-            // field and try to save any outgoing Record references that contain
-            // modifications.
             seen.replace(this, true, false);
             for (Field field : fields()) {
                 Object value = getFieldValue(field, this);
-                saveModifiedReferenceWithinTransaction(value, concourse, seen,
+                saveModifiedReferenceWithinTransaction(value, saver, seen,
                         snapshots, preventStaleWrite);
             }
         }
         else {
             beforeSave();
-            concourse.verifyOrSet(SECTION_KEY, __, id);
+            saver.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
             for (Field field : fields()) {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     String key = field.getName();
                     Object value = getFieldValue(field, this);
                     boolean isSequence = Sequences.isSequence(value);
-                    // Enforce that Required fields have a non-empty value
                     if(field.isAnnotationPresent(Required.class) && (isSequence
                             ? Sequences.stream(value)
                                     .allMatch(Empty.ness()::describes)
@@ -2320,24 +2319,18 @@ public abstract class Record implements Comparable<Record> {
                                 .format("{}  is required in {}", key, __));
                     }
                     if(value != null) {
-                        // Enforce that Unique fields have non-duplicated
-                        // values across the class
-                        if(field.isAnnotationPresent(Unique.class)
-                                && (isSequence ? Sequences.stream(value)
-                                        .anyMatch(Predicates.not(
-                                                item -> checkIsUnique(concourse,
-                                                        field, key, item,
-                                                        alreadyVerifiedUniqueConstraints)))
-                                        : !checkIsUnique(concourse, field, key,
-                                                value,
-                                                alreadyVerifiedUniqueConstraints))) {
-                            String name = field.getAnnotation(Unique.class)
-                                    .name();
-                            name = name.length() == 0 ? key : name;
-                            throw new IllegalStateException(AnyStrings.format(
-                                    "{} must be unique in {}", name, __));
+                        if(field.isAnnotationPresent(Unique.class)) {
+                            if(isSequence) {
+                                Sequences.forEach(value,
+                                        item -> checkIsUnique(saver, field, key,
+                                                item,
+                                                alreadyVerifiedUniqueConstraints));
+                            }
+                            else {
+                                checkIsUnique(saver, field, key, value,
+                                        alreadyVerifiedUniqueConstraints);
+                            }
                         }
-                        // Apply custom validation
                         if(field.isAnnotationPresent(ValidatedBy.class)) {
                             Class<? extends Validator> validatorClass = field
                                     .getAnnotation(ValidatedBy.class).value();
@@ -2352,17 +2345,17 @@ public abstract class Record implements Comparable<Record> {
 
                             }
                         }
-                        value = transform(value, concourse, seen, snapshots,
+                        value = transform(value, saver, seen, snapshots,
                                 preventStaleWrite);
                         if(value.getClass().isArray()) {
-                            concourse.reconcile(key, id, (Object[]) value);
+                            saver.reconcile(key, id, (Object[]) value);
                         }
                         else {
-                            concourse.verifyOrSet(key, value, id);
+                            saver.verifyOrSet(key, value, id);
                         }
                     }
                     else {
-                        concourse.clear(key, id);
+                        saver.clear(key, id);
                     }
                 }
             }
@@ -2539,16 +2532,16 @@ public abstract class Record implements Comparable<Record> {
      * @return {@code true} if the value is unique according to the specified
      *         constraints; {@code false} otherwise.
      */
-    private boolean checkIsUnique(Concourse concourse, Field field, String key,
+    private void checkIsUnique(Saver saver, Field field, String key,
             Object value, Set<String> alreadyVerifiedUniqueConstraints) {
         Unique constraint = field.getAnnotation(Unique.class);
         String name = constraint.name();
-        if(name.length() == 0 && !isUnique(concourse, key, value)) {
-            return false;
+        String errorName = name.length() == 0 ? key : name;
+        if(name.length() == 0) {
+            enqueueUniquenessCheck(saver, AnyMaps.create(key, value),
+                    errorName);
         }
         else if(!alreadyVerifiedUniqueConstraints.contains(name)) {
-            // Find all the fields that have this constraint and
-            // check for uniqueness.
             Map<String, Object> values = Maps.newHashMap();
             values.put(key, value);
             fields().stream().filter($field -> $field != field)
@@ -2559,14 +2552,9 @@ public abstract class Record implements Comparable<Record> {
                         values.put($field.getName(),
                                 Reflection.get($field.getName(), this));
                     });
-            if(isUnique(concourse, values)) {
-                alreadyVerifiedUniqueConstraints.add(name);
-            }
-            else {
-                return false;
-            }
+            enqueueUniquenessCheck(saver, values, errorName);
+            alreadyVerifiedUniqueConstraints.add(name);
         }
-        return true;
     }
 
     /**
@@ -2801,10 +2789,8 @@ public abstract class Record implements Comparable<Record> {
      * @param preventStaleWrite if {@code true}, reject the deletion when this
      *            {@link Record} has been externally modified
      */
-    private void deleteWithinTransaction(Concourse concourse,
+    private void deleteWithinTransaction(Saver saver,
             boolean preventStaleWrite) {
-        // Ensure any fields to which this Record must @CascadeDelete are
-        // deleted within this transaction
         Set<Field> dependents = StaticAnalysis.instance()
                 .getAnnotatedFields(getClass(), CascadeDelete.class);
         for (Field dependent : dependents) {
@@ -2826,16 +2812,11 @@ public abstract class Record implements Comparable<Record> {
             }
         }
 
-        // Check if there are any incoming links that used the @JoinDelete
-        // annotation to join in the deletion of this Record
         Criteria potentialJoinDeletes = StaticAnalysis.instance()
                 .getJoinDeleteLookupCondition(this);
         if(potentialJoinDeletes != null) {
-            for (Entry<Long, Set<Object>> entry : concourse
+            for (Entry<Long, Set<Object>> entry : saver.concourse()
                     .select(SECTION_KEY, potentialJoinDeletes).entrySet()) {
-                // It's necessary to load each of the Records (instead of
-                // directly clearing it in the database) in case any of them
-                // also have deletion hook annotations.
                 long id = entry.getKey();
                 String __ = (String) Iterables.getLast(entry.getValue());
                 Class<? extends Record> clazz = Reflection.getClassCasted(__);
@@ -2844,14 +2825,10 @@ public abstract class Record implements Comparable<Record> {
             }
         }
 
-        // Check if there are any incoming links that used the
-        // @CaptureDelete annotation to remove references to this Record post
-        // deletion. Handle that business and save those records within this
-        // transaction
         Criteria potentialCaptureDeletes = StaticAnalysis.instance()
                 .getCaptureDeleteLookupCondition(this);
         if(potentialCaptureDeletes != null) {
-            for (Entry<Long, Set<Object>> entry : concourse
+            for (Entry<Long, Set<Object>> entry : saver.concourse()
                     .select(SECTION_KEY, potentialCaptureDeletes).entrySet()) {
                 long id = entry.getKey();
                 String __ = (String) Iterables.getLast(entry.getValue());
@@ -2888,15 +2865,14 @@ public abstract class Record implements Comparable<Record> {
                         throw CheckedExceptions.wrapAsRuntimeException(e);
                     }
                 }
-                record.saveWithinTransaction(concourse, new HashMap<>(),
+                record.saveWithinTransaction(saver, new HashMap<>(),
                         new HashMap<>(), preventStaleWrite);
             }
         }
 
-        // Perform the deletion(s)
-        concourse.clear(id);
+        saver.clear(id);
         for (Record record : waitingToBeDeleted) {
-            record.deleteWithinTransaction(concourse, preventStaleWrite);
+            record.deleteWithinTransaction(saver, preventStaleWrite);
         }
     }
 
@@ -3034,7 +3010,8 @@ public abstract class Record implements Comparable<Record> {
      * @param data
      * @return
      */
-    private boolean isUnique(Concourse concourse, Map<String, Object> data) {
+    private void enqueueUniquenessCheck(Saver saver, Map<String, Object> data,
+            String errorName) {
         AtomicReference<BuildableState> $criteria = new AtomicReference<>(
                 Criteria.where().key(SECTION_KEY).operator(Operator.EQUALS)
                         .value(getClass().getName()));
@@ -3042,7 +3019,7 @@ public abstract class Record implements Comparable<Record> {
             String key = entry.getKey();
             Object value = entry.getValue();
             if(value == null) {
-                continue; // A null value does not affect uniqueness.
+                continue;
             }
             else if(Sequences.isSequence(value)) {
                 AtomicReference<BuildableState> $sub = new AtomicReference<>(
@@ -3068,27 +3045,13 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         Criteria criteria = $criteria.get();
-        Set<Long> records = concourse.find(criteria);
-        return records.isEmpty()
-                || (records.contains(id) && records.size() == 1);
-    }
-
-    /**
-     * Return {@code true} if {@code key} as {@code value} for this class is
-     * unique, meaning there is no other record in the database in this class
-     * with that mapping. If {@code value} is a collection, then this method
-     * will return {@code true} if and only if every element in the collection
-     * is unique.
-     *
-     * @param concourse
-     * @param key
-     * @param value
-     * @return {@code true} if {@code key} as {@code value} is a unique mapping
-     *         for this class
-     */
-    private boolean isUnique(Concourse concourse, String key, Object value) {
-        return value != null ? isUnique(concourse, AnyMaps.create(key, value))
-                : true;
+        saver.find(criteria, records -> {
+            if(!(records.isEmpty()
+                    || (records.contains(id) && records.size() == 1))) {
+                throw new IllegalStateException(AnyStrings
+                        .format("{} must be unique in {}", errorName, __));
+            }
+        });
     }
 
     /**
@@ -3253,14 +3216,14 @@ public abstract class Record implements Comparable<Record> {
      *         primitives
      */
     @SuppressWarnings("rawtypes")
-    private Object transform(@Nonnull Object value, Concourse concourse,
+    private Object transform(@Nonnull Object value, Saver saver,
             Map<Record, Boolean> seen,
             @Nullable Map<Record, Snapshot> snapshots,
             boolean preventStaleWrite) {
         if(Sequences.isSequence(value)) {
             ArrayBuilder<Object> array = ArrayBuilder.builder();
             Sequences.forEach(value, item -> {
-                array.add(transform(item, concourse, seen, snapshots,
+                array.add(transform(item, saver, seen, snapshots,
                         preventStaleWrite));
             });
             return array.length() > 0 ? array.build() : Array.containing();
@@ -3279,10 +3242,8 @@ public abstract class Record implements Comparable<Record> {
                 record = null;
             }
 
-            // Ensure that Record references are saved within the current
-            // transaction
             if(record != null && !seen.containsKey(record)) {
-                record.saveWithinTransaction(concourse, seen, snapshots,
+                record.saveWithinTransaction(saver, seen, snapshots,
                         preventStaleWrite);
             }
 
