@@ -27,14 +27,14 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.google.common.base.Preconditions;
 
 /**
- * A {@link Saver} that executes every recording call synchronously against
- * the wrapped {@link Concourse} connection.
+ * A {@link Saver} that executes every recording call synchronously against the
+ * wrapped {@link Concourse} connection.
  * <p>
  * Each {@code audit}/{@code find} round-trips immediately and invokes the
  * supplied {@link Consumer validator} inline so a validation failure throws
- * before any subsequent write is recorded. Each write call goes straight to
- * the connection. {@link #commit()} and {@link #abort()} delegate directly
- * to the underlying connection's transaction primitives.
+ * before any subsequent write is recorded. Each write call goes straight to the
+ * connection. {@link #commit()} and {@link #abort()} delegate directly to the
+ * underlying connection's transaction primitives.
  * </p>
  *
  * @author Jeff Nelson

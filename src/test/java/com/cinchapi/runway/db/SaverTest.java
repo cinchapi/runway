@@ -56,8 +56,8 @@ public abstract class SaverTest extends ClientServerTest {
     }
 
     /**
-     * Construct the {@link Saver} under test, wrapping a fresh connection so
-     * it has its own staging context independent of {@link #concourse}.
+     * Construct the {@link Saver} under test, wrapping a fresh connection so it
+     * has its own staging context independent of {@link #concourse}.
      *
      * @return a new {@link Saver}
      */
@@ -65,8 +65,8 @@ public abstract class SaverTest extends ClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link Saver#concourse()} returns the
-     * underlying {@link Concourse} that the {@link Saver} was constructed
-     * with so cascade-read fallthrough has a connection to use.
+     * underlying {@link Concourse} that the {@link Saver} was constructed with
+     * so cascade-read fallthrough has a connection to use.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
@@ -86,8 +86,8 @@ public abstract class SaverTest extends ClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link Saver#commit()} returns
-     * {@code true} when the staged transaction commits cleanly with no
-     * recorded operations beyond stage.
+     * {@code true} when the staged transaction commits cleanly with no recorded
+     * operations beyond stage.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
@@ -120,8 +120,8 @@ public abstract class SaverTest extends ClientServerTest {
      * <li>Commit the {@link Saver}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The target record's {@code "foo"} field
-     * holds exactly {@code "bar"}.
+     * <strong>Expected:</strong> The target record's {@code "foo"} field holds
+     * exactly {@code "bar"}.
      */
     @Test
     public void testSetIsAppliedAfterCommit() {
@@ -140,8 +140,7 @@ public abstract class SaverTest extends ClientServerTest {
      * <strong>Goal:</strong> Verify that {@link Saver#clear(String, long)}
      * removes the values previously associated with the key.
      * <p>
-     * <strong>Start state:</strong> A record with a value under
-     * {@code "drop"}.
+     * <strong>Start state:</strong> A record with a value under {@code "drop"}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -194,11 +193,10 @@ public abstract class SaverTest extends ClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link Saver#verifyOrSet} updates
-     * the value on a record so that exactly one value remains.
+     * <strong>Goal:</strong> Verify that {@link Saver#verifyOrSet} updates the
+     * value on a record so that exactly one value remains.
      * <p>
-     * <strong>Start state:</strong> A record with two values under
-     * {@code "k"}.
+     * <strong>Start state:</strong> A record with two values under {@code "k"}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -207,8 +205,8 @@ public abstract class SaverTest extends ClientServerTest {
      * <li>Commit.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The record holds exactly the new value
-     * under {@code "k"}.
+     * <strong>Expected:</strong> The record holds exactly the new value under
+     * {@code "k"}.
      */
     @Test
     public void testVerifyOrSetIsAppliedAfterCommit() {
@@ -256,8 +254,8 @@ public abstract class SaverTest extends ClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that the {@code validator} passed to
-     * {@link Saver#audit(long, java.util.function.Consumer) audit} receives
-     * the audit history for the recorded record.
+     * {@link Saver#audit(long, java.util.function.Consumer) audit} receives the
+     * audit history for the recorded record.
      * <p>
      * <strong>Start state:</strong> A record that has been modified once.
      * <p>
@@ -287,8 +285,8 @@ public abstract class SaverTest extends ClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that the {@code validator} passed to
-     * {@link Saver#find(Criteria, java.util.function.Consumer) find}
-     * receives the matching record ids.
+     * {@link Saver#find(Criteria, java.util.function.Consumer) find} receives
+     * the matching record ids.
      * <p>
      * <strong>Start state:</strong> Two records with {@code flag = true} and
      * one with {@code flag = false}.
@@ -338,9 +336,9 @@ public abstract class SaverTest extends ClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> An {@link IllegalStateException} is observed
-     * (either from the recording call for synchronous implementations or
-     * from {@link Saver#commit()} for bulk implementations) and the new
-     * write is not visible on the record after abort.
+     * (either from the recording call for synchronous implementations or from
+     * {@link Saver#commit()} for bulk implementations) and the new write is not
+     * visible on the record after abort.
      */
     @Test
     public void testValidatorThrowAbortsStagedTransaction() {

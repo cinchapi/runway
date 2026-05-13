@@ -24,37 +24,33 @@ import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 
 /**
- * A {@link Saver} encapsulates the database interaction for one save
- * &mdash; the staged transaction, the save-time validation reads, the
- * persisted writes, and the terminal commit or abort &mdash; behind a single
- * type that {@link com.cinchapi.runway.Record#saveWithinTransaction(Saver,
- * java.util.Map, java.util.Map, boolean)} can target without knowing
- * whether the underlying database supports the bulk
+ * A {@link Saver} encapsulates the database interaction for one save &mdash;
+ * the staged transaction, the save-time validation reads, the persisted writes,
+ * and the terminal commit or abort &mdash; behind a single type that
+ * {@link com.cinchapi.runway.Record#saveWithinTransaction(Saver, java.util.Map, java.util.Map, boolean)}
+ * can target without knowing whether the underlying database supports the bulk
  * {@link com.cinchapi.concourse.lang.CommandGroup CommandGroup} command API.
  * <p>
- * <h2>Reads</h2>
- * Validation reads ({@link #audit(long, Consumer) audit},
+ * <h2>Reads</h2> Validation reads ({@link #audit(long, Consumer) audit},
  * {@link #find(Criteria, Consumer) find}) accept a {@link Consumer} that
  * receives the read's result and may throw to signal a validation failure.
  * Implementations decide <em>when</em> the {@link Consumer} runs: immediately
- * for the synchronous path; queued-and-flushed inside {@link #commit()} for
- * the bulk path. Either way the {@link Consumer} sees the same data and any
+ * for the synchronous path; queued-and-flushed inside {@link #commit()} for the
+ * bulk path. Either way the {@link Consumer} sees the same data and any
  * exception it raises propagates to the caller of the recording method (for
  * immediate implementations) or the caller of {@link #commit()} (for bulk
  * implementations).
  * </p>
- * <h2>Writes</h2>
- * Writes ({@link #set set}, {@link #clear(String, long) clear},
+ * <h2>Writes</h2> Writes ({@link #set set}, {@link #clear(String, long) clear},
  * {@link #verifyOrSet verifyOrSet}, {@link #reconcile reconcile}) are recorded
- * against the active transaction. Bulk implementations defer their server-
- * side execution until {@link #commit()}; synchronous implementations execute
- * each write immediately. In both cases the staged transaction is the unit
- * of atomicity &mdash; a failure anywhere before {@link #commit()} succeeds
- * aborts the entire save.
+ * against the active transaction. Bulk implementations defer their server- side
+ * execution until {@link #commit()}; synchronous implementations execute each
+ * write immediately. In both cases the staged transaction is the unit of
+ * atomicity &mdash; a failure anywhere before {@link #commit()} succeeds aborts
+ * the entire save.
  *
- * <h2>Lifecycle</h2>
- * The caller drives the lifecycle: {@link #stage()} once, any number of
- * recording calls, then exactly one of {@link #commit()} or
+ * <h2>Lifecycle</h2> The caller drives the lifecycle: {@link #stage()} once,
+ * any number of recording calls, then exactly one of {@link #commit()} or
  * {@link #abort()}. A {@link Saver} is single-use and is not safe for
  * concurrent access.
  *
@@ -79,11 +75,10 @@ public interface Saver {
     /**
      * Begin a staged transaction for the save this {@link Saver} represents.
      * <p>
-     * Must be called exactly once before any recording method. For
-     * synchronous implementations the stage takes effect on the server
-     * immediately; for bulk implementations the stage is recorded for
-     * execution as the first command of the read submission inside
-     * {@link #commit()}.
+     * Must be called exactly once before any recording method. For synchronous
+     * implementations the stage takes effect on the server immediately; for
+     * bulk implementations the stage is recorded for execution as the first
+     * command of the read submission inside {@link #commit()}.
      * </p>
      */
     void stage();
@@ -91,12 +86,12 @@ public interface Saver {
     /**
      * Commit the staged transaction.
      * <p>
-     * For synchronous implementations this delegates straight to the
-     * underlying connection's commit. For bulk implementations this is where
-     * the actual work happens: submit the reads (executing {@link #stage()},
-     * the recorded {@link #audit audits} and {@link #find finds} in one
-     * round trip), run every queued validator against the results, then
-     * submit the writes plus the terminal commit in a second round trip.
+     * For synchronous implementations this delegates straight to the underlying
+     * connection's commit. For bulk implementations this is where the actual
+     * work happens: submit the reads (executing {@link #stage()}, the recorded
+     * {@link #audit audits} and {@link #find finds} in one round trip), run
+     * every queued validator against the results, then submit the writes plus
+     * the terminal commit in a second round trip.
      * </p>
      * <p>
      * If any queued validator throws, the writes are <strong>not</strong>
@@ -105,8 +100,8 @@ public interface Saver {
      * </p>
      *
      * @return {@code true} if the staged transaction committed; {@code false}
-     *         if the server rejected the commit (e.g. a spurious commit
-     *         failure that the caller may retry)
+     *         if the server rejected the commit (e.g. a spurious commit failure
+     *         that the caller may retry)
      */
     boolean commit();
 
@@ -124,10 +119,10 @@ public interface Saver {
      * Record an {@link Concourse#audit(long) audit} for {@code record} and
      * arrange to apply {@code validator} to the result.
      * <p>
-     * The {@code validator} may throw to signal a validation failure
-     * (typically {@link com.cinchapi.runway.StaleDataException}); the
-     * exception propagates from the recording call for synchronous
-     * implementations and from {@link #commit()} for bulk implementations.
+     * The {@code validator} may throw to signal a validation failure (typically
+     * {@link com.cinchapi.runway.StaleDataException}); the exception propagates
+     * from the recording call for synchronous implementations and from
+     * {@link #commit()} for bulk implementations.
      * </p>
      *
      * @param record the record id whose change history is being inspected
@@ -140,23 +135,22 @@ public interface Saver {
      * Record a {@link Concourse#find(Criteria) find} for the {@code criteria}
      * and arrange to apply {@code validator} to the matching record ids.
      * <p>
-     * The {@code validator} may throw to signal a validation failure
-     * (typically {@link IllegalStateException} for a {@link
-     * com.cinchapi.runway.Unique} violation); the exception propagates from
-     * the recording call for synchronous implementations and from
-     * {@link #commit()} for bulk implementations.
+     * The {@code validator} may throw to signal a validation failure (typically
+     * {@link IllegalStateException} for a {@link com.cinchapi.runway.Unique}
+     * violation); the exception propagates from the recording call for
+     * synchronous implementations and from {@link #commit()} for bulk
+     * implementations.
      * </p>
      *
-     * @param criteria the {@link Criteria} that identifies the matching
-     *            records
+     * @param criteria the {@link Criteria} that identifies the matching records
      * @param validator a {@link Consumer} that receives the matching ids and
      *            may throw to reject the save
      */
     void find(Criteria criteria, Consumer<Set<Long>> validator);
 
     /**
-     * Record a {@link Concourse#set(String, Object, long) set} of
-     * {@code value} for {@code key} in {@code record}.
+     * Record a {@link Concourse#set(String, Object, long) set} of {@code value}
+     * for {@code key} in {@code record}.
      *
      * @param key the field name to set
      * @param value the value to associate with {@code key}
@@ -182,8 +176,8 @@ public interface Saver {
     void clear(long record);
 
     /**
-     * Record a {@link Concourse#verifyOrSet(String, Object, long)
-     * verifyOrSet} of {@code value} for {@code key} in {@code record}.
+     * Record a {@link Concourse#verifyOrSet(String, Object, long) verifyOrSet}
+     * of {@code value} for {@code key} in {@code record}.
      *
      * @param key the field name to verifyOrSet
      * @param value the value to associate with {@code key}

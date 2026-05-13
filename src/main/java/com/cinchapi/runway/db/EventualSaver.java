@@ -35,8 +35,8 @@ import com.google.common.base.Preconditions;
  * {@link CommandGroup} submissions: one carrying {@link #stage()} and all
  * validation reads, the other carrying all writes and the terminal commit.
  * <p>
- * Recording calls touch only client-side state. Server-side work happens
- * inside {@link #commit()}, which:
+ * Recording calls touch only client-side state. Server-side work happens inside
+ * {@link #commit()}, which:
  * <ol>
  * <li>Submits the reads {@link CommandGroup} as one round trip,</li>
  * <li>Drains queued {@link Consumer validator} callbacks against the result
@@ -47,10 +47,9 @@ import com.google.common.base.Preconditions;
  * result.</li>
  * </ol>
  * <p>
- * If no validation reads are recorded the reads submission still runs
- * because it carries {@link #stage()} &mdash; the round trip is required to
- * open the staged transaction on the server before the writes submission
- * can commit it.
+ * If no validation reads are recorded the reads submission still runs because
+ * it carries {@link #stage()} &mdash; the round trip is required to open the
+ * staged transaction on the server before the writes submission can commit it.
  * </p>
  *
  * @author Jeff Nelson
@@ -59,15 +58,14 @@ import com.google.common.base.Preconditions;
 public final class EventualSaver implements Saver {
 
     /**
-     * The {@link Concourse} connection used to submit the read and write
-     * groups and against which any {@link #abort()} executes.
+     * The {@link Concourse} connection used to submit the read and write groups
+     * and against which any {@link #abort()} executes.
      */
     private final Concourse concourse;
 
     /**
-     * The {@link CommandGroup} accumulating {@link #stage()} and all
-     * validation reads; submitted as the first round trip of
-     * {@link #commit()}.
+     * The {@link CommandGroup} accumulating {@link #stage()} and all validation
+     * reads; submitted as the first round trip of {@link #commit()}.
      */
     private final CommandGroup reads;
 
@@ -85,9 +83,9 @@ public final class EventualSaver implements Saver {
     private final List<Consumer<List<Object>>> validations;
 
     /**
-     * Whether the reads {@link CommandGroup} has been submitted to the
-     * server. Used by {@link #abort()} to decide whether a server-side
-     * staged transaction exists that needs rolling back.
+     * Whether the reads {@link CommandGroup} has been submitted to the server.
+     * Used by {@link #abort()} to decide whether a server-side staged
+     * transaction exists that needs rolling back.
      */
     private boolean readsSubmitted;
 
@@ -95,8 +93,8 @@ public final class EventualSaver implements Saver {
      * Construct a new {@link EventualSaver} that submits against
      * {@code concourse}.
      *
-     * @param concourse the {@link Concourse} connection that hosts the
-     *            staged transaction; must not be {@code null}
+     * @param concourse the {@link Concourse} connection that hosts the staged
+     *            transaction; must not be {@code null}
      */
     public EventualSaver(Concourse concourse) {
         this.concourse = Preconditions.checkNotNull(concourse);
@@ -122,8 +120,7 @@ public final class EventualSaver implements Saver {
         int slot = reads.commands().size();
         reads.audit(record);
         validations.add(results -> {
-            @SuppressWarnings("unchecked")
-            Map<Timestamp, String> result = (Map<Timestamp, String>) results
+            @SuppressWarnings("unchecked") Map<Timestamp, String> result = (Map<Timestamp, String>) results
                     .get(slot);
             validator.accept(result);
         });
@@ -135,8 +132,8 @@ public final class EventualSaver implements Saver {
         int slot = reads.commands().size();
         reads.find(criteria);
         validations.add(results -> {
-            @SuppressWarnings("unchecked")
-            Set<Long> result = (Set<Long>) results.get(slot);
+            @SuppressWarnings("unchecked") Set<Long> result = (Set<Long>) results
+                    .get(slot);
             validator.accept(result);
         });
     }

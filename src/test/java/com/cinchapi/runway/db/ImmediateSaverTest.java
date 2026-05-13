@@ -40,10 +40,10 @@ public class ImmediateSaverTest extends SaverTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link ImmediateSaver} runs the
-     * audit {@link java.util.function.Consumer validator} at the moment
-     * {@code audit} is called &mdash; not later during commit &mdash; so a
-     * throwing validator stops further recording.
+     * <strong>Goal:</strong> Verify that {@link ImmediateSaver} runs the audit
+     * {@link java.util.function.Consumer validator} at the moment {@code audit}
+     * is called &mdash; not later during commit &mdash; so a throwing validator
+     * stops further recording.
      * <p>
      * <strong>Start state:</strong> A record exists with one value.
      * <p>
@@ -54,8 +54,8 @@ public class ImmediateSaverTest extends SaverTest {
      * <li>Catch the exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The exception arrives from the
-     * {@code audit} call itself, not from a later {@code commit}.
+     * <strong>Expected:</strong> The exception arrives from the {@code audit}
+     * call itself, not from a later {@code commit}.
      */
     @Test
     public void testAuditValidatorRunsInline() {
@@ -78,8 +78,8 @@ public class ImmediateSaverTest extends SaverTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that an {@link ImmediateSaver}
-     * {@code find} validator runs inline.
+     * <strong>Goal:</strong> Verify that an {@link ImmediateSaver} {@code find}
+     * validator runs inline.
      * <p>
      * <strong>Start state:</strong> A record matching {@code flag = true}.
      * <p>
