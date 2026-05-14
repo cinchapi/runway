@@ -277,12 +277,16 @@ public final class BatchSaver implements Saver {
         CommandGroup reads = concourse.prepare();
         if(stageRequested && !stageSubmitted) {
             reads.stage();
+            // Mark the stage as submitted before sending so that a mid-flight
+            // submit failure still routes through to concourse.abort() in
+            // abort(), matching the writes-submit path in commit() and
+            // mirroring the unconditional abort() in IncrementalSaver.
+            stageSubmitted = true;
         }
         for (Consumer<CommandGroup> op : deferredReadOps) {
             op.accept(reads);
         }
         List<Object> results = concourse.submit(reads);
-        stageSubmitted = true;
         // Snapshot and clear before dispatching so nested saver recordings
         // made by a validator/consumer accumulate into a fresh batch.
         List<Consumer<List<Object>>> active = new ArrayList<>(
