@@ -147,8 +147,8 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
         UniqueNamed duplicate = new UniqueNamed("Alpha");
         Assert.assertFalse(duplicate.save());
 
-        Assert.assertFalse(duplicate.errors().isEmpty());
-        Throwable err = duplicate.errors().iterator().next();
+        Assert.assertFalse(duplicate.errors.isEmpty());
+        Throwable err = duplicate.errors.iterator().next();
         Assert.assertTrue(err instanceof IllegalStateException);
         Assert.assertTrue(err.getMessage().toLowerCase().contains("unique"));
 
