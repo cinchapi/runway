@@ -519,8 +519,8 @@ public abstract class Record implements Comparable<Record> {
             boolean preventStaleWrite) {
         if(Sequences.isSequence(value)) {
             Sequences.forEach(value,
-                    item -> saveModifiedReferenceWithinTransaction(item,
-                            saver, seen, snapshots, preventStaleWrite));
+                    item -> saveModifiedReferenceWithinTransaction(item, saver,
+                            seen, snapshots, preventStaleWrite));
         }
         else {
             Record record = null;
@@ -2321,10 +2321,9 @@ public abstract class Record implements Comparable<Record> {
                     if(value != null) {
                         if(field.isAnnotationPresent(Unique.class)) {
                             if(isSequence) {
-                                Sequences.forEach(value,
-                                        item -> checkIsUnique(saver, field, key,
-                                                item,
-                                                alreadyVerifiedUniqueConstraints));
+                                Sequences.forEach(value, item -> checkIsUnique(
+                                        saver, field, key, item,
+                                        alreadyVerifiedUniqueConstraints));
                             }
                             else {
                                 checkIsUnique(saver, field, key, value,
@@ -2815,59 +2814,66 @@ public abstract class Record implements Comparable<Record> {
         Criteria potentialJoinDeletes = StaticAnalysis.instance()
                 .getJoinDeleteLookupCondition(this);
         if(potentialJoinDeletes != null) {
-            for (Entry<Long, Set<Object>> entry : saver.concourse()
-                    .select(SECTION_KEY, potentialJoinDeletes).entrySet()) {
-                long id = entry.getKey();
-                String __ = (String) Iterables.getLast(entry.getValue());
-                Class<? extends Record> clazz = Reflection.getClassCasted(__);
-                Record record = db.load(clazz, id);
-                ensureDeletion(record);
-            }
+            saver.select(SECTION_KEY, potentialJoinDeletes, result -> {
+                for (Entry<Long, Set<Object>> entry : result.entrySet()) {
+                    long joinId = entry.getKey();
+                    String section = (String) Iterables
+                            .getLast(entry.getValue());
+                    Class<? extends Record> clazz = Reflection
+                            .getClassCasted(section);
+                    Record record = db.load(clazz, joinId);
+                    ensureDeletion(record);
+                }
+            });
         }
 
         Criteria potentialCaptureDeletes = StaticAnalysis.instance()
                 .getCaptureDeleteLookupCondition(this);
         if(potentialCaptureDeletes != null) {
-            for (Entry<Long, Set<Object>> entry : saver.concourse()
-                    .select(SECTION_KEY, potentialCaptureDeletes).entrySet()) {
-                long id = entry.getKey();
-                String __ = (String) Iterables.getLast(entry.getValue());
-                Class<? extends Record> clazz = Reflection.getClassCasted(__);
-                Record record = db.load(clazz, id);
-                Set<Field> fields = StaticAnalysis.instance()
-                        .getAnnotatedFields(record, CaptureDelete.class);
-                for (Field field : fields) {
-                    try {
-                        Object value = field.get(record);
-                        if(value == null) { // GH-58
-                            continue;
-                        }
-                        else if(value instanceof Collection) {
-                            Collection<?> collection = (Collection<?>) value;
-                            while (collection.contains(this)) {
-                                collection.remove(this);
+            saver.select(SECTION_KEY, potentialCaptureDeletes, result -> {
+                for (Entry<Long, Set<Object>> entry : result.entrySet()) {
+                    long captureId = entry.getKey();
+                    String section = (String) Iterables
+                            .getLast(entry.getValue());
+                    Class<? extends Record> clazz = Reflection
+                            .getClassCasted(section);
+                    Record record = db.load(clazz, captureId);
+                    Set<Field> fields = StaticAnalysis.instance()
+                            .getAnnotatedFields(record, CaptureDelete.class);
+                    for (Field field : fields) {
+                        try {
+                            Object value = field.get(record);
+                            if(value == null) { // GH-58
+                                continue;
+                            }
+                            else if(value instanceof Collection) {
+                                Collection<?> collection = (Collection<?>) value;
+                                while (collection.contains(this)) {
+                                    collection.remove(this);
+                                }
+                            }
+                            else if(value.getClass().isArray()) {
+                                ArrayBuilder<Object> ab = ArrayBuilder
+                                        .builder();
+                                Sequences.forEach(value, item -> {
+                                    if(!item.equals(this)) {
+                                        ab.add(item);
+                                    }
+                                });
+                                field.set(record, ab.build());
+                            }
+                            else if(value.equals(this)) {
+                                field.set(record, null);
                             }
                         }
-                        else if(value.getClass().isArray()) {
-                            ArrayBuilder<Object> ab = ArrayBuilder.builder();
-                            Sequences.forEach(value, item -> {
-                                if(!item.equals(this)) {
-                                    ab.add(item);
-                                }
-                            });
-                            field.set(record, ab.build());
-                        }
-                        else if(value.equals(this)) {
-                            field.set(record, null);
+                        catch (ReflectiveOperationException e) {
+                            throw CheckedExceptions.wrapAsRuntimeException(e);
                         }
                     }
-                    catch (ReflectiveOperationException e) {
-                        throw CheckedExceptions.wrapAsRuntimeException(e);
-                    }
+                    record.saveWithinTransaction(saver, new HashMap<>(),
+                            new HashMap<>(), preventStaleWrite);
                 }
-                record.saveWithinTransaction(saver, new HashMap<>(),
-                        new HashMap<>(), preventStaleWrite);
-            }
+            });
         }
 
         saver.clear(id);

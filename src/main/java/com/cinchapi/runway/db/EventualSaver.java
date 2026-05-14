@@ -31,25 +31,40 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.google.common.base.Preconditions;
 
 /**
- * A {@link Saver} that batches save-time database interaction into two
- * {@link CommandGroup} submissions: one carrying {@link #stage()} and all
- * validation reads, the other carrying all writes and the terminal commit.
+ * A {@link Saver} that batches save-pipeline interaction into the smallest
+ * number of {@link CommandGroup} submissions a given save permits.
  * <p>
- * Recording calls touch only client-side state. Server-side work happens inside
- * {@link #commit()}, which:
- * <ol>
- * <li>Submits the reads {@link CommandGroup} as one round trip,</li>
- * <li>Drains queued {@link Consumer validator} callbacks against the result
- * list &mdash; any throw propagates out and prevents the second submit,</li>
- * <li>Appends a commit command to the writes {@link CommandGroup} and submits
- * it as the second round trip,</li>
- * <li>Returns the commit's boolean from the last entry in the writes
- * result.</li>
- * </ol>
+ * Recording calls accumulate deferred operations against this {@link Saver}
+ * rather than touching the server. Server work happens at one of two points:
+ * </p>
+ * <ul>
+ * <li><strong>Inside {@link #commit()}.</strong> If only writes were recorded,
+ * one {@link CommandGroup} carries {@link #stage()} plus every write plus the
+ * terminal commit and submits in a single round trip. If validation reads were
+ * also recorded, two {@link CommandGroup CommandGroups} are used: the first
+ * carries {@link #stage()} plus the recorded {@link #audit audits} and
+ * {@link #find finds}, runs every queued {@link Consumer validator} against the
+ * result, and only then is the writes-plus-commit {@link CommandGroup}
+ * submitted.</li>
+ * <li><strong>Inside {@link #select(String, Criteria, Consumer)
+ * select}.</strong> Save-time {@link #select select} reads drive control flow
+ * rather than a throw/no-throw validation, so the {@link Consumer} must observe
+ * its result before the recording call returns. Calling
+ * {@link #select(String, Criteria, Consumer) select} therefore submits any
+ * reads accumulated so far &mdash; {@link #stage()}, queued {@link #audit
+ * audits}, queued {@link #find finds}, and this {@link #select select} itself
+ * &mdash; runs all the queued {@link Consumer Consumers} in recording order,
+ * and then resets the read-side state so subsequent recordings start a fresh
+ * batch.</li>
+ * </ul>
  * <p>
- * If no validation reads are recorded the reads submission still runs because
- * it carries {@link #stage()} &mdash; the round trip is required to open the
- * staged transaction on the server before the writes submission can commit it.
+ * If any {@link Consumer Consumer} throws during a flush, the corresponding
+ * submission has already opened the staged transaction on the server; the
+ * caller is responsible for calling {@link #abort()} after handling the
+ * exception.
+ * </p>
+ * <p>
+ * This {@link Saver} is <strong>not thread-safe</strong>.
  * </p>
  *
  * @author Jeff Nelson
@@ -58,36 +73,40 @@ import com.google.common.base.Preconditions;
 public final class EventualSaver implements Saver {
 
     /**
-     * The {@link Concourse} connection used to submit the read and write groups
-     * and against which any {@link #abort()} executes.
+     * The {@link Concourse} connection used to submit and against which
+     * {@link #abort()} executes.
      */
     private final Concourse concourse;
 
     /**
-     * The {@link CommandGroup} accumulating {@link #stage()} and all validation
-     * reads; submitted as the first round trip of {@link #commit()}.
+     * Whether {@link #stage()} has been called.
      */
-    private final CommandGroup reads;
+    private boolean stageRequested;
 
     /**
-     * The {@link CommandGroup} accumulating writes and the terminal commit;
-     * submitted as the second round trip of {@link #commit()}.
+     * Whether {@link #stage()} has been included in a submitted
+     * {@link CommandGroup}; once {@code true} subsequent flushes and the writes
+     * submission do not re-record it.
      */
-    private final CommandGroup writes;
+    private boolean stageSubmitted;
 
     /**
-     * Validator callbacks queued by {@link #audit audit} and {@link #find
-     * find}, in recording order. Each callback receives the full reads-
-     * submission result list and extracts its own slot.
+     * Deferred read recordings in the active batch. Each entry records its own
+     * slot position when it runs against the active read {@link CommandGroup}.
      */
-    private final List<Consumer<List<Object>>> validations;
+    private final List<Consumer<CommandGroup>> deferredReadOps;
 
     /**
-     * Whether the reads {@link CommandGroup} has been submitted to the server.
-     * Used by {@link #abort()} to decide whether a server-side staged
-     * transaction exists that needs rolling back.
+     * Validator {@link Consumer Consumers} paired with the deferred reads in
+     * the active batch. Run in recording order against the submitted result
+     * list.
      */
-    private boolean readsSubmitted;
+    private final List<Consumer<List<Object>>> pendingValidators;
+
+    /**
+     * Deferred write recordings accumulated for the writes submission.
+     */
+    private final List<Consumer<CommandGroup>> deferredWriteOps;
 
     /**
      * Construct a new {@link EventualSaver} that submits against
@@ -98,10 +117,11 @@ public final class EventualSaver implements Saver {
      */
     public EventualSaver(Concourse concourse) {
         this.concourse = Preconditions.checkNotNull(concourse);
-        this.reads = concourse.prepare();
-        this.writes = concourse.prepare();
-        this.validations = new ArrayList<>();
-        this.readsSubmitted = false;
+        this.stageRequested = false;
+        this.stageSubmitted = false;
+        this.deferredReadOps = new ArrayList<>();
+        this.pendingValidators = new ArrayList<>();
+        this.deferredWriteOps = new ArrayList<>();
     }
 
     @Override
@@ -111,17 +131,20 @@ public final class EventualSaver implements Saver {
 
     @Override
     public void stage() {
-        reads.stage();
+        stageRequested = true;
     }
 
     @Override
     public void audit(long record, Consumer<Map<Timestamp, String>> validator) {
         Preconditions.checkNotNull(validator);
-        int slot = reads.commands().size();
-        reads.audit(record);
-        validations.add(results -> {
+        int[] slot = new int[1];
+        deferredReadOps.add(group -> {
+            slot[0] = group.commands().size();
+            group.audit(record);
+        });
+        pendingValidators.add(results -> {
             @SuppressWarnings("unchecked") Map<Timestamp, String> result = (Map<Timestamp, String>) results
-                    .get(slot);
+                    .get(slot[0]);
             validator.accept(result);
         });
     }
@@ -129,58 +152,111 @@ public final class EventualSaver implements Saver {
     @Override
     public void find(Criteria criteria, Consumer<Set<Long>> validator) {
         Preconditions.checkNotNull(validator);
-        int slot = reads.commands().size();
-        reads.find(criteria);
-        validations.add(results -> {
+        int[] slot = new int[1];
+        deferredReadOps.add(group -> {
+            slot[0] = group.commands().size();
+            group.find(criteria);
+        });
+        pendingValidators.add(results -> {
             @SuppressWarnings("unchecked") Set<Long> result = (Set<Long>) results
-                    .get(slot);
+                    .get(slot[0]);
             validator.accept(result);
         });
     }
 
     @Override
+    public void select(String key, Criteria criteria,
+            Consumer<Map<Long, Set<Object>>> consumer) {
+        Preconditions.checkNotNull(consumer);
+        int[] slot = new int[1];
+        deferredReadOps.add(group -> {
+            slot[0] = group.commands().size();
+            group.select(key, criteria);
+        });
+        pendingValidators.add(results -> {
+            @SuppressWarnings("unchecked") Map<Long, Set<Object>> result = (Map<Long, Set<Object>>) results
+                    .get(slot[0]);
+            consumer.accept(result);
+        });
+        flushReads();
+    }
+
+    @Override
     public void set(String key, Object value, long record) {
-        writes.set(key, value, record);
+        deferredWriteOps.add(group -> group.set(key, value, record));
     }
 
     @Override
     public void clear(String key, long record) {
-        writes.clear(key, record);
+        deferredWriteOps.add(group -> group.clear(key, record));
     }
 
     @Override
     public void clear(long record) {
-        writes.clear(record);
+        deferredWriteOps.add(group -> group.clear(record));
     }
 
     @Override
     public void verifyOrSet(String key, Object value, long record) {
-        writes.verifyOrSet(key, value, record);
+        deferredWriteOps.add(group -> group.verifyOrSet(key, value, record));
     }
 
     @Override
     public void reconcile(String key, long record, Object[] values) {
-        writes.reconcile(key, record, Arrays.asList(values));
+        deferredWriteOps.add(
+                group -> group.reconcile(key, record, Arrays.asList(values)));
     }
 
     @Override
     public boolean commit() {
-        if(reads.commands().size() > 0) {
-            List<Object> readResults = concourse.submit(reads);
-            readsSubmitted = true;
-            for (Consumer<List<Object>> validation : validations) {
-                validation.accept(readResults);
-            }
+        flushReads();
+        CommandGroup writes = concourse.prepare();
+        if(stageRequested && !stageSubmitted) {
+            writes.stage();
+            stageSubmitted = true;
+        }
+        for (Consumer<CommandGroup> op : deferredWriteOps) {
+            op.accept(writes);
         }
         writes.commit();
-        List<Object> writeResults = concourse.submit(writes);
-        return (Boolean) writeResults.get(writeResults.size() - 1);
+        List<Object> results = concourse.submit(writes);
+        return (Boolean) results.get(results.size() - 1);
     }
 
     @Override
     public void abort() {
-        if(readsSubmitted) {
+        if(stageSubmitted) {
             concourse.abort();
+        }
+    }
+
+    /**
+     * Submit any reads accumulated in the active batch and run every queued
+     * {@link Consumer Consumer} against the result list in recording order.
+     * Clears the batch so subsequent recordings start fresh. No-op when no
+     * reads have been recorded since the previous flush.
+     */
+    private void flushReads() {
+        if(deferredReadOps.isEmpty()) {
+            return;
+        }
+        CommandGroup reads = concourse.prepare();
+        if(stageRequested && !stageSubmitted) {
+            reads.stage();
+        }
+        for (Consumer<CommandGroup> op : deferredReadOps) {
+            op.accept(reads);
+        }
+        List<Object> results = concourse.submit(reads);
+        stageSubmitted = true;
+        try {
+            for (Consumer<List<Object>> validator : pendingValidators) {
+                validator.accept(results);
+            }
+        }
+        finally {
+            deferredReadOps.clear();
+            pendingValidators.clear();
         }
     }
 

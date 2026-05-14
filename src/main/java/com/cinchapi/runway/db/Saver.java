@@ -60,13 +60,6 @@ public interface Saver {
 
     /**
      * Return the underlying {@link Concourse} connection.
-     * <p>
-     * Provided so that save-pipeline reads that do not fit the
-     * {@link Consumer}-validator shape &mdash; notably cascade-delete reads
-     * whose results drive recursive control flow rather than throw/no-throw
-     * validation &mdash; can fall through to the raw connection. Such reads
-     * execute immediately and are not folded into the bulk batch.
-     * </p>
      *
      * @return the wrapped {@link Concourse} connection
      */
@@ -87,11 +80,12 @@ public interface Saver {
      * Commit the staged transaction.
      * <p>
      * For synchronous implementations this delegates straight to the underlying
-     * connection's commit. For bulk implementations this is where the actual
-     * work happens: submit the reads (executing {@link #stage()}, the recorded
-     * {@link #audit audits} and {@link #find finds} in one round trip), run
-     * every queued validator against the results, then submit the writes plus
-     * the terminal commit in a second round trip.
+     * connection's commit. Bulk implementations submit accumulated recordings
+     * with as few round trips as the save permits: a single submission carrying
+     * {@link #stage()}, every write, and the terminal commit when no validation
+     * reads were recorded; otherwise the reads submission first (running every
+     * queued validator against its result list) followed by the
+     * writes-plus-commit submission.
      * </p>
      * <p>
      * If any queued validator throws, the writes are <strong>not</strong>
@@ -147,6 +141,30 @@ public interface Saver {
      *            may throw to reject the save
      */
     void find(Criteria criteria, Consumer<Set<Long>> validator);
+
+    /**
+     * Record a {@link Concourse#select(String, Criteria) select} of values for
+     * {@code key} on every record matching {@code criteria} and arrange to
+     * apply {@code consumer} to the resulting record-keyed map.
+     * <p>
+     * Unlike {@link #audit audit} and {@link #find find}, this read drives
+     * control flow rather than a throw/no-throw validation &mdash; the
+     * {@code consumer} typically iterates the result and triggers further save
+     * work (e.g. cascade-delete loads). Implementations therefore guarantee
+     * that {@code consumer} runs before the recording call returns. For bulk
+     * implementations this means an early submission of any reads accumulated
+     * so far so the result is available; subsequent recordings start a fresh
+     * batch.
+     * </p>
+     *
+     * @param key the field name whose values should be returned
+     * @param criteria the {@link Criteria} that identifies the matching records
+     * @param consumer a {@link Consumer} that receives the result and may
+     *            mutate caller state, trigger further recordings on this
+     *            {@link Saver}, or throw to reject the save
+     */
+    void select(String key, Criteria criteria,
+            Consumer<Map<Long, Set<Object>>> consumer);
 
     /**
      * Record a {@link Concourse#set(String, Object, long) set} of {@code value}

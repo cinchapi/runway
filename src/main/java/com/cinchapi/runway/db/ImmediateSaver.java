@@ -88,6 +88,12 @@ public final class ImmediateSaver implements Saver {
     }
 
     @Override
+    public void select(String key, Criteria criteria,
+            Consumer<Map<Long, Set<Object>>> consumer) {
+        consumer.accept(concourse.select(key, criteria));
+    }
+
+    @Override
     public void set(String key, Object value, long record) {
         concourse.set(key, value, record);
     }
