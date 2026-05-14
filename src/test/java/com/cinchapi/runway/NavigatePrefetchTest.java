@@ -1211,6 +1211,219 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that the default
+     * {@link CollectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NAVIGATE} so loads use the unified
+     * navigate-plus-cleanup path out of the box.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Runway} without calling
+     * {@link Runway.Builder#collectionPreSelectStrategy
+     * collectionPreSelectStrategy}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NAVIGATE}.
+     */
+    @Test
+    public void testDefaultStrategyIsNavigate() throws Exception {
+        Runway custom = Runway.builder().port(server.getClientPort()).build();
+        try {
+            Assert.assertEquals(CollectionPreSelectStrategy.NAVIGATE,
+                    custom.properties().collectionPreSelectStrategy());
+        }
+        finally {
+            custom.close();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that selecting the deprecated
+     * {@link CollectionPreSelectStrategy#BULK_SELECT} alias produces the same
+     * loaded {@link Record Records} as
+     * {@link CollectionPreSelectStrategy#NAVIGATE} &mdash; the two strategies
+     * are now unified.
+     * <p>
+     * <strong>Start state:</strong> A {@link Conversation} with two
+     * {@link Exchange Exchanges} saved to the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a small {@link Conversation} graph.</li>
+     * <li>Load it once under {@link CollectionPreSelectStrategy#NAVIGATE} and
+     * once under {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
+     * <li>Compare the loaded data on both sides.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both loads populate the same {@link Exchange}
+     * text values and the same nested {@link Prompt} data.
+     */
+    @Test
+    @SuppressWarnings("deprecation")
+    public void testBulkSelectBehavesAsAliasForNavigate() {
+        Conversation convo = new Conversation();
+        Exchange e1 = new Exchange();
+        e1.text = "first";
+        Prompt p1 = new Prompt();
+        p1.text = "prompt-one";
+        e1.prompt = p1;
+        Exchange e2 = new Exchange();
+        e2.text = "second";
+        Prompt p2 = new Prompt();
+        p2.text = "prompt-two";
+        e2.prompt = p2;
+        convo.root.add(e1);
+        convo.root.add(e2);
+        convo.save();
+        CollectionPreSelectStrategy previous = runway.properties()
+                .collectionPreSelectStrategy();
+        try {
+            runway.properties().collectionPreSelectStrategy(
+                    CollectionPreSelectStrategy.NAVIGATE);
+            Conversation viaNavigate = runway.load(Conversation.class,
+                    convo.id());
+            runway.properties().collectionPreSelectStrategy(
+                    CollectionPreSelectStrategy.BULK_SELECT);
+            Conversation viaBulkSelect = runway.load(Conversation.class,
+                    convo.id());
+            Set<String> navigateTexts = viaNavigate.root.stream()
+                    .map(e -> e.text).collect(Collectors.toSet());
+            Set<String> bulkSelectTexts = viaBulkSelect.root.stream()
+                    .map(e -> e.text).collect(Collectors.toSet());
+            Assert.assertEquals(navigateTexts, bulkSelectTexts);
+            Set<String> navigatePromptTexts = viaNavigate.root.stream()
+                    .map(e -> e.prompt.text).collect(Collectors.toSet());
+            Set<String> bulkSelectPromptTexts = viaBulkSelect.root.stream()
+                    .map(e -> e.prompt.text).collect(Collectors.toSet());
+            Assert.assertEquals(navigatePromptTexts, bulkSelectPromptTexts);
+        }
+        finally {
+            runway.properties().collectionPreSelectStrategy(previous);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the unified resolve path populates a
+     * mutual-reference graph deeper than static path enumeration can reach, so
+     * the cleanup pass that follows the {@code navigate()} call actually fills
+     * in the tail.
+     * <p>
+     * <strong>Start state:</strong> A mutual chain of {@link Alpha Alphas} and
+     * {@link Beta Betas} of length seven
+     * ({@code A1 -> B1 -> A2 -> B2 -> A3 -> B3 -> A4}) saved to the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save the chain through {@code A1}.</li>
+     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE} (the unified
+     * resolve path).</li>
+     * <li>Load {@code A1} and walk every level of the chain.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Every {@link Alpha} and {@link Beta} along the
+     * chain loads with its correct label, including the deep tail that the
+     * static path enumeration alone cannot cover.
+     */
+    @Test
+    public void testNavigateStrategyPopulatesDeepMutualReferenceChain() {
+        Alpha a1 = new Alpha();
+        a1.label = "a1";
+        Beta b1 = new Beta();
+        b1.label = "b1";
+        Alpha a2 = new Alpha();
+        a2.label = "a2";
+        Beta b2 = new Beta();
+        b2.label = "b2";
+        Alpha a3 = new Alpha();
+        a3.label = "a3";
+        Beta b3 = new Beta();
+        b3.label = "b3";
+        Alpha a4 = new Alpha();
+        a4.label = "a4";
+        a1.betas.add(b1);
+        b1.alphas.add(a2);
+        a2.betas.add(b2);
+        b2.alphas.add(a3);
+        a3.betas.add(b3);
+        b3.alphas.add(a4);
+        a1.save();
+        CollectionPreSelectStrategy previous = runway.properties()
+                .collectionPreSelectStrategy();
+        runway.properties().collectionPreSelectStrategy(
+                CollectionPreSelectStrategy.NAVIGATE);
+        try {
+            Alpha loadedA1 = runway.load(Alpha.class, a1.id());
+            Assert.assertEquals("a1", loadedA1.label);
+            Beta loadedB1 = loadedA1.betas.get(0);
+            Assert.assertEquals("b1", loadedB1.label);
+            Alpha loadedA2 = loadedB1.alphas.get(0);
+            Assert.assertEquals("a2", loadedA2.label);
+            Beta loadedB2 = loadedA2.betas.get(0);
+            Assert.assertEquals("b2", loadedB2.label);
+            Alpha loadedA3 = loadedB2.alphas.get(0);
+            Assert.assertEquals("a3", loadedA3.label);
+            Beta loadedB3 = loadedA3.betas.get(0);
+            Assert.assertEquals("b3", loadedB3.label);
+            Alpha loadedA4 = loadedB3.alphas.get(0);
+            Assert.assertEquals("a4", loadedA4.label);
+        }
+        finally {
+            runway.properties().collectionPreSelectStrategy(previous);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the unified resolve path supports
+     * untyped loads &mdash; each record's class is recovered from its section
+     * key, then a class-aware {@code navigate()} dispatches for the grouped
+     * ids, and linked destinations are populated.
+     * <p>
+     * <strong>Start state:</strong> A {@link Lock} with three {@link Dock
+     * Docks} saved to the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save the {@link Lock} with a distinguishing tag.</li>
+     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE}.</li>
+     * <li>Invoke {@code findAny(Lock.class, criteria)}, which takes the untyped
+     * {@code instantiateAll(Set)} path with {@code any=true}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The matching {@link Lock} loads with every
+     * {@link Dock} populated to its original value.
+     */
+    @Test
+    public void testNavigateStrategySupportsUntypedLoadAnyDispatch() {
+        Lock lock = new Lock(ImmutableList.of(new Dock("alpha"),
+                new Dock("beta"), new Dock("gamma")));
+        lock.tag = "untyped-lock-tag";
+        lock.save();
+        CollectionPreSelectStrategy previous = runway.properties()
+                .collectionPreSelectStrategy();
+        runway.properties().collectionPreSelectStrategy(
+                CollectionPreSelectStrategy.NAVIGATE);
+        try {
+            Set<Lock> loaded = runway.findAny(Lock.class,
+                    Criteria.where().key("tag").operator(Operator.EQUALS)
+                            .value("untyped-lock-tag").build());
+            Assert.assertEquals(1, loaded.size());
+            Lock loadedLock = loaded.iterator().next();
+            Assert.assertEquals(3, loadedLock.docks.size());
+            Set<String> dockValues = loadedLock.docks.stream().map(d -> d.dock)
+                    .collect(Collectors.toSet());
+            Assert.assertTrue(dockValues.contains("alpha"));
+            Assert.assertTrue(dockValues.contains("beta"));
+            Assert.assertTrue(dockValues.contains("gamma"));
+        }
+        finally {
+            runway.properties().collectionPreSelectStrategy(previous);
+        }
+    }
+
     // NOTE: Performance benchmark tests were removed because
     // timing-based assertions are inherently flaky on localhost
     // where server work dominates latency. The optimization
@@ -1539,6 +1752,41 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
          * A human-readable name for this {@link TreeNode}.
          */
         public String name;
+    }
+
+    /**
+     * One half of a mutual-reference test pair. {@link Alpha} links to
+     * {@link Beta Betas} which link back to {@link Alpha Alphas}, exercising
+     * the cleanup pass that closes the gap left when Concourse's same-field
+     * transitive modifier cannot traverse alternating field names.
+     */
+    class Alpha extends Record {
+
+        /**
+         * The {@link Beta Betas} this {@link Alpha} references.
+         */
+        public List<Beta> betas = Lists.newArrayList();
+
+        /**
+         * A label for this {@link Alpha}.
+         */
+        public String label;
+    }
+
+    /**
+     * One half of a mutual-reference test pair. See {@link Alpha}.
+     */
+    class Beta extends Record {
+
+        /**
+         * The {@link Alpha Alphas} this {@link Beta} references.
+         */
+        public List<Alpha> alphas = Lists.newArrayList();
+
+        /**
+         * A label for this {@link Beta}.
+         */
+        public String label;
     }
 
 }

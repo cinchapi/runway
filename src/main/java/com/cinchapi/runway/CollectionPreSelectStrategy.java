@@ -35,70 +35,40 @@ import com.cinchapi.concourse.Link;
 public enum CollectionPreSelectStrategy {
 
     /**
-     * Use Concourse's {@code navigate()} API to pre-fetch all destination
-     * {@link Record} data for {@link Collection Collection&lt;Record&gt;}
-     * fields in a single call.
+     * Pre-fetch every reachable destination {@link Record} for a load operation
+     * using Concourse's path-driven {@code navigate()} API, followed by a
+     * bulk-{@code select()} cleanup pass that closes any gaps the navigate
+     * paths cannot reach (e.g., multi-field cycles whose fields alternate names
+     * so the {@code *} transitive modifier cannot traverse them, or links into
+     * records that are not represented by a known {@link Record} class).
      * <p>
-     * {@code navigate()} returns data keyed by destination record ID,
-     * preserving the per-destination association that {@code select()} with
-     * navigation keys loses when following multi-valued {@link Link Links}.
-     * This strategy issues one {@code navigate()} call per query and requires
-     * {@link Record.StaticAnalysis} to compute navigation paths at startup.
+     * This is the default strategy and the recommended choice for every load.
+     * It dispatches a single {@code navigate()} per request for typed loads
+     * (and one per discovered class for untyped loads), adding follow-up bulk
+     * selects only when the navigate result does not already cover every
+     * reachable target.
      * </p>
-     * <p>
-     * <strong>Trade-offs:</strong>
-     * <ul>
-     * <li>Single RPC with snapshot atomicity &mdash; all destination data
-     * reflects a consistent point in time.</li>
-     * <li>Requires class-aware path computation via
-     * {@link Record.StaticAnalysis}, so it cannot be used for untyped loads
-     * where the class is unknown.</li>
-     * <li>Actual performance depends on how efficiently the Concourse server
-     * implements the {@code navigate()} codepath &mdash; some earlier versions
-     * of Concourse did not fully optimize it.</li>
-     * </ul>
      */
     NAVIGATE,
 
     /**
-     * Scan the initially loaded data for {@link Link} values, batch-fetch all
-     * discovered targets via {@code concourse.select(Set&lt;Long&gt;)}, and
-     * repeat until all reachable {@link Record Records} are collected. One
-     * batch {@code select()} call is issued per depth level in the object graph
-     * (typically 2&ndash;3 iterations).
-     * <p>
-     * <strong>Trade-offs:</strong>
-     * <ul>
-     * <li>Schema-agnostic &mdash; does not require
-     * {@link Record.StaticAnalysis} or class-specific path computation, so it
-     * works for untyped loads and arbitrary object graphs.</li>
-     * <li>Issues one batch {@code select()} per depth level rather than a
-     * single call, so deeper graphs require more round trips (one per
-     * level).</li>
-     * <li>Fetches all keys for each destination record, not just the keys
-     * matching declared fields &mdash; slightly more data transferred than
-     * {@link #NAVIGATE}.</li>
-     * <li>No snapshot atomicity across levels &mdash; each batch sees the
-     * database state at the time of its call.</li>
-     * </ul>
+     * Deprecated alias for {@link #NAVIGATE}. Historically dispatched a
+     * client-side {@link Link}-discovery BFS without a path-driven
+     * {@code navigate()} stage; that mode is no longer distinct, since
+     * {@link #NAVIGATE} now performs the same cleanup pass on top of the
+     * navigate result.
+     *
+     * @deprecated Use {@link #NAVIGATE} directly. Selecting {@code BULK_SELECT}
+     *             now behaves identically.
      */
+    @Deprecated
     BULK_SELECT,
 
     /**
-     * Do not pre-select data for {@link Collection Collection&lt;Record&gt;}
-     * fields. Each linked {@link Record} is fetched individually as it is
-     * encountered during field conversion &mdash; one
-     * {@code concourse.select(id)} call per element.
-     * <p>
-     * <strong>Trade-offs:</strong>
-     * <ul>
-     * <li>Simplest implementation with no upfront work or extra memory.</li>
-     * <li>O(N) round trips for a collection of N elements &mdash; acceptable
-     * for small collections or same-region deployments with sub-millisecond
-     * latency.</li>
-     * <li>Catastrophic for large collections or cross-region deployments where
-     * per-call latency is significant.</li>
-     * </ul>
+     * Opt out of bulk pre-selection: every linked {@link Record} is fetched
+     * individually by {@link Record} field conversion through a separate
+     * {@code concourse.select(id)} call. Provided as an explicit escape hatch
+     * for tests and debugging; production loads should use {@link #NAVIGATE}.
      */
     NONE;
 }

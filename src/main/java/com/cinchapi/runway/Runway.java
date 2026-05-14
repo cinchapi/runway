@@ -86,6 +86,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.cache.Cache;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -444,7 +445,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The strategy for pre-selecting data for {@link Collection
      * Collection&lt;Record&gt;} fields.
      */
-    private CollectionPreSelectStrategy collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
+    private CollectionPreSelectStrategy collectionPreSelectStrategy = CollectionPreSelectStrategy.NAVIGATE;
 
     /**
      * A queue of records that have been successfully saved and are waiting for
@@ -1622,22 +1623,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             Map<String, Set<Object>> data = null;
             Map<Long, Map<String, Set<Object>>> targets = null;
-            if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE) {
-                Set<String> navigatePaths = getNavigatePathsForClassIfSupported(
-                        clazz);
-                if(navigatePaths != null) {
-                    connection = ensureValidConnection(connection);
-                    targets = connection.navigate(navigatePaths, id);
-                }
-            }
-            else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
+            if(collectionPreSelectStrategy != CollectionPreSelectStrategy.NONE) {
                 connection = ensureValidConnection(connection);
                 Set<String> paths = getPathsForClassIfSupported(clazz);
                 data = paths != null ? connection.select(paths, id)
                         : connection.select(id);
-                Map<Long, Map<String, Set<Object>>> seed = Maps.newHashMap();
-                seed.put(id, data);
-                targets = prefetchLinks(connection, seed);
+                Map<Long, Map<String, Set<Object>>> seed = ImmutableMap.of(id,
+                        data);
+                targets = resolveLinkedCollections(clazz, false,
+                        ImmutableSet.of(id), seed);
             }
             T record = instantiate(clazz, id, data, targets);
             if(record != null && hasFilter) {
@@ -2303,34 +2297,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Collect all {@link Record Records} reachable through {@link Link Links}
-     * from the initial {@code data} by iteratively discovering and
-     * batch-fetching targets.
-     *
-     * @param concourse the connection to use
-     * @param data the initial data from the query; not mutated
-     * @return a new map containing {@code data} plus all reachable linked
-     *         record data
-     */
-    private Map<Long, Map<String, Set<Object>>> prefetchLinks(
-            Concourse concourse, Map<Long, Map<String, Set<Object>>> data) {
-        Map<Long, Map<String, Set<Object>>> pool = Maps.newHashMap(data);
-        // BFS over the link graph: each iteration fetches one depth level.
-        // #fetched tracks visited IDs so cycles in the link graph terminate
-        // naturally.
-        Set<Long> fetched = Sets.newHashSet(data.keySet());
-        Set<Long> frontier = extractLinkTargets(data, fetched);
-        while (!frontier.isEmpty()) {
-            Map<Long, Map<String, Set<Object>>> batch = concourse
-                    .select(frontier);
-            pool.putAll(batch);
-            fetched.addAll(frontier);
-            frontier = extractLinkTargets(batch, fetched);
-        }
-        return pool;
-    }
-
-    /**
      * Internal utility method to dispatch a "select" request" for a
      * {@code criteria} based on whether the {@code order} and/or {@code page}
      * params are non-null.
@@ -2513,15 +2479,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Resolve destination {@link Record} data for {@link Collection
-     * Collection&lt;Record&gt;} fields based on the configured
-     * {@link #collectionPreSelectStrategy}.
+     * Resolve destination {@link Record} data for every {@link Link} reachable
+     * from {@code data}.
      *
-     * @param clazz the target class, or {@code null} for untyped loads
-     *            (disqualifies {@link CollectionPreSelectStrategy#NAVIGATE})
+     * @param clazz the target class, or {@code null} for untyped loads where
+     *            each record's class is recovered from its section key
      * @param data the initial query data
-     * @return pre-fetched targets keyed by record ID, or {@code null} when the
-     *         strategy is {@link CollectionPreSelectStrategy#NONE}
+     * @return pre-fetched targets keyed by destination record ID, or
+     *         {@code null} when the configured
+     *         {@link #collectionPreSelectStrategy} is
+     *         {@link CollectionPreSelectStrategy#NONE}
      */
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollections(
             @Nullable Class<? extends Record> clazz,
@@ -2530,13 +2497,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Resolve destination {@link Record} data for {@link Collection
-     * Collection&lt;Record&gt;} fields using class hierarchy navigation paths.
+     * Resolve destination {@link Record} data for every {@link Link} reachable
+     * from {@code data}, using paths that span {@code clazz} and all of its
+     * descendants.
      *
-     * @param clazz the target class, or {@code null} for untyped loads
+     * @param clazz the target class, or {@code null} for untyped loads where
+     *            each record's class is recovered from its section key
      * @param data the initial query data
-     * @param ids the record IDs for navigation
-     * @return pre-fetched targets keyed by record ID, or {@code null}
+     * @param ids the record ids to pass to {@code navigate()}
+     * @return pre-fetched targets keyed by destination record ID, or
+     *         {@code null} when the configured
+     *         {@link #collectionPreSelectStrategy} is
+     *         {@link CollectionPreSelectStrategy#NONE}
      */
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollectionsHierarchy(
             @Nullable Class<? extends Record> clazz,
@@ -2545,59 +2517,128 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Dispatch link collection resolution based on the configured
-     * {@link #collectionPreSelectStrategy}.
+     * Resolve destination {@link Record} data for every {@link Link} reachable
+     * from {@code data} or {@code navigateIds}, returning the complete set
+     * keyed by destination record ID.
      * <p>
-     * When {@code hierarchy} is {@code true}, navigate paths are resolved for
-     * {@code clazz} and all its descendants; otherwise, only for {@code clazz}
-     * itself.
+     * The pre-fetch runs a single {@code navigate()} per class (single call for
+     * typed loads; one per discovered class for untyped loads) followed by a
+     * bulk-{@code select()} cleanup sweep that closes any gaps the navigate
+     * paths cannot reach. Returns {@code null} when the configured
+     * {@link #collectionPreSelectStrategy} is
+     * {@link CollectionPreSelectStrategy#NONE}.
      * </p>
      *
-     * @param clazz the target class, or {@code null} for untyped loads
-     *            (disqualifies {@link CollectionPreSelectStrategy#NAVIGATE})
+     * @param clazz the target class, or {@code null} for untyped loads where
+     *            each record's class is recovered from its section key
      * @param hierarchy if {@code true}, resolve navigate paths across the full
      *            class hierarchy; if {@code false}, resolve for {@code clazz}
-     *            alone
-     * @param navigateIds the record IDs to pass to {@code navigate()}
-     * @param data the initial query data (used by
-     *            {@link CollectionPreSelectStrategy#BULK_SELECT BULK_SELECT} to
-     *            discover {@link Link} targets)
-     * @return pre-fetched targets keyed by record ID, or {@code null}
+     *            alone (ignored when {@code clazz} is {@code null})
+     * @param navigateIds the record ids to pass to {@code navigate()}
+     * @param data the initial query data, scanned for {@link Link} values
+     *            during the cleanup pass and for section keys when grouping
+     *            untyped ids by class
+     * @return pre-fetched targets keyed by destination record ID, or
+     *         {@code null}
      */
     private Map<Long, Map<String, Set<Object>>> resolveLinkedCollections(
             @Nullable Class<? extends Record> clazz, boolean hierarchy,
             Set<Long> navigateIds, Map<Long, Map<String, Set<Object>>> data) {
-        if(data.isEmpty()) {
+        if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NONE) {
             return null;
         }
-        Set<String> navigatePaths = null;
-        if(clazz != null) {
-            navigatePaths = hierarchy
-                    ? getNavigatePathsForClassHierarchyIfSupported(clazz)
-                    : getNavigatePathsForClassIfSupported(clazz);
-        }
-        if(navigatePaths != null) {
-            Concourse concourse = connections.request();
-            try {
-                return concourse.navigate(navigatePaths, navigateIds);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else if(collectionPreSelectStrategy == CollectionPreSelectStrategy.BULK_SELECT) {
-            Concourse concourse = connections.request();
-            try {
-                return prefetchLinks(concourse, data);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        else {
-            // NONE — each linked record is fetched individually
+        if(data.isEmpty() && navigateIds.isEmpty()) {
             return null;
         }
+        Concourse connection = connections.request();
+        try {
+            Map<Long, Map<String, Set<Object>>> targets = Maps.newHashMap();
+            // Phase 1: NAVIGATE — pre-fetch destinations using path-driven
+            // server-side traversal. When the class is known, dispatch a
+            // single navigate() per request; for untyped loads, group the
+            // records by their section key so each class group dispatches
+            // its own navigate() with class-specific paths.
+            if(clazz != null) {
+                Set<String> paths = hierarchy
+                        ? getNavigatePathsForClassHierarchyIfSupported(clazz)
+                        : getNavigatePathsForClassIfSupported(clazz);
+                if(paths != null && !navigateIds.isEmpty()) {
+                    targets.putAll(connection.navigate(paths, navigateIds));
+                }
+            }
+            else {
+                Map<Class<? extends Record>, Set<Long>> grouped = groupBySectionKey(
+                        data, navigateIds);
+                for (Map.Entry<Class<? extends Record>, Set<Long>> entry : grouped
+                        .entrySet()) {
+                    Set<String> paths = getNavigatePathsForClassIfSupported(
+                            entry.getKey());
+                    if(paths != null) {
+                        targets.putAll(
+                                connection.navigate(paths, entry.getValue()));
+                    }
+                }
+            }
+            // Phase 2: Cleanup BFS — close any gaps the navigate phase
+            // missed (multi-field cycles that Concourse's same-field
+            // transitive modifier cannot traverse, schema-unknown links,
+            // etc.). Iterating bulk select()s converges in O(depth-of-tail)
+            // round trips on top of the single navigate() above.
+            Set<Long> covered = Sets.newHashSet(data.keySet());
+            covered.addAll(targets.keySet());
+            Set<Long> frontier = extractLinkTargets(data, covered);
+            frontier.addAll(extractLinkTargets(targets, covered));
+            while (!frontier.isEmpty()) {
+                Map<Long, Map<String, Set<Object>>> batch = connection
+                        .select(frontier);
+                targets.putAll(batch);
+                covered.addAll(frontier);
+                frontier = extractLinkTargets(batch, covered);
+            }
+            return targets;
+        }
+        finally {
+            connections.release(connection);
+        }
+    }
+
+    /**
+     * Group {@code navigateIds} by the {@link Record} {@link Class} reported by
+     * each record's {@link Record#SECTION_KEY section key} in {@code data}. Ids
+     * missing from {@code data}, missing a section key, or whose section key
+     * does not resolve to a known {@link Record} subclass are skipped.
+     *
+     * @param data the data already in hand for the {@link Record Records} being
+     *            loaded
+     * @param navigateIds the ids whose class to determine
+     * @return a {@link Map} from each discovered {@link Record} class to the
+     *         ids in {@code navigateIds} that belong to that class
+     */
+    private Map<Class<? extends Record>, Set<Long>> groupBySectionKey(
+            Map<Long, Map<String, Set<Object>>> data, Set<Long> navigateIds) {
+        Map<Class<? extends Record>, Set<Long>> grouped = Maps.newHashMap();
+        for (long id : navigateIds) {
+            Map<String, Set<Object>> record = data.get(id);
+            if(record == null) {
+                continue;
+            }
+            Set<Object> sections = record.getOrDefault(Record.SECTION_KEY,
+                    ImmutableSet.of());
+            String section = (String) Iterables.getFirst(sections, null);
+            if(section == null) {
+                continue;
+            }
+            Class<? extends Record> recordClass;
+            try {
+                recordClass = Reflection.getClassCasted(section);
+            }
+            catch (Exception e) {
+                continue;
+            }
+            grouped.computeIfAbsent(recordClass, $ -> Sets.newHashSet())
+                    .add(id);
+        }
+        return grouped;
     }
 
     /**
@@ -2811,7 +2852,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * Set the strategy for pre-selecting data for {@link Collection
          * Collection&lt;Record&gt;} fields.
          * <p>
-         * The default is {@link CollectionPreSelectStrategy#NONE}.
+         * The default is {@link CollectionPreSelectStrategy#NAVIGATE}.
          * </p>
          *
          * @param strategy the {@link CollectionPreSelectStrategy} to use
