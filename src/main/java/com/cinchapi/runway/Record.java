@@ -4579,7 +4579,14 @@ public abstract class Record implements Comparable<Record> {
         @Immutable
         private static final class TransitiveEdge {
 
+            /**
+             * The {@link Class} on which the cyclic field is declared.
+             */
             private final Class<?> source;
+
+            /**
+             * The name of the cyclic field on {@link #source}.
+             */
             private final String field;
 
             /**

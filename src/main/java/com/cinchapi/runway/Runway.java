@@ -1132,11 +1132,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     final Set<String> getNavigatePathsForClassHierarchyIfSupported(
             Class<? extends Record> clazz) {
-        if(collectionPreSelectStrategy != CollectionPreSelectStrategy.NAVIGATE) {
-            return null;
-        }
-        Set<String> paths = StaticAnalysis.instance()
-                .getNavigatePathsHierarchy(clazz);
+        Set<String> paths = collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
+                ? StaticAnalysis.instance().getNavigatePathsHierarchy(clazz)
+                : null;
         return paths != null && !paths.isEmpty() ? paths : null;
     }
 
@@ -1151,10 +1149,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     final Set<String> getNavigatePathsForClassIfSupported(
             Class<? extends Record> clazz) {
-        if(collectionPreSelectStrategy != CollectionPreSelectStrategy.NAVIGATE) {
-            return null;
-        }
-        Set<String> paths = StaticAnalysis.instance().getNavigatePaths(clazz);
+        Set<String> paths = collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
+                ? StaticAnalysis.instance().getNavigatePaths(clazz)
+                : null;
         return paths != null && !paths.isEmpty() ? paths : null;
     }
 
@@ -1621,9 +1618,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     return new SelectResult<>(null); // TODO: what to do here?
                 }
             }
-            Map<String, Set<Object>> data = null;
-            Map<Long, Map<String, Set<Object>>> targets = null;
-            if(collectionPreSelectStrategy != CollectionPreSelectStrategy.NONE) {
+            Map<String, Set<Object>> data;
+            Map<Long, Map<String, Set<Object>>> targets;
+            if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NONE) {
+                data = null;
+                targets = null;
+            }
+            else {
                 connection = ensureValidConnection(connection);
                 Set<String> paths = getPathsForClassIfSupported(clazz);
                 data = paths != null ? connection.select(paths, id)
@@ -2544,69 +2545,72 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Map<Long, Map<String, Set<Object>>> resolveLinkedCollections(
             @Nullable Class<? extends Record> clazz, boolean hierarchy,
             Set<Long> navigateIds, Map<Long, Map<String, Set<Object>>> data) {
-        if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NONE) {
+        if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NONE
+                || (data.isEmpty() && navigateIds.isEmpty())) {
             return null;
         }
-        if(data.isEmpty() && navigateIds.isEmpty()) {
-            return null;
-        }
-        Concourse connection = connections.request();
-        try {
-            Map<Long, Map<String, Set<Object>>> targets = Maps.newHashMap();
-            // Phase 1: NAVIGATE — pre-fetch destination Record data.
-            // select() can fold a one-to-one Link's destination into the
-            // source record's flat result (e.g., owner.name appears as a
-            // key on the source), but for a multi-valued Link it would
-            // flatten every destination's values into a single set with
-            // no per-destination grouping, making it impossible to
-            // reconstruct individual destination Records. navigate()
-            // returns data keyed by destination record ID instead, which
-            // preserves the association. When the source class is known,
-            // dispatch a single navigate() per request; for untyped
-            // loads, group the records by their section key so each
-            // class group dispatches its own navigate() with
-            // class-specific paths.
-            if(clazz != null) {
-                Set<String> paths = hierarchy
-                        ? getNavigatePathsForClassHierarchyIfSupported(clazz)
-                        : getNavigatePathsForClassIfSupported(clazz);
-                if(paths != null && !navigateIds.isEmpty()) {
-                    targets.putAll(connection.navigate(paths, navigateIds));
-                }
-            }
-            else {
-                Map<Class<? extends Record>, Set<Long>> grouped = groupBySectionKey(
-                        data, navigateIds);
-                for (Map.Entry<Class<? extends Record>, Set<Long>> entry : grouped
-                        .entrySet()) {
-                    Set<String> paths = getNavigatePathsForClassIfSupported(
-                            entry.getKey());
-                    if(paths != null) {
-                        targets.putAll(
-                                connection.navigate(paths, entry.getValue()));
+        else {
+            Concourse connection = connections.request();
+            try {
+                Map<Long, Map<String, Set<Object>>> targets = Maps.newHashMap();
+                // Phase 1: NAVIGATE — pre-fetch destination Record data.
+                // select() can fold a one-to-one Link's destination into
+                // the source record's flat result (e.g., owner.name
+                // appears as a key on the source), but for a multi-valued
+                // Link it would flatten every destination's values into a
+                // single set with no per-destination grouping, making it
+                // impossible to reconstruct individual destination
+                // Records. navigate() returns data keyed by destination
+                // record ID instead, which preserves the association.
+                // When the source class is known, dispatch a single
+                // navigate() per request; for untyped loads, group the
+                // records by their section key so each class group
+                // dispatches its own navigate() with class-specific
+                // paths.
+                if(clazz != null) {
+                    Set<String> paths = hierarchy
+                            ? getNavigatePathsForClassHierarchyIfSupported(
+                                    clazz)
+                            : getNavigatePathsForClassIfSupported(clazz);
+                    if(paths != null && !navigateIds.isEmpty()) {
+                        targets.putAll(connection.navigate(paths, navigateIds));
                     }
                 }
+                else {
+                    Map<Class<? extends Record>, Set<Long>> grouped = groupBySectionKey(
+                            data, navigateIds);
+                    for (Map.Entry<Class<? extends Record>, Set<Long>> entry : grouped
+                            .entrySet()) {
+                        Set<String> paths = getNavigatePathsForClassIfSupported(
+                                entry.getKey());
+                        if(paths != null) {
+                            targets.putAll(connection.navigate(paths,
+                                    entry.getValue()));
+                        }
+                    }
+                }
+                // Phase 2: Cleanup BFS — close any gaps the navigate
+                // phase missed (multi-field cycles that Concourse's
+                // same-field transitive modifier cannot traverse,
+                // schema-unknown links, etc.). Iterating bulk select()s
+                // converges in O(depth-of-tail) round trips on top of the
+                // single navigate() above.
+                Set<Long> covered = Sets.newHashSet(data.keySet());
+                covered.addAll(targets.keySet());
+                Set<Long> frontier = extractLinkTargets(data, covered);
+                frontier.addAll(extractLinkTargets(targets, covered));
+                while (!frontier.isEmpty()) {
+                    Map<Long, Map<String, Set<Object>>> batch = connection
+                            .select(frontier);
+                    targets.putAll(batch);
+                    covered.addAll(frontier);
+                    frontier = extractLinkTargets(batch, covered);
+                }
+                return targets;
             }
-            // Phase 2: Cleanup BFS — close any gaps the navigate phase
-            // missed (multi-field cycles that Concourse's same-field
-            // transitive modifier cannot traverse, schema-unknown links,
-            // etc.). Iterating bulk select()s converges in O(depth-of-tail)
-            // round trips on top of the single navigate() above.
-            Set<Long> covered = Sets.newHashSet(data.keySet());
-            covered.addAll(targets.keySet());
-            Set<Long> frontier = extractLinkTargets(data, covered);
-            frontier.addAll(extractLinkTargets(targets, covered));
-            while (!frontier.isEmpty()) {
-                Map<Long, Map<String, Set<Object>>> batch = connection
-                        .select(frontier);
-                targets.putAll(batch);
-                covered.addAll(frontier);
-                frontier = extractLinkTargets(batch, covered);
+            finally {
+                connections.release(connection);
             }
-            return targets;
-        }
-        finally {
-            connections.release(connection);
         }
     }
 
