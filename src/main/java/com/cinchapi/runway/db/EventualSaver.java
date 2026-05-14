@@ -136,7 +136,8 @@ public final class EventualSaver implements Saver {
     }
 
     @Override
-    public void audit(long record, Consumer<Map<Timestamp, String>> validator) {
+    public void audit(long record,
+            Consumer<Map<Timestamp, List<String>>> validator) {
         Preconditions.checkNotNull(validator);
         int[] slot = new int[1];
         deferredReadOps.add(group -> {
@@ -144,7 +145,7 @@ public final class EventualSaver implements Saver {
             group.audit(record);
         });
         pendingValidators.add(results -> {
-            @SuppressWarnings("unchecked") Map<Timestamp, String> result = (Map<Timestamp, String>) results
+            @SuppressWarnings("unchecked") Map<Timestamp, List<String>> result = (Map<Timestamp, List<String>>) results
                     .get(slot[0]);
             validator.accept(result);
         });

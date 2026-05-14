@@ -16,6 +16,7 @@
 package com.cinchapi.runway.db;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -124,7 +125,7 @@ public interface Saver {
      * @param validator a {@link Consumer} that receives the audit result and
      *            may throw to reject the save
      */
-    void audit(long record, Consumer<Map<Timestamp, String>> validator);
+    void audit(long record, Consumer<Map<Timestamp, List<String>>> validator);
 
     /**
      * Record a {@link Concourse#find(Criteria) find} for the {@code criteria}

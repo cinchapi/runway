@@ -16,6 +16,7 @@
 package com.cinchapi.runway.db;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -79,7 +80,8 @@ public final class ImmediateSaver implements Saver {
     }
 
     @Override
-    public void audit(long record, Consumer<Map<Timestamp, String>> validator) {
+    public void audit(long record,
+            Consumer<Map<Timestamp, List<String>>> validator) {
         validator.accept(concourse.audit(record));
     }
 

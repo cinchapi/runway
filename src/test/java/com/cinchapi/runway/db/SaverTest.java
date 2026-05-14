@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway.db;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -275,7 +276,7 @@ public abstract class SaverTest extends ClientServerTest {
 
         Saver saver = newSaver();
         saver.stage();
-        AtomicReference<Map<Timestamp, String>> captured = new AtomicReference<>();
+        AtomicReference<Map<Timestamp, List<String>>> captured = new AtomicReference<>();
         saver.audit(id, captured::set);
         Assert.assertTrue(saver.commit());
 
