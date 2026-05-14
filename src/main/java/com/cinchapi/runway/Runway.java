@@ -73,10 +73,10 @@ import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.Record.InvalidRecordException;
 import com.cinchapi.runway.Record.Snapshot;
 import com.cinchapi.runway.Record.StaticAnalysis;
-import com.cinchapi.runway.db.EventualReader;
-import com.cinchapi.runway.db.EventualSaver;
-import com.cinchapi.runway.db.ImmediateReader;
-import com.cinchapi.runway.db.ImmediateSaver;
+import com.cinchapi.runway.db.BatchReader;
+import com.cinchapi.runway.db.BatchSaver;
+import com.cinchapi.runway.db.IncrementalReader;
+import com.cinchapi.runway.db.IncrementalSaver;
 import com.cinchapi.runway.db.Reader;
 import com.cinchapi.runway.db.Saver;
 import com.cinchapi.runway.util.Obligations;
@@ -820,9 +820,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Record, Boolean> seen = new HashMap<>();
             int attempts = 0;
             while (true) {
-                Saver saver = supportsBulkCommands
-                        ? new EventualSaver(concourse)
-                        : new ImmediateSaver(concourse);
+                Saver saver = supportsBulkCommands ? new BatchSaver(concourse)
+                        : new IncrementalSaver(concourse);
                 try {
                     seen.clear();
                     saver.stage();
@@ -980,7 +979,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 else {
                     concourse = ensureValidConnection(concourse);
-                    Reader reader = new ImmediateReader(concourse);
+                    Reader reader = new IncrementalReader(concourse);
                     $select(reader, selection);
                     reader.drain();
                     reserve(selection);
@@ -1001,7 +1000,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         else {
                             if(reader == null) {
                                 concourse = ensureValidConnection(concourse);
-                                reader = new EventualReader(concourse);
+                                reader = new BatchReader(concourse);
                             }
                             $select(reader, selection);
                             dispatched.add(selection);
@@ -1038,7 +1037,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 : getAttachedSources(selection.clazz);
                         if(!sources.isEmpty()) {
                             concourse = ensureValidConnection(concourse);
-                            Reader reader = new ImmediateReader(concourse);
+                            Reader reader = new IncrementalReader(concourse);
                             $selectWithPossibleSources(reader, selection,
                                     sources);
                             reader.drain();
@@ -1083,7 +1082,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     }
                     if(combined != null) {
                         concourse = ensureValidConnection(concourse);
-                        Reader reader = new ImmediateReader(concourse);
+                        Reader reader = new IncrementalReader(concourse);
                         Map<Long, Map<String, Set<Object>>> data = read(reader,
                                 null, combined, null, null).get();
                         for (DatabaseSelection<?> selection : combinable) {
@@ -1097,7 +1096,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             tasks[i] = () -> {
                                 Concourse _concourse = connections.request();
                                 try {
-                                    Reader reader = new ImmediateReader(
+                                    Reader reader = new IncrementalReader(
                                             _concourse);
                                     $select(reader, selection);
                                     reader.drain();
@@ -1485,7 +1484,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         Function<Page, Set<T>> retriever = $page -> {
                             Concourse concourse = ensureValidConnection(
                                     connection);
-                            Reader _reader = new ImmediateReader(concourse);
+                            Reader _reader = new IncrementalReader(concourse);
                             try {
                                 Map<Long, Map<String, Set<Object>>> data = any
                                         ? $loadAny(_reader, clazz, order, $page,
@@ -1671,7 +1670,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             if(dbResolvable) {
                                 Concourse concourse = ensureValidConnection(
                                         connection);
-                                Reader _reader = new ImmediateReader(concourse);
+                                Reader _reader = new IncrementalReader(
+                                        concourse);
                                 try {
                                     Map<Long, Map<String, Set<Object>>> data = any
                                             ? $findAny(_reader, clazz, criteria,

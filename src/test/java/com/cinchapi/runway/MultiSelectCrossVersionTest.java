@@ -31,13 +31,12 @@ import com.cinchapi.concourse.thrift.Operator;
  * multi-selection dispatch.
  * <p>
  * The {@code 0.12.8} server lacks the Concourse Command API, so
- * {@code select(Selection...)} dispatches through the legacy
- * combinable/isolated path. The latest server supports
- * {@code prepare()}/{@code submit()}, so {@code select(Selection...)}
- * dispatches every {@link Selection} through a single batched
- * {@link com.cinchapi.runway.db.EventualReader EventualReader}. Running the
- * same {@link Test} body against both versions guards against either path
- * regressing relative to the other.
+ * {@code select(Selection...)} dispatches through the combinable/isolated path.
+ * The latest server supports {@code prepare()}/{@code submit()}, so
+ * {@code select(Selection...)} dispatches every {@link Selection} through a
+ * single batched {@link com.cinchapi.runway.db.BatchReader}. Running the same
+ * {@link Test} body against both versions guards against either path regressing
+ * relative to the other.
  *
  * @author Jeff Nelson
  */
@@ -65,8 +64,8 @@ public class MultiSelectCrossVersionTest extends CrossVersionTest {
      * <strong>Goal:</strong> Verify that a multi-selection call mixing every
      * {@link DatabaseSelection} subtype the dispatch can handle &mdash;
      * load-by-id, find-by-criteria, load-class, count, and unique &mdash;
-     * resolves each {@link Selection} to the same result on both the legacy and
-     * bulk paths.
+     * resolves each {@link Selection} to the same result on both the
+     * combinable/isolated and bulk paths.
      * <p>
      * <strong>Start state:</strong> Three {@link Widget Widgets} saved with
      * scores 10, 50, and 90; one {@link Gadget} saved with the name
@@ -139,9 +138,10 @@ public class MultiSelectCrossVersionTest extends CrossVersionTest {
 
     /**
      * <strong>Goal:</strong> Verify that same-class {@link Selection
-     * Selections} with divergent criteria &mdash; the case the legacy dispatch
-     * would isolate to avoid {@code demux} cross-contamination &mdash; resolve
-     * to their own criteria's matches and do not share results on either path.
+     * Selections} with divergent criteria &mdash; the case the
+     * combinable/isolated dispatch isolates to avoid {@code demux}
+     * cross-contamination &mdash; resolve to their own criteria's matches and
+     * do not share results on either path.
      * <p>
      * <strong>Start state:</strong> Four {@link Widget Widgets} saved with
      * scores 10, 30, 60, and 90.

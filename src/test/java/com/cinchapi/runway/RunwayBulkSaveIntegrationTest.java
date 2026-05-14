@@ -27,15 +27,14 @@ import com.google.common.collect.ImmutableSet;
  * {@link Runway#save(boolean, Record...)} on the bulk-command save path enabled
  * when the connected server supports the Concourse Command API (1.0.0+).
  * <p>
- * The bulk path drives every save through an
- * {@link com.cinchapi.runway.db.EventualSaver EventualSaver} that batches stage
- * + audit + uniqueness {@code find} into one round trip, validates the results
+ * The bulk path drives every save through a
+ * {@link com.cinchapi.runway.db.BatchSaver} that batches stage + audit +
+ * uniqueness {@code find} into one round trip, validates the results
  * client-side, and submits the writes plus {@code commit()} in a second round
  * trip. These tests verify that the save semantics &mdash; field persistence,
  * stale-data detection, uniqueness enforcement, cascading delete, record-graph
  * saves, and {@link Record#overrideSave() override-driven abort} &mdash; match
- * the legacy path the {@link com.cinchapi.runway.db.ImmediateSaver
- * ImmediateSaver} preserves.
+ * the path the {@link com.cinchapi.runway.db.IncrementalSaver} preserves.
  *
  * @author Jeff Nelson
  */
@@ -238,11 +237,11 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * to a {@link Unique} field are rejected even though no such record exists
      * in the database when the save begins.
      * <p>
-     * The legacy per-call save path relied on the staged transaction to make
-     * earlier records' writes visible to later uniqueness reads. The bulk path
-     * submits every queued uniqueness {@code find} against a single pre-write
-     * snapshot, so without explicit intra-batch detection both records would
-     * pass the DB check and commit duplicate values.
+     * The per-call save path relies on the staged transaction to make earlier
+     * records' writes visible to later uniqueness reads. The bulk path submits
+     * every queued uniqueness {@code find} against a single pre-write snapshot,
+     * so detecting duplicates between records in the same save call needs
+     * explicit intra-batch detection.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>

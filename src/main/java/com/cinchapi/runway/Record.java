@@ -3075,15 +3075,15 @@ public abstract class Record implements Comparable<Record> {
         Criteria criteria = $criteria.get();
         String errorMessage = AnyStrings.format("{} must be unique in {}",
                 errorName, __);
-        // Synchronous savers see prior staged writes on subsequent reads,
-        // so the database itself enforces intra-batch uniqueness. Batched
-        // savers submit every queued find against a single pre-write
-        // snapshot, so two records writing the same value in one save call
-        // would both pass the DB-side check. Declaring the intent here
-        // bridges that gap on the batched path. Sequence-valued fields
-        // expand into the cartesian product of (field, item) pairs across
-        // dimensions so an overlap on any single item under a compound
-        // constraint produces a canonical that matches between records.
+        // Synchronous savers see prior staged writes on subsequent reads;
+        // the database itself enforces intra-batch uniqueness for that
+        // path. Batched savers submit every queued find against a single
+        // pre-write snapshot, so detecting duplicates between records in
+        // the same save call needs client-side help. Sequence-valued
+        // fields expand into the cartesian product of (field, item) pairs
+        // across dimensions so an overlap on any single item under a
+        // compound constraint produces a canonical that matches between
+        // records.
         List<List<Object>> bindings = new ArrayList<>();
         bindings.add(new ArrayList<>());
         for (Entry<String, Object> entry : new TreeMap<>(data).entrySet()) {
@@ -3148,8 +3148,8 @@ public abstract class Record implements Comparable<Record> {
                 : map(options, keys);
 
         // Create a dynamic type Gson instance that will detect recursive
-        // links
-        // and prevent infinite recursion when trying to generate the JSON.
+        // links and prevent infinite recursion when trying to generate the
+        // JSON.
         GsonBuilder builder = new GsonBuilder().registerTypeAdapterFactory(
                 TypeAdapters.primitiveTypesFactory(true));
         if(options.flattenSingleElementCollections()) {

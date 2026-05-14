@@ -72,7 +72,7 @@ import com.google.common.base.Preconditions;
  * @author Jeff Nelson
  */
 @NotThreadSafe
-public final class EventualSaver implements Saver {
+public final class BatchSaver implements Saver {
 
     /**
      * The {@link Concourse} connection used to submit and against which
@@ -118,13 +118,13 @@ public final class EventualSaver implements Saver {
     private final Map<Object, Long> uniqueIntents;
 
     /**
-     * Construct a new {@link EventualSaver} that submits against
+     * Construct a new {@link BatchSaver} that submits against
      * {@code concourse}.
      *
      * @param concourse the {@link Concourse} connection that hosts the staged
      *            transaction; must not be {@code null}
      */
-    public EventualSaver(Concourse concourse) {
+    public BatchSaver(Concourse concourse) {
         this.concourse = Preconditions.checkNotNull(concourse);
         this.stageRequested = false;
         this.stageSubmitted = false;
@@ -230,11 +230,11 @@ public final class EventualSaver implements Saver {
             String errorMessage) {
         Long prior = uniqueIntents.putIfAbsent(canonical, record);
         if(prior != null && prior.longValue() != record) {
-            // Queue the throw as a pendingValidator instead of throwing
-            // here so any audits already queued (e.g. for
-            // preventStaleWrites=true) get a chance to surface their own
-            // exception first, preserving the legacy ImmediateSaver
-            // staleness-before-uniqueness precedence.
+            // Queue the throw as a pendingValidator so audits queued
+            // earlier (e.g. preventStaleWrites=true stale-data checks)
+            // get a chance to surface their exception before this one,
+            // matching the staleness-before-uniqueness precedence that
+            // IncrementalSaver provides via inline staged reads.
             pendingValidators.add(results -> {
                 throw new IllegalStateException(errorMessage);
             });
@@ -284,8 +284,7 @@ public final class EventualSaver implements Saver {
         List<Object> results = concourse.submit(reads);
         stageSubmitted = true;
         // Snapshot and clear before dispatching so nested saver recordings
-        // made by a validator/consumer start a fresh batch instead of
-        // mutating the lists currently being iterated.
+        // made by a validator/consumer accumulate into a fresh batch.
         List<Consumer<List<Object>>> active = new ArrayList<>(
                 pendingValidators);
         deferredReadOps.clear();

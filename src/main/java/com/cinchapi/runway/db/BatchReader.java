@@ -56,7 +56,7 @@ import com.google.common.collect.ImmutableList;
  * @author Jeff Nelson
  */
 @NotThreadSafe
-public final class EventualReader extends AbstractReader {
+public final class BatchReader extends AbstractReader {
 
     /**
      * The active recording batch, or {@code null} when no batch has been opened
@@ -65,12 +65,12 @@ public final class EventualReader extends AbstractReader {
     private Batch current;
 
     /**
-     * Construct a new {@link EventualReader}.
+     * Construct a new {@link BatchReader}.
      *
      * @param concourse the {@link Concourse} connection against which reads are
      *            submitted; must not be {@code null}
      */
-    public EventualReader(Concourse concourse) {
+    public BatchReader(Concourse concourse) {
         super(concourse);
     }
 

@@ -25,7 +25,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 
 /**
- * Unit tests for {@link ImmediateSaver} that combine the shared {@link Saver}
+ * Unit tests for {@link IncrementalSaver} that combine the shared {@link Saver}
  * contract with implementation-specific behavior.
  *
  * @author Jeff Nelson
@@ -36,20 +36,20 @@ public class ImmediateSaverTest extends SaverTest {
     protected Saver newSaver() {
         Concourse connection = Concourse.at().port(server.getClientPort())
                 .connect();
-        return new ImmediateSaver(connection);
+        return new IncrementalSaver(connection);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link ImmediateSaver} runs the audit
-     * {@link java.util.function.Consumer validator} at the moment {@code audit}
-     * is called &mdash; not later during commit &mdash; so a throwing validator
-     * stops further recording.
+     * <strong>Goal:</strong> Verify that {@link IncrementalSaver} runs the
+     * audit {@link java.util.function.Consumer validator} at the moment
+     * {@code audit} is called &mdash; not later during commit &mdash; so a
+     * throwing validator stops further recording.
      * <p>
      * <strong>Start state:</strong> A record exists with one value.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Stage the {@link ImmediateSaver}.</li>
+     * <li>Stage the {@link IncrementalSaver}.</li>
      * <li>Record an {@code audit} whose validator throws.</li>
      * <li>Catch the exception.</li>
      * </ul>
@@ -78,8 +78,8 @@ public class ImmediateSaverTest extends SaverTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that an {@link ImmediateSaver} {@code find}
-     * validator runs inline.
+     * <strong>Goal:</strong> Verify that an {@link IncrementalSaver}
+     * {@code find} validator runs inline.
      * <p>
      * <strong>Start state:</strong> A record matching {@code flag = true}.
      * <p>

@@ -33,15 +33,15 @@ import com.cinchapi.concourse.lang.sort.Order;
  * @author Jeff Nelson
  */
 @NotThreadSafe
-public class ImmediateReader extends AbstractReader {
+public class IncrementalReader extends AbstractReader {
 
     /**
-     * Construct a new {@link ImmediateReader}.
+     * Construct a new {@link IncrementalReader}.
      *
      * @param concourse the {@link Concourse} connection against which reads are
      *            issued; must not be {@code null}
      */
-    public ImmediateReader(Concourse concourse) {
+    public IncrementalReader(Concourse concourse) {
         super(concourse);
     }
 

@@ -235,10 +235,10 @@ public interface Saver {
      * <p>
      * Synchronous implementations no-op because each write enters the staged
      * transaction immediately and the next read observes it. Batched
-     * implementations track each declared {@code canonical} and throw
-     * {@link IllegalStateException} carrying {@code errorMessage} when the same
-     * {@code canonical} is declared a second time with a different
-     * {@code record}.
+     * implementations record each {@code canonical} and arrange for
+     * {@link #commit()} to throw {@link IllegalStateException} carrying
+     * {@code errorMessage} when the same {@code canonical} has been declared by
+     * more than one {@code record} in the batch.
      * </p>
      *
      * @param canonical a value-equal key identifying the uniqueness constraint
@@ -247,11 +247,8 @@ public interface Saver {
      * @param record the id of the {@link com.cinchapi.runway.Record Record}
      *            that intends to write this value
      * @param errorMessage the message attached to the
-     *            {@link IllegalStateException} thrown on an intra-batch
-     *            conflict
-     * @throws IllegalStateException if another
-     *             {@link com.cinchapi.runway.Record Record} in this save batch
-     *             has already declared {@code canonical}
+     *            {@link IllegalStateException} thrown at {@link #commit()} time
+     *            on an intra-batch conflict
      */
     default void declareUniqueIntent(Object canonical, long record,
             String errorMessage) {/* no-op */}

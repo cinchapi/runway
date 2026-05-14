@@ -27,7 +27,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 
 /**
- * Unit tests for {@link EventualSaver} that combine the shared {@link Saver}
+ * Unit tests for {@link BatchSaver} that combine the shared {@link Saver}
  * contract with the implementation's batched semantics.
  *
  * @author Jeff Nelson
@@ -38,20 +38,20 @@ public class EventualSaverTest extends SaverTest {
     protected Saver newSaver() {
         Concourse connection = Concourse.at().port(server.getClientPort())
                 .connect();
-        return new EventualSaver(connection);
+        return new BatchSaver(connection);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that an {@link EventualSaver} validator
-     * does <em>not</em> run at recording time &mdash; the record-then-batch
-     * shape requires that validators only fire after the reads submission
-     * resolves inside {@link Saver#commit()}.
+     * <strong>Goal:</strong> Verify that an {@link BatchSaver} validator does
+     * <em>not</em> run at recording time &mdash; the record-then-batch shape
+     * requires that validators only fire after the reads submission resolves
+     * inside {@link Saver#commit()}.
      * <p>
      * <strong>Start state:</strong> A record matches {@code flag = true}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Stage the {@link EventualSaver}.</li>
+     * <li>Stage the {@link BatchSaver}.</li>
      * <li>Record a {@code find} whose validator sets a flag.</li>
      * <li>Read the flag immediately after the {@code find} call.</li>
      * </ul>
@@ -79,7 +79,7 @@ public class EventualSaverTest extends SaverTest {
     /**
      * <strong>Goal:</strong> Verify that when a validator throws inside
      * {@link Saver#commit()}, the writes recorded against the
-     * {@link EventualSaver} are <em>not</em> persisted &mdash; the second
+     * {@link BatchSaver} are <em>not</em> persisted &mdash; the second
      * submission must be skipped.
      * <p>
      * <strong>Start state:</strong> A record exists with {@code flag = true}.
@@ -124,7 +124,7 @@ public class EventualSaverTest extends SaverTest {
     /**
      * <strong>Goal:</strong> Verify that a {@code consumer} passed to
      * {@link Saver#select(String, Criteria, java.util.function.Consumer)
-     * select} can record further reads on the {@link EventualSaver} without
+     * select} can record further reads on the {@link BatchSaver} without
      * mutating the validator list currently being iterated &mdash; the nested
      * recordings must start a fresh batch and resolve cleanly inside the next
      * flush.
@@ -135,7 +135,7 @@ public class EventualSaverTest extends SaverTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Stage the {@link EventualSaver}.</li>
+     * <li>Stage the {@link BatchSaver}.</li>
      * <li>Record a {@code select} on {@code name} for the {@code "alpha"}
      * record whose consumer in turn records a {@code find} for
      * {@code flag = true}.</li>
@@ -175,7 +175,7 @@ public class EventualSaverTest extends SaverTest {
      * {@link Saver#select(String, Criteria, java.util.function.Consumer)
      * select} can record another nested
      * {@link Saver#select(String, Criteria, java.util.function.Consumer)
-     * select} on the same {@link EventualSaver} &mdash; the deeper case that
+     * select} on the same {@link BatchSaver} &mdash; the deeper case that
      * exercises recursive {@code flushReads} re-entry against the
      * snapshot-and-clear pattern.
      * <p>
@@ -186,7 +186,7 @@ public class EventualSaverTest extends SaverTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Stage the {@link EventualSaver}.</li>
+     * <li>Stage the {@link BatchSaver}.</li>
      * <li>Record a {@code select} on {@code name} whose consumer records a
      * second {@code select} on {@code color} whose consumer records a
      * {@code find} on {@code category}.</li>

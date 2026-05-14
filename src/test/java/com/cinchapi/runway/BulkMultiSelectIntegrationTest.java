@@ -30,12 +30,12 @@ import com.cinchapi.concourse.thrift.Operator;
  * <p>
  * The bulk path collapses an N-selection call into a single
  * {@code prepare()}/{@code submit()} round trip via the supplier-pipeline
- * {@link com.cinchapi.runway.db.EventualReader EventualReader}. These tests
- * verify that the dispatch produces the same results as the legacy
- * combinable/isolated path for every {@link DatabaseSelection} subtype the
- * dispatch can hand to {@code $select} &mdash; including mixed-subtype batches,
- * same-class selections with divergent criteria (which the legacy path would
- * isolate), and cache short-circuits inside the batch.
+ * {@link com.cinchapi.runway.db.BatchReader}. These tests verify that the
+ * dispatch produces the same results as the combinable/isolated path for every
+ * {@link DatabaseSelection} subtype the dispatch can hand to {@code $select}
+ * &mdash; including mixed-subtype batches, same-class selections with divergent
+ * criteria (which the combinable/isolated path isolates), and cache
+ * short-circuits inside the batch.
  *
  * @author Jeff Nelson
  */
@@ -118,9 +118,10 @@ public class BulkMultiSelectIntegrationTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that same-class {@link Selection
-     * Selections} with divergent criteria &mdash; the case the legacy dispatch
-     * would isolate to avoid {@code demux} cross-contamination &mdash; resolve
-     * to their own criteria's matches and do not share results.
+     * Selections} with divergent criteria &mdash; the case the
+     * combinable/isolated dispatch isolates to avoid {@code demux}
+     * cross-contamination &mdash; resolve to their own criteria's matches and
+     * do not share results.
      * <p>
      * <strong>Start state:</strong> Four {@link Widget Widgets} saved with
      * scores 10, 30, 60, and 90.

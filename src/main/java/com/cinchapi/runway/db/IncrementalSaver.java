@@ -42,7 +42,7 @@ import com.google.common.base.Preconditions;
  * @author Jeff Nelson
  */
 @NotThreadSafe
-public final class ImmediateSaver implements Saver {
+public final class IncrementalSaver implements Saver {
 
     /**
      * The {@link Concourse} connection that every recording call targets.
@@ -50,12 +50,12 @@ public final class ImmediateSaver implements Saver {
     private final Concourse concourse;
 
     /**
-     * Construct a new {@link ImmediateSaver} backed by {@code concourse}.
+     * Construct a new {@link IncrementalSaver} backed by {@code concourse}.
      *
      * @param concourse the {@link Concourse} connection that every recording
      *            call targets; must not be {@code null}
      */
-    public ImmediateSaver(Concourse concourse) {
+    public IncrementalSaver(Concourse concourse) {
         this.concourse = Preconditions.checkNotNull(concourse);
     }
 
