@@ -170,4 +170,57 @@ public class EventualSaverTest extends SaverTest {
         Assert.assertTrue(nestedResult.get().contains(bravo));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a {@code consumer} passed to
+     * {@link Saver#select(String, Criteria, java.util.function.Consumer)
+     * select} can record another nested
+     * {@link Saver#select(String, Criteria, java.util.function.Consumer)
+     * select} on the same {@link EventualSaver} &mdash; the deeper case that
+     * exercises recursive {@code flushReads} re-entry against the
+     * snapshot-and-clear pattern.
+     * <p>
+     * <strong>Start state:</strong> One record matches the outer select on
+     * {@code name = "outer"}; one record matches the inner select on
+     * {@code color = "red"}; one record matches the deepest find on
+     * {@code category = "X"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link EventualSaver}.</li>
+     * <li>Record a {@code select} on {@code name} whose consumer records a
+     * second {@code select} on {@code color} whose consumer records a
+     * {@code find} on {@code category}.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> All three reads resolve cleanly without
+     * throwing {@link java.util.ConcurrentModificationException
+     * ConcurrentModificationException}, and the captured find result contains
+     * the matching record.
+     */
+    @Test
+    public void testSelectConsumerCanRecursivelyRecordSelect() {
+        long outer = client.add("name", "outer");
+        client.add("color", "red", outer);
+        long match = client.add("category", "X");
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Set<Long>> findResult = new AtomicReference<>();
+        saver.select("name",
+                Criteria.where().key("name").operator(Operator.EQUALS)
+                        .value("outer"),
+                outerResult -> saver.select("color",
+                        Criteria.where().key("color").operator(Operator.EQUALS)
+                                .value("red"),
+                        innerResult -> saver.find(
+                                Criteria.where().key("category")
+                                        .operator(Operator.EQUALS).value("X"),
+                                findResult::set)));
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(findResult.get());
+        Assert.assertTrue(findResult.get().contains(match));
+    }
+
 }

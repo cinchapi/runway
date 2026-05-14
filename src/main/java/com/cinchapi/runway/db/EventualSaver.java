@@ -229,8 +229,15 @@ public final class EventualSaver implements Saver {
     public void declareUniqueIntent(Object canonical, long record,
             String errorMessage) {
         Long prior = uniqueIntents.putIfAbsent(canonical, record);
-        if(prior != null && prior != record) {
-            throw new IllegalStateException(errorMessage);
+        if(prior != null && prior.longValue() != record) {
+            // Queue the throw as a pendingValidator instead of throwing
+            // here so any audits already queued (e.g. for
+            // preventStaleWrites=true) get a chance to surface their own
+            // exception first, preserving the legacy ImmediateSaver
+            // staleness-before-uniqueness precedence.
+            pendingValidators.add(results -> {
+                throw new IllegalStateException(errorMessage);
+            });
         }
     }
 

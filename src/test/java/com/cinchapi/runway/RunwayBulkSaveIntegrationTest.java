@@ -15,8 +15,12 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Set;
+
 import org.junit.Assert;
 import org.junit.Test;
+
+import com.google.common.collect.ImmutableSet;
 
 /**
  * Integration tests for {@link Runway#save(Record...)} and
@@ -272,6 +276,50 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a named compound {@link Unique}
+     * constraint whose fields include a sequence rejects two records saved in
+     * one call when their sequences overlap on a single item and the scalar
+     * fields all match &mdash; the case the canonical must enumerate via
+     * cartesian product to catch overlap rather than only exact-set match.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct two {@link CompoundUnique} records with the same
+     * {@code category} and overlapping {@code tags} &mdash; {@code [X, Y]} and
+     * {@code [Y, Z]}.</li>
+     * <li>Save them together in one {@link Runway#save(Record...)} call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code false}, at least one
+     * of the records carries an {@link IllegalStateException} mentioning
+     * uniqueness in its {@code errors} list, and zero {@link CompoundUnique}
+     * records exist in the database.
+     */
+    @Test
+    public void testBulkSaveRejectsIntraBatchOverlapInCompoundUniqueSequence() {
+        CompoundUnique a = new CompoundUnique(ImmutableSet.of("X", "Y"),
+                "cat1");
+        CompoundUnique b = new CompoundUnique(ImmutableSet.of("Y", "Z"),
+                "cat1");
+
+        Assert.assertFalse(runway.save(a, b));
+
+        boolean rejected = a.errors.stream()
+                .anyMatch(t -> t instanceof IllegalStateException
+                        && t.getMessage().toLowerCase().contains("unique"))
+                || b.errors.stream()
+                        .anyMatch(t -> t instanceof IllegalStateException && t
+                                .getMessage().toLowerCase().contains("unique"));
+        Assert.assertTrue(
+                "expected an intra-batch overlap conflict on the compound "
+                        + "unique constraint",
+                rejected);
+        Assert.assertEquals(0, runway.load(CompoundUnique.class).size());
+    }
+
+    /**
      * A simple {@link Record} type with a name and age, used as the baseline
      * for save tests.
      */
@@ -314,6 +362,25 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
 
         UniqueNamed(String name) {
             this.name = name;
+        }
+    }
+
+    /**
+     * A {@link Record} type with a named compound {@link Unique} constraint
+     * across a sequence-valued field and a scalar field, used to exercise
+     * intra-batch overlap detection in the bulk save path.
+     */
+    class CompoundUnique extends Record {
+
+        @Unique(name = "bk")
+        Set<String> tags;
+
+        @Unique(name = "bk")
+        String category;
+
+        CompoundUnique(Set<String> tags, String category) {
+            this.tags = tags;
+            this.category = category;
         }
     }
 

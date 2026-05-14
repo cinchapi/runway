@@ -3080,24 +3080,45 @@ public abstract class Record implements Comparable<Record> {
         // savers submit every queued find against a single pre-write
         // snapshot, so two records writing the same value in one save call
         // would both pass the DB-side check. Declaring the intent here
-        // bridges that gap on the batched path.
-        List<Object> canonical = new ArrayList<>();
-        canonical.add(getClass().getName());
-        new TreeMap<>(data).forEach((k, v) -> {
-            if(v != null) {
-                canonical.add(k);
-                if(Sequences.isSequence(v)) {
-                    Set<Object> items = new HashSet<>();
-                    Sequences.forEach(v,
-                            item -> items.add(serializeScalarValue(item)));
-                    canonical.add(items);
-                }
-                else {
-                    canonical.add(serializeScalarValue(v));
+        // bridges that gap on the batched path. Sequence-valued fields
+        // expand into the cartesian product of (field, item) pairs across
+        // dimensions so an overlap on any single item under a compound
+        // constraint produces a canonical that matches between records.
+        List<List<Object>> bindings = new ArrayList<>();
+        bindings.add(new ArrayList<>());
+        for (Entry<String, Object> entry : new TreeMap<>(data).entrySet()) {
+            Object value = entry.getValue();
+            if(value == null) {
+                continue;
+            }
+            String key = entry.getKey();
+            List<Object> options = new ArrayList<>();
+            if(Sequences.isSequence(value)) {
+                Sequences.forEach(value,
+                        item -> options.add(serializeScalarValue(item)));
+            }
+            else {
+                options.add(serializeScalarValue(value));
+            }
+            List<List<Object>> next = new ArrayList<>(
+                    bindings.size() * options.size());
+            for (List<Object> partial : bindings) {
+                for (Object option : options) {
+                    List<Object> extended = new ArrayList<>(partial.size() + 2);
+                    extended.addAll(partial);
+                    extended.add(key);
+                    extended.add(option);
+                    next.add(extended);
                 }
             }
-        });
-        saver.declareUniqueIntent(canonical, id, errorMessage);
+            bindings = next;
+        }
+        for (List<Object> binding : bindings) {
+            List<Object> canonical = new ArrayList<>(binding.size() + 1);
+            canonical.add(getClass().getName());
+            canonical.addAll(binding);
+            saver.declareUniqueIntent(canonical, id, errorMessage);
+        }
         saver.find(criteria, records -> {
             if(!(records.isEmpty()
                     || (records.contains(id) && records.size() == 1))) {
