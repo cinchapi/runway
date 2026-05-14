@@ -17,6 +17,7 @@ package com.cinchapi.runway.db;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -199,6 +200,13 @@ public final class EventualSaver implements Saver {
     @Override
     public void verifyOrSet(String key, Object value, long record) {
         deferredWriteOps.add(group -> group.verifyOrSet(key, value, record));
+    }
+
+    @Override
+    public void reconcile(String key, long record, Collection<?> values) {
+        @SuppressWarnings({ "rawtypes",
+                "unchecked" }) Collection<Object> casted = (Collection) values;
+        deferredWriteOps.add(group -> group.reconcile(key, record, casted));
     }
 
     @Override

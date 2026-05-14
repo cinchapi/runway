@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway.db;
 
+import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -204,8 +205,19 @@ public interface Saver {
     void verifyOrSet(String key, Object value, long record);
 
     /**
-     * Record a {@link Concourse#reconcile(String, long, java.util.Collection)
-     * reconcile} of {@code values} for {@code key} in {@code record}.
+     * Record a {@link Concourse#reconcile(String, long, Collection) reconcile}
+     * of {@code values} for {@code key} in {@code record}.
+     *
+     * @param key the field name whose values are being reconciled
+     * @param record the record id whose mapping is being reconciled
+     * @param values the canonical set of values that should remain under
+     *            {@code key}
+     */
+    void reconcile(String key, long record, Collection<?> values);
+
+    /**
+     * Record a {@link Concourse#reconcile(String, long, Collection) reconcile}
+     * of {@code values} for {@code key} in {@code record}.
      *
      * @param key the field name whose values are being reconciled
      * @param record the record id whose mapping is being reconciled

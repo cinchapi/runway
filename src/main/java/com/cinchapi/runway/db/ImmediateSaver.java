@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway.db;
 
+import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -111,6 +112,11 @@ public final class ImmediateSaver implements Saver {
     @Override
     public void verifyOrSet(String key, Object value, long record) {
         concourse.verifyOrSet(key, value, record);
+    }
+
+    @Override
+    public void reconcile(String key, long record, Collection<?> values) {
+        concourse.reconcile(key, record, values.toArray());
     }
 
     @Override

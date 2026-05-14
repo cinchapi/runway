@@ -2279,7 +2279,7 @@ public abstract class Record implements Comparable<Record> {
         errors.clear();
         seen.put(this, true);
         if(_hasModifiedRealms) {
-            saver.reconcile(REALMS_KEY, id, _realms.toArray());
+            saver.reconcile(REALMS_KEY, id, _realms);
             _hasModifiedRealms = false;
         }
         if(_author != null) {
