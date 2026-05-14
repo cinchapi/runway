@@ -831,6 +831,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     for (Record record : records) {
                         Supplier<Boolean> override = record.overrideSave();
                         if(override != null && !override.get()) {
+                            // Early exit the entire transaction because an
+                            // overriden save has failed.
                             saver.abort();
                             return false;
                         }
@@ -856,6 +858,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return false;
                     }
                     else {
+                        // Trigger catch block below for potential retry
                         throw new TransactionException();
                     }
                 }

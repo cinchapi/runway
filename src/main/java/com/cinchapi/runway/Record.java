@@ -2283,6 +2283,8 @@ public abstract class Record implements Comparable<Record> {
             _hasModifiedRealms = false;
         }
         if(_author != null) {
+            // Check for self-authorship: if this record is its own author,
+            // use the sentinel ID to avoid self-referential links in Concourse
             long authorId = _author.id == this.id ? SELF_AUTHOR_SENTINEL_ID
                     : _author.id;
             saver.set(AUTHOR_KEY, Link.to(authorId), id);
@@ -2295,6 +2297,9 @@ public abstract class Record implements Comparable<Record> {
             deleteWithinTransaction(saver, preventStaleWrite);
         }
         else if(!hasUnsavedChanges()) {
+            // This Record hasn't been modified, so simply go through each
+            // field and try to save any outgoing Record references that contain
+            // modifications.
             seen.replace(this, true, false);
             for (Field field : fields()) {
                 Object value = getFieldValue(field, this);
@@ -2311,6 +2316,7 @@ public abstract class Record implements Comparable<Record> {
                     String key = field.getName();
                     Object value = getFieldValue(field, this);
                     boolean isSequence = Sequences.isSequence(value);
+                    // Enforce that Required fields have a non-empty value
                     if(field.isAnnotationPresent(Required.class) && (isSequence
                             ? Sequences.stream(value)
                                     .allMatch(Empty.ness()::describes)
@@ -2319,6 +2325,8 @@ public abstract class Record implements Comparable<Record> {
                                 .format("{}  is required in {}", key, __));
                     }
                     if(value != null) {
+                        // Enforce that Unique fields have non-duplicated
+                        // values across the class
                         if(field.isAnnotationPresent(Unique.class)) {
                             if(isSequence) {
                                 Sequences.forEach(value, item -> checkIsUnique(
@@ -2330,6 +2338,7 @@ public abstract class Record implements Comparable<Record> {
                                         alreadyVerifiedUniqueConstraints);
                             }
                         }
+                        // Apply custom validation
                         if(field.isAnnotationPresent(ValidatedBy.class)) {
                             Class<? extends Validator> validatorClass = field
                                     .getAnnotation(ValidatedBy.class).value();
@@ -2541,6 +2550,8 @@ public abstract class Record implements Comparable<Record> {
                     errorName);
         }
         else if(!alreadyVerifiedUniqueConstraints.contains(name)) {
+            // Find all the fields that have this constraint and
+            // check for uniqueness.
             Map<String, Object> values = Maps.newHashMap();
             values.put(key, value);
             fields().stream().filter($field -> $field != field)
@@ -2790,6 +2801,8 @@ public abstract class Record implements Comparable<Record> {
      */
     private void deleteWithinTransaction(Saver saver,
             boolean preventStaleWrite) {
+        // Ensure any fields to which this Record must @CascadeDelete are
+        // deleted within this transaction
         Set<Field> dependents = StaticAnalysis.instance()
                 .getAnnotatedFields(getClass(), CascadeDelete.class);
         for (Field dependent : dependents) {
@@ -2811,33 +2824,40 @@ public abstract class Record implements Comparable<Record> {
             }
         }
 
+        // Check if there are any incoming links that used the @JoinDelete
+        // annotation to join in the deletion of this Record
         Criteria potentialJoinDeletes = StaticAnalysis.instance()
                 .getJoinDeleteLookupCondition(this);
         if(potentialJoinDeletes != null) {
             saver.select(SECTION_KEY, potentialJoinDeletes, result -> {
                 for (Entry<Long, Set<Object>> entry : result.entrySet()) {
-                    long joinId = entry.getKey();
-                    String section = (String) Iterables
-                            .getLast(entry.getValue());
+                    // It's necessary to load each of the Records (instead of
+                    // directly clearing it in the database) in case any of them
+                    // also have deletion hook annotations.
+                    long id = entry.getKey();
+                    String __ = (String) Iterables.getLast(entry.getValue());
                     Class<? extends Record> clazz = Reflection
-                            .getClassCasted(section);
-                    Record record = db.load(clazz, joinId);
+                            .getClassCasted(__);
+                    Record record = db.load(clazz, id);
                     ensureDeletion(record);
                 }
             });
         }
 
+        // Check if there are any incoming links that used the
+        // @CaptureDelete annotation to remove references to this Record post
+        // deletion. Handle that business and save those records within this
+        // transaction
         Criteria potentialCaptureDeletes = StaticAnalysis.instance()
                 .getCaptureDeleteLookupCondition(this);
         if(potentialCaptureDeletes != null) {
             saver.select(SECTION_KEY, potentialCaptureDeletes, result -> {
                 for (Entry<Long, Set<Object>> entry : result.entrySet()) {
-                    long captureId = entry.getKey();
-                    String section = (String) Iterables
-                            .getLast(entry.getValue());
+                    long id = entry.getKey();
+                    String __ = (String) Iterables.getLast(entry.getValue());
                     Class<? extends Record> clazz = Reflection
-                            .getClassCasted(section);
-                    Record record = db.load(clazz, captureId);
+                            .getClassCasted(__);
+                    Record record = db.load(clazz, id);
                     Set<Field> fields = StaticAnalysis.instance()
                             .getAnnotatedFields(record, CaptureDelete.class);
                     for (Field field : fields) {
@@ -2876,6 +2896,7 @@ public abstract class Record implements Comparable<Record> {
             });
         }
 
+        // Perform the deletion(s)
         saver.clear(id);
         for (Record record : waitingToBeDeleted) {
             record.deleteWithinTransaction(saver, preventStaleWrite);
@@ -3025,7 +3046,7 @@ public abstract class Record implements Comparable<Record> {
             String key = entry.getKey();
             Object value = entry.getValue();
             if(value == null) {
-                continue;
+                continue; // A null value does not affect uniqueness.
             }
             else if(Sequences.isSequence(value)) {
                 AtomicReference<BuildableState> $sub = new AtomicReference<>(
@@ -3248,6 +3269,8 @@ public abstract class Record implements Comparable<Record> {
                 record = null;
             }
 
+            // Ensure that Record references are saved within the current
+            // transaction
             if(record != null && !seen.containsKey(record)) {
                 record.saveWithinTransaction(saver, seen, snapshots,
                         preventStaleWrite);
