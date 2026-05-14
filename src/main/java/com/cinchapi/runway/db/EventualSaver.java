@@ -258,14 +258,15 @@ public final class EventualSaver implements Saver {
         }
         List<Object> results = concourse.submit(reads);
         stageSubmitted = true;
-        try {
-            for (Consumer<List<Object>> validator : pendingValidators) {
-                validator.accept(results);
-            }
-        }
-        finally {
-            deferredReadOps.clear();
-            pendingValidators.clear();
+        // Snapshot and clear before dispatching so nested saver recordings
+        // made by a validator/consumer start a fresh batch instead of
+        // mutating the lists currently being iterated.
+        List<Consumer<List<Object>>> active = new ArrayList<>(
+                pendingValidators);
+        deferredReadOps.clear();
+        pendingValidators.clear();
+        for (Consumer<List<Object>> validator : active) {
+            validator.accept(results);
         }
     }
 

@@ -15,7 +15,9 @@
  */
 package com.cinchapi.runway.db;
 
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -117,6 +119,55 @@ public class EventualSaverTest extends SaverTest {
 
         Assert.assertTrue(caught);
         Assert.assertTrue(client.select("scratch", id).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code consumer} passed to
+     * {@link Saver#select(String, Criteria, java.util.function.Consumer)
+     * select} can record further reads on the {@link EventualSaver} without
+     * mutating the validator list currently being iterated &mdash; the nested
+     * recordings must start a fresh batch and resolve cleanly inside the next
+     * flush.
+     * <p>
+     * <strong>Start state:</strong> A record with {@code name = "alpha"} and
+     * {@code flag = true}, plus a second record with {@code flag = true} that
+     * does not match the select.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link EventualSaver}.</li>
+     * <li>Record a {@code select} on {@code name} for the {@code "alpha"}
+     * record whose consumer in turn records a {@code find} for
+     * {@code flag = true}.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The select consumer runs without throwing
+     * {@link java.util.ConcurrentModificationException
+     * ConcurrentModificationException}, the nested {@code find} resolves inside
+     * the next flush, and the captured ids include both records.
+     */
+    @Test
+    public void testSelectConsumerCanRecordNestedReads() {
+        long alpha = client.add("name", "alpha");
+        client.add("flag", true, alpha);
+        long bravo = client.add("name", "bravo");
+        client.add("flag", true, bravo);
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Set<Long>> nestedResult = new AtomicReference<>();
+        saver.select("name",
+                Criteria.where().key("name").operator(Operator.EQUALS)
+                        .value("alpha"),
+                result -> saver.find(Criteria.where().key("flag")
+                        .operator(Operator.EQUALS).value(true),
+                        nestedResult::set));
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(nestedResult.get());
+        Assert.assertTrue(nestedResult.get().contains(alpha));
+        Assert.assertTrue(nestedResult.get().contains(bravo));
     }
 
 }
