@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway.db;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -22,6 +24,7 @@ import java.util.function.Supplier;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.RunwayBaseClientServerTest;
@@ -31,11 +34,20 @@ import com.google.common.collect.ImmutableSet;
  * Behavioral contract tests for {@link Reader} implementations.
  * <p>
  * Concrete subclasses supply the implementation under test by overriding
- * {@link #newReader()} and inherit the full suite of behavioral tests.
+ * {@link #instantiateReader(Concourse)} and inherit the full suite of
+ * behavioral tests.
  *
  * @author Jeff Nelson
  */
 public abstract class ReaderTest extends RunwayBaseClientServerTest {
+
+    /**
+     * Tracks the {@link Concourse} connections wrapped by every {@link Reader}
+     * returned from {@link #newReader()} so they can be released in
+     * {@link #afterStartedTest()} instead of leaking against a server reused
+     * across tests.
+     */
+    private final List<Concourse> readerConnections = new ArrayList<>();
 
     /**
      * <strong>Goal:</strong> Verify that a recorded {@code find(Criteria)}
@@ -352,11 +364,46 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Return a fresh {@link Reader} for the implementation under test.
+     * Open a fresh {@link Concourse} connection on the same environment as
+     * {@link #client}, hand it to the subclass to wrap into a {@link Reader},
+     * and track the connection so {@link #afterStartedTest()} can release it.
      *
      * @return the {@link Reader} under test
      */
-    protected abstract Reader newReader();
+    protected final Reader newReader() {
+        Concourse connection = Concourse.at().port(server.getClientPort())
+                .environment(environment).connect();
+        readerConnections.add(connection);
+        return instantiateReader(connection);
+    }
+
+    /**
+     * Wrap {@code connection} in the {@link Reader} implementation under test.
+     *
+     * @param connection the {@link Concourse} connection the {@link Reader}
+     *            should target
+     * @return the {@link Reader} under test
+     */
+    protected abstract Reader instantiateReader(Concourse connection);
+
+    @Override
+    public void afterStartedTest() {
+        try {
+            super.afterStartedTest();
+        }
+        finally {
+            for (Concourse connection : readerConnections) {
+                try {
+                    connection.close();
+                }
+                catch (Exception ignored) {/*
+                                            * second-close on a connection a
+                                            * test already closed is benign
+                                            */}
+            }
+            readerConnections.clear();
+        }
+    }
 
     @Override
     protected boolean reuseServerAcrossTests() {

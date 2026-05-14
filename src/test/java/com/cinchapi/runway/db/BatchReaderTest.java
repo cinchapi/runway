@@ -35,9 +35,7 @@ import com.cinchapi.concourse.thrift.Operator;
 public class BatchReaderTest extends ReaderTest {
 
     @Override
-    protected Reader newReader() {
-        Concourse connection = Concourse.at().port(server.getClientPort())
-                .connect();
+    protected Reader instantiateReader(Concourse connection) {
         return new BatchReader(connection);
     }
 

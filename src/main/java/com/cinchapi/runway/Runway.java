@@ -994,7 +994,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     else {
                         concourse = ensureValidConnection(concourse);
                         Reader reader = new IncrementalReader(concourse);
-                        $select(reader, selection);
+                        // Forward the already-resolved (empty) sources so
+                        // $selectWithPossibleSources doesn't re-issue
+                        // getAttachedSources for every cache-missing single
+                        // selection.
+                        $selectWithPossibleSources(reader, selection, sources);
                         reader.drain();
                     }
                     reserve(selection);
