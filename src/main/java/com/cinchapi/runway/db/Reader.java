@@ -42,6 +42,12 @@ import com.cinchapi.concourse.lang.sort.Order;
  * {@link #onDrain(Runnable)}. {@link #drain()} issues any deferred reads and
  * then runs every registered completion in registration order.
  * </p>
+ * <p>
+ * Callers <strong>must</strong> call {@link #drain()} before discarding a
+ * {@link Reader}. Discarding without draining leaves any registered
+ * {@link #onDrain(Runnable) completions} unrun and any deferred reads
+ * unsubmitted.
+ * </p>
  *
  * @author Jeff Nelson
  */

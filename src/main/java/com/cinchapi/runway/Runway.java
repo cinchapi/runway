@@ -1488,13 +1488,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             Concourse concourse = ensureValidConnection(
                                     connection);
                             Reader _reader = new ImmediateReader(concourse);
-                            Map<Long, Map<String, Set<Object>>> data = any
-                                    ? $loadAny(_reader, clazz, order, $page,
-                                            realms).get()
-                                    : $load(_reader, clazz, order, $page,
-                                            realms).get();
-                            return any ? instantiateAll(data)
-                                    : instantiateAll(clazz, data);
+                            try {
+                                Map<Long, Map<String, Set<Object>>> data = any
+                                        ? $loadAny(_reader, clazz, order, $page,
+                                                realms).get()
+                                        : $load(_reader, clazz, order, $page,
+                                                realms).get();
+                                return any ? instantiateAll(data)
+                                        : instantiateAll(clazz, data);
+                            }
+                            finally {
+                                _reader.drain();
+                            }
                         };
                         return new SelectResult<>(Pagination
                                 .applyFilterAndPage(retriever, filter, page));
@@ -1669,13 +1674,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 Concourse concourse = ensureValidConnection(
                                         connection);
                                 Reader _reader = new ImmediateReader(concourse);
-                                Map<Long, Map<String, Set<Object>>> data = any
-                                        ? $findAny(_reader, clazz, criteria,
-                                                order, $page, realms).get()
-                                        : $find(_reader, clazz, criteria, order,
-                                                $page, realms).get();
-                                return any ? instantiateAll(data)
-                                        : instantiateAll(clazz, data);
+                                try {
+                                    Map<Long, Map<String, Set<Object>>> data = any
+                                            ? $findAny(_reader, clazz, criteria,
+                                                    order, $page, realms).get()
+                                            : $find(_reader, clazz, criteria,
+                                                    order, $page, realms).get();
+                                    return any ? instantiateAll(data)
+                                            : instantiateAll(clazz, data);
+                                }
+                                finally {
+                                    _reader.drain();
+                                }
                             }
                             else {
                                 return any
