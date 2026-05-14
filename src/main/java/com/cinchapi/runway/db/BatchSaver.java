@@ -47,7 +47,11 @@ import com.google.common.base.Preconditions;
  * carries {@link #stage()} plus the recorded {@link #audit audits} and
  * {@link #find finds}, runs every queued {@link Consumer validator} against the
  * result, and only then is the writes-plus-commit {@link CommandGroup}
- * submitted.</li>
+ * submitted. The driver propagates the staged
+ * {@link com.cinchapi.concourse.thrift.TransactionToken TransactionToken}
+ * across the two submissions and clears it when the terminal commit runs, so no
+ * direct {@link Concourse#stage()}, {@link Concourse#commit()}, or
+ * {@link Concourse#abort()} call is needed in the success path.</li>
  * <li><strong>Inside {@link #select(String, Criteria, Consumer)
  * select}.</strong> Save-time {@link #select select} reads drive control flow
  * rather than a throw/no-throw validation, so the {@link Consumer} must observe
@@ -88,7 +92,9 @@ public final class BatchSaver implements Saver {
     /**
      * Whether {@link #stage()} has been included in a submitted
      * {@link CommandGroup}; once {@code true} subsequent flushes and the writes
-     * submission do not re-record it.
+     * submission do not re-record it, and {@link #abort()} routes through
+     * {@link Concourse#abort()} to release any transaction the driver still
+     * holds.
      */
     private boolean stageSubmitted;
 
