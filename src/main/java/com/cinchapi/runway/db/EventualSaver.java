@@ -18,6 +18,7 @@ package com.cinchapi.runway.db;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -110,6 +111,13 @@ public final class EventualSaver implements Saver {
     private final List<Consumer<CommandGroup>> deferredWriteOps;
 
     /**
+     * Intra-batch uniqueness intents declared via
+     * {@link #declareUniqueIntent(Object, long, String)}, keyed by canonical
+     * constraint identifier and valued by the declaring record id.
+     */
+    private final Map<Object, Long> uniqueIntents;
+
+    /**
      * Construct a new {@link EventualSaver} that submits against
      * {@code concourse}.
      *
@@ -123,6 +131,7 @@ public final class EventualSaver implements Saver {
         this.deferredReadOps = new ArrayList<>();
         this.pendingValidators = new ArrayList<>();
         this.deferredWriteOps = new ArrayList<>();
+        this.uniqueIntents = new HashMap<>();
     }
 
     @Override
@@ -214,6 +223,15 @@ public final class EventualSaver implements Saver {
     public void reconcile(String key, long record, Object[] values) {
         deferredWriteOps.add(
                 group -> group.reconcile(key, record, Arrays.asList(values)));
+    }
+
+    @Override
+    public void declareUniqueIntent(Object canonical, long record,
+            String errorMessage) {
+        Long prior = uniqueIntents.putIfAbsent(canonical, record);
+        if(prior != null && prior != record) {
+            throw new IllegalStateException(errorMessage);
+        }
     }
 
     @Override

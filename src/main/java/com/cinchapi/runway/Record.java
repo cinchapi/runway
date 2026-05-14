@@ -40,6 +40,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -3072,11 +3073,35 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         Criteria criteria = $criteria.get();
+        String errorMessage = AnyStrings.format("{} must be unique in {}",
+                errorName, __);
+        // Synchronous savers see prior staged writes on subsequent reads,
+        // so the database itself enforces intra-batch uniqueness. Batched
+        // savers submit every queued find against a single pre-write
+        // snapshot, so two records writing the same value in one save call
+        // would both pass the DB-side check. Declaring the intent here
+        // bridges that gap on the batched path.
+        List<Object> canonical = new ArrayList<>();
+        canonical.add(getClass().getName());
+        new TreeMap<>(data).forEach((k, v) -> {
+            if(v != null) {
+                canonical.add(k);
+                if(Sequences.isSequence(v)) {
+                    Set<Object> items = new HashSet<>();
+                    Sequences.forEach(v,
+                            item -> items.add(serializeScalarValue(item)));
+                    canonical.add(items);
+                }
+                else {
+                    canonical.add(serializeScalarValue(v));
+                }
+            }
+        });
+        saver.declareUniqueIntent(canonical, id, errorMessage);
         saver.find(criteria, records -> {
             if(!(records.isEmpty()
                     || (records.contains(id) && records.size() == 1))) {
-                throw new IllegalStateException(AnyStrings
-                        .format("{} must be unique in {}", errorName, __));
+                throw new IllegalStateException(errorMessage);
             }
         });
     }

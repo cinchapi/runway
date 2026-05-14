@@ -229,6 +229,49 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that two records saved in a single
+     * {@link Runway#save(Record...)} call that would both write the same value
+     * to a {@link Unique} field are rejected even though no such record exists
+     * in the database when the save begins.
+     * <p>
+     * The legacy per-call save path relied on the staged transaction to make
+     * earlier records' writes visible to later uniqueness reads. The bulk path
+     * submits every queued uniqueness {@code find} against a single pre-write
+     * snapshot, so without explicit intra-batch detection both records would
+     * pass the DB check and commit duplicate values.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct two {@link UniqueNamed} records with the same name.</li>
+     * <li>Save them together in one {@link Runway#save(Record...)} call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code false}, at least one
+     * of the records carries an {@link IllegalStateException} mentioning
+     * uniqueness in its {@code errors} list, and zero {@link UniqueNamed}
+     * records exist in the database.
+     */
+    @Test
+    public void testBulkSaveRejectsIntraBatchUniquenessViolation() {
+        UniqueNamed first = new UniqueNamed("Alpha");
+        UniqueNamed second = new UniqueNamed("Alpha");
+
+        Assert.assertFalse(runway.save(first, second));
+
+        boolean rejected = first.errors.stream()
+                .anyMatch(t -> t instanceof IllegalStateException
+                        && t.getMessage().toLowerCase().contains("unique"))
+                || second.errors.stream()
+                        .anyMatch(t -> t instanceof IllegalStateException && t
+                                .getMessage().toLowerCase().contains("unique"));
+        Assert.assertTrue("expected an intra-batch uniqueness violation",
+                rejected);
+        Assert.assertEquals(0, runway.load(UniqueNamed.class).size());
+    }
+
+    /**
      * A simple {@link Record} type with a name and age, used as the baseline
      * for save tests.
      */

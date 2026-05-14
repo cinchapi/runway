@@ -227,4 +227,33 @@ public interface Saver {
      */
     void reconcile(String key, long record, Object[] values);
 
+    /**
+     * Declare that {@code record} intends to write the value identified by
+     * {@code canonical} within the current save batch, so that batched
+     * implementations can detect intra-batch duplicates that the database
+     * itself cannot see (because writes are deferred until {@link #commit()}).
+     * <p>
+     * Synchronous implementations no-op because each write enters the staged
+     * transaction immediately and the next read observes it. Batched
+     * implementations track each declared {@code canonical} and throw
+     * {@link IllegalStateException} carrying {@code errorMessage} when the same
+     * {@code canonical} is declared a second time with a different
+     * {@code record}.
+     * </p>
+     *
+     * @param canonical a value-equal key identifying the uniqueness constraint
+     *            being asserted; equal keys across calls indicate the same
+     *            constraint
+     * @param record the id of the {@link com.cinchapi.runway.Record Record}
+     *            that intends to write this value
+     * @param errorMessage the message attached to the
+     *            {@link IllegalStateException} thrown on an intra-batch
+     *            conflict
+     * @throws IllegalStateException if another
+     *             {@link com.cinchapi.runway.Record Record} in this save batch
+     *             has already declared {@code canonical}
+     */
+    default void declareUniqueIntent(Object canonical, long record,
+            String errorMessage) {/* no-op */}
+
 }
