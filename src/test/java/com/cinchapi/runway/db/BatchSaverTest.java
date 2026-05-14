@@ -35,9 +35,7 @@ import com.cinchapi.concourse.thrift.Operator;
 public class BatchSaverTest extends SaverTest {
 
     @Override
-    protected Saver newSaver() {
-        Concourse connection = Concourse.at().port(server.getClientPort())
-                .connect();
+    protected Saver instantiateSaver(Concourse connection) {
         return new BatchSaver(connection);
     }
 

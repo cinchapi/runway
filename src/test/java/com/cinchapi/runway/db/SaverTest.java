@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway.db;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,11 +35,20 @@ import com.google.common.collect.ImmutableSet;
  * Behavioral contract tests for {@link Saver} implementations.
  * <p>
  * Concrete subclasses supply the implementation under test by overriding
- * {@link #newSaver()} and inherit the full suite of behavioral tests.
+ * {@link #instantiateSaver(Concourse)} and inherit the full suite of behavioral
+ * tests.
  *
  * @author Jeff Nelson
  */
 public abstract class SaverTest extends RunwayBaseClientServerTest {
+
+    /**
+     * Tracks the {@link Concourse} connections wrapped by every {@link Saver}
+     * returned from {@link #newSaver()} so they can be released in
+     * {@link #afterStartedTest()} instead of leaking against a server reused
+     * across tests.
+     */
+    private final List<Concourse> saverConnections = new ArrayList<>();
 
     /**
      * <strong>Goal:</strong> Verify that {@link Saver#abort()} leaves no
@@ -370,11 +380,50 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Construct the {@link Saver} under test, wrapping a fresh connection so it
-     * has its own staging context independent of {@link #concourse}.
+     * Open a fresh {@link Concourse} connection on the same environment as
+     * {@link #client}, hand it to the subclass to wrap into a {@link Saver},
+     * and track the connection so {@link #afterStartedTest()} can release it.
      *
-     * @return a new {@link Saver}
+     * @return the {@link Saver} under test
      */
-    protected abstract Saver newSaver();
+    protected final Saver newSaver() {
+        Concourse connection = Concourse.at().port(server.getClientPort())
+                .environment(environment).connect();
+        saverConnections.add(connection);
+        return instantiateSaver(connection);
+    }
+
+    /**
+     * Wrap {@code connection} in the {@link Saver} implementation under test.
+     *
+     * @param connection the {@link Concourse} connection the {@link Saver}
+     *            should target
+     * @return the {@link Saver} under test
+     */
+    protected abstract Saver instantiateSaver(Concourse connection);
+
+    @Override
+    public void afterStartedTest() {
+        try {
+            super.afterStartedTest();
+        }
+        finally {
+            for (Concourse connection : saverConnections) {
+                try {
+                    connection.close();
+                }
+                catch (Exception ignored) {/*
+                                            * second-close on a connection a
+                                            * test already closed is benign
+                                            */}
+            }
+            saverConnections.clear();
+        }
+    }
+
+    @Override
+    protected boolean reuseServerAcrossTests() {
+        return true;
+    }
 
 }
