@@ -2553,11 +2553,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Concourse connection = connections.request();
         try {
             Map<Long, Map<String, Set<Object>>> targets = Maps.newHashMap();
-            // Phase 1: NAVIGATE — pre-fetch destinations using path-driven
-            // server-side traversal. When the class is known, dispatch a
-            // single navigate() per request; for untyped loads, group the
-            // records by their section key so each class group dispatches
-            // its own navigate() with class-specific paths.
+            // Phase 1: NAVIGATE — pre-fetch destination Record data.
+            // select() can fold a one-to-one Link's destination into the
+            // source record's flat result (e.g., owner.name appears as a
+            // key on the source), but for a multi-valued Link it would
+            // flatten every destination's values into a single set with
+            // no per-destination grouping, making it impossible to
+            // reconstruct individual destination Records. navigate()
+            // returns data keyed by destination record ID instead, which
+            // preserves the association. When the source class is known,
+            // dispatch a single navigate() per request; for untyped
+            // loads, group the records by their section key so each
+            // class group dispatches its own navigate() with
+            // class-specific paths.
             if(clazz != null) {
                 Set<String> paths = hierarchy
                         ? getNavigatePathsForClassHierarchyIfSupported(clazz)

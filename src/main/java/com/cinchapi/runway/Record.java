@@ -3543,6 +3543,14 @@ public abstract class Record implements Comparable<Record> {
                     }
                 }
                 else if(Collection.class.isAssignableFrom(type)) {
+                    // Collection<Record> fields must be pre-fetched via
+                    // navigate() rather than select(). select() with a
+                    // multi-valued navigation path (e.g., books.title)
+                    // returns the destination values as a single flat
+                    // set, losing the per-destination grouping needed to
+                    // reconstruct individual Record instances. navigate()
+                    // returns data keyed by destination record ID, which
+                    // preserves the association.
                     Class<?> elementType = Iterables
                             .getFirst(fieldTypeArgumentsByClass
                                     .getOrDefault(clazz, ImmutableMap.of())
@@ -3761,6 +3769,16 @@ public abstract class Record implements Comparable<Record> {
                     }
                 }
                 else {
+                    // Non-Record types (primitives, scalars, Collections,
+                    // etc.) emit a bare key. For Collection<Record> in
+                    // particular, recursing into the element type here
+                    // would be wrong: select() flattens a multi-valued
+                    // navigation path into one set of values, losing the
+                    // per-destination grouping needed to reconstruct
+                    // individual Records. The bare key produces the Link
+                    // values, and navigate() (driven by computeNavigatePaths)
+                    // returns each destination's data keyed by destination
+                    // ID.
                     paths.add(prefix + field.getName());
                 }
             }
