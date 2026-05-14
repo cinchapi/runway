@@ -59,7 +59,7 @@ public class ImmediateSaverTest extends SaverTest {
      */
     @Test
     public void testAuditValidatorRunsInline() {
-        long id = concourse.add("a", 1);
+        long id = client.add("a", 1);
 
         Saver saver = newSaver();
         saver.stage();
@@ -95,7 +95,7 @@ public class ImmediateSaverTest extends SaverTest {
      */
     @Test
     public void testFindValidatorRunsInline() {
-        concourse.add("flag", true);
+        client.add("flag", true);
 
         Saver saver = newSaver();
         saver.stage();

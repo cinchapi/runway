@@ -26,8 +26,8 @@ import org.junit.Test;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.RunwayBaseClientServerTest;
 import com.google.common.collect.ImmutableSet;
 
 /**
@@ -38,31 +38,122 @@ import com.google.common.collect.ImmutableSet;
  *
  * @author Jeff Nelson
  */
-public abstract class SaverTest extends ClientServerTest {
+public abstract class SaverTest extends RunwayBaseClientServerTest {
 
     /**
-     * A long-lived {@link Concourse} connection used for arrange/assert
-     * operations that should not flow through the {@link Saver} under test.
+     * <strong>Goal:</strong> Verify that {@link Saver#abort()} leaves no
+     * recorded writes persisted on the database.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@code set}.</li>
+     * <li>Call {@link Saver#abort()} instead of {@link Saver#commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The recorded write is not visible on the
+     * target record.
      */
-    protected Concourse concourse;
+    @Test
+    public void testAbortDiscardsPendingWrites() {
+        long id = client.add("placeholder", 1L);
 
-    @Override
-    public void afterStartedTest() {
-        concourse.close();
-    }
+        Saver saver = newSaver();
+        saver.stage();
+        saver.set("foo", "bar", id);
+        saver.abort();
 
-    @Override
-    public void beforeEachTest() {
-        concourse = Concourse.at().port(server.getClientPort()).connect();
+        Assert.assertTrue(client.select("foo", id).isEmpty());
     }
 
     /**
-     * Construct the {@link Saver} under test, wrapping a fresh connection so it
-     * has its own staging context independent of {@link #concourse}.
-     *
-     * @return a new {@link Saver}
+     * <strong>Goal:</strong> Verify that the {@code validator} passed to
+     * {@link Saver#audit(long, java.util.function.Consumer) audit} receives the
+     * audit history for the recorded record.
+     * <p>
+     * <strong>Start state:</strong> A record that has been modified once.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record an {@code audit} with a {@code validator} that captures the
+     * result.</li>
+     * <li>Commit so the {@code validator} is guaranteed to have run.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The captured audit map is non-empty.
      */
-    protected abstract Saver newSaver();
+    @Test
+    public void testAuditValidatorReceivesResult() {
+        long id = client.add("a", 1);
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<Timestamp, List<String>>> captured = new AtomicReference<>();
+        saver.audit(id, captured::set);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(captured.get());
+        Assert.assertFalse(captured.get().isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Saver#clear(String, long)}
+     * removes the values previously associated with the key.
+     * <p>
+     * <strong>Start state:</strong> A record with a value under {@code "drop"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@code clear(key, record)}.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@code "drop"} field is empty on the
+     * record.
+     */
+    @Test
+    public void testClearKeyOnRecordIsAppliedAfterCommit() {
+        long id = client.add("drop", "value");
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.clear("drop", id);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertTrue(client.select("drop", id).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Saver#clear(long)} wipes the
+     * entire record.
+     * <p>
+     * <strong>Start state:</strong> A record with values under two keys.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@code clear(record)} on the record.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The record holds no values under any key.
+     */
+    @Test
+    public void testClearRecordIsAppliedAfterCommit() {
+        long id = client.add("a", 1);
+        client.add("b", 2, id);
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.clear(id);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertTrue(client.select(id).isEmpty());
+    }
 
     /**
      * <strong>Goal:</strong> Verify that {@link Saver#concourse()} returns the
@@ -108,118 +199,38 @@ public abstract class SaverTest extends ClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link Saver#set} is applied to the
-     * database after the staged transaction commits.
+     * <strong>Goal:</strong> Verify that the {@code validator} passed to
+     * {@link Saver#find(Criteria, java.util.function.Consumer) find} receives
+     * the matching record ids.
      * <p>
-     * <strong>Start state:</strong> An empty target record.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage the {@link Saver}.</li>
-     * <li>Record a {@code set} of {@code "bar"} into {@code "foo"} on the
-     * target.</li>
-     * <li>Commit the {@link Saver}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The target record's {@code "foo"} field holds
-     * exactly {@code "bar"}.
-     */
-    @Test
-    public void testSetIsAppliedAfterCommit() {
-        long id = concourse.add("placeholder", 1L);
-
-        Saver saver = newSaver();
-        saver.stage();
-        saver.set("foo", "bar", id);
-        Assert.assertTrue(saver.commit());
-
-        Set<Object> values = concourse.select("foo", id);
-        Assert.assertEquals(ImmutableSet.of("bar"), values);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@link Saver#clear(String, long)}
-     * removes the values previously associated with the key.
-     * <p>
-     * <strong>Start state:</strong> A record with a value under {@code "drop"}.
+     * <strong>Start state:</strong> Two records with {@code flag = true} and
+     * one with {@code flag = false}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Stage the {@link Saver}.</li>
-     * <li>Record a {@code clear(key, record)}.</li>
+     * <li>Record a {@code find} for {@code flag = true} with a
+     * {@code validator} that captures the matching ids.</li>
      * <li>Commit.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The {@code "drop"} field is empty on the
-     * record.
+     * <strong>Expected:</strong> The captured set contains exactly the two
+     * matching ids.
      */
     @Test
-    public void testClearKeyOnRecordIsAppliedAfterCommit() {
-        long id = concourse.add("drop", "value");
+    public void testFindValidatorReceivesMatchingIds() {
+        long match1 = client.add("flag", true);
+        long match2 = client.add("flag", true);
+        client.add("flag", false);
 
         Saver saver = newSaver();
         saver.stage();
-        saver.clear("drop", id);
+        AtomicReference<Set<Long>> captured = new AtomicReference<>();
+        saver.find(Criteria.where().key("flag").operator(Operator.EQUALS)
+                .value(true), captured::set);
         Assert.assertTrue(saver.commit());
 
-        Assert.assertTrue(concourse.select("drop", id).isEmpty());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@link Saver#clear(long)} wipes the
-     * entire record.
-     * <p>
-     * <strong>Start state:</strong> A record with values under two keys.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage the {@link Saver}.</li>
-     * <li>Record a {@code clear(record)} on the record.</li>
-     * <li>Commit.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The record holds no values under any key.
-     */
-    @Test
-    public void testClearRecordIsAppliedAfterCommit() {
-        long id = concourse.add("a", 1);
-        concourse.add("b", 2, id);
-
-        Saver saver = newSaver();
-        saver.stage();
-        saver.clear(id);
-        Assert.assertTrue(saver.commit());
-
-        Assert.assertTrue(concourse.select(id).isEmpty());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@link Saver#verifyOrSet} updates the
-     * value on a record so that exactly one value remains.
-     * <p>
-     * <strong>Start state:</strong> A record with two values under {@code "k"}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage the {@link Saver}.</li>
-     * <li>Record a {@code verifyOrSet} with a new value.</li>
-     * <li>Commit.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The record holds exactly the new value under
-     * {@code "k"}.
-     */
-    @Test
-    public void testVerifyOrSetIsAppliedAfterCommit() {
-        long id = concourse.add("k", "old1");
-        concourse.add("k", "old2", id);
-
-        Saver saver = newSaver();
-        saver.stage();
-        saver.verifyOrSet("k", "new", id);
-        Assert.assertTrue(saver.commit());
-
-        Assert.assertEquals(ImmutableSet.of("new"), concourse.select("k", id));
+        Assert.assertEquals(ImmutableSet.of(match1, match2), captured.get());
     }
 
     /**
@@ -241,8 +252,8 @@ public abstract class SaverTest extends ClientServerTest {
      */
     @Test
     public void testReconcileIsAppliedAfterCommit() {
-        long id = concourse.add("tags", "a");
-        concourse.add("tags", "b", id);
+        long id = client.add("tags", "a");
+        client.add("tags", "b", id);
 
         Saver saver = newSaver();
         saver.stage();
@@ -250,73 +261,37 @@ public abstract class SaverTest extends ClientServerTest {
         Assert.assertTrue(saver.commit());
 
         Assert.assertEquals(ImmutableSet.of("b", "c"),
-                concourse.select("tags", id));
+                client.select("tags", id));
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the {@code validator} passed to
-     * {@link Saver#audit(long, java.util.function.Consumer) audit} receives the
-     * audit history for the recorded record.
+     * <strong>Goal:</strong> Verify that {@link Saver#set} is applied to the
+     * database after the staged transaction commits.
      * <p>
-     * <strong>Start state:</strong> A record that has been modified once.
+     * <strong>Start state:</strong> An empty target record.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Stage the {@link Saver}.</li>
-     * <li>Record an {@code audit} with a {@code validator} that captures the
-     * result.</li>
-     * <li>Commit so the {@code validator} is guaranteed to have run.</li>
+     * <li>Record a {@code set} of {@code "bar"} into {@code "foo"} on the
+     * target.</li>
+     * <li>Commit the {@link Saver}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The captured audit map is non-empty.
+     * <strong>Expected:</strong> The target record's {@code "foo"} field holds
+     * exactly {@code "bar"}.
      */
     @Test
-    public void testAuditValidatorReceivesResult() {
-        long id = concourse.add("a", 1);
+    public void testSetIsAppliedAfterCommit() {
+        long id = client.add("placeholder", 1L);
 
         Saver saver = newSaver();
         saver.stage();
-        AtomicReference<Map<Timestamp, List<String>>> captured = new AtomicReference<>();
-        saver.audit(id, captured::set);
+        saver.set("foo", "bar", id);
         Assert.assertTrue(saver.commit());
 
-        Assert.assertNotNull(captured.get());
-        Assert.assertFalse(captured.get().isEmpty());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that the {@code validator} passed to
-     * {@link Saver#find(Criteria, java.util.function.Consumer) find} receives
-     * the matching record ids.
-     * <p>
-     * <strong>Start state:</strong> Two records with {@code flag = true} and
-     * one with {@code flag = false}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage the {@link Saver}.</li>
-     * <li>Record a {@code find} for {@code flag = true} with a
-     * {@code validator} that captures the matching ids.</li>
-     * <li>Commit.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The captured set contains exactly the two
-     * matching ids.
-     */
-    @Test
-    public void testFindValidatorReceivesMatchingIds() {
-        long match1 = concourse.add("flag", true);
-        long match2 = concourse.add("flag", true);
-        concourse.add("flag", false);
-
-        Saver saver = newSaver();
-        saver.stage();
-        AtomicReference<Set<Long>> captured = new AtomicReference<>();
-        saver.find(Criteria.where().key("flag").operator(Operator.EQUALS)
-                .value(true), captured::set);
-        Assert.assertTrue(saver.commit());
-
-        Assert.assertEquals(ImmutableSet.of(match1, match2), captured.get());
+        Set<Object> values = client.select("foo", id);
+        Assert.assertEquals(ImmutableSet.of("bar"), values);
     }
 
     /**
@@ -343,7 +318,7 @@ public abstract class SaverTest extends ClientServerTest {
      */
     @Test
     public void testValidatorThrowAbortsStagedTransaction() {
-        long id = concourse.add("flag", true);
+        long id = client.add("flag", true);
 
         Saver saver = newSaver();
         saver.stage();
@@ -362,35 +337,44 @@ public abstract class SaverTest extends ClientServerTest {
         }
 
         Assert.assertTrue("expected validator to reject the save", caught);
-        Assert.assertTrue(concourse.select("foo", id).isEmpty());
+        Assert.assertTrue(client.select("foo", id).isEmpty());
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link Saver#abort()} leaves no
-     * recorded writes persisted on the database.
+     * <strong>Goal:</strong> Verify that {@link Saver#verifyOrSet} updates the
+     * value on a record so that exactly one value remains.
      * <p>
-     * <strong>Start state:</strong> No prior state needed.
+     * <strong>Start state:</strong> A record with two values under {@code "k"}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Stage the {@link Saver}.</li>
-     * <li>Record a {@code set}.</li>
-     * <li>Call {@link Saver#abort()} instead of {@link Saver#commit()}.</li>
+     * <li>Record a {@code verifyOrSet} with a new value.</li>
+     * <li>Commit.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The recorded write is not visible on the
-     * target record.
+     * <strong>Expected:</strong> The record holds exactly the new value under
+     * {@code "k"}.
      */
     @Test
-    public void testAbortDiscardsPendingWrites() {
-        long id = concourse.add("placeholder", 1L);
+    public void testVerifyOrSetIsAppliedAfterCommit() {
+        long id = client.add("k", "old1");
+        client.add("k", "old2", id);
 
         Saver saver = newSaver();
         saver.stage();
-        saver.set("foo", "bar", id);
-        saver.abort();
+        saver.verifyOrSet("k", "new", id);
+        Assert.assertTrue(saver.commit());
 
-        Assert.assertTrue(concourse.select("foo", id).isEmpty());
+        Assert.assertEquals(ImmutableSet.of("new"), client.select("k", id));
     }
+
+    /**
+     * Construct the {@link Saver} under test, wrapping a fresh connection so it
+     * has its own staging context independent of {@link #concourse}.
+     *
+     * @return a new {@link Saver}
+     */
+    protected abstract Saver newSaver();
 
 }

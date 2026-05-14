@@ -58,7 +58,7 @@ public class EventualSaverTest extends SaverTest {
      */
     @Test
     public void testFindValidatorIsDeferredUntilCommit() {
-        concourse.add("flag", true);
+        client.add("flag", true);
 
         Saver saver = newSaver();
         saver.stage();
@@ -96,7 +96,7 @@ public class EventualSaverTest extends SaverTest {
      */
     @Test
     public void testValidatorThrowSkipsWritesSubmission() {
-        long id = concourse.add("flag", true);
+        long id = client.add("flag", true);
 
         Saver saver = newSaver();
         saver.stage();
@@ -116,7 +116,7 @@ public class EventualSaverTest extends SaverTest {
         }
 
         Assert.assertTrue(caught);
-        Assert.assertTrue(concourse.select("scratch", id).isEmpty());
+        Assert.assertTrue(client.select("scratch", id).isEmpty());
     }
 
 }
