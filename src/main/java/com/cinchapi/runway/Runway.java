@@ -68,9 +68,6 @@ import com.cinchapi.concourse.lang.sort.Direction;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.lang.sort.OrderComponent;
 import com.cinchapi.concourse.server.plugin.util.Versions;
-import com.cinchapi.runway.db.EventualSaver;
-import com.cinchapi.runway.db.ImmediateSaver;
-import com.cinchapi.runway.db.Saver;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.Record.InvalidRecordException;
@@ -78,8 +75,11 @@ import com.cinchapi.runway.Record.Snapshot;
 import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.cinchapi.runway.db.EventualReader;
+import com.cinchapi.runway.db.EventualSaver;
 import com.cinchapi.runway.db.ImmediateReader;
+import com.cinchapi.runway.db.ImmediateSaver;
 import com.cinchapi.runway.db.Reader;
+import com.cinchapi.runway.db.Saver;
 import com.cinchapi.runway.util.Obligations;
 import com.cinchapi.runway.util.Pagination;
 import com.github.zafarkhaja.semver.Version;
@@ -316,10 +316,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * captured snapshot.
      * <p>
      * This is used during spurious save failure retry to undo the side effects
-     * that {@link Record#saveWithinTransaction saveWithinTransaction}
-     * performs on metadata fields (checksum, realm
-     * flags, author), since the transaction was aborted and none of those
-     * mutations should persist.
+     * that {@link Record#saveWithinTransaction saveWithinTransaction} performs
+     * on metadata fields (checksum, realm flags, author), since the transaction
+     * was aborted and none of those mutations should persist.
      * </p>
      *
      * @param snapshot a mapping from {@link Record} to its captured
@@ -841,8 +840,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         else {
                             current = record;
                             record.assign(this);
-                            record.saveWithinTransaction(saver, seen,
-                                    snapshots, preventStaleWrites);
+                            record.saveWithinTransaction(saver, seen, snapshots,
+                                    preventStaleWrites);
                         }
                     }
                     if(saver.commit()) {
