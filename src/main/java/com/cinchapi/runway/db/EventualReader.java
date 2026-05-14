@@ -59,7 +59,8 @@ import com.google.common.collect.ImmutableList;
 public final class EventualReader extends AbstractReader {
 
     /**
-     * The active recording batch.
+     * The active recording batch, or {@code null} when no batch has been opened
+     * yet.
      */
     private Batch current;
 
@@ -71,7 +72,6 @@ public final class EventualReader extends AbstractReader {
      */
     public EventualReader(Concourse concourse) {
         super(concourse);
-        rollover();
     }
 
     @Override
@@ -230,20 +230,20 @@ public final class EventualReader extends AbstractReader {
 
     @Override
     protected void prepareDrain() {
-        if(!current.flushed() && current.size() > 0) {
+        if(current != null && !current.flushed() && current.size() > 0) {
             current.flush(concourse);
         }
     }
 
     /**
      * Return the {@link Batch} that subsequent recordings should append to,
-     * starting a fresh one if the active {@link Batch} has already been
-     * flushed.
+     * starting a fresh one when no {@link Batch} is open or the active one has
+     * already been flushed.
      *
      * @return the {@link Batch} that should receive the next recording
      */
     private Batch batch() {
-        if(current.flushed()) {
+        if(current == null || current.flushed()) {
             rollover();
         }
         return current;
