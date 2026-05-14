@@ -22,11 +22,9 @@ import java.util.function.Supplier;
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
-import com.cinchapi.runway.Testing;
+import com.cinchapi.runway.RunwayBaseClientServerTest;
 import com.google.common.collect.ImmutableSet;
 
 /**
@@ -37,23 +35,7 @@ import com.google.common.collect.ImmutableSet;
  *
  * @author Jeff Nelson
  */
-public abstract class ReaderTest extends ClientServerTest {
-
-    /**
-     * The {@link Concourse} connection passed to every {@link Reader} under
-     * test.
-     */
-    protected Concourse concourse;
-
-    @Override
-    public void afterStartedTest() {
-        concourse.close();
-    }
-
-    @Override
-    public void beforeEachTest() {
-        concourse = Concourse.at().port(server.getClientPort()).connect();
-    }
+public abstract class ReaderTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that a recorded {@code find(Criteria)}
@@ -74,8 +56,8 @@ public abstract class ReaderTest extends ClientServerTest {
      */
     @Test
     public void testFindByCriteriaYieldsMatchingIds() {
-        long low = concourse.add("score", 5);
-        long high = concourse.add("score", 10);
+        long low = client.add("score", 5);
+        long high = client.add("score", 10);
 
         Reader reader = newReader();
         Supplier<Set<Long>> supplier = reader.find(Criteria.where().key("score")
@@ -106,9 +88,9 @@ public abstract class ReaderTest extends ClientServerTest {
      */
     @Test
     public void testMultipleReadsResolveIndependently() {
-        long a = concourse.add("active", true);
-        long b = concourse.add("active", true);
-        long c = concourse.add("active", false);
+        long a = client.add("active", true);
+        long b = client.add("active", true);
+        long c = client.add("active", false);
 
         Reader reader = newReader();
         Supplier<Map<Long, Map<String, Set<Object>>>> active = reader
@@ -142,8 +124,8 @@ public abstract class ReaderTest extends ClientServerTest {
      */
     @Test
     public void testRecordsAfterResolutionStartNewBatch() {
-        long first = concourse.add("tag", "first");
-        long second = concourse.add("tag", "second");
+        long first = client.add("tag", "first");
+        long second = client.add("tag", "second");
 
         Reader reader = newReader();
         Supplier<Set<Long>> firstSupplier = reader.find(Criteria.where()
@@ -174,10 +156,10 @@ public abstract class ReaderTest extends ClientServerTest {
      */
     @Test
     public void testSelectByCriteriaYieldsMatchingRecord() {
-        long alice = concourse.add("name", "alice");
-        concourse.add("age", 30, alice);
-        long bob = concourse.add("name", "bob");
-        concourse.add("age", 40, bob);
+        long alice = client.add("name", "alice");
+        client.add("age", 30, alice);
+        long bob = client.add("name", "bob");
+        client.add("age", 40, bob);
 
         Reader reader = newReader();
         Supplier<Map<Long, Map<String, Set<Object>>>> supplier = reader
@@ -209,9 +191,9 @@ public abstract class ReaderTest extends ClientServerTest {
      */
     @Test
     public void testSelectWithKeysIncludesOnlyRequestedKeys() {
-        long jeff = concourse.add("name", "jeff");
-        concourse.add("age", 32, jeff);
-        concourse.add("city", "Atlanta", jeff);
+        long jeff = client.add("name", "jeff");
+        client.add("age", 32, jeff);
+        client.add("city", "Atlanta", jeff);
 
         Reader reader = newReader();
         Supplier<Map<Long, Map<String, Set<Object>>>> supplier = reader
@@ -241,9 +223,9 @@ public abstract class ReaderTest extends ClientServerTest {
      */
     @Test
     public void testCountByCriteriaYieldsMatchCount() {
-        concourse.add("score", 1);
-        concourse.add("score", 5);
-        concourse.add("score", 10);
+        client.add("score", 1);
+        client.add("score", 5);
+        client.add("score", 10);
 
         Reader reader = newReader();
         Supplier<Long> supplier = reader.count("score", Criteria.where()
@@ -270,8 +252,8 @@ public abstract class ReaderTest extends ClientServerTest {
      */
     @Test
     public void testSelectByRecordYieldsAllFields() {
-        long id = concourse.add("name", "jeff");
-        concourse.add("age", 32, id);
+        long id = client.add("name", "jeff");
+        client.add("age", 32, id);
 
         Reader reader = newReader();
         Supplier<Map<String, Set<Object>>> supplier = reader.select(id);
@@ -299,9 +281,9 @@ public abstract class ReaderTest extends ClientServerTest {
      */
     @Test
     public void testSelectByKeysAndRecordIncludesOnlyRequestedKeys() {
-        long id = concourse.add("name", "jeff");
-        concourse.add("age", 32, id);
-        concourse.add("city", "Atlanta", id);
+        long id = client.add("name", "jeff");
+        client.add("age", 32, id);
+        client.add("city", "Atlanta", id);
 
         Reader reader = newReader();
         Supplier<Map<String, Set<Object>>> supplier = reader
@@ -330,9 +312,9 @@ public abstract class ReaderTest extends ClientServerTest {
      */
     @Test
     public void testSelectByKeyAndRecordYieldsAllValuesForKey() {
-        long id = concourse.add("tag", "alpha");
-        concourse.add("tag", "beta", id);
-        concourse.add("tag", "gamma", id);
+        long id = client.add("tag", "alpha");
+        client.add("tag", "beta", id);
+        client.add("tag", "gamma", id);
 
         Reader reader = newReader();
         Supplier<Set<Object>> supplier = reader.select("tag", id);
@@ -360,18 +342,13 @@ public abstract class ReaderTest extends ClientServerTest {
      */
     @Test
     public void testGetByKeyAndRecordYieldsMostRecentValue() {
-        long id = concourse.add("status", "pending");
-        concourse.add("status", "approved", id);
+        long id = client.add("status", "pending");
+        client.add("status", "approved", id);
 
         Reader reader = newReader();
         Supplier<Object> supplier = reader.get("status", id);
 
         Assert.assertEquals("approved", supplier.get());
-    }
-
-    @Override
-    protected String getServerVersion() {
-        return Testing.CONCOURSE_VERSION;
     }
 
     /**

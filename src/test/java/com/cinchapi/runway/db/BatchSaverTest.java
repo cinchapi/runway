@@ -32,7 +32,7 @@ import com.cinchapi.concourse.thrift.Operator;
  *
  * @author Jeff Nelson
  */
-public class EventualSaverTest extends SaverTest {
+public class BatchSaverTest extends SaverTest {
 
     @Override
     protected Saver newSaver() {

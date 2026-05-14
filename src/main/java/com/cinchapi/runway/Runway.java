@@ -978,10 +978,25 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     selection.setState(Selection.State.FINISHED);
                 }
                 else {
-                    concourse = ensureValidConnection(concourse);
-                    Reader reader = new IncrementalReader(concourse);
-                    $select(reader, selection);
-                    reader.drain();
+                    Object cached = recallAndPossiblyFilter(selection);
+                    Set<AdHocDataSource<?>> sources = cached != null ? null
+                            : (selection.any
+                                    ? getAttachedSourcesForHierarchy(
+                                            selection.clazz)
+                                    : getAttachedSources(selection.clazz));
+                    if(cached != null
+                            || (sources != null && !sources.isEmpty())) {
+                        // No database connection needed; sources/cache
+                        // resolve the selection in $selectWithPossibleSources
+                        // before the reader is touched.
+                        $selectWithPossibleSources(null, selection, sources);
+                    }
+                    else {
+                        concourse = ensureValidConnection(concourse);
+                        Reader reader = new IncrementalReader(concourse);
+                        $select(reader, selection);
+                        reader.drain();
+                    }
                     reserve(selection);
                 }
                 return new Selections(selections);

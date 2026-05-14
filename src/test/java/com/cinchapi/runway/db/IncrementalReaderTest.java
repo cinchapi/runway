@@ -21,6 +21,7 @@ import java.util.function.Supplier;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 
@@ -30,11 +31,13 @@ import com.cinchapi.concourse.thrift.Operator;
  *
  * @author Jeff Nelson
  */
-public class ImmediateReaderTest extends ReaderTest {
+public class IncrementalReaderTest extends ReaderTest {
 
     @Override
     protected Reader newReader() {
-        return new IncrementalReader(concourse);
+        Concourse connection = Concourse.at().port(server.getClientPort())
+                .connect();
+        return new IncrementalReader(connection);
     }
 
     /**
@@ -59,12 +62,12 @@ public class ImmediateReaderTest extends ReaderTest {
      */
     @Test
     public void testReadIsIssuedAtRecordingTime() {
-        long original = concourse.add("flag", true);
+        long original = client.add("flag", true);
 
         Reader reader = newReader();
         Supplier<Set<Long>> supplier = reader.find(Criteria.where().key("flag")
                 .operator(Operator.EQUALS).value(true));
-        long postRecording = concourse.add("flag", true);
+        long postRecording = client.add("flag", true);
 
         Set<Long> ids = supplier.get();
         Assert.assertTrue(ids.contains(original));

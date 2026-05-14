@@ -32,11 +32,13 @@ import com.cinchapi.concourse.thrift.Operator;
  *
  * @author Jeff Nelson
  */
-public class EventualReaderTest extends ReaderTest {
+public class BatchReaderTest extends ReaderTest {
 
     @Override
     protected Reader newReader() {
-        return new BatchReader(concourse);
+        Concourse connection = Concourse.at().port(server.getClientPort())
+                .connect();
+        return new BatchReader(connection);
     }
 
     /**
@@ -61,12 +63,12 @@ public class EventualReaderTest extends ReaderTest {
      */
     @Test
     public void testReadIsIssuedAtSupplierResolution() {
-        long original = concourse.add("flag", true);
+        long original = client.add("flag", true);
 
         Reader reader = newReader();
         Supplier<Set<Long>> supplier = reader.find(Criteria.where().key("flag")
                 .operator(Operator.EQUALS).value(true));
-        long postRecording = concourse.add("flag", true);
+        long postRecording = client.add("flag", true);
 
         Set<Long> ids = supplier.get();
         Assert.assertTrue(ids.contains(original));
@@ -84,7 +86,8 @@ public class EventualReaderTest extends ReaderTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Record two finds on a fresh {@link BatchReader}.</li>
-     * <li>Close the underlying {@link Concourse} connection so the next
+     * <li>Close the {@link BatchReader Reader's} underlying
+     * {@link com.cinchapi.concourse.Concourse Concourse} connection so the next
      * {@code submit} call cannot succeed.</li>
      * <li>Resolve the first {@link Supplier}; capture the thrown
      * exception.</li>
@@ -99,13 +102,13 @@ public class EventualReaderTest extends ReaderTest {
      */
     @Test
     public void testFailedFlushLatchesAndRethrowsSameExceptionToSiblings() {
-        concourse.add("score", 1);
+        client.add("score", 1);
         Reader reader = newReader();
         Supplier<Set<Long>> first = reader.find(Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(0));
         Supplier<Set<Long>> second = reader.find(Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(0));
-        concourse.close();
+        reader.concourse().close();
 
         RuntimeException firstFailure = null;
         try {
@@ -126,11 +129,6 @@ public class EventualReaderTest extends ReaderTest {
         }
 
         Assert.assertSame(firstFailure, secondFailure);
-    }
-
-    @Override
-    protected String getServerVersion() {
-        return "1.0.0-rc1778433818";
     }
 
 }

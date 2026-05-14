@@ -2018,13 +2018,24 @@ public abstract class Record implements Comparable<Record> {
             return false;
         }
         else {
-            for (Timestamp ts : concourse.audit(id).keySet()) {
-                if(ts.getMicros() > checkpointTs) {
-                    return true;
-                }
-            }
-            return false;
+            return isStaleAudit(concourse.audit(id));
         }
+    }
+
+    /**
+     * Return {@code true} if {@code audit} contains any change recorded after
+     * this {@link Record Record's} most recent checkpoint.
+     *
+     * @param audit a record-level audit history keyed by {@link Timestamp}
+     * @return {@code true} if the data is stale
+     */
+    boolean isStaleAudit(Map<Timestamp, List<String>> audit) {
+        for (Timestamp ts : audit.keySet()) {
+            if(ts.getMicros() > checkpointTs) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -2270,10 +2281,8 @@ public abstract class Record implements Comparable<Record> {
         Preconditions.checkState(!inViolation);
         if(preventStaleWrite && checkpointTs != 0) {
             saver.audit(id, audit -> {
-                for (Timestamp ts : audit.keySet()) {
-                    if(ts.getMicros() > checkpointTs) {
-                        throw new StaleDataException(id);
-                    }
+                if(isStaleAudit(audit)) {
+                    throw new StaleDataException(id);
                 }
             });
         }
@@ -2526,20 +2535,19 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Checks whether a given value for a field is unique across all records in
-     * the class. If the {@link Unique} constraint has a name, this method
-     * verifies the uniqueness for all fields with that same constraint name
-     * within the class. If the constraint has been already verified, it is
-     * skipped.
+     * Enqueue the uniqueness check for {@code field}'s value on {@code saver}.
+     * For an unnamed {@link Unique} constraint the check covers only
+     * {@code key}; for a named constraint the check covers every field that
+     * shares the same constraint name, and the name is recorded in
+     * {@code alreadyVerifiedUniqueConstraints} so subsequent fields under the
+     * same name are skipped.
      *
-     * @param concourse The Concourse instance managing the transaction.
-     * @param field The field that is being checked for uniqueness.
-     * @param key The key or name of the field.
-     * @param value The value that needs to be checked for uniqueness.
-     * @param alreadyVerifiedUniqueConstraints A set containing names of
-     *            constraints that have already been verified.
-     * @return {@code true} if the value is unique according to the specified
-     *         constraints; {@code false} otherwise.
+     * @param saver the {@link Saver} the uniqueness check is recorded on
+     * @param field the {@link Field} whose value is being checked
+     * @param key the field's name
+     * @param value the value being checked
+     * @param alreadyVerifiedUniqueConstraints the names of compound constraints
+     *            that have already been recorded in this save
      */
     private void checkIsUnique(Saver saver, Field field, String key,
             Object value, Set<String> alreadyVerifiedUniqueConstraints) {
@@ -3024,19 +3032,17 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if all the key/value pairs in {@code data} are
-     * collectively unique for this class. This means that there is no other
-     * record in the database for this class with all the mappings.
-     * <p>
-     * If any of the values in {@code data} are a
-     * {@link Sequences#isSequence(Object) sequence}, this method will return
-     * {@code true} if and only if every element in every
-     * {@link Sequences#isSequence(Object) sequence} is unique.
-     * </p>
+     * Record on {@code saver} the uniqueness check for the (key, value) pairs
+     * in {@code data}, treating them as a single compound constraint that must
+     * not collide with any other {@link Record} in this class. A
+     * {@link Sequences#isSequence(Object) sequence}-valued entry is treated
+     * element-wise: a collision on any single element is a violation.
      *
-     * @param concourse
-     * @param data
-     * @return
+     * @param saver the {@link Saver} the uniqueness check is recorded on
+     * @param data the (key, value) pairs that collectively identify the
+     *            constraint being asserted
+     * @param errorName the human-readable name attached to the
+     *            {@link IllegalStateException} thrown on a violation
      */
     private void enqueueUniquenessCheck(Saver saver, Map<String, Object> data,
             String errorName) {
@@ -3073,17 +3079,18 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         Criteria criteria = $criteria.get();
+        // The errorMessage carries through two independent paths: it's
+        // attached to each declareUniqueIntent below (where a batched Saver
+        // throws on an intra-batch collision) and to the find validator
+        // (which throws on a database-side collision). Synchronous Savers
+        // ignore declareUniqueIntent because each staged write is visible
+        // to the next read, so the database's own find catches duplicates
+        // between records in the same save. Sequence-valued fields expand
+        // into the cartesian product of (field, item) pairs so an overlap
+        // on any single item under a compound constraint produces a
+        // canonical that matches between records.
         String errorMessage = AnyStrings.format("{} must be unique in {}",
                 errorName, __);
-        // Synchronous savers see prior staged writes on subsequent reads;
-        // the database itself enforces intra-batch uniqueness for that
-        // path. Batched savers submit every queued find against a single
-        // pre-write snapshot, so detecting duplicates between records in
-        // the same save call needs client-side help. Sequence-valued
-        // fields expand into the cartesian product of (field, item) pairs
-        // across dimensions so an overlap on any single item under a
-        // compound constraint produces a canonical that matches between
-        // records.
         List<List<Object>> bindings = new ArrayList<>();
         bindings.add(new ArrayList<>());
         for (Entry<String, Object> entry : new TreeMap<>(data).entrySet()) {

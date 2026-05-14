@@ -30,7 +30,7 @@ import com.cinchapi.concourse.thrift.Operator;
  *
  * @author Jeff Nelson
  */
-public class ImmediateSaverTest extends SaverTest {
+public class IncrementalSaverTest extends SaverTest {
 
     @Override
     protected Saver newSaver() {
