@@ -3460,12 +3460,15 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * Return the paths that should be used with {@code navigate()} to
-         * pre-fetch destination {@link Record} data for {@link Collection
-         * Collection&lt;Record&gt;} fields in {@code clazz}. For each such
-         * field, this generates the same nested paths that
-         * {@link #computePaths(Class, Multimap, Map, String, Set, boolean)}
-         * would produce for the element type, prefixed with the collection
-         * field name.
+         * pre-fetch destination {@link Record} data reachable from
+         * {@code clazz}.
+         * <p>
+         * Paths follow single-{@link Record} and {@link Collection
+         * Collection&lt;Record&gt;} edges recursively. Edges that cycle back to
+         * a previously visited {@link Record} type emit the {@code *}
+         * transitive modifier so a single {@code navigate()} RPC traverses the
+         * reachable graph to arbitrary depth via server-side BFS.
+         * </p>
          *
          * @param clazz
          * @param hierarchies
@@ -3479,14 +3482,23 @@ public abstract class Record implements Comparable<Record> {
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
                 Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass) {
             return computeNavigatePaths(clazz, hierarchies, fieldsByClass,
-                    fieldTypeArgumentsByClass, "", Sets.newHashSet());
+                    fieldTypeArgumentsByClass, "", Sets.newHashSet(),
+                    Sets.newHashSet());
         }
 
         /**
          * Return the paths that should be used with {@code navigate()} to
-         * pre-fetch destination {@link Record} data for {@link Collection
-         * Collection&lt;Record&gt;} fields in {@code clazz}; all prefixed with
-         * {@code prefix} and using {@code ancestors} for cycle detection.
+         * pre-fetch destination {@link Record} data reachable from
+         * {@code clazz}; all prefixed with {@code prefix} and using
+         * {@code ancestors} and {@code visitedEdges} for cycle detection.
+         * <p>
+         * The traversal crosses both single-{@link Record} and
+         * {@link Collection Collection&lt;Record&gt;} field edges. When an edge
+         * cycles back to a {@link Record} type already in {@code ancestors}, a
+         * {@code *}-suffixed prefix is emitted to delegate transitive traversal
+         * to the server; {@code visitedEdges} prevents re-emission of the same
+         * cyclic {@code (sourceClass, field)} edge within a single lineage.
+         * </p>
          *
          * @param clazz
          * @param hierarchies
@@ -3494,6 +3506,7 @@ public abstract class Record implements Comparable<Record> {
          * @param fieldTypeArgumentsByClass
          * @param prefix
          * @param ancestors
+         * @param visitedEdges
          * @return the navigate paths
          */
         @SuppressWarnings("unchecked")
@@ -3502,42 +3515,115 @@ public abstract class Record implements Comparable<Record> {
                 Multimap<Class<? extends Record>, Class<?>> hierarchies,
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
                 Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass,
-                String prefix, Set<Class<? extends Record>> ancestors) {
+                String prefix, Set<Class<? extends Record>> ancestors,
+                Set<TransitiveEdge> visitedEdges) {
+            ancestors.add(clazz);
             Set<String> navigatePaths = new LinkedHashSet<>();
             Collection<Field> fields = fieldsByClass
                     .getOrDefault(clazz, ImmutableMap.of()).values();
             for (Field field : fields) {
                 Class<?> type = field.getType();
-                if(Collection.class.isAssignableFrom(type)) {
+                if(Record.class.isAssignableFrom(type)
+                        && !ancestors.contains(type)) {
+                    // Non-cyclic single-Record edge: recurse to discover
+                    // Collection<Record> fields reachable through this link.
+                    // The bare field name is intentionally not emitted here
+                    // because computePaths handles single-Record traversal
+                    // for the select-side path set.
+                    Class<? extends Record> nested = (Class<? extends Record>) type;
+                    Collection<Class<?>> hierarchy = hierarchies.get(nested);
+                    for (Class<?> descendant : hierarchy) {
+                        navigatePaths.addAll(computeNavigatePaths(
+                                (Class<? extends Record>) descendant,
+                                hierarchies, fieldsByClass,
+                                fieldTypeArgumentsByClass,
+                                prefix + field.getName() + ".",
+                                new HashSet<>(ancestors),
+                                new HashSet<>(visitedEdges)));
+                    }
+                }
+                else if(Collection.class.isAssignableFrom(type)) {
                     Class<?> elementType = Iterables
                             .getFirst(fieldTypeArgumentsByClass
                                     .getOrDefault(clazz, ImmutableMap.of())
                                     .getOrDefault(field.getName(),
                                             ImmutableList.of()),
                                     null);
-                    if(elementType != null
-                            && Record.class.isAssignableFrom(elementType)) {
-                        // NOTE: navigate() returns data keyed by
-                        // destination record ID, so these nested
-                        // paths tell it to follow the Links in this
-                        // collection field and return each
-                        // destination's data individually.
-                        // The computePaths call handles its own
-                        // cycle detection via the ancestors set.
-                        Class<? extends Record> recordType = (Class<? extends Record>) elementType;
-                        Collection<Class<?>> hierarchy = hierarchies
-                                .get(recordType);
-                        for (Class<?> descendant : hierarchy) {
-                            navigatePaths.addAll(computePaths(
-                                    (Class<? extends Record>) descendant,
-                                    hierarchies, fieldsByClass,
-                                    prefix + field.getName() + ".",
-                                    new HashSet<>(ancestors), true));
-                        }
+                    if(elementType == null
+                            || !Record.class.isAssignableFrom(elementType)) {
+                        continue;
+                    }
+                    Class<? extends Record> recordType = (Class<? extends Record>) elementType;
+                    boolean cyclic = ancestors.contains(recordType);
+                    TransitiveEdge edge = cyclic
+                            ? new TransitiveEdge(clazz, field.getName())
+                            : null;
+                    if(cyclic && visitedEdges.contains(edge)) {
+                        continue;
+                    }
+                    String fieldPrefix = cyclic
+                            ? prefix + field.getName() + "*."
+                            : prefix + field.getName() + ".";
+                    Set<TransitiveEdge> nextEdges = cyclic
+                            ? plus(visitedEdges, edge)
+                            : visitedEdges;
+                    Collection<Class<?>> hierarchy = hierarchies
+                            .get(recordType);
+                    for (Class<?> descendant : hierarchy) {
+                        navigatePaths.addAll(computePaths(
+                                (Class<? extends Record>) descendant,
+                                hierarchies, fieldsByClass, fieldPrefix,
+                                new HashSet<>(ancestors), true));
+                        navigatePaths.addAll(computeNavigatePaths(
+                                (Class<? extends Record>) descendant,
+                                hierarchies, fieldsByClass,
+                                fieldTypeArgumentsByClass, fieldPrefix,
+                                new HashSet<>(ancestors),
+                                new HashSet<>(nextEdges)));
+                    }
+                }
+                else if(Record.class.isAssignableFrom(type)) {
+                    // Cyclic single-Record edge: emit *-suffixed paths so a
+                    // single navigate RPC follows the link transitively.
+                    Class<? extends Record> recordType = (Class<? extends Record>) type;
+                    TransitiveEdge edge = new TransitiveEdge(clazz,
+                            field.getName());
+                    if(visitedEdges.contains(edge)) {
+                        continue;
+                    }
+                    String fieldPrefix = prefix + field.getName() + "*.";
+                    Set<TransitiveEdge> nextEdges = plus(visitedEdges, edge);
+                    Collection<Class<?>> hierarchy = hierarchies
+                            .get(recordType);
+                    for (Class<?> descendant : hierarchy) {
+                        navigatePaths.addAll(computePaths(
+                                (Class<? extends Record>) descendant,
+                                hierarchies, fieldsByClass, fieldPrefix,
+                                new HashSet<>(ancestors), true));
+                        navigatePaths.addAll(computeNavigatePaths(
+                                (Class<? extends Record>) descendant,
+                                hierarchies, fieldsByClass,
+                                fieldTypeArgumentsByClass, fieldPrefix,
+                                new HashSet<>(ancestors),
+                                new HashSet<>(nextEdges)));
                     }
                 }
             }
             return navigatePaths;
+        }
+
+        /**
+         * Return a new {@link Set} that contains every element of {@code set}
+         * plus {@code element}.
+         *
+         * @param set the source {@link Set}
+         * @param element the additional element
+         * @return a {@link Set} containing {@code set} and {@code element}
+         */
+        private static <T> Set<T> plus(Set<T> set, T element) {
+            Set<T> next = new HashSet<>(set);
+            next.add(element);
+            return next;
         }
 
         /**
@@ -3603,6 +3689,7 @@ public abstract class Record implements Comparable<Record> {
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
                 String prefix, Set<Class<? extends Record>> ancestors,
                 boolean includeRecordFieldKeys) {
+            boolean reentered = ancestors.contains(clazz);
             ancestors.add(clazz);
             Set<String> paths = new LinkedHashSet<>();
             paths.add(prefix + SECTION_KEY);
@@ -3613,38 +3700,65 @@ public abstract class Record implements Comparable<Record> {
             for (Field field : fields) {
                 Class<?> type = field.getType();
                 Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
-                if(Record.class.isAssignableFrom(type)
-                        && !ancestors.contains(type)
-                        && (COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS
-                                || !hasDescendantDefinedFields(type,
-                                        hierarchies, fieldsByClass))) {
-                    if(includeRecordFieldKeys) {
-                        // NOTE: For select(), nested navigation keys (e.g.,
-                        // company._) fold destination data into the source
-                        // record's result, so the raw Link value is
-                        // unnecessary. For navigate(), each hop resolves to a
-                        // separate entry keyed by destination ID, so the
-                        // intermediate record never receives the Link value
-                        // unless we explicitly include the bare field name as a
-                        // path.
+                if(Record.class.isAssignableFrom(type)) {
+                    boolean cyclic = ancestors.contains(type);
+                    if(!cyclic && (COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS
+                            || !hasDescendantDefinedFields(type, hierarchies,
+                                    fieldsByClass))) {
+                        if(includeRecordFieldKeys) {
+                            // NOTE: For select(), nested navigation keys
+                            // (e.g., company._) fold destination data into
+                            // the source record's result, so the raw Link
+                            // value is unnecessary. For navigate(), each hop
+                            // resolves to a separate entry keyed by
+                            // destination ID, so the intermediate record
+                            // never receives the Link value unless we
+                            // explicitly include the bare field name as a
+                            // path.
+                            paths.add(prefix + field.getName());
+                        }
+                        Class<? extends Record> _type = (Class<? extends Record>) type;
+                        lineage.add(_type);
+                        Collection<Class<?>> hierarchy = hierarchies.get(_type);
+                        Set<String> nested = new HashSet<>();
+                        for (Class<?> descendant : hierarchy) {
+                            // Account for declared types having descendant
+                            // defined fields in child classes by computing
+                            // the paths for each descendant type at this
+                            // junction, in the path
+                            nested.addAll(computePaths(
+                                    (Class<? extends Record>) descendant,
+                                    hierarchies, fieldsByClass,
+                                    prefix + field.getName() + ".", lineage,
+                                    includeRecordFieldKeys));
+                        }
+                        paths.addAll(nested);
+                    }
+                    else if(cyclic && includeRecordFieldKeys && !reentered) {
+                        // Cyclic single-Record edge at the head of a chain:
+                        // emit *-suffixed paths so a single navigate RPC
+                        // follows the link transitively. Gated on
+                        // includeRecordFieldKeys so the select-side path set
+                        // remains byte-identical. The !reentered check
+                        // prevents infinite recursion: the inner call
+                        // re-enters this method with clazz already in
+                        // ancestors, so cyclic Record fields encountered
+                        // there fall through to the bare-leaf branch below.
+                        paths.add(prefix + field.getName());
+                        Class<? extends Record> _type = (Class<? extends Record>) type;
+                        Collection<Class<?>> hierarchy = hierarchies.get(_type);
+                        String prefixWithStar = prefix + field.getName() + "*.";
+                        for (Class<?> descendant : hierarchy) {
+                            paths.addAll(computePaths(
+                                    (Class<? extends Record>) descendant,
+                                    hierarchies, fieldsByClass, prefixWithStar,
+                                    new HashSet<>(ancestors),
+                                    includeRecordFieldKeys));
+                        }
+                    }
+                    else {
                         paths.add(prefix + field.getName());
                     }
-                    Class<? extends Record> _type = (Class<? extends Record>) type;
-                    lineage.add(_type);
-                    Collection<Class<?>> hierarchy = hierarchies.get(_type);
-                    Set<String> nested = new HashSet<>();
-                    for (Class<?> descendant : hierarchy) {
-                        // Account for declared types having descendant
-                        // defined fields in child classes by computing the
-                        // paths for each descendant type at this junction, in
-                        // the path
-                        nested.addAll(computePaths(
-                                (Class<? extends Record>) descendant,
-                                hierarchies, fieldsByClass,
-                                prefix + field.getName() + ".", lineage,
-                                includeRecordFieldKeys));
-                    }
-                    paths.addAll(nested);
                 }
                 else {
                     paths.add(prefix + field.getName());
@@ -4435,6 +4549,53 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
             return false;
+        }
+
+        /**
+         * A {@link TransitiveEdge} identifies a cyclic {@link Record}-typed
+         * field by the source {@link Class} on which the field is declared and
+         * the field's name.
+         *
+         * @author Jeff Nelson
+         */
+        @Immutable
+        private static final class TransitiveEdge {
+
+            private final Class<?> source;
+            private final String field;
+
+            /**
+             * Construct a new instance.
+             *
+             * @param source the {@link Class} on which the field is declared
+             * @param field the field name
+             */
+            TransitiveEdge(Class<?> source, String field) {
+                this.source = source;
+                this.field = field;
+            }
+
+            @Override
+            public boolean equals(Object obj) {
+                if(this == obj) {
+                    return true;
+                }
+                if(!(obj instanceof TransitiveEdge)) {
+                    return false;
+                }
+                TransitiveEdge other = (TransitiveEdge) obj;
+                return source.equals(other.source) && field.equals(other.field);
+            }
+
+            @Override
+            public int hashCode() {
+                return Objects.hash(source, field);
+            }
+
+            @Override
+            public String toString() {
+                return source.getSimpleName() + "." + field;
+            }
         }
 
     }

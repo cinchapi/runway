@@ -1,6 +1,7 @@
 # Changelog
 
 #### Version 1.15.0 (TBD)
+* **Transitive Navigation for Self-Referential Links**: `CollectionPreSelectStrategy.NAVIGATE` now pre-fetches self-referential `Record` graphs of arbitrary depth in a single round trip. Previously, both self-referential `Collection<Record>` fields (e.g., `Exchange.children: Set<Exchange>`) and self-referential single `Record` fields (e.g., `Exchange.parent: Exchange`) bounded pre-fetching at one level, forcing subsequent levels to be loaded one record at a time. Additionally, `Collection<Record>` fields reached through single-`Record` edges (e.g., `Document.metadata.tags`) and non-cyclic `Collection<Record>` fields nested under self-referential ones are now fully pre-fetched as well. `NAVIGATE` pre-fetching also now activates for any class with reachable destinations &mdash; previously it only activated for classes with a direct `Collection<Record>` field, so classes whose pre-fetchable data lived behind a single-`Record` edge fell back to per-record loads. Select-side pre-fetching is unchanged. ([GH-80](https://github.com/cinchapi/runway/issues/80), [GH-98](https://github.com/cinchapi/runway/issues/98))
 
 #### Version 1.14.6 (May 1, 2026)
 * Fixed a bug where loading a `Record` graph that contained a nested `Record` with a dangling `Link` (one whose target had been cleared) inside a `Collection<Record>` field would throw `InvalidArgumentException`, making the graph unloadable until the dangling `Link` was removed manually. ([GH-94](https://github.com/cinchapi/runway/issues/94))

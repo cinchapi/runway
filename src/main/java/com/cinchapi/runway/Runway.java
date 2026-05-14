@@ -1126,16 +1126,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * for {@code clazz} and all descendants.
      *
      * @param clazz
-     * @return the navigate paths, or {@code null} if unsupported
+     * @return the navigate paths, or {@code null} if unsupported or no
+     *         pre-fetchable destinations are reachable
      */
     final Set<String> getNavigatePathsForClassHierarchyIfSupported(
             Class<? extends Record> clazz) {
-        return collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
-                && StaticAnalysis.instance()
-                        .hasCollectionRecordFieldInClassHierarchy(clazz)
-                                ? StaticAnalysis.instance()
-                                        .getNavigatePathsHierarchy(clazz)
-                                : null;
+        if(collectionPreSelectStrategy != CollectionPreSelectStrategy.NAVIGATE) {
+            return null;
+        }
+        Set<String> paths = StaticAnalysis.instance()
+                .getNavigatePathsHierarchy(clazz);
+        return paths != null && !paths.isEmpty() ? paths : null;
     }
 
     /**
@@ -1144,17 +1145,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * for {@code clazz}.
      *
      * @param clazz
-     * @return the navigate paths, or {@code null} if unsupported or the class
-     *         has no {@link Collection Collection&lt;Record&gt;} fields
+     * @return the navigate paths, or {@code null} if unsupported or no
+     *         pre-fetchable destinations are reachable
      */
     final Set<String> getNavigatePathsForClassIfSupported(
             Class<? extends Record> clazz) {
-        return collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
-                && StaticAnalysis.instance()
-                        .hasCollectionRecordFieldInClass(clazz)
-                                ? StaticAnalysis.instance()
-                                        .getNavigatePaths(clazz)
-                                : null;
+        if(collectionPreSelectStrategy != CollectionPreSelectStrategy.NAVIGATE) {
+            return null;
+        }
+        Set<String> paths = StaticAnalysis.instance().getNavigatePaths(clazz);
+        return paths != null && !paths.isEmpty() ? paths : null;
     }
 
     /**
