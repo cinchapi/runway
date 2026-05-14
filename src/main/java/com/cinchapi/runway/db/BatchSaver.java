@@ -214,6 +214,13 @@ public final class BatchSaver implements Saver {
 
     @Override
     public void reconcile(String key, long record, Collection<?> values) {
+        if(values.isEmpty()) {
+            // NOTE: CommandGroup.reconcile drops the operation when values is
+            // empty, so route an empty reconcile through clear, which has the
+            // same semantics (cinchapi/concourse#738).
+            deferredWriteOps.add(group -> group.clear(key, record));
+            return;
+        }
         @SuppressWarnings({ "rawtypes",
                 "unchecked" }) Collection<Object> casted = (Collection) values;
         deferredWriteOps.add(group -> group.reconcile(key, record, casted));
@@ -221,6 +228,13 @@ public final class BatchSaver implements Saver {
 
     @Override
     public void reconcile(String key, long record, Object[] values) {
+        if(values.length == 0) {
+            // NOTE: CommandGroup.reconcile drops the operation when values is
+            // empty, so route an empty reconcile through clear, which has the
+            // same semantics (cinchapi/concourse#738).
+            deferredWriteOps.add(group -> group.clear(key, record));
+            return;
+        }
         deferredWriteOps.add(
                 group -> group.reconcile(key, record, Arrays.asList(values)));
     }
