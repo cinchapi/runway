@@ -73,7 +73,6 @@ import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.Record.InvalidRecordException;
 import com.cinchapi.runway.Record.Snapshot;
 import com.cinchapi.runway.Record.StaticAnalysis;
-import com.cinchapi.runway.cache.CachingConnectionPool;
 import com.cinchapi.runway.db.EventualReader;
 import com.cinchapi.runway.db.EventualSaver;
 import com.cinchapi.runway.db.ImmediateReader;
@@ -85,7 +84,6 @@ import com.cinchapi.runway.util.Pagination;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
-import com.google.common.cache.Cache;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -2899,7 +2897,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public static class Builder {
 
-        private Cache<Long, Map<String, Set<Object>>> cache;
         private String environment = "";
         private String host = "localhost";
         private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = null;
@@ -2920,15 +2917,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         @SuppressWarnings("unchecked")
         public Runway build() {
-            ConnectionPool connections = cache == null
-                    ? ConnectionPool.newCachedConnectionPool(host, port,
-                            username, password, environment)
-                    : new CachingConnectionPool(host, port, username, password,
-                            environment, cache);
+            ConnectionPool connections = ConnectionPool.newCachedConnectionPool(
+                    host, port, username, password, environment);
             Runway db = new Runway(connections);
             db.streamingReadBufferSize = streamingReadBufferSize;
             db.readStrategy = MoreObjects.firstNonNull(readStrategy,
-                    cache != null ? ReadStrategy.STREAM : ReadStrategy.BULK);
+                    ReadStrategy.BULK);
             db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
@@ -2990,20 +2984,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
 
             return db;
-        }
-
-        /**
-         * Set the connection's cache.
-         *
-         * @param cache
-         * @return this builder
-         * @deprecated {@link Record} caching has been deprecated in favor of
-         *             raw data caching for better performance; please use
-         *             {@link #withCache(Cache)} to provide a cache instance.
-         */
-        @Deprecated
-        public Builder cache(Cache<Long, Record> cache) {
-            return this;
         }
 
         /**
@@ -3171,10 +3151,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
         /**
          * Set the {@link ReadStrategy} for the {@link Runway} instance.
-         * <p>
-         * The default {@link ReadStrategy} varies based on the
-         * {@link #withCache(Cache) cache} setting.
-         * </p>
          *
          * @param readStrategy
          * @return this builder
@@ -3248,16 +3224,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return this;
         }
 
-        /**
-         * Set the connection's cache.
-         *
-         * @param cache
-         * @return this builder
-         */
-        public Builder withCache(Cache<Long, Map<String, Set<Object>>> cache) {
-            this.cache = cache;
-            return this;
-        }
     }
 
     /**
