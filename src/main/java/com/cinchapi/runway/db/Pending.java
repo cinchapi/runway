@@ -26,13 +26,15 @@ import javax.annotation.concurrent.NotThreadSafe;
 import com.google.common.base.Preconditions;
 
 /**
- * A {@link Pending} represents a value that a {@link Reader} will produce.
+ * A {@link Pending} value that is eventually procuded by a {@link Reader}.
+ * <p>
  * Composition operators ({@link #map}, {@link #then}) build new {@link Pending
  * Pendings} from existing ones, and {@link #onResolve} delivers the value to a
  * {@link Consumer}.
+ * </p>
  * <p>
- * A {@link Pending} is <strong>not thread-safe</strong>: it is associated with
- * a single {@link Reader} and must be touched only from that {@link Reader
+ * A {@link Pending} value is <strong>not thread-safe</strong>: it is associated
+ * with a single {@link Reader} and must be touched only from that {@link Reader
  * Reader's} owning thread.
  * </p>
  *

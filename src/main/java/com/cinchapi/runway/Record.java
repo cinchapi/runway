@@ -652,6 +652,33 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code value} converted to its database representation:
+     * {@link Record Records} become {@link Link Links}, and collections of
+     * {@link Record Records} become collections of {@link Link Links}. Scalar
+     * values pass through unchanged.
+     *
+     * @param value the resolved in-memory value
+     * @return the database-equivalent representation
+     */
+    private static Object toLinkIfRecord(Object value) {
+        if(value instanceof Record) {
+            return Link.to(((Record) value).id());
+        }
+        else if(Sequences.isSequence(value)) {
+            Collection<Object> converted = value instanceof Set
+                    ? new LinkedHashSet<>()
+                    : new ArrayList<>();
+            Sequences.forEach(value, item -> {
+                converted.add(toLinkIfRecord(item));
+            });
+            return converted;
+        }
+        else {
+            return value;
+        }
+    }
+
+    /**
      * A globally pinned {@link Runway} instance that is automatically assigned
      * to newly created {@link Record} instances when no explicit assignment is
      * made.
@@ -1175,101 +1202,6 @@ public abstract class Record implements Comparable<Record> {
      */
     public <T> T get(String key) {
         return get(key, Record::isReadableField);
-    }
-
-    /**
-     * Return the value associated with {@code key}, using {@code filter} to
-     * govern field accessibility.
-     *
-     * @param key the key name or navigation key
-     * @param filter a {@link Predicate} that determines whether a declared
-     *            {@link Field} should be read
-     * @return the resolved value, or {@code null} if no value is found
-     */
-    @SuppressWarnings("unchecked")
-    private <T> T get(String key, Predicate<Field> filter) {
-        if(key.equalsIgnoreCase("id")) {
-            return (T) data().get(key);
-        }
-        else {
-            String[] stops = key.split("\\.");
-            if(stops.length == 1) {
-                Object value = dynamicData.get(key);
-                if(value == null) {
-                    try {
-                        Field field = StaticAnalysis.instance().getField(this,
-                                key);
-                        if(filter.test(field)) {
-                            value = field.get(this);
-                            value = dereference(key, value);
-                        }
-                    }
-                    catch (Exception e) {/* ignore */}
-                }
-                if(value == null) {
-                    value = $derived().get(key);
-                }
-                if(value == null) {
-                    Supplier<?> computer = $computed().get(key);
-                    if(computer != null) {
-                        value = computer.get();
-                    }
-                }
-                return (T) value;
-            }
-            else {
-                // The presented key is a navigation key, so incrementally
-                // traverse the document graph.
-                String stop = stops[0];
-                Object destination = get(stop, filter);
-                String path = StringUtils.join(stops, '.', 1, stops.length);
-                if(destination instanceof Record) {
-                    return (T) ((Record) destination).get(path, filter);
-                }
-                else if(Sequences.isSequence(destination)) {
-                    Collection<Object> seq = destination instanceof Set
-                            ? Sets.newLinkedHashSet()
-                            : Lists.newArrayList();
-                    Sequences.forEach(destination, item -> {
-                        if(item instanceof Record) {
-                            Object next = ((Record) item).get(path, filter);
-                            // NOTE: When the remaining path crosses another
-                            // collection-valued field, the recursive call
-                            // returns a collection. Flatten those results into
-                            // this level's sequence so the final return value
-                            // is a flat list of leaf values, not nested
-                            // collections-of-collections.
-                            //
-                            // e.g., for "orgs.seats.member.userId" where "orgs"
-                            // and "seats" are both Sets:
-                            //
-                            // @formatter:off
-                            // depth 0: iterates each Org in "orgs"
-                            // depth 1: iterates each Seat in "seats"
-                            // depth 2: "member" is a single Record
-                            // depth 3: returns scalar "alice123"
-                            // depth 2 collects: {"alice123", ...}
-                            // depth 1 flattens: {"alice123", ...}
-                            // depth 0 flattens: {"alice123", ...}
-                            // @formatter:on
-                            //
-                            // Each level flattens one layer; recursion
-                            // guarantees everything below is already flat.
-                            if(Sequences.isSequence(next)) {
-                                Sequences.forEach(next, seq::add);
-                            }
-                            else if(next != null) {
-                                seq.add(next);
-                            }
-                        }
-                    });
-                    return !seq.isEmpty() ? (T) seq : null;
-                }
-                else {
-                    return null;
-                }
-            }
-        }
     }
 
     /**
@@ -2023,22 +1955,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if {@code audit} contains any change recorded after
-     * this {@link Record Record's} most recent checkpoint.
-     *
-     * @param audit a record-level audit history keyed by {@link Timestamp}
-     * @return {@code true} if the data is stale
-     */
-    boolean isStaleAudit(Map<Timestamp, List<String>> audit) {
-        for (Timestamp ts : audit.keySet()) {
-            if(ts.getMicros() > checkpointTs) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Return {@code true} if this {@link Record} has any unsaved changes.
      *
      * @return {@code true} if there are changes that need to be saved.
@@ -2061,6 +1977,22 @@ public abstract class Record implements Comparable<Record> {
      */
     final boolean inZombieState(Concourse concourse) {
         return inZombieState(id, concourse, null);
+    }
+
+    /**
+     * Return {@code true} if {@code audit} contains any change recorded after
+     * this {@link Record Record's} most recent checkpoint.
+     *
+     * @param audit a record-level audit history keyed by {@link Timestamp}
+     * @return {@code true} if the data is stale
+     */
+    boolean isStaleAudit(Map<Timestamp, List<String>> audit) {
+        for (Timestamp ts : audit.keySet()) {
+            if(ts.getMicros() > checkpointTs) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -2913,71 +2845,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return an {@link Association} mapping each of the requested {@code keys}
-     * to its resolved value, without readability restrictions.
-     * <p>
-     * Navigation keys are stored under the full path in the returned
-     * {@link Association}.
-     * </p>
-     *
-     * @param keys the keys to resolve
-     * @return an {@link Association} mapping each key to its resolved value
-     */
-    private Association navigate(String... keys) {
-        Preconditions.checkArgument(keys.length > 0,
-                "Must provide at least one key");
-        Association data = Association.of();
-        // NOTE: Each key is resolved independently, so keys that share a common
-        // prefix (e.g., "participant.userId" and "participant.age") will
-        // traverse the first segment twice. This is acceptable because field
-        // access via reflection is just reading an object reference from
-        // memory, DeferredReference caches after first resolution, and all
-        // Records are already loaded in-memory (that's the premise of
-        // client-side evaluation).
-        for (String key : keys) {
-            Object value = get(key, Predicates.alwaysTrue());
-            if(value != null) {
-                // NOTE: The resolved value may be a Record or
-                // a collection of Records when the navigation
-                // key terminates at a Record-valued field
-                // (e.g., "orgs.seats.member"). Convert those
-                // to Links so the data mirrors the database
-                // representation that ConcourseCompiler expects
-                // for operators like LINKS_TO.
-                data.set(key, toLinkIfRecord(value));
-            }
-        }
-        return data;
-    }
-
-    /**
-     * Return {@code value} converted to its database representation:
-     * {@link Record Records} become {@link Link Links}, and collections of
-     * {@link Record Records} become collections of {@link Link Links}. Scalar
-     * values pass through unchanged.
-     *
-     * @param value the resolved in-memory value
-     * @return the database-equivalent representation
-     */
-    private static Object toLinkIfRecord(Object value) {
-        if(value instanceof Record) {
-            return Link.to(((Record) value).id());
-        }
-        else if(Sequences.isSequence(value)) {
-            Collection<Object> converted = value instanceof Set
-                    ? new LinkedHashSet<>()
-                    : new ArrayList<>();
-            Sequences.forEach(value, item -> {
-                converted.add(toLinkIfRecord(item));
-            });
-            return converted;
-        }
-        else {
-            return value;
-        }
-    }
-
-    /**
      * Dereference the {@code value} stored for {@code key} if it is a
      * {@link DeferredReference} or a {@link Sequence} of them.
      *
@@ -3006,29 +2873,6 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return value;
-    }
-
-    /**
-     * Ensure that {@code record} is scheduled for
-     * {@link #deleteWithinTransaction(Concourse) deletion} alongside this
-     * {@link Record}.
-     *
-     * @param record
-     */
-    private void ensureDeletion(Record record) {
-        if(!record.deleted) {
-            waitingToBeDeleted.add(record);
-            record.deleted = true;
-        }
-    }
-
-    /**
-     * Return all the non-internal {@link Field fields} in this class.
-     *
-     * @return the non-internal {@link Field fields}
-     */
-    private Collection<Field> fields() {
-        return StaticAnalysis.instance().getFields(this);
     }
 
     /**
@@ -3135,6 +2979,124 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Ensure that {@code record} is scheduled for
+     * {@link #deleteWithinTransaction(Concourse) deletion} alongside this
+     * {@link Record}.
+     *
+     * @param record
+     */
+    private void ensureDeletion(Record record) {
+        if(!record.deleted) {
+            waitingToBeDeleted.add(record);
+            record.deleted = true;
+        }
+    }
+
+    /**
+     * Return all the non-internal {@link Field fields} in this class.
+     *
+     * @return the non-internal {@link Field fields}
+     */
+    private Collection<Field> fields() {
+        return StaticAnalysis.instance().getFields(this);
+    }
+
+    /**
+     * Return the value associated with {@code key}, using {@code filter} to
+     * govern field accessibility.
+     *
+     * @param key the key name or navigation key
+     * @param filter a {@link Predicate} that determines whether a declared
+     *            {@link Field} should be read
+     * @return the resolved value, or {@code null} if no value is found
+     */
+    @SuppressWarnings("unchecked")
+    private <T> T get(String key, Predicate<Field> filter) {
+        if(key.equalsIgnoreCase("id")) {
+            return (T) data().get(key);
+        }
+        else {
+            String[] stops = key.split("\\.");
+            if(stops.length == 1) {
+                Object value = dynamicData.get(key);
+                if(value == null) {
+                    try {
+                        Field field = StaticAnalysis.instance().getField(this,
+                                key);
+                        if(filter.test(field)) {
+                            value = field.get(this);
+                            value = dereference(key, value);
+                        }
+                    }
+                    catch (Exception e) {/* ignore */}
+                }
+                if(value == null) {
+                    value = $derived().get(key);
+                }
+                if(value == null) {
+                    Supplier<?> computer = $computed().get(key);
+                    if(computer != null) {
+                        value = computer.get();
+                    }
+                }
+                return (T) value;
+            }
+            else {
+                // The presented key is a navigation key, so incrementally
+                // traverse the document graph.
+                String stop = stops[0];
+                Object destination = get(stop, filter);
+                String path = StringUtils.join(stops, '.', 1, stops.length);
+                if(destination instanceof Record) {
+                    return (T) ((Record) destination).get(path, filter);
+                }
+                else if(Sequences.isSequence(destination)) {
+                    Collection<Object> seq = destination instanceof Set
+                            ? Sets.newLinkedHashSet()
+                            : Lists.newArrayList();
+                    Sequences.forEach(destination, item -> {
+                        if(item instanceof Record) {
+                            Object next = ((Record) item).get(path, filter);
+                            // NOTE: When the remaining path crosses another
+                            // collection-valued field, the recursive call
+                            // returns a collection. Flatten those results into
+                            // this level's sequence so the final return value
+                            // is a flat list of leaf values, not nested
+                            // collections-of-collections.
+                            //
+                            // e.g., for "orgs.seats.member.userId" where "orgs"
+                            // and "seats" are both Sets:
+                            //
+                            // @formatter:off
+                            // depth 0: iterates each Org in "orgs"
+                            // depth 1: iterates each Seat in "seats"
+                            // depth 2: "member" is a single Record
+                            // depth 3: returns scalar "alice123"
+                            // depth 2 collects: {"alice123", ...}
+                            // depth 1 flattens: {"alice123", ...}
+                            // depth 0 flattens: {"alice123", ...}
+                            // @formatter:on
+                            //
+                            // Each level flattens one layer; recursion
+                            // guarantees everything below is already flat.
+                            if(Sequences.isSequence(next)) {
+                                Sequences.forEach(next, seq::add);
+                            }
+                            else if(next != null) {
+                                seq.add(next);
+                            }
+                        }
+                    });
+                    return !seq.isEmpty() ? (T) seq : null;
+                }
+                else {
+                    return null;
+                }
+            }
+        }
+    }
+
+    /**
      * Return the JSON string for this {@link Record}.
      *
      * <p>
@@ -3195,6 +3157,44 @@ public abstract class Record implements Comparable<Record> {
         });
         Gson gson = builder.create();
         return gson.toJson(data);
+    }
+
+    /**
+     * Return an {@link Association} mapping each of the requested {@code keys}
+     * to its resolved value, without readability restrictions.
+     * <p>
+     * Navigation keys are stored under the full path in the returned
+     * {@link Association}.
+     * </p>
+     *
+     * @param keys the keys to resolve
+     * @return an {@link Association} mapping each key to its resolved value
+     */
+    private Association navigate(String... keys) {
+        Preconditions.checkArgument(keys.length > 0,
+                "Must provide at least one key");
+        Association data = Association.of();
+        // NOTE: Each key is resolved independently, so keys that share a common
+        // prefix (e.g., "participant.userId" and "participant.age") will
+        // traverse the first segment twice. This is acceptable because field
+        // access via reflection is just reading an object reference from
+        // memory, DeferredReference caches after first resolution, and all
+        // Records are already loaded in-memory (that's the premise of
+        // client-side evaluation).
+        for (String key : keys) {
+            Object value = get(key, Predicates.alwaysTrue());
+            if(value != null) {
+                // NOTE: The resolved value may be a Record or
+                // a collection of Records when the navigation
+                // key terminates at a Record-valued field
+                // (e.g., "orgs.seats.member"). Convert those
+                // to Links so the data mirrors the database
+                // representation that ConcourseCompiler expects
+                // for operators like LINKS_TO.
+                data.set(key, toLinkIfRecord(value));
+            }
+        }
+        return data;
     }
 
     /**
