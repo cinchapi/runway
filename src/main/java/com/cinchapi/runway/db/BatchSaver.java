@@ -266,9 +266,10 @@ public final class BatchSaver implements Saver {
         for (Consumer<CommandGroup> op : deferredWriteOps) {
             op.accept(writes);
         }
+        int commitSlot = writes.commands().size();
         writes.commit();
         List<Object> results = concourse.submit(writes);
-        return (Boolean) results.get(results.size() - 1);
+        return (Boolean) results.get(commitSlot);
     }
 
     @Override
