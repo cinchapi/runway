@@ -296,17 +296,29 @@ public final class BatchSaver implements Saver {
      * {@link Consumer Consumer} against the result list in recording order.
      * Clears the batch so subsequent recordings start fresh. No-op when no
      * reads have been recorded since the previous flush.
+     * <p>
+     * Deferred writes accumulated up to this point are flushed in the same
+     * {@link CommandGroup} immediately before the reads, so that the reads
+     * observe those writes in the staged transaction &mdash; matching the
+     * {@link IncrementalSaver} semantic where every write is visible to a
+     * subsequent read. Without this, a save-time {@link #select} (e.g., the
+     * {@link com.cinchapi.runway.CaptureDelete} cascade lookup in
+     * {@link com.cinchapi.runway.Record#deleteWithinTransaction}) would
+     * resolve against the pre-save snapshot and miss in-flight link updates
+     * &mdash; producing false-positive cleanups whose writes overwrite the
+     * user's explicit assignments.
+     * </p>
      */
     private void flushReads() {
         if(!deferredReadOps.isEmpty()) {
-            CommandGroup reads = concourse.prepare();
+            CommandGroup group = concourse.prepare();
             if(stageRequested && !stageSubmitted) {
                 // NOTE: STAGE inside this CommandGroup relies on the driver
                 // to adopt the resulting TransactionToken and to clear it
                 // when a later submission's COMMIT runs, so the
                 // reads-then-writes pair shares one staged transaction
                 // (cinchapi/concourse#735).
-                reads.stage();
+                group.stage();
                 // Mark the stage as submitted before sending so that a
                 // mid-flight submit failure still routes through to
                 // concourse.abort() in abort(), matching the writes-submit
@@ -314,10 +326,14 @@ public final class BatchSaver implements Saver {
                 // in IncrementalSaver.
                 stageSubmitted = true;
             }
-            for (Consumer<CommandGroup> op : deferredReadOps) {
-                op.accept(reads);
+            for (Consumer<CommandGroup> op : deferredWriteOps) {
+                op.accept(group);
             }
-            List<Object> results = concourse.submit(reads);
+            deferredWriteOps.clear();
+            for (Consumer<CommandGroup> op : deferredReadOps) {
+                op.accept(group);
+            }
+            List<Object> results = concourse.submit(group);
             // Snapshot and clear before dispatching so nested saver
             // recordings made by a validator/consumer accumulate into a
             // fresh batch.

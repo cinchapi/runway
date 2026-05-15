@@ -815,9 +815,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Record current = null;
         try {
             boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
-            Map<Record, Snapshot> snapshots = retrySpuriousSaveFailure
-                    ? new HashMap<>()
-                    : null;
+            // NOTE: Snapshots are taken on every save (not only when RETRY is
+            // configured) because saveWithinTransaction mutates Record
+            // metadata (__checksum, _hasModifiedRealms, _author) before
+            // saver.commit() runs. If a queued validator throws inside
+            // commit() under FAIL_FAST &mdash; a uniqueness violation, a
+            // StaleDataException &mdash; the in-memory state must be rolled
+            // back to its pre-save form so a subsequent save() of the same
+            // Record still observes hasUnsavedChanges() and writes the
+            // record's fields.
+            Map<Record, Snapshot> snapshots = new HashMap<>();
             Map<Record, Boolean> seen = new HashMap<>();
             int attempts = 0;
             while (true) {
@@ -853,6 +860,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return true;
                     }
                     else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {
+                        restore(snapshots);
                         return false;
                     }
                     else {
@@ -876,6 +884,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         continue;
                     }
                     else if(t instanceof StaleDataException) {
+                        restore(snapshots);
                         throw (StaleDataException) t;
                     }
                     else {
@@ -888,6 +897,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 // concourse.clear(record.id());
                             }
                         }
+                        restore(snapshots);
                         if(current != null) {
                             current.errors.add(t);
                         }

@@ -319,6 +319,172 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@link Runway#save save} that fails
+     * a {@link Unique @Unique} validation on the bulk path leaves the rejected
+     * {@link Record} in an unsaved state, so a subsequent {@link Runway#save
+     * save} of the same in-memory instance &mdash; with no further field
+     * mutations &mdash; still writes the record's fields to the database when
+     * the conflict is removed.
+     * <p>
+     * <strong>Start state:</strong> A {@link UniqueNamed} with name
+     * {@code "Alpha"} is already saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a second in-memory {@link UniqueNamed} with the same name
+     * and call {@link Record#save save}; the call returns {@code false}.</li>
+     * <li>Delete the conflicting first {@link UniqueNamed} so the same name
+     * is now free.</li>
+     * <li>Call {@link Record#save save} on the original duplicate
+     * {@link UniqueNamed} instance again, with no in-memory changes between
+     * calls.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Exactly one {@link UniqueNamed} exists in
+     * the database after the second save, with name {@code "Alpha"} &mdash;
+     * proving the failed save did not silently mark the in-memory record
+     * clean and that the second save actually wrote the record's fields.
+     */
+    @Test
+    public void testFailedBulkSaveLeavesRecordReSavable() {
+        UniqueNamed first = new UniqueNamed("Alpha");
+        Assert.assertTrue(first.save());
+
+        UniqueNamed dup = new UniqueNamed("Alpha");
+        Assert.assertFalse(dup.save());
+
+        first.deleteOnSave();
+        Assert.assertTrue(first.save());
+
+        Assert.assertTrue(dup.save());
+
+        Set<UniqueNamed> all = runway.load(UniqueNamed.class);
+        Assert.assertEquals(1, all.size());
+        Assert.assertEquals("Alpha", all.iterator().next().name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Runway#save save} that fails
+     * with a {@link StaleDataException} on the bulk path under
+     * {@code preventStaleWrites=true} leaves the in-memory {@link Record} in
+     * its pre-save state, so a subsequent {@link Runway#save save} of the
+     * same instance &mdash; even with the staleness check disabled and no
+     * intervening reload &mdash; still observes the in-memory mutation and
+     * writes it to the database.
+     * <p>
+     * <strong>Start state:</strong> A {@link Person} has been saved and
+     * loaded; a second {@link Runway} writes an external modification to the
+     * same database row so the in-memory copy is now stale.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save and reload a {@link Person} so the in-memory copy has a
+     * checkpoint timestamp.</li>
+     * <li>Open a second {@link Runway}, externally modify the same
+     * {@link Person} row, and close the second {@link Runway}.</li>
+     * <li>Modify the original in-memory {@link Person}.</li>
+     * <li>Call {@link Runway#save(boolean, Record...) save} with
+     * {@code preventStaleWrites=true}; catch the {@link StaleDataException}.
+     * </li>
+     * <li>Force the write by calling {@link Runway#save(Record...) save}
+     * (staleness check off) on the same in-memory instance with no further
+     * field mutations.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The forced save returns {@code true} and
+     * the in-memory mutation is persisted &mdash; proving that the
+     * {@link StaleDataException} did not silently update the record's
+     * {@code __checksum} to match its current field state, which would
+     * otherwise cause the forced save to skip the write loop entirely.
+     */
+    @Test
+    public void testStaleDataFailureLeavesRecordReSavable() {
+        Person p = new Person("Carol", 25);
+        Assert.assertTrue(p.save());
+        Person loaded = runway.load(Person.class, p.id());
+
+        Runway other = Runway.builder().port(server.getClientPort()).build();
+        try {
+            Person externallyModified = other.load(Person.class, p.id());
+            externallyModified.age = 26;
+            Assert.assertTrue(other.save(externallyModified));
+        }
+        finally {
+            try {
+                other.close();
+            }
+            catch (Exception ignored) {/* close failure not under test */}
+        }
+
+        loaded.age = 99;
+        try {
+            runway.save(true, loaded);
+            Assert.fail("expected StaleDataException");
+        }
+        catch (StaleDataException expected) {
+            // good
+        }
+
+        Assert.assertTrue(runway.save(loaded));
+
+        Person finalLoad = runway.load(Person.class, p.id());
+        Assert.assertEquals(99, finalLoad.age);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the
+     * {@link CaptureDelete @CaptureDelete} cascade lookup on the bulk save
+     * path observes link mutations queued earlier in the same
+     * {@link Runway#save save} call, so that a record whose link was
+     * <em>moved</em> away from the deletion target in this save is not
+     * falsely identified as still pointing at the target and therefore is
+     * not nulled out by the cascade cleanup.
+     * <p>
+     * <strong>Start state:</strong> A {@link Custodian} record is saved with
+     * {@code captured} pointing at an existing {@link Holding}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Reload the {@link Custodian} and the original {@link Holding}.</li>
+     * <li>Construct a brand-new {@link Holding} and assign it to the
+     * {@link Custodian Custodian's} {@code captured} field, replacing the
+     * original.</li>
+     * <li>Mark the original {@link Holding} for deletion via
+     * {@link Record#deleteOnSave deleteOnSave}.</li>
+     * <li>Call {@link Runway#save(Record...) save} with both records in one
+     * call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The reloaded {@link Custodian Custodian's}
+     * {@code captured} field still points at the new {@link Holding}; it has
+     * not been nulled out by a stale cascade-delete lookup that read the
+     * pre-save link state.
+     */
+    @Test
+    public void testCascadeDeleteSeesInFlightLinkUpdate() {
+        Holding original = new Holding("original");
+        Custodian custodian = new Custodian(original);
+        Assert.assertTrue(runway.save(custodian));
+
+        Custodian loadedCustodian = runway.load(Custodian.class,
+                custodian.id());
+        Holding loadedOriginal = runway.load(Holding.class, original.id());
+
+        Holding replacement = new Holding("replacement");
+        loadedCustodian.captured = replacement;
+        loadedOriginal.deleteOnSave();
+
+        Assert.assertTrue(runway.save(loadedCustodian, loadedOriginal));
+
+        Custodian reloaded = runway.load(Custodian.class, custodian.id());
+        Assert.assertNotNull(
+                "Custodian.captured must point at the replacement Holding, "
+                        + "not be nulled by a stale cascade-delete lookup",
+                reloaded.captured);
+        Assert.assertEquals("replacement", reloaded.captured.name);
+    }
+
+    /**
      * A simple {@link Record} type with a name and age, used as the baseline
      * for save tests.
      */
@@ -402,6 +568,35 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
         @Override
         protected java.util.function.Supplier<Boolean> overrideSave() {
             return veto ? () -> false : null;
+        }
+    }
+
+    /**
+     * A {@link Record} type whose {@code captured} field is annotated with
+     * {@link CaptureDelete @CaptureDelete}, used to exercise the cascade
+     * cleanup that runs when the linked record is deleted.
+     */
+    public static class Custodian extends Record {
+
+        @CaptureDelete
+        Holding captured;
+
+        Custodian(Holding captured) {
+            this.captured = captured;
+        }
+    }
+
+    /**
+     * A simple {@link Record} type linked from {@link Custodian} via a
+     * {@link CaptureDelete @CaptureDelete}-annotated field, used to exercise
+     * the cascade-delete lookup path on the bulk save path.
+     */
+    public static class Holding extends Record {
+
+        String name;
+
+        Holding(String name) {
+            this.name = name;
         }
     }
 
