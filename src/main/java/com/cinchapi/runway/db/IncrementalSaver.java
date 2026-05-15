@@ -118,12 +118,22 @@ public final class IncrementalSaver implements Saver {
 
     @Override
     public void reconcile(String key, long record, Collection<?> values) {
-        concourse.reconcile(key, record, values.toArray());
+        if(values.isEmpty()) {
+            concourse.clear(key, record);
+        }
+        else {
+            concourse.reconcile(key, record, values.toArray());
+        }
     }
 
     @Override
     public void reconcile(String key, long record, Object[] values) {
-        concourse.reconcile(key, record, values);
+        if(values.length == 0) {
+            concourse.clear(key, record);
+        }
+        else {
+            concourse.reconcile(key, record, values);
+        }
     }
 
 }

@@ -118,6 +118,15 @@ public final class BatchSaver implements Saver {
     private final Map<Object, Long> uniqueIntents;
 
     /**
+     * Exceptions raised by intra-batch uniqueness conflicts detected in
+     * {@link #declareUniqueIntent(Object, long, String)}. Surfaced from
+     * {@link #commit()} after {@link #flushReads()} returns, so that any
+     * staleness or database-uniqueness violation queued through the read
+     * pipeline takes precedence.
+     */
+    private final List<RuntimeException> intentConflicts;
+
+    /**
      * Construct a new {@link BatchSaver} that submits against
      * {@code concourse}.
      *
@@ -132,6 +141,7 @@ public final class BatchSaver implements Saver {
         this.pendingValidators = new ArrayList<>();
         this.deferredWriteOps = new ArrayList<>();
         this.uniqueIntents = new HashMap<>();
+        this.intentConflicts = new ArrayList<>();
     }
 
     @Override
@@ -144,6 +154,7 @@ public final class BatchSaver implements Saver {
         stageRequested = true;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public void audit(long record,
             Consumer<Map<Timestamp, List<String>>> validator) {
@@ -154,12 +165,13 @@ public final class BatchSaver implements Saver {
             group.audit(record);
         });
         pendingValidators.add(results -> {
-            @SuppressWarnings("unchecked") Map<Timestamp, List<String>> result = (Map<Timestamp, List<String>>) results
+            Map<Timestamp, List<String>> result = (Map<Timestamp, List<String>>) results
                     .get(slot[0]);
             validator.accept(result);
         });
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public void find(Criteria criteria, Consumer<Set<Long>> validator) {
         Preconditions.checkNotNull(validator);
@@ -169,12 +181,12 @@ public final class BatchSaver implements Saver {
             group.find(criteria);
         });
         pendingValidators.add(results -> {
-            @SuppressWarnings("unchecked") Set<Long> result = (Set<Long>) results
-                    .get(slot[0]);
+            Set<Long> result = (Set<Long>) results.get(slot[0]);
             validator.accept(result);
         });
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public void select(String key, Criteria criteria,
             Consumer<Map<Long, Set<Object>>> consumer) {
@@ -185,7 +197,7 @@ public final class BatchSaver implements Saver {
             group.select(key, criteria);
         });
         pendingValidators.add(results -> {
-            @SuppressWarnings("unchecked") Map<Long, Set<Object>> result = (Map<Long, Set<Object>>) results
+            Map<Long, Set<Object>> result = (Map<Long, Set<Object>>) results
                     .get(slot[0]);
             consumer.accept(result);
         });
@@ -212,31 +224,27 @@ public final class BatchSaver implements Saver {
         deferredWriteOps.add(group -> group.verifyOrSet(key, value, record));
     }
 
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     @Override
     public void reconcile(String key, long record, Collection<?> values) {
         if(values.isEmpty()) {
-            // NOTE: CommandGroup.reconcile drops the operation when values is
-            // empty, so route an empty reconcile through clear, which has the
-            // same semantics (cinchapi/concourse#738).
             deferredWriteOps.add(group -> group.clear(key, record));
-            return;
         }
-        @SuppressWarnings({ "rawtypes",
-                "unchecked" }) Collection<Object> casted = (Collection) values;
-        deferredWriteOps.add(group -> group.reconcile(key, record, casted));
+        else {
+            Collection<Object> casted = (Collection) values;
+            deferredWriteOps.add(group -> group.reconcile(key, record, casted));
+        }
     }
 
     @Override
     public void reconcile(String key, long record, Object[] values) {
         if(values.length == 0) {
-            // NOTE: CommandGroup.reconcile drops the operation when values is
-            // empty, so route an empty reconcile through clear, which has the
-            // same semantics (cinchapi/concourse#738).
             deferredWriteOps.add(group -> group.clear(key, record));
-            return;
         }
-        deferredWriteOps.add(
-                group -> group.reconcile(key, record, Arrays.asList(values)));
+        else {
+            deferredWriteOps.add(group -> group.reconcile(key, record,
+                    Arrays.asList(values)));
+        }
     }
 
     @Override
@@ -244,32 +252,36 @@ public final class BatchSaver implements Saver {
             String errorMessage) {
         Long prior = uniqueIntents.putIfAbsent(canonical, record);
         if(prior != null && prior.longValue() != record) {
-            // Queue the throw as a pendingValidator so audits queued
-            // earlier (e.g. preventStaleWrites=true stale-data checks)
-            // get a chance to surface their exception before this one,
-            // matching the staleness-before-uniqueness precedence that
-            // IncrementalSaver provides via inline staged reads.
-            pendingValidators.add(results -> {
-                throw new IllegalStateException(errorMessage);
-            });
+            // Track on a dedicated list and surface in #commit() after
+            // #flushReads() returns, so any staleness or database-uniqueness
+            // exception queued through the read pipeline takes precedence (the
+            // staleness-before-uniqueness precedence IncrementalSaver provides
+            // via inline staged reads) and so the throw fires regardless of
+            // whether the caller also recorded a paired read.
+            intentConflicts.add(new IllegalStateException(errorMessage));
         }
     }
 
     @Override
     public boolean commit() {
         flushReads();
-        CommandGroup writes = concourse.prepare();
-        if(stageRequested && !stageSubmitted) {
-            writes.stage();
-            stageSubmitted = true;
+        if(intentConflicts.isEmpty()) {
+            CommandGroup writes = concourse.prepare();
+            if(stageRequested && !stageSubmitted) {
+                writes.stage();
+                stageSubmitted = true;
+            }
+            for (Consumer<CommandGroup> op : deferredWriteOps) {
+                op.accept(writes);
+            }
+            int commitSlot = writes.commands().size();
+            writes.commit();
+            List<Object> results = concourse.submit(writes);
+            return (Boolean) results.get(commitSlot);
         }
-        for (Consumer<CommandGroup> op : deferredWriteOps) {
-            op.accept(writes);
+        else {
+            throw intentConflicts.get(0);
         }
-        int commitSlot = writes.commands().size();
-        writes.commit();
-        List<Object> results = concourse.submit(writes);
-        return (Boolean) results.get(commitSlot);
     }
 
     @Override

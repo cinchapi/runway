@@ -51,6 +51,139 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     private final List<Concourse> saverConnections = new ArrayList<>();
 
     /**
+     * <strong>Goal:</strong> Verify that {@link Saver#abort()} on a fresh
+     * {@link Saver} (no {@link Saver#stage() stage}, no recordings) is a no-op
+     * and leaves the underlying connection usable for a subsequent save.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Saver}.</li>
+     * <li>Call {@link Saver#abort()} immediately.</li>
+     * <li>Stage, record a {@code set}, and commit on the same
+     * {@link Saver}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The initial {@link Saver#abort() abort} does
+     * not throw, the follow-on commit returns {@code true}, and the recorded
+     * write is visible on the target record.
+     */
+    @Test
+    public void testAbortBeforeStageIsNoOp() {
+        long id = client.add("placeholder", 1L);
+
+        Saver saver = newSaver();
+        saver.abort();
+
+        saver.stage();
+        saver.set("foo", "bar", id);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertEquals(ImmutableSet.of("bar"), client.select("foo", id));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Saver#abort()} after
+     * {@link Saver#stage() stage} but with no recordings does not corrupt the
+     * underlying connection, so a subsequent save against the same
+     * {@link Saver} still commits.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Saver}.</li>
+     * <li>Call {@link Saver#stage()} and then {@link Saver#abort()} immediately
+     * with no operations in between.</li>
+     * <li>Stage, record a {@code set}, and commit on the same
+     * {@link Saver}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The follow-on commit returns {@code true} and
+     * the recorded write is visible.
+     */
+    @Test
+    public void testAbortAfterStageWithNoRecordingsIsNoOp() {
+        long id = client.add("placeholder", 1L);
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.abort();
+
+        saver.stage();
+        saver.set("foo", "bar", id);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertEquals(ImmutableSet.of("bar"), client.select("foo", id));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an empty {@link Saver#reconcile
+     * reconcile} is equivalent to {@link Saver#clear(String, long) clear(key,
+     * record)} &mdash; both impls must route empty values through clear so
+     * callers see uniform behavior regardless of transport.
+     * <p>
+     * <strong>Start state:</strong> A record with two existing values under
+     * {@code "tags"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@code reconcile} with an empty {@link java.util.Collection
+     * Collection}.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@code "tags"} field is empty on the
+     * record.
+     */
+    @Test
+    public void testReconcileWithEmptyCollectionClearsKey() {
+        long id = client.add("tags", "a");
+        client.add("tags", "b", id);
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.reconcile("tags", id, ImmutableSet.of());
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertTrue(client.select("tags", id).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an empty
+     * {@link Saver#reconcile(String, long, Object[]) reconcile(key, record,
+     * Object[])} is equivalent to {@link Saver#clear(String, long) clear(key,
+     * record)}.
+     * <p>
+     * <strong>Start state:</strong> A record with two existing values under
+     * {@code "tags"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@code reconcile} with an empty {@code Object[]}.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@code "tags"} field is empty on the
+     * record.
+     */
+    @Test
+    public void testReconcileWithEmptyArrayClearsKey() {
+        long id = client.add("tags", "a");
+        client.add("tags", "b", id);
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.reconcile("tags", id, new Object[0]);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertTrue(client.select("tags", id).isEmpty());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@link Saver#abort()} leaves no
      * recorded writes persisted on the database.
      * <p>

@@ -1709,32 +1709,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Build a {@link SelectResult} of {@link Record Records} from {@code data},
-     * applying {@code filter} when {@code hasFilter} is {@code true}.
-     *
-     * @param clazz the target {@link Record} class
-     * @param any whether to query across the class hierarchy
-     * @param data the matching record data
-     * @param hasFilter whether {@code filter} is non-trivial
-     * @param filter the client-side filter
-     * @param <T> the {@link Record} type
-     * @return the {@link SelectResult}
-     */
-    private <T extends Record> SelectResult<Set<T>> finalizeSet(Class<T> clazz,
-            boolean any, Map<Long, Map<String, Set<Object>>> data,
-            boolean hasFilter, Predicate<T> filter) {
-        Set<T> records = any ? instantiateAll(data)
-                : instantiateAll(clazz, data);
-        if(hasFilter) {
-            return new SelectResult<>(
-                    records.stream().filter(filter).collect(
-                            Collectors.toCollection(LinkedHashSet::new)),
-                    records);
-        }
-        return new SelectResult<>(records);
-    }
-
-    /**
      * Resolve {@code selection} against the supplied {@code sources} by
      * dispatching {@link AdHocDataSource#fetch(DatabaseSelection)} to each
      * source and combining the results.
@@ -1910,36 +1884,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Recursively resolve link-graph targets through {@code reader}, recording
-     * one {@link Reader#select(Collection)} per BFS frontier so each depth is
-     * shared across sibling {@link Pending Pendings} that drain together.
-     *
-     * @param reader the {@link Reader} that records each frontier's select
-     * @param pool the link-graph data accumulated so far; mutated in place as
-     *            new frontiers are loaded
-     * @param fetched the record ids already loaded into {@code pool}; mutated
-     *            in place
-     * @param frontier the record ids to load next
-     * @return a {@link Pending} of the fully resolved {@code pool}
-     */
-    private Pending<Map<Long, Map<String, Set<Object>>>> prefetchLinks(
-            Reader reader, Map<Long, Map<String, Set<Object>>> pool,
-            Set<Long> fetched, Set<Long> frontier) {
-        // BFS over the link graph: each recursive call fetches one depth
-        // level. #fetched tracks visited IDs so cycles in the link graph
-        // terminate naturally.
-        if(frontier.isEmpty()) {
-            return Pending.of(pool);
-        }
-        return reader.select(frontier).then(batch -> {
-            pool.putAll(batch);
-            fetched.addAll(frontier);
-            return prefetchLinks(reader, pool, fetched,
-                    extractLinkTargets(batch, fetched));
-        });
-    }
-
-    /**
      * Record on {@code reader} the read required to resolve {@code selection}
      * and return a {@link Pending} of the {@link SelectResult} holding the
      * unique matching {@link Record} (or {@code null} when no record matches).
@@ -2008,44 +1952,52 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(cached != null) {
             ((DatabaseSelection) selection).setResult(cached);
             selection.setState(Selection.State.FINISHED);
-            return;
-        }
-        Set<AdHocDataSource<?>> resolvedSources = sources == null
-                ? (selection.any
-                        ? getAttachedSourcesForHierarchy(selection.clazz)
-                        : getAttachedSources(selection.clazz))
-                : sources;
-        if(!resolvedSources.isEmpty()) {
-            R result = $selectFromSources(selection, resolvedSources);
-            ((DatabaseSelection) selection).setResult(result);
-            selection.setState(Selection.State.FINISHED);
-            return;
-        }
-        Pending<? extends SelectResult<?>> pending;
-        if(selection instanceof CountSelection) {
-            pending = $selectCount(reader, (CountSelection<T>) selection);
-        }
-        else if(selection instanceof LoadRecordSelection) {
-            pending = $selectRecord(reader, (LoadRecordSelection<T>) selection);
-        }
-        else if(selection instanceof LoadClassSelection) {
-            pending = $selectClass(reader, (LoadClassSelection<T>) selection);
-        }
-        else if(selection instanceof FindSelection) {
-            pending = $selectCriteria(reader, (FindSelection<T>) selection);
-        }
-        else if(selection instanceof UniqueSelection) {
-            pending = $selectUnique(reader, (UniqueSelection<T>) selection);
         }
         else {
-            throw new IllegalStateException(
-                    "Unsupported Selection type " + selection.getClass());
+            Set<AdHocDataSource<?>> relevantSources = sources == null
+                    ? (selection.any
+                            ? getAttachedSourcesForHierarchy(selection.clazz)
+                            : getAttachedSources(selection.clazz))
+                    : sources;
+            if(!relevantSources.isEmpty()) {
+                R result = $selectFromSources(selection, relevantSources);
+                ((DatabaseSelection) selection).setResult(result);
+                selection.setState(Selection.State.FINISHED);
+            }
+            else {
+                Pending<? extends SelectResult<?>> pending;
+                if(selection instanceof CountSelection) {
+                    pending = $selectCount(reader,
+                            (CountSelection<T>) selection);
+                }
+                else if(selection instanceof LoadRecordSelection) {
+                    pending = $selectRecord(reader,
+                            (LoadRecordSelection<T>) selection);
+                }
+                else if(selection instanceof LoadClassSelection) {
+                    pending = $selectClass(reader,
+                            (LoadClassSelection<T>) selection);
+                }
+                else if(selection instanceof FindSelection) {
+                    pending = $selectCriteria(reader,
+                            (FindSelection<T>) selection);
+                }
+                else if(selection instanceof UniqueSelection) {
+                    pending = $selectUnique(reader,
+                            (UniqueSelection<T>) selection);
+                }
+                else {
+                    throw new IllegalStateException(
+                            "Unsupported Selection type "
+                                    + selection.getClass());
+                }
+                pending.onResolve(res -> {
+                    ((DatabaseSelection) selection).setResult(res.result);
+                    selection.cacheValue = res.cacheValue;
+                    selection.setState(Selection.State.FINISHED);
+                });
+            }
         }
-        pending.onResolve(res -> {
-            ((DatabaseSelection) selection).setResult(res.result);
-            selection.cacheValue = res.cacheValue;
-            selection.setState(Selection.State.FINISHED);
-        });
     }
 
     /**
@@ -2233,6 +2185,32 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         return fetch(Selection.ofAny(clazz).order(order).page(page)
                 .filter(record -> record
                         .matches($Criteria.amongRealms(realms, criteria))));
+    }
+
+    /**
+     * Build a {@link SelectResult} of {@link Record Records} from {@code data},
+     * applying {@code filter} when {@code hasFilter} is {@code true}.
+     *
+     * @param clazz the target {@link Record} class
+     * @param any whether to query across the class hierarchy
+     * @param data the matching record data
+     * @param hasFilter whether {@code filter} is non-trivial
+     * @param filter the client-side filter
+     * @param <T> the {@link Record} type
+     * @return the {@link SelectResult}
+     */
+    private <T extends Record> SelectResult<Set<T>> finalizeSet(Class<T> clazz,
+            boolean any, Map<Long, Map<String, Set<Object>>> data,
+            boolean hasFilter, Predicate<T> filter) {
+        Set<T> records = any ? instantiateAll(data)
+                : instantiateAll(clazz, data);
+        if(hasFilter) {
+            return new SelectResult<>(
+                    records.stream().filter(filter).collect(
+                            Collectors.toCollection(LinkedHashSet::new)),
+                    records);
+        }
+        return new SelectResult<>(records);
     }
 
     /**
@@ -2504,6 +2482,36 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             frontier = extractLinkTargets(batch, fetched);
         }
         return pool;
+    }
+
+    /**
+     * Recursively resolve link-graph targets through {@code reader}, recording
+     * one {@link Reader#select(Collection)} per BFS frontier so each depth is
+     * shared across sibling {@link Pending Pendings} that drain together.
+     *
+     * @param reader the {@link Reader} that records each frontier's select
+     * @param pool the link-graph data accumulated so far; mutated in place as
+     *            new frontiers are loaded
+     * @param fetched the record ids already loaded into {@code pool}; mutated
+     *            in place
+     * @param frontier the record ids to load next
+     * @return a {@link Pending} of the fully resolved {@code pool}
+     */
+    private Pending<Map<Long, Map<String, Set<Object>>>> prefetchLinks(
+            Reader reader, Map<Long, Map<String, Set<Object>>> pool,
+            Set<Long> fetched, Set<Long> frontier) {
+        // BFS over the link graph: each recursive call fetches one depth
+        // level. #fetched tracks visited IDs so cycles in the link graph
+        // terminate naturally.
+        if(frontier.isEmpty()) {
+            return Pending.of(pool);
+        }
+        return reader.select(frontier).then(batch -> {
+            pool.putAll(batch);
+            fetched.addAll(frontier);
+            return prefetchLinks(reader, pool, fetched,
+                    extractLinkTargets(batch, fetched));
+        });
     }
 
     /**

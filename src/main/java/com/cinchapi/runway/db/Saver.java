@@ -208,22 +208,38 @@ public interface Saver {
     /**
      * Record a {@link Concourse#reconcile(String, long, Collection) reconcile}
      * of {@code values} for {@code key} in {@code record}.
+     * <p>
+     * An empty {@code values} is equivalent to {@link #clear(String, long)
+     * clear(key, record)}; {@code reconcile} mandates a non-empty canonical and
+     * "leave nothing" is what {@code clear} is for. Implementations route an
+     * empty {@code values} through {@link #clear(String, long)} so callers see
+     * uniform behavior regardless of transport.
+     * </p>
      *
      * @param key the field name whose values are being reconciled
      * @param record the record id whose mapping is being reconciled
      * @param values the canonical set of values that should remain under
-     *            {@code key}
+     *            {@code key}; an empty {@link Collection} is routed through
+     *            {@link #clear(String, long)}
      */
     void reconcile(String key, long record, Collection<?> values);
 
     /**
      * Record a {@link Concourse#reconcile(String, long, Collection) reconcile}
      * of {@code values} for {@code key} in {@code record}.
+     * <p>
+     * An empty {@code values} is equivalent to {@link #clear(String, long)
+     * clear(key, record)}; {@code reconcile} mandates a non-empty canonical and
+     * "leave nothing" is what {@code clear} is for. Implementations route an
+     * empty {@code values} through {@link #clear(String, long)} so callers see
+     * uniform behavior regardless of transport.
+     * </p>
      *
      * @param key the field name whose values are being reconciled
      * @param record the record id whose mapping is being reconciled
      * @param values the canonical set of values that should remain under
-     *            {@code key}
+     *            {@code key}; an empty array is routed through
+     *            {@link #clear(String, long)}
      */
     void reconcile(String key, long record, Object[] values);
 
