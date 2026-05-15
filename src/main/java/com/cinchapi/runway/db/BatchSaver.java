@@ -33,37 +33,16 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.google.common.base.Preconditions;
 
 /**
- * A {@link Saver} that batches save-pipeline interaction into the smallest
- * number of {@link CommandGroup} submissions a given save permits.
+ * A {@link Saver} that batches save-pipeline interaction into the
+ * smallest number of {@link CommandGroup} submissions a given save
+ * permits. Recording calls accumulate deferred operations rather than
+ * touching the server; submissions happen at {@link #commit()} and
+ * whenever a save-time {@link #select(String, Criteria, Consumer)
+ * select} requires its result inline.
  * <p>
- * Recording calls accumulate deferred operations against this {@link Saver}
- * rather than touching the server. Server work happens at one of two points:
- * </p>
- * <ul>
- * <li><strong>Inside {@link #commit()}.</strong> If only writes were recorded,
- * one {@link CommandGroup} carries {@link #stage()} plus every write plus the
- * terminal commit and submits in a single round trip. If validation reads were
- * also recorded, two {@link CommandGroup CommandGroups} are used: the first
- * carries {@link #stage()} plus the recorded {@link #audit audits} and
- * {@link #find finds}, runs every queued {@link Consumer validator} against the
- * result, and only then is the writes-plus-commit {@link CommandGroup}
- * submitted.</li>
- * <li><strong>Inside {@link #select(String, Criteria, Consumer)
- * select}.</strong> Save-time {@link #select select} reads drive control flow
- * rather than a throw/no-throw validation, so the {@link Consumer} must observe
- * its result before the recording call returns. Calling
- * {@link #select(String, Criteria, Consumer) select} therefore submits any
- * reads accumulated so far &mdash; {@link #stage()}, queued {@link #audit
- * audits}, queued {@link #find finds}, and this {@link #select select} itself
- * &mdash; runs all the queued {@link Consumer Consumers} in recording order,
- * and then resets the read-side state so subsequent recordings start a fresh
- * batch.</li>
- * </ul>
- * <p>
- * If any {@link Consumer Consumer} throws during a flush, the corresponding
- * submission has already opened the staged transaction on the server; the
- * caller is responsible for calling {@link #abort()} after handling the
- * exception.
+ * If any queued {@link Consumer} throws during a submission, the staged
+ * transaction has already been opened on the server; the caller is
+ * responsible for calling {@link #abort()} after handling the exception.
  * </p>
  * <p>
  * This {@link Saver} is <strong>not thread-safe</strong>.
@@ -118,11 +97,8 @@ public final class BatchSaver implements Saver {
     private final Map<Object, Long> uniqueIntents;
 
     /**
-     * Exceptions raised by intra-batch uniqueness conflicts detected in
-     * {@link #declareUniqueIntent(Object, long, String)}. Surfaced from
-     * {@link #commit()} after {@link #flushReads()} returns, so that any
-     * staleness or database-uniqueness violation queued through the read
-     * pipeline takes precedence.
+     * Exceptions raised by intra-batch uniqueness conflicts detected
+     * during {@link #declareUniqueIntent(Object, long, String)}.
      */
     private final List<RuntimeException> intentConflicts;
 
@@ -165,8 +141,8 @@ public final class BatchSaver implements Saver {
             group.audit(record);
         });
         pendingValidators.add(results -> {
-            Map<Timestamp, List<String>> result = (Map<Timestamp, List<String>>) results
-                    .get(slot[0]);
+            Map<Timestamp, List<String>> result =
+                    (Map<Timestamp, List<String>>) results.get(slot[0]);
             validator.accept(result);
         });
     }
@@ -252,12 +228,10 @@ public final class BatchSaver implements Saver {
             String errorMessage) {
         Long prior = uniqueIntents.putIfAbsent(canonical, record);
         if(prior != null && prior.longValue() != record) {
-            // Track on a dedicated list and surface in #commit() after
-            // #flushReads() returns, so any staleness or database-uniqueness
-            // exception queued through the read pipeline takes precedence (the
-            // staleness-before-uniqueness precedence IncrementalSaver provides
-            // via inline staged reads) and so the throw fires regardless of
-            // whether the caller also recorded a paired read.
+            // Surfaced from commit() only after the read pipeline has
+            // run, so any staleness or database-uniqueness exception
+            // takes precedence and the throw fires regardless of whether
+            // the caller also recorded a paired find.
             intentConflicts.add(new IllegalStateException(errorMessage));
         }
     }
@@ -294,19 +268,11 @@ public final class BatchSaver implements Saver {
     /**
      * Submit any reads accumulated in the active batch and run every queued
      * {@link Consumer Consumer} against the result list in recording order.
-     * Clears the batch so subsequent recordings start fresh. No-op when no
-     * reads have been recorded since the previous flush.
+     * No-op when no reads have been recorded since the previous flush.
      * <p>
-     * Deferred writes accumulated up to this point are flushed in the same
-     * {@link CommandGroup} immediately before the reads, so that the reads
-     * observe those writes in the staged transaction &mdash; matching the
-     * {@link IncrementalSaver} semantic where every write is visible to a
-     * subsequent read. Without this, a save-time {@link #select} (e.g., the
-     * {@link com.cinchapi.runway.CaptureDelete} cascade lookup in
-     * {@link com.cinchapi.runway.Record#deleteWithinTransaction}) would
-     * resolve against the pre-save snapshot and miss in-flight link updates
-     * &mdash; producing false-positive cleanups whose writes overwrite the
-     * user's explicit assignments.
+     * Deferred writes accumulated up to this point are submitted in the
+     * same {@link CommandGroup} immediately before the reads, so reads
+     * observe those writes in the staged transaction.
      * </p>
      */
     private void flushReads() {

@@ -815,15 +815,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Record current = null;
         try {
             boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
-            // NOTE: Snapshots are taken on every save (not only when RETRY is
-            // configured) because saveWithinTransaction mutates Record
-            // metadata (__checksum, _hasModifiedRealms, _author) before
-            // saver.commit() runs. If a queued validator throws inside
-            // commit() under FAIL_FAST &mdash; a uniqueness violation, a
-            // StaleDataException &mdash; the in-memory state must be rolled
-            // back to its pre-save form so a subsequent save() of the same
-            // Record still observes hasUnsavedChanges() and writes the
-            // record's fields.
+            // NOTE: Snapshots are taken on every save because
+            // saveWithinTransaction mutates Record metadata (__checksum,
+            // _hasModifiedRealms, _author) before saver.commit() runs. If
+            // a queued validator throws inside commit(), the in-memory
+            // state must be rolled back so a subsequent save() of the
+            // same Record still observes hasUnsavedChanges() and writes
+            // the record's fields.
             Map<Record, Snapshot> snapshots = new HashMap<>();
             Map<Record, Boolean> seen = new HashMap<>();
             int attempts = 0;

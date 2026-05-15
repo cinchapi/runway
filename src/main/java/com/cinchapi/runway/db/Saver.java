@@ -29,32 +29,27 @@ import com.cinchapi.concourse.lang.Criteria;
  * A {@link Saver} encapsulates the database interaction for one save &mdash;
  * the staged transaction, the save-time validation reads, the persisted writes,
  * and the terminal commit or abort &mdash; behind a single type that
- * {@link com.cinchapi.runway.Record#saveWithinTransaction(Saver, java.util.Map, java.util.Map, boolean)}
- * can target without knowing whether the underlying database supports the bulk
- * {@link com.cinchapi.concourse.lang.CommandGroup CommandGroup} command API.
+ * {@link com.cinchapi.runway.Record#saveWithinTransaction(Saver,
+ * java.util.Map, java.util.Map, boolean)} can target without knowing the
+ * underlying database transport.
  * <p>
  * <h2>Reads</h2> Validation reads ({@link #audit(long, Consumer) audit},
  * {@link #find(Criteria, Consumer) find}) accept a {@link Consumer} that
- * receives the read's result and may throw to signal a validation failure.
- * Implementations decide <em>when</em> the {@link Consumer} runs: immediately
- * for the synchronous path; queued-and-flushed inside {@link #commit()} for the
- * bulk path. Either way the {@link Consumer} sees the same data and any
- * exception it raises propagates to the caller of the recording method (for
- * immediate implementations) or the caller of {@link #commit()} (for bulk
- * implementations).
+ * may throw to signal a validation failure. Depending on the
+ * implementation, the {@link Consumer} runs either inline at the
+ * recording call or deferred until {@link #commit()}; the throw
+ * propagates from whichever site invokes the {@link Consumer}.
  * </p>
- * <h2>Writes</h2> Writes ({@link #set set}, {@link #clear(String, long) clear},
- * {@link #verifyOrSet verifyOrSet}, {@link #reconcile reconcile}) are recorded
- * against the active transaction. Bulk implementations defer their server- side
- * execution until {@link #commit()}; synchronous implementations execute each
- * write immediately. In both cases the staged transaction is the unit of
- * atomicity &mdash; a failure anywhere before {@link #commit()} succeeds aborts
- * the entire save.
+ * <h2>Writes</h2> Writes ({@link #set set}, {@link #clear(String, long)
+ * clear}, {@link #verifyOrSet verifyOrSet}, {@link #reconcile reconcile})
+ * are recorded against the active staged transaction, which is the unit
+ * of atomicity: a failure anywhere before {@link #commit()} succeeds
+ * aborts the entire save.
  *
- * <h2>Lifecycle</h2> The caller drives the lifecycle: {@link #stage()} once,
- * any number of recording calls, then exactly one of {@link #commit()} or
- * {@link #abort()}. A {@link Saver} is single-use and is not safe for
- * concurrent access.
+ * <h2>Lifecycle</h2> The caller drives the lifecycle: {@link #stage()}
+ * once, any number of recording calls, then exactly one of
+ * {@link #commit()} or {@link #abort()}. A {@link Saver} is single-use
+ * and is not safe for concurrent access.
  *
  * @author Jeff Nelson
  */
