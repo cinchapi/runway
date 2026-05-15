@@ -26,7 +26,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 import com.google.common.base.Preconditions;
 
 /**
- * A {@link Pending} value that is eventually procuded by a {@link Reader}.
+ * A {@link Pending} is a value that is eventually produced by a {@link Reader}.
  * <p>
  * Composition operators ({@link #map}, {@link #then}) build new {@link Pending
  * Pendings} from existing ones, and {@link #onResolve} delivers the value to a
