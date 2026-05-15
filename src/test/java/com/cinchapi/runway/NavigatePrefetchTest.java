@@ -280,6 +280,46 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the {@code visitedEdges} set permits
+     * crossing different cyclic edges in the same lineage but blocks
+     * re-emission of the same cyclic edge.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve navigate paths for {@link Exchange}, which has two cyclic
+     * edges: a single-{@link Record} {@code parent: Exchange} and a
+     * {@link java.util.Collection Collection&lt;Record&gt;} {@code children:
+     * List<Exchange>}.</li>
+     * <li>Assert that paths crossing the two distinct edges in either order are
+     * emitted.</li>
+     * <li>Assert that no path re-emits the same cyclic edge twice in its
+     * lineage.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> At least one path begins with
+     * {@code parent*.children*.} and at least one with
+     * {@code children*.parent*.}; no path begins with {@code parent*.parent*.}
+     * or {@code children*.children*.}.
+     */
+    @Test
+    public void testNavigatePathsCrossEdgesButNotSameEdgeUnderTransitiveStop() {
+        Set<String> navigatePaths = Record.StaticAnalysis.instance()
+                .getNavigatePaths(Exchange.class);
+        Assert.assertNotNull(navigatePaths);
+        Assert.assertTrue(navigatePaths.stream()
+                .anyMatch(p -> p.startsWith("parent*.children*.")));
+        Assert.assertTrue(navigatePaths.stream()
+                .anyMatch(p -> p.startsWith("children*.parent*.")));
+        Assert.assertTrue(navigatePaths.stream()
+                .noneMatch(p -> p.startsWith("parent*.parent*.")));
+        Assert.assertTrue(navigatePaths.stream()
+                .noneMatch(p -> p.startsWith("children*.children*.")));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a cyclic single-{@link Record} field
      * encountered deep inside a non-cyclic chain emits {@code *}-suffixed paths
      * through {@code computePaths} (the literal scope of #98).

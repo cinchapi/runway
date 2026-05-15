@@ -3506,7 +3506,10 @@ public abstract class Record implements Comparable<Record> {
          * @param fieldTypeArgumentsByClass
          * @param prefix
          * @param ancestors
-         * @param visitedEdges
+         * @param visitedEdges the cyclic {@code (sourceClass, field)} edges
+         *            already emitted in this lineage; used to prevent
+         *            re-emission of the same transitive edge under a deeper
+         *            {@code *} stop
          * @return the navigate paths
          */
         @SuppressWarnings("unchecked")
@@ -3697,7 +3700,6 @@ public abstract class Record implements Comparable<Record> {
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
                 String prefix, Set<Class<? extends Record>> ancestors,
                 boolean includeRecordFieldKeys) {
-            boolean reentered = ancestors.contains(clazz);
             ancestors.add(clazz);
             Set<String> paths = new LinkedHashSet<>();
             paths.add(prefix + SECTION_KEY);
@@ -3708,77 +3710,54 @@ public abstract class Record implements Comparable<Record> {
             for (Field field : fields) {
                 Class<?> type = field.getType();
                 Set<Class<? extends Record>> lineage = new HashSet<>(ancestors);
-                if(Record.class.isAssignableFrom(type)) {
-                    boolean cyclic = ancestors.contains(type);
-                    if(!cyclic && (COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS
-                            || !hasDescendantDefinedFields(type, hierarchies,
-                                    fieldsByClass))) {
-                        if(includeRecordFieldKeys) {
-                            // NOTE: For select(), nested navigation keys
-                            // (e.g., company._) fold destination data into
-                            // the source record's result, so the raw Link
-                            // value is unnecessary. For navigate(), each hop
-                            // resolves to a separate entry keyed by
-                            // destination ID, so the intermediate record
-                            // never receives the Link value unless we
-                            // explicitly include the bare field name as a
-                            // path.
-                            paths.add(prefix + field.getName());
-                        }
-                        Class<? extends Record> _type = (Class<? extends Record>) type;
-                        lineage.add(_type);
-                        Collection<Class<?>> hierarchy = hierarchies.get(_type);
-                        Set<String> nested = new HashSet<>();
-                        for (Class<?> descendant : hierarchy) {
-                            // Account for declared types having descendant
-                            // defined fields in child classes by computing
-                            // the paths for each descendant type at this
-                            // junction, in the path
-                            nested.addAll(computePaths(
-                                    (Class<? extends Record>) descendant,
-                                    hierarchies, fieldsByClass,
-                                    prefix + field.getName() + ".", lineage,
-                                    includeRecordFieldKeys));
-                        }
-                        paths.addAll(nested);
-                    }
-                    else if(cyclic && includeRecordFieldKeys && !reentered) {
-                        // Cyclic single-Record edge at the head of a chain:
-                        // emit *-suffixed paths so a single navigate RPC
-                        // follows the link transitively. Gated on
-                        // includeRecordFieldKeys so the select-side path set
-                        // remains byte-identical. The !reentered check
-                        // prevents infinite recursion: the inner call
-                        // re-enters this method with clazz already in
-                        // ancestors, so cyclic Record fields encountered
-                        // there fall through to the bare-leaf branch below.
-                        paths.add(prefix + field.getName());
-                        Class<? extends Record> _type = (Class<? extends Record>) type;
-                        Collection<Class<?>> hierarchy = hierarchies.get(_type);
-                        String prefixWithStar = prefix + field.getName() + "*.";
-                        for (Class<?> descendant : hierarchy) {
-                            paths.addAll(computePaths(
-                                    (Class<? extends Record>) descendant,
-                                    hierarchies, fieldsByClass, prefixWithStar,
-                                    new HashSet<>(ancestors),
-                                    includeRecordFieldKeys));
-                        }
-                    }
-                    else {
+                if(Record.class.isAssignableFrom(type)
+                        && !ancestors.contains(type)
+                        && (COMPUTE_PATHS_FOR_DESCENDANT_DEFINED_FIELDS
+                                || !hasDescendantDefinedFields(type,
+                                        hierarchies, fieldsByClass))) {
+                    if(includeRecordFieldKeys) {
+                        // NOTE: For select(), nested navigation keys (e.g.,
+                        // company._) fold destination data into the source
+                        // record's result, so the raw Link value is
+                        // unnecessary. For navigate(), each hop resolves to
+                        // a separate entry keyed by destination ID, so the
+                        // intermediate record never receives the Link value
+                        // unless we explicitly include the bare field name
+                        // as a path.
                         paths.add(prefix + field.getName());
                     }
+                    Class<? extends Record> _type = (Class<? extends Record>) type;
+                    lineage.add(_type);
+                    Collection<Class<?>> hierarchy = hierarchies.get(_type);
+                    Set<String> nested = new HashSet<>();
+                    for (Class<?> descendant : hierarchy) {
+                        // Account for declared types having descendant
+                        // defined fields in child classes by computing the
+                        // paths for each descendant type at this junction,
+                        // in the path
+                        nested.addAll(computePaths(
+                                (Class<? extends Record>) descendant,
+                                hierarchies, fieldsByClass,
+                                prefix + field.getName() + ".", lineage,
+                                includeRecordFieldKeys));
+                    }
+                    paths.addAll(nested);
                 }
                 else {
-                    // Non-Record types (primitives, scalars, Collections,
-                    // etc.) emit a bare key. For Collection<Record> in
-                    // particular, recursing into the element type here
-                    // would be wrong: select() flattens a multi-valued
-                    // navigation path into one set of values, losing the
-                    // per-destination grouping needed to reconstruct
-                    // individual Records. The bare key produces the Link
-                    // values, and navigate() (driven by computeNavigatePaths)
-                    // returns each destination's data keyed by destination
-                    // ID.
+                    // Bare key for non-Record types (primitives, scalars,
+                    // Collections, etc.) and for cyclic or
+                    // descendant-defining Record types where recursing
+                    // would either loop or omit subclass-specific fields.
+                    // For Collection<Record> in particular, recursing into
+                    // the element type here would be wrong: select()
+                    // flattens a multi-valued navigation path into one set
+                    // of values, losing the per-destination grouping
+                    // needed to reconstruct individual Records. The bare
+                    // key produces the Link values, and navigate() (driven
+                    // by computeNavigatePaths) returns each destination's
+                    // data keyed by destination ID. Cyclic single-Record
+                    // edges that need transitive {@code *} expansion are
+                    // emitted by computeNavigatePaths Branch 3.
                     paths.add(prefix + field.getName());
                 }
             }
