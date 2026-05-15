@@ -298,34 +298,36 @@ public final class BatchSaver implements Saver {
      * reads have been recorded since the previous flush.
      */
     private void flushReads() {
-        if(deferredReadOps.isEmpty()) {
-            return;
-        }
-        CommandGroup reads = concourse.prepare();
-        if(stageRequested && !stageSubmitted) {
-            // NOTE: STAGE inside this CommandGroup relies on the driver to
-            // adopt the resulting TransactionToken and to clear it when a
-            // later submission's COMMIT runs, so the reads-then-writes pair
-            // shares one staged transaction (cinchapi/concourse#735).
-            reads.stage();
-            // Mark the stage as submitted before sending so that a mid-flight
-            // submit failure still routes through to concourse.abort() in
-            // abort(), matching the writes-submit path in commit() and
-            // mirroring the unconditional abort() in IncrementalSaver.
-            stageSubmitted = true;
-        }
-        for (Consumer<CommandGroup> op : deferredReadOps) {
-            op.accept(reads);
-        }
-        List<Object> results = concourse.submit(reads);
-        // Snapshot and clear before dispatching so nested saver recordings
-        // made by a validator/consumer accumulate into a fresh batch.
-        List<Consumer<List<Object>>> active = new ArrayList<>(
-                pendingValidators);
-        deferredReadOps.clear();
-        pendingValidators.clear();
-        for (Consumer<List<Object>> validator : active) {
-            validator.accept(results);
+        if(!deferredReadOps.isEmpty()) {
+            CommandGroup reads = concourse.prepare();
+            if(stageRequested && !stageSubmitted) {
+                // NOTE: STAGE inside this CommandGroup relies on the driver
+                // to adopt the resulting TransactionToken and to clear it
+                // when a later submission's COMMIT runs, so the
+                // reads-then-writes pair shares one staged transaction
+                // (cinchapi/concourse#735).
+                reads.stage();
+                // Mark the stage as submitted before sending so that a
+                // mid-flight submit failure still routes through to
+                // concourse.abort() in abort(), matching the writes-submit
+                // path in commit() and mirroring the unconditional abort()
+                // in IncrementalSaver.
+                stageSubmitted = true;
+            }
+            for (Consumer<CommandGroup> op : deferredReadOps) {
+                op.accept(reads);
+            }
+            List<Object> results = concourse.submit(reads);
+            // Snapshot and clear before dispatching so nested saver
+            // recordings made by a validator/consumer accumulate into a
+            // fresh batch.
+            List<Consumer<List<Object>>> active = new ArrayList<>(
+                    pendingValidators);
+            deferredReadOps.clear();
+            pendingValidators.clear();
+            for (Consumer<List<Object>> validator : active) {
+                validator.accept(results);
+            }
         }
     }
 

@@ -1018,11 +1018,37 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             selection.setState(Selection.State.FINISHED);
                         }
                         else {
-                            if(reader == null) {
-                                concourse = ensureValidConnection(concourse);
-                                reader = new BatchReader(concourse);
+                            Object cached = recallAndPossiblyFilter(selection);
+                            Set<AdHocDataSource<?>> sources = cached != null
+                                    ? null
+                                    : (selection.any
+                                            ? getAttachedSourcesForHierarchy(
+                                                    selection.clazz)
+                                            : getAttachedSources(
+                                                    selection.clazz));
+                            if(cached != null
+                                    || (sources != null
+                                            && !sources.isEmpty())) {
+                                // No database connection needed; sources/cache
+                                // resolve the selection in
+                                // $selectWithPossibleSources before the reader
+                                // is touched.
+                                $selectWithPossibleSources(null, selection,
+                                        sources);
                             }
-                            $select(reader, selection);
+                            else {
+                                if(reader == null) {
+                                    concourse = ensureValidConnection(
+                                            concourse);
+                                    reader = new BatchReader(concourse);
+                                }
+                                // Forward the already-resolved (empty) sources
+                                // so $selectWithPossibleSources doesn't
+                                // re-issue getAttachedSources for every
+                                // cache-missing selection.
+                                $selectWithPossibleSources(reader, selection,
+                                        sources);
+                            }
                             dispatched.add(selection);
                         }
                     }

@@ -322,7 +322,7 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * A simple {@link Record} type with a name and age, used as the baseline
      * for save tests.
      */
-    class Person extends Record {
+    public static class Person extends Record {
 
         String name;
 
@@ -338,7 +338,7 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * A {@link Record} type with a link to a {@link Person} owner, used to
      * exercise object-graph saves.
      */
-    class Pet extends Record {
+    public static class Pet extends Record {
 
         String name;
 
@@ -354,7 +354,7 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * A {@link Record} type with a {@link Unique}-annotated name field, used to
      * exercise uniqueness validation.
      */
-    class UniqueNamed extends Record {
+    public static class UniqueNamed extends Record {
 
         @Unique
         String name;
@@ -369,7 +369,7 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * across a sequence-valued field and a scalar field, used to exercise
      * intra-batch overlap detection in the bulk save path.
      */
-    class CompoundUnique extends Record {
+    public static class CompoundUnique extends Record {
 
         @Unique(name = "bk")
         Set<String> tags;
@@ -388,7 +388,7 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * {@code false} when {@code veto} is set, used to exercise the
      * override-driven abort path.
      */
-    class Vetoing extends Record {
+    public static class Vetoing extends Record {
 
         String name;
 
