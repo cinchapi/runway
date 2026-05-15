@@ -16,7 +16,6 @@
 package com.cinchapi.runway.db;
 
 import java.util.Set;
-import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,8 +40,8 @@ public class BatchReaderTest extends ReaderTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link BatchReader} defers each read
-     * until the returned {@link Supplier} is resolved, so writes that occur
-     * after recording but before resolution are reflected in the result.
+     * until {@link Reader#drain()}, so writes that occur after recording but
+     * before {@code drain()} are reflected in the resolved value.
      * <p>
      * <strong>Start state:</strong> One record is added with
      * {@code flag = true}.
@@ -52,32 +51,31 @@ public class BatchReaderTest extends ReaderTest {
      * <li>Record a {@code find} for {@code flag = true}.</li>
      * <li>Add another {@code flag = true} record directly via the underlying
      * {@link com.cinchapi.concourse.Concourse}.</li>
-     * <li>Resolve the {@link Supplier}.</li>
+     * <li>Resolve the {@link Pending} via {@link Reader#drain()}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The resolved result contains both the original
-     * id and the post-recording id, because the find is issued at resolution
-     * time after the add has landed.
+     * id and the post-recording id, because the find is issued during
+     * {@code drain()} after the post-recording add has landed.
      */
     @Test
-    public void testReadIsIssuedAtSupplierResolution() {
+    public void testReadIsIssuedAtDrain() {
         long original = client.add("flag", true);
 
         Reader reader = newReader();
-        Supplier<Set<Long>> supplier = reader.find(Criteria.where().key("flag")
+        Pending<Set<Long>> pending = reader.find(Criteria.where().key("flag")
                 .operator(Operator.EQUALS).value(true));
         long postRecording = client.add("flag", true);
 
-        Set<Long> ids = supplier.get();
+        Set<Long> ids = resolve(reader, pending);
         Assert.assertTrue(ids.contains(original));
         Assert.assertTrue(ids.contains(postRecording));
     }
 
     /**
      * <strong>Goal:</strong> Verify that when a batch's underlying submission
-     * fails, every {@link Supplier} bound to that batch throws the same
-     * {@link RuntimeException} instance on resolution &mdash; the failure is
-     * latched onto the batch and never re-submitted.
+     * fails, {@link Reader#drain()} throws and {@link Pending Pendings} bound
+     * to the failed batch do not resolve.
      * <p>
      * <strong>Start state:</strong> One record is added with {@code score = 1}.
      * <p>
@@ -87,46 +85,39 @@ public class BatchReaderTest extends ReaderTest {
      * <li>Close the {@link BatchReader Reader's} underlying
      * {@link com.cinchapi.concourse.Concourse Concourse} connection so the next
      * {@code submit} call cannot succeed.</li>
-     * <li>Resolve the first {@link Supplier}; capture the thrown
-     * exception.</li>
-     * <li>Resolve the second {@link Supplier}; capture the thrown
-     * exception.</li>
+     * <li>Call {@link Reader#drain()}; capture the thrown exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> Both invocations throw, and the second
-     * invocation throws the same {@link RuntimeException} instance as the first
-     * &mdash; demonstrating that the failure is latched and the batch is never
-     * re-submitted.
+     * <strong>Expected:</strong> {@link Reader#drain()} throws a
+     * {@link RuntimeException} and neither {@link Pending Pending's} sink
+     * fires.
      */
     @Test
-    public void testFailedFlushLatchesAndRethrowsSameExceptionToSiblings() {
+    public void testFailedFlushDuringDrainThrows() {
         client.add("score", 1);
         Reader reader = newReader();
-        Supplier<Set<Long>> first = reader.find(Criteria.where().key("score")
-                .operator(Operator.GREATER_THAN).value(0));
-        Supplier<Set<Long>> second = reader.find(Criteria.where().key("score")
-                .operator(Operator.GREATER_THAN).value(0));
+        boolean[] firstFired = new boolean[1];
+        boolean[] secondFired = new boolean[1];
+        reader.find(Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(0))
+                .onResolve(ids -> firstFired[0] = true);
+        reader.find(Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(0))
+                .onResolve(ids -> secondFired[0] = true);
         reader.concourse().close();
 
-        RuntimeException firstFailure = null;
+        RuntimeException failure = null;
         try {
-            first.get();
-            Assert.fail("first.get() should have thrown");
+            reader.drain();
+            Assert.fail("drain() should have thrown");
         }
         catch (RuntimeException e) {
-            firstFailure = e;
+            failure = e;
         }
 
-        RuntimeException secondFailure = null;
-        try {
-            second.get();
-            Assert.fail("second.get() should have thrown");
-        }
-        catch (RuntimeException e) {
-            secondFailure = e;
-        }
-
-        Assert.assertSame(firstFailure, secondFailure);
+        Assert.assertNotNull(failure);
+        Assert.assertFalse("first sink should not have fired", firstFired[0]);
+        Assert.assertFalse("second sink should not have fired", secondFired[0]);
     }
 
 }

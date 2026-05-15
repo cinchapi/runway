@@ -15,9 +15,9 @@
  */
 package com.cinchapi.runway.db;
 
+import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Supplier;
 
 import javax.annotation.concurrent.NotThreadSafe;
 
@@ -46,129 +46,109 @@ public class IncrementalReader extends AbstractReader {
     }
 
     @Override
-    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
             Criteria criteria) {
-        Map<Long, Map<String, Set<Object>>> result = concourse.select(criteria);
-        return () -> result;
+        return Pending.of(concourse.select(criteria));
     }
 
     @Override
-    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
-            Set<String> keys, Criteria criteria) {
-        Map<Long, Map<String, Set<Object>>> result = concourse.select(keys,
-                criteria);
-        return () -> result;
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria) {
+        return Pending.of(concourse.select(keys, criteria));
     }
 
     @Override
-    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
             Criteria criteria, Order order) {
-        Map<Long, Map<String, Set<Object>>> result = concourse.select(criteria,
-                order);
-        return () -> result;
+        return Pending.of(concourse.select(criteria, order));
     }
 
     @Override
-    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
-            Set<String> keys, Criteria criteria, Order order) {
-        Map<Long, Map<String, Set<Object>>> result = concourse.select(keys,
-                criteria, order);
-        return () -> result;
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Order order) {
+        return Pending.of(concourse.select(keys, criteria, order));
     }
 
     @Override
-    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
             Criteria criteria, Page page) {
-        Map<Long, Map<String, Set<Object>>> result = concourse.select(criteria,
-                page);
-        return () -> result;
+        return Pending.of(concourse.select(criteria, page));
     }
 
     @Override
-    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
-            Set<String> keys, Criteria criteria, Page page) {
-        Map<Long, Map<String, Set<Object>>> result = concourse.select(keys,
-                criteria, page);
-        return () -> result;
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Page page) {
+        return Pending.of(concourse.select(keys, criteria, page));
     }
 
     @Override
-    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
             Criteria criteria, Order order, Page page) {
-        Map<Long, Map<String, Set<Object>>> result = concourse.select(criteria,
-                order, page);
-        return () -> result;
+        return Pending.of(concourse.select(criteria, order, page));
     }
 
     @Override
-    public Supplier<Map<Long, Map<String, Set<Object>>>> select(
-            Set<String> keys, Criteria criteria, Order order, Page page) {
-        Map<Long, Map<String, Set<Object>>> result = concourse.select(keys,
-                criteria, order, page);
-        return () -> result;
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Order order, Page page) {
+        return Pending.of(concourse.select(keys, criteria, order, page));
     }
 
     @Override
-    public Supplier<Set<Long>> find(Criteria criteria) {
-        Set<Long> result = concourse.find(criteria);
-        return () -> result;
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
+            Collection<Long> records) {
+        return Pending.of(concourse.select(records));
     }
 
     @Override
-    public Supplier<Set<Long>> find(Criteria criteria, Order order) {
-        Set<Long> result = concourse.find(criteria, order);
-        return () -> result;
+    public Pending<Map<String, Set<Object>>> select(long record) {
+        return Pending.of(concourse.select(record));
     }
 
     @Override
-    public Supplier<Set<Long>> find(Criteria criteria, Page page) {
-        Set<Long> result = concourse.find(criteria, page);
-        return () -> result;
-    }
-
-    @Override
-    public Supplier<Set<Long>> find(Criteria criteria, Order order, Page page) {
-        Set<Long> result = concourse.find(criteria, order, page);
-        return () -> result;
-    }
-
-    @Override
-    public Supplier<Map<String, Set<Object>>> select(long record) {
-        Map<String, Set<Object>> result = concourse.select(record);
-        return () -> result;
-    }
-
-    @Override
-    public Supplier<Map<String, Set<Object>>> select(Set<String> keys,
+    public Pending<Map<String, Set<Object>>> select(Set<String> keys,
             long record) {
-        Map<String, Set<Object>> result = concourse.select(keys, record);
-        return () -> result;
+        return Pending.of(concourse.select(keys, record));
     }
 
     @Override
-    public Supplier<Set<Object>> select(String key, long record) {
-        Set<Object> result = concourse.select(key, record);
-        return () -> result;
+    public Pending<Set<Object>> select(String key, long record) {
+        return Pending.of(concourse.select(key, record));
     }
 
     @Override
-    public Supplier<Object> get(String key, long record) {
-        Object result = concourse.get(key, record);
-        return () -> result;
+    public Pending<Object> get(String key, long record) {
+        return Pending.of(concourse.get(key, record));
     }
 
     @Override
-    public Supplier<Map<Long, Map<String, Set<Object>>>> navigate(
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
             Set<String> keys, long record) {
-        Map<Long, Map<String, Set<Object>>> result = concourse.navigate(keys,
-                record);
-        return () -> result;
+        return Pending.of(concourse.navigate(keys, record));
     }
 
     @Override
-    public Supplier<Long> count(String key, Criteria criteria) {
-        long result = concourse.calculate().count(key, criteria);
-        return () -> result;
+    public Pending<Set<Long>> find(Criteria criteria) {
+        return Pending.of(concourse.find(criteria));
+    }
+
+    @Override
+    public Pending<Set<Long>> find(Criteria criteria, Order order) {
+        return Pending.of(concourse.find(criteria, order));
+    }
+
+    @Override
+    public Pending<Set<Long>> find(Criteria criteria, Page page) {
+        return Pending.of(concourse.find(criteria, page));
+    }
+
+    @Override
+    public Pending<Set<Long>> find(Criteria criteria, Order order, Page page) {
+        return Pending.of(concourse.find(criteria, order, page));
+    }
+
+    @Override
+    public Pending<Long> count(String key, Criteria criteria) {
+        return Pending.of(concourse.calculate().count(key, criteria));
     }
 
     @Override

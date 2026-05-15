@@ -23,10 +23,9 @@ import com.google.common.base.Preconditions;
 
 /**
  * Base class for {@link Reader} implementations that wrap a single
- * {@link Concourse} connection. Provides shared bookkeeping for completions
- * registered via {@link #onDrain(Runnable)} and a {@link #drain()} template
- * that delegates the implementation-specific flush step to
- * {@link #prepareDrain()}.
+ * {@link Concourse} connection. Provides the shared {@link #drain()} template
+ * and the package-private {@link #register(Runnable)} hook that {@link Pending}
+ * uses to schedule its own resolution.
  *
  * @author Jeff Nelson
  */
@@ -39,17 +38,10 @@ public abstract class AbstractReader implements Reader {
     protected final Concourse concourse;
 
     /**
-     * Completions registered via {@link #onDrain(Runnable)} and run by
+     * Resolution work registered via {@link #register(Runnable)} and run by
      * {@link #drain()} in registration order.
      */
-    private final List<Runnable> completions;
-
-    /**
-     * Whether the deferred reads have been issued (drained); when {@code true},
-     * subsequent {@link #drain()} calls are no-ops regardless of whether every
-     * completion ran.
-     */
-    private boolean drained;
+    private final List<Runnable> registered;
 
     /**
      * Construct a new {@link AbstractReader}.
@@ -59,8 +51,7 @@ public abstract class AbstractReader implements Reader {
      */
     protected AbstractReader(Concourse concourse) {
         this.concourse = Preconditions.checkNotNull(concourse);
-        this.completions = new ArrayList<>();
-        this.drained = false;
+        this.registered = new ArrayList<>();
     }
 
     @Override
@@ -69,31 +60,32 @@ public abstract class AbstractReader implements Reader {
     }
 
     @Override
-    public final void onDrain(Runnable completion) {
-        completions.add(Preconditions.checkNotNull(completion));
-    }
-
-    @Override
     public final void drain() {
-        if(drained) {
-            return;
-        }
-        prepareDrain();
-        drained = true;
-        try {
-            for (Runnable completion : completions) {
-                completion.run();
+        while (!registered.isEmpty()) {
+            prepareDrain();
+            List<Runnable> snapshot = new ArrayList<>(registered);
+            registered.clear();
+            for (Runnable work : snapshot) {
+                work.run();
             }
-        }
-        finally {
-            completions.clear();
         }
     }
 
     /**
+     * Register {@code work} to run during {@link #drain()}, in registration
+     * order. Work registered while {@link #drain()} is iterating runs in a
+     * subsequent pass after any reads it records have been issued.
+     *
+     * @param work the resolution work to run
+     */
+    final void register(Runnable work) {
+        registered.add(Preconditions.checkNotNull(work));
+    }
+
+    /**
      * Issue any deferred work (e.g., submit a batched
-     * {@link com.cinchapi.concourse.lang.CommandGroup CommandGroup}) before
-     * {@link #onDrain registered completions} run.
+     * {@link com.cinchapi.concourse.lang.CommandGroup CommandGroup}) before the
+     * next wave of {@link #register registered} resolutions run.
      */
     protected abstract void prepareDrain();
 

@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Supplier;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -60,7 +60,7 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Record a {@code find} with a criteria matching the {@code score = 10}
      * record.</li>
-     * <li>Call {@link Supplier#get()} on the returned {@link Supplier}.</li>
+     * <li>Resolve the {@link Pending}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The resolved {@link Set} contains exactly the
@@ -72,9 +72,8 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         long high = client.add("score", 10);
 
         Reader reader = newReader();
-        Supplier<Set<Long>> supplier = reader.find(Criteria.where().key("score")
-                .operator(Operator.GREATER_THAN).value(7));
-        Set<Long> ids = supplier.get();
+        Set<Long> ids = resolve(reader, reader.find(Criteria.where()
+                .key("score").operator(Operator.GREATER_THAN).value(7)));
 
         Assert.assertEquals(ImmutableSet.of(high), ids);
         Assert.assertFalse(ids.contains(low));
@@ -91,12 +90,12 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Record a {@code select} for active records.</li>
      * <li>Record a {@code find} for inactive records.</li>
-     * <li>Resolve both {@link Supplier Suppliers}.</li>
+     * <li>Drain the {@link Reader} and capture both results.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The select {@link Supplier} resolves to a
-     * {@link Map} keyed by the two active record ids; the find {@link Supplier}
-     * resolves to a {@link Set} containing the single inactive record id.
+     * <strong>Expected:</strong> The select resolves to a {@link Map} keyed by
+     * the two active record ids; the find resolves to a {@link Set} containing
+     * the single inactive record id.
      */
     @Test
     public void testMultipleReadsResolveIndependently() {
@@ -105,20 +104,21 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         long c = client.add("active", false);
 
         Reader reader = newReader();
-        Supplier<Map<Long, Map<String, Set<Object>>>> active = reader
-                .select(Criteria.where().key("active").operator(Operator.EQUALS)
-                        .value(true));
-        Supplier<Set<Long>> inactive = reader.find(Criteria.where()
-                .key("active").operator(Operator.EQUALS).value(false));
+        AtomicReference<Map<Long, Map<String, Set<Object>>>> active = new AtomicReference<>();
+        AtomicReference<Set<Long>> inactive = new AtomicReference<>();
+        reader.select(Criteria.where().key("active").operator(Operator.EQUALS)
+                .value(true)).onResolve(active::set);
+        reader.find(Criteria.where().key("active").operator(Operator.EQUALS)
+                .value(false)).onResolve(inactive::set);
+        reader.drain();
 
         Assert.assertEquals(ImmutableSet.of(a, b), active.get().keySet());
         Assert.assertEquals(ImmutableSet.of(c), inactive.get());
     }
 
     /**
-     * <strong>Goal:</strong> Verify that records recorded after a previous
-     * resolution start a new batch and resolve to their own value, independent
-     * of the prior batch.
+     * <strong>Goal:</strong> Verify that reads recorded after a previous
+     * {@link Reader#drain()} still resolve correctly on a subsequent drain.
      * <p>
      * <strong>Start state:</strong> Two records are added &mdash; one with
      * {@code tag = "first"} and one with {@code tag = "second"}.
@@ -140,13 +140,13 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         long second = client.add("tag", "second");
 
         Reader reader = newReader();
-        Supplier<Set<Long>> firstSupplier = reader.find(Criteria.where()
-                .key("tag").operator(Operator.EQUALS).value("first"));
-        Assert.assertEquals(ImmutableSet.of(first), firstSupplier.get());
+        Set<Long> firstResult = resolve(reader, reader.find(Criteria.where()
+                .key("tag").operator(Operator.EQUALS).value("first")));
+        Assert.assertEquals(ImmutableSet.of(first), firstResult);
 
-        Supplier<Set<Long>> secondSupplier = reader.find(Criteria.where()
-                .key("tag").operator(Operator.EQUALS).value("second"));
-        Assert.assertEquals(ImmutableSet.of(second), secondSupplier.get());
+        Set<Long> secondResult = resolve(reader, reader.find(Criteria.where()
+                .key("tag").operator(Operator.EQUALS).value("second")));
+        Assert.assertEquals(ImmutableSet.of(second), secondResult);
     }
 
     /**
@@ -160,7 +160,7 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Record a {@code select} with a criteria matching only the
      * {@code age = 40} record.</li>
-     * <li>Resolve the {@link Supplier}.</li>
+     * <li>Resolve the {@link Pending}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The resolved {@link Map} has exactly one entry
@@ -174,10 +174,9 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         client.add("age", 40, bob);
 
         Reader reader = newReader();
-        Supplier<Map<Long, Map<String, Set<Object>>>> supplier = reader
-                .select(Criteria.where().key("age")
-                        .operator(Operator.GREATER_THAN).value(35));
-        Map<Long, Map<String, Set<Object>>> data = supplier.get();
+        Map<Long, Map<String, Set<Object>>> data = resolve(reader,
+                reader.select(Criteria.where().key("age")
+                        .operator(Operator.GREATER_THAN).value(35)));
 
         Assert.assertEquals(1, data.size());
         Assert.assertTrue(data.containsKey(bob));
@@ -194,7 +193,7 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Record a {@code select} with {@code keys = {"name", "city"}}.</li>
-     * <li>Resolve the {@link Supplier}.</li>
+     * <li>Resolve the {@link Pending}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The inner {@link Map} for the matching record
@@ -208,10 +207,9 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         client.add("city", "Atlanta", jeff);
 
         Reader reader = newReader();
-        Supplier<Map<Long, Map<String, Set<Object>>>> supplier = reader
-                .select(ImmutableSet.of("name", "city"), Criteria.where()
-                        .key("name").operator(Operator.EQUALS).value("jeff"));
-        Map<Long, Map<String, Set<Object>>> data = supplier.get();
+        Map<Long, Map<String, Set<Object>>> data = resolve(reader,
+                reader.select(ImmutableSet.of("name", "city"), Criteria.where()
+                        .key("name").operator(Operator.EQUALS).value("jeff")));
         Map<String, Set<Object>> entry = data.get(jeff);
 
         Assert.assertEquals(ImmutableSet.of("name", "city"), entry.keySet());
@@ -228,7 +226,7 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Record a {@code count} on the {@code score} key with a criteria
      * matching the records with {@code score > 3}.</li>
-     * <li>Resolve the {@link Supplier}.</li>
+     * <li>Resolve the {@link Pending}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The resolved count is {@code 2}.
@@ -240,10 +238,10 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         client.add("score", 10);
 
         Reader reader = newReader();
-        Supplier<Long> supplier = reader.count("score", Criteria.where()
-                .key("score").operator(Operator.GREATER_THAN).value(3));
+        Long count = resolve(reader, reader.count("score", Criteria.where()
+                .key("score").operator(Operator.GREATER_THAN).value(3)));
 
-        Assert.assertEquals(Long.valueOf(2L), supplier.get());
+        Assert.assertEquals(Long.valueOf(2L), count);
     }
 
     /**
@@ -256,7 +254,7 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Record a {@code select} for that record id.</li>
-     * <li>Resolve the {@link Supplier}.</li>
+     * <li>Resolve the {@link Pending}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The resolved {@link Map} contains entries for
@@ -268,8 +266,7 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         client.add("age", 32, id);
 
         Reader reader = newReader();
-        Supplier<Map<String, Set<Object>>> supplier = reader.select(id);
-        Map<String, Set<Object>> data = supplier.get();
+        Map<String, Set<Object>> data = resolve(reader, reader.select(id));
 
         Assert.assertEquals(ImmutableSet.of("name", "age"), data.keySet());
     }
@@ -285,7 +282,7 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Record a {@code select} for {@code keys = {"name", "city"}} on that
      * record.</li>
-     * <li>Resolve the {@link Supplier}.</li>
+     * <li>Resolve the {@link Pending}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The resolved {@link Map} has exactly the
@@ -298,9 +295,8 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         client.add("city", "Atlanta", id);
 
         Reader reader = newReader();
-        Supplier<Map<String, Set<Object>>> supplier = reader
-                .select(ImmutableSet.of("name", "city"), id);
-        Map<String, Set<Object>> data = supplier.get();
+        Map<String, Set<Object>> data = resolve(reader,
+                reader.select(ImmutableSet.of("name", "city"), id));
 
         Assert.assertEquals(ImmutableSet.of("name", "city"), data.keySet());
     }
@@ -316,7 +312,7 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Record a {@code select} for {@code key = "tag"} on that record.</li>
-     * <li>Resolve the {@link Supplier}.</li>
+     * <li>Resolve the {@link Pending}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The resolved {@link Set} contains every value
@@ -329,10 +325,9 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         client.add("tag", "gamma", id);
 
         Reader reader = newReader();
-        Supplier<Set<Object>> supplier = reader.select("tag", id);
+        Set<Object> values = resolve(reader, reader.select("tag", id));
 
-        Assert.assertEquals(ImmutableSet.of("alpha", "beta", "gamma"),
-                supplier.get());
+        Assert.assertEquals(ImmutableSet.of("alpha", "beta", "gamma"), values);
     }
 
     /**
@@ -346,7 +341,7 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Record a {@code get} for {@code key = "status"} on that record.</li>
-     * <li>Resolve the {@link Supplier}.</li>
+     * <li>Resolve the {@link Pending}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The resolved value is the most recently added
@@ -358,9 +353,97 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         client.add("status", "approved", id);
 
         Reader reader = newReader();
-        Supplier<Object> supplier = reader.get("status", id);
+        Object value = resolve(reader, reader.get("status", id));
 
-        Assert.assertEquals("approved", supplier.get());
+        Assert.assertEquals("approved", value);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Reader#select(java.util.Collection)} resolves to a {@link Map}
+     * keyed by every record id in the supplied collection.
+     * <p>
+     * <strong>Start state:</strong> Three records exist with values stored
+     * under {@code tag}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Record a {@code select} for an explicit set of two of the three
+     * record ids.</li>
+     * <li>Resolve the {@link Pending}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The resolved {@link Map} contains exactly the
+     * two requested record ids; the unrequested record is absent.
+     */
+    @Test
+    public void testSelectByRecordCollectionYieldsRequestedRecords() {
+        long alpha = client.add("tag", "alpha");
+        long bravo = client.add("tag", "bravo");
+        long charlie = client.add("tag", "charlie");
+
+        Reader reader = newReader();
+        Map<Long, Map<String, Set<Object>>> data = resolve(reader,
+                reader.select(ImmutableSet.of(alpha, bravo)));
+
+        Assert.assertEquals(ImmutableSet.of(alpha, bravo), data.keySet());
+        Assert.assertFalse(data.containsKey(charlie));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Pending#then chained
+     * continuation} can record a follow-up read whose result is observed by a
+     * subsequent {@link Pending#onResolve} sink in the same drain.
+     * <p>
+     * <strong>Start state:</strong> Two records exist &mdash; one with
+     * {@code stage = "first"} and one with {@code stage = "second"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Record a {@code find} for {@code stage = "first"}.</li>
+     * <li>Chain {@code .then} so that the result of the first find is observed
+     * and a second {@code find} for {@code stage = "second"} is recorded.</li>
+     * <li>Drain the {@link Reader}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both finds resolve and the captured result of
+     * the chained find contains the {@code stage = "second"} record's id.
+     */
+    @Test
+    public void testThenChainsAcrossDrainPasses() {
+        long first = client.add("stage", "first");
+        long second = client.add("stage", "second");
+
+        Reader reader = newReader();
+        AtomicReference<Set<Long>> firstResult = new AtomicReference<>();
+        AtomicReference<Set<Long>> secondResult = new AtomicReference<>();
+        reader.find(Criteria.where().key("stage").operator(Operator.EQUALS)
+                .value("first")).then(ids -> {
+                    firstResult.set(ids);
+                    return reader.find(Criteria.where().key("stage")
+                            .operator(Operator.EQUALS).value("second"));
+                }).onResolve(secondResult::set);
+        reader.drain();
+
+        Assert.assertEquals(ImmutableSet.of(first), firstResult.get());
+        Assert.assertEquals(ImmutableSet.of(second), secondResult.get());
+    }
+
+    /**
+     * Capture the value of {@code pending} by attaching an
+     * {@link Pending#onResolve} sink, calling {@link Reader#drain()}, and
+     * returning the captured value.
+     *
+     * @param reader the {@link Reader} that owns {@code pending}
+     * @param pending the {@link Pending} to resolve
+     * @param <T> the value type
+     * @return the resolved value
+     */
+    protected final <T> T resolve(Reader reader, Pending<T> pending) {
+        AtomicReference<T> result = new AtomicReference<>();
+        pending.onResolve(result::set);
+        reader.drain();
+        return result.get();
     }
 
     /**
