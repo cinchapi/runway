@@ -15,30 +15,65 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Set;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
+import com.cinchapi.common.reflect.Reflection;
 import com.google.common.collect.ImmutableSet;
 
 /**
  * Integration tests for {@link Runway#save(Record...)} and
- * {@link Runway#save(boolean, Record...)} on the bulk-command save path enabled
- * when the connected server supports the Concourse Command API (1.0.0+).
- * <p>
- * The bulk path drives every save through a
- * {@link com.cinchapi.runway.db.BatchSaver} that batches stage + audit +
- * uniqueness {@code find} into one round trip, validates the results
- * client-side, and submits the writes plus {@code commit()} in a second round
- * trip. These tests verify that the save semantics &mdash; field persistence,
+ * {@link Runway#save(boolean, Record...)} that verify field persistence,
  * stale-data detection, uniqueness enforcement, cascading delete, record-graph
- * saves, and {@link Record#overrideSave() override-driven abort} &mdash; match
- * the path the {@link com.cinchapi.runway.db.IncrementalSaver} preserves.
+ * saves, and {@link Record#overrideSave() override-driven abort}. Each test
+ * runs once against the {@link com.cinchapi.runway.db.BatchSaver BatchSaver}
+ * and once against the {@link com.cinchapi.runway.db.IncrementalSaver
+ * IncrementalSaver} so both save paths are exercised regardless of the
+ * connected server's Command-API capability.
  *
  * @author Jeff Nelson
  */
+@RunWith(Parameterized.class)
 public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
+
+    /**
+     * Return the parameter matrix that drives each test once per save path.
+     *
+     * @return one row per {@link com.cinchapi.runway.db.Saver Saver}
+     *         implementation
+     */
+    @Parameters(name = "bulkCommands={0}")
+    public static Collection<Object[]> parameters() {
+        return Arrays.asList(new Object[][] { { true }, { false } });
+    }
+
+    private final boolean useBulkCommands;
+
+    /**
+     * Construct a new instance.
+     *
+     * @param useBulkCommands {@code true} to drive saves through the
+     *            {@link com.cinchapi.runway.db.BatchSaver BatchSaver};
+     *            {@code false} for the
+     *            {@link com.cinchapi.runway.db.IncrementalSaver
+     *            IncrementalSaver}
+     */
+    public RunwayBulkSaveIntegrationTest(boolean useBulkCommands) {
+        this.useBulkCommands = useBulkCommands;
+    }
+
+    @Override
+    public void beforeEachTest() {
+        super.beforeEachTest();
+        Reflection.set("supportsBulkCommands", useBulkCommands, runway); // (authorized)
+    }
 
     /**
      * <strong>Goal:</strong> Verify that a single-record save persists every

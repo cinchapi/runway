@@ -72,10 +72,20 @@ public final class BatchSaver implements Saver {
     private boolean stageBundled;
 
     /**
-     * Deferred read recordings in the active batch. Each entry records its own
-     * slot position when it runs against the active read {@link CommandGroup}.
+     * Deferred read recordings that must observe the pre-save snapshot. Applied
+     * to the active {@link CommandGroup} before the deferred writes so the
+     * audit-based stale-write check sees only state that existed before this
+     * save began. Each entry records its own slot position when it runs.
      */
-    private final List<Consumer<CommandGroup>> deferredReadOps;
+    private final List<Consumer<CommandGroup>> preWriteReadOps;
+
+    /**
+     * Deferred read recordings that must observe the writes accumulated in this
+     * save. Applied to the active {@link CommandGroup} after the deferred
+     * writes so uniqueness and cascade-delete lookups see the in-flight
+     * updates. Each entry records its own slot position when it runs.
+     */
+    private final List<Consumer<CommandGroup>> postWriteReadOps;
 
     /**
      * Validator {@link Consumer Consumers} paired with the deferred reads in
@@ -113,7 +123,8 @@ public final class BatchSaver implements Saver {
         this.concourse = Preconditions.checkNotNull(concourse);
         this.stageRequested = false;
         this.stageBundled = false;
-        this.deferredReadOps = new ArrayList<>();
+        this.preWriteReadOps = new ArrayList<>();
+        this.postWriteReadOps = new ArrayList<>();
         this.pendingValidators = new ArrayList<>();
         this.deferredWriteOps = new ArrayList<>();
         this.uniqueIntents = new HashMap<>();
@@ -136,7 +147,7 @@ public final class BatchSaver implements Saver {
             Consumer<Map<Timestamp, List<String>>> validator) {
         Preconditions.checkNotNull(validator);
         int[] slot = new int[1];
-        deferredReadOps.add(group -> {
+        preWriteReadOps.add(group -> {
             slot[0] = group.commands().size();
             group.audit(record);
         });
@@ -152,7 +163,7 @@ public final class BatchSaver implements Saver {
     public void find(Criteria criteria, Consumer<Set<Long>> validator) {
         Preconditions.checkNotNull(validator);
         int[] slot = new int[1];
-        deferredReadOps.add(group -> {
+        postWriteReadOps.add(group -> {
             slot[0] = group.commands().size();
             group.find(criteria);
         });
@@ -168,7 +179,7 @@ public final class BatchSaver implements Saver {
             Consumer<Map<Long, Set<Object>>> consumer) {
         Preconditions.checkNotNull(consumer);
         int[] slot = new int[1];
-        deferredReadOps.add(group -> {
+        postWriteReadOps.add(group -> {
             slot[0] = group.commands().size();
             group.select(key, criteria);
         });
@@ -268,13 +279,16 @@ public final class BatchSaver implements Saver {
      * {@link Consumer Consumer} against the result list in recording order.
      * No-op when no reads have been recorded since the previous flush.
      * <p>
-     * Deferred writes accumulated up to this point are submitted in the same
-     * {@link CommandGroup} immediately before the reads, so reads observe those
-     * writes in the staged transaction.
+     * Reads are split around the deferred writes by what they need to see:
+     * pre-write reads (the stale-write {@link #audit audit}) run against the
+     * pre-save snapshot, then the deferred writes apply within the same staged
+     * transaction, then post-write reads ({@link #find find} and {@link #select
+     * select}) run so uniqueness and cascade-delete lookups observe the
+     * in-flight updates.
      * </p>
      */
     private void flushReads() {
-        if(!deferredReadOps.isEmpty()) {
+        if(!preWriteReadOps.isEmpty() || !postWriteReadOps.isEmpty()) {
             CommandGroup group = concourse.prepare();
             if(stageRequested && !stageBundled) {
                 // NOTE: STAGE inside this CommandGroup relies on the driver
@@ -285,11 +299,15 @@ public final class BatchSaver implements Saver {
                 group.stage();
                 stageBundled = true;
             }
+            for (Consumer<CommandGroup> op : preWriteReadOps) {
+                op.accept(group);
+            }
+            preWriteReadOps.clear();
             for (Consumer<CommandGroup> op : deferredWriteOps) {
                 op.accept(group);
             }
             deferredWriteOps.clear();
-            for (Consumer<CommandGroup> op : deferredReadOps) {
+            for (Consumer<CommandGroup> op : postWriteReadOps) {
                 op.accept(group);
             }
             List<Object> results = concourse.submit(group);
@@ -298,7 +316,7 @@ public final class BatchSaver implements Saver {
             // fresh batch.
             List<Consumer<List<Object>>> active = new ArrayList<>(
                     pendingValidators);
-            deferredReadOps.clear();
+            postWriteReadOps.clear();
             pendingValidators.clear();
             for (Consumer<List<Object>> validator : active) {
                 validator.accept(results);
