@@ -330,10 +330,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Return {@code true} if a server running {@code actual} provides a feature
+     * gated on {@code target} &mdash; either {@code actual} is at least
+     * {@code target}, or it is the {@link #DEVELOPMENT_VERSION}, which is
+     * treated as providing every feature.
+     * 
+     * @param actual the connected server's {@link Version}
+     * @param target the minimum {@link Version} that provides the feature
+     *
+     * @return {@code true} if {@code actual} provides the feature
+     */
+    private static boolean isActualVersionGreaterThanOrEquals(Version actual,
+            Version target) {
+        return actual.greaterThanOrEqualTo(target)
+                || actual.equals(DEVELOPMENT_VERSION);
+    }
+
+    /**
      * The maximum number of times a spurious save failure is retried before
      * giving up.
      */
     private static final int MAX_SPURIOUS_SAVE_RETRIES = 5;
+
+    /**
+     * The development {@link Version} sentinel; a server reporting this version
+     * is treated as providing every feature, regardless of the {@link Version}
+     * a given feature is gated on.
+     */
+    private static final Version DEVELOPMENT_VERSION = Versions
+            .parseSemanticVersion("0.0.0-SNAPSHOT");
 
     /**
      * The default {@link #onLoadFailureHandler}.
@@ -506,26 +531,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
         Concourse concourse = connections.request();
         try {
-            Version target = Version.forIntegers(0, 10);
             Version actual = Versions
                     .parseSemanticVersion(concourse.getServerVersion());
-            this.hasNativeSortingAndPagination = actual
-                    .greaterThanOrEqualTo(target)
-                    || actual.equals(
-                            Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
-            target = Version.forIntegers(0, 11, 3);
-            this.supportsPreSelectLinkedRecords = actual
-                    .greaterThanOrEqualTo(target)
-                    || actual.equals(
-                            Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
-            target = Version.forIntegers(0, 12, 2);
-            this.supportsNativeCount = actual.greaterThanOrEqualTo(target)
-                    || actual.equals(
-                            Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
-            target = Version.forIntegers(1, 0, 0);
-            this.supportsBulkCommands = actual.greaterThanOrEqualTo(target)
-                    || actual.equals(
-                            Versions.parseSemanticVersion("0.0.0-SNAPSHOT"));
+            this.hasNativeSortingAndPagination = isActualVersionGreaterThanOrEquals(
+                    actual, Version.forIntegers(0, 10));
+            this.supportsPreSelectLinkedRecords = isActualVersionGreaterThanOrEquals(
+                    actual, Version.forIntegers(0, 11, 3));
+            this.supportsNativeCount = isActualVersionGreaterThanOrEquals(
+                    actual, Version.forIntegers(0, 12, 2));
+            this.supportsBulkCommands = isActualVersionGreaterThanOrEquals(
+                    actual, Version.forIntegers(1, 0, 0));
         }
         finally {
             connections.release(concourse);
@@ -903,13 +918,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         if(t instanceof ConstraintViolationException) {
                             named = ((ConstraintViolationException) t).record();
                         }
-                        Record offender;
-                        if(named != null) {
-                            offender = named;
-                        }
-                        else {
-                            offender = current;
-                        }
+                        Record offender = named != null ? named : current;
                         if(offender != null) {
                             offender.errors.add(t);
                         }

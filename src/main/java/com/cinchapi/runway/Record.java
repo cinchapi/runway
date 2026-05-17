@@ -429,6 +429,24 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if {@code audit} contains any change recorded after
+     * {@code checkpointTs}
+     *
+     * @param audit a record-level audit history keyed by {@link Timestamp}
+     * @param checkpointTs the timestamp of the most recent checkpoint
+     * @return {@code true} if the data is stale
+     */
+    private static boolean isStaleAudit(Map<Timestamp, List<String>> audit,
+            long checkpointTs) {
+        for (Timestamp ts : audit.keySet()) {
+            if(ts.getMicros() > checkpointTs) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
      *
@@ -1956,7 +1974,7 @@ public abstract class Record implements Comparable<Record> {
             return false;
         }
         else {
-            return isStaleAudit(concourse.audit(id));
+            return isStaleAudit(concourse.audit(id), checkpointTs);
         }
     }
 
@@ -1983,22 +2001,6 @@ public abstract class Record implements Comparable<Record> {
      */
     final boolean inZombieState(Concourse concourse) {
         return inZombieState(id, concourse, null);
-    }
-
-    /**
-     * Return {@code true} if {@code audit} contains any change recorded after
-     * this {@link Record Record's} most recent checkpoint.
-     *
-     * @param audit a record-level audit history keyed by {@link Timestamp}
-     * @return {@code true} if the data is stale
-     */
-    boolean isStaleAudit(Map<Timestamp, List<String>> audit) {
-        for (Timestamp ts : audit.keySet()) {
-            if(ts.getMicros() > checkpointTs) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -2219,7 +2221,7 @@ public abstract class Record implements Comparable<Record> {
         Preconditions.checkState(!inViolation);
         if(preventStaleWrite && checkpointTs != 0) {
             saver.audit(id, audit -> {
-                if(isStaleAudit(audit)) {
+                if(isStaleAudit(audit, checkpointTs)) {
                     throw new StaleDataException(id);
                 }
             });
