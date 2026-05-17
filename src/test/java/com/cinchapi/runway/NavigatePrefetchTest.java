@@ -1030,6 +1030,45 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(dockValues.contains("gamma"));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that navigate path computation terminates
+     * and emits the {@code *} transitive modifier for a polymorphic
+     * {@link Record} whose self-referential edges are declared with a base type
+     * that has subtypes.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve navigate paths for {@link Manager}, whose
+     * single-{@link Record} {@code supervisor} and {@link java.util.Collection
+     * Collection&lt;Record&gt;} {@code directReports} fields are both declared
+     * as the base type {@link Employee}, which {@link Manager} extends.</li>
+     * <li>Assert that both edges emit the {@code *} transitive modifier.</li>
+     * <li>Assert that neither edge re-emits itself under a chained {@code *}
+     * suffix.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Paths include {@code supervisor*.name} and
+     * {@code directReports*.name}; no path begins with
+     * {@code supervisor*.supervisor*.} or
+     * {@code directReports*.directReports*.}. Computation terminates without a
+     * {@link StackOverflowError}.
+     */
+    @Test
+    public void testNavigatePathsForPolymorphicSelfReferentialRecord() {
+        Set<String> navigatePaths = Record.StaticAnalysis.instance()
+                .getNavigatePaths(Manager.class);
+        Assert.assertNotNull(navigatePaths);
+        Assert.assertTrue(navigatePaths.contains("supervisor*.name"));
+        Assert.assertTrue(navigatePaths.contains("directReports*.name"));
+        Assert.assertTrue(navigatePaths.stream()
+                .noneMatch(p -> p.startsWith("supervisor*.supervisor*.")));
+        Assert.assertTrue(navigatePaths.stream().noneMatch(
+                p -> p.startsWith("directReports*.directReports*.")));
+    }
+
     // NOTE: Performance benchmark tests were removed because
     // timing-based assertions are inherently flaky on localhost
     // where server work dominates latency. The optimization
@@ -1393,6 +1432,38 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
          * A label for this {@link Beta}.
          */
         public String label;
+    }
+
+    /**
+     * The base of a polymorphic {@link Record} hierarchy. Because
+     * {@link Manager} extends {@link Employee}, a field declared as
+     * {@link Employee} may link to either an {@link Employee} or a
+     * {@link Manager}.
+     */
+    class Employee extends Record {
+
+        /**
+         * A human-readable name for this {@link Employee}.
+         */
+        public String name;
+    }
+
+    /**
+     * A subclass of {@link Employee} whose self-referential fields are declared
+     * with the polymorphic base type {@link Employee}, exercising navigate path
+     * cycle detection across edges that close through a subtype.
+     */
+    class Manager extends Employee {
+
+        /**
+         * The {@link Employee} this {@link Manager} reports to.
+         */
+        public Employee supervisor;
+
+        /**
+         * The {@link Employee Employees} who report to this {@link Manager}.
+         */
+        public List<Employee> directReports = Lists.newArrayList();
     }
 
 }

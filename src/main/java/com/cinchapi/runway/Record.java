@@ -3532,7 +3532,8 @@ public abstract class Record implements Comparable<Record> {
             for (Field field : fields) {
                 Class<?> type = field.getType();
                 if(Record.class.isAssignableFrom(type)
-                        && !ancestors.contains(type)) {
+                        && !isCyclic((Class<? extends Record>) type,
+                                hierarchies, ancestors)) {
                     // Non-cyclic single-Record edge: recurse to discover
                     // Collection<Record> fields reachable through this link.
                     // The bare field name is intentionally not emitted here
@@ -3570,7 +3571,8 @@ public abstract class Record implements Comparable<Record> {
                         continue;
                     }
                     Class<? extends Record> recordType = (Class<? extends Record>) elementType;
-                    boolean cyclic = ancestors.contains(recordType);
+                    boolean cyclic = isCyclic(recordType, hierarchies,
+                            ancestors);
                     TransitiveEdge edge = cyclic
                             ? new TransitiveEdge(clazz, field.getName())
                             : null;
@@ -3640,6 +3642,25 @@ public abstract class Record implements Comparable<Record> {
             Set<T> next = new HashSet<>(set);
             next.add(element);
             return next;
+        }
+
+        /**
+         * Return {@code true} if an edge whose declared destination is
+         * {@code recordType} closes a cycle &mdash; that is, if
+         * {@code recordType}, or any of its subtypes, is among the
+         * {@code ancestors} already traversed.
+         *
+         * @param recordType the declared destination {@link Record} type
+         * @param hierarchies the {@link Record} type hierarchies
+         * @param ancestors the {@link Record} types already traversed on the
+         *            current lineage
+         * @return {@code true} if the edge closes a cycle
+         */
+        private static boolean isCyclic(Class<? extends Record> recordType,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Set<Class<? extends Record>> ancestors) {
+            return hierarchies.get(recordType).stream()
+                    .anyMatch(ancestors::contains);
         }
 
         /**
