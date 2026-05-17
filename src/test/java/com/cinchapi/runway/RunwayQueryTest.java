@@ -15,85 +15,22 @@
  */
 package com.cinchapi.runway;
 
-import java.util.List;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Collectors;
 
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
-import com.cinchapi.concourse.time.Time;
-import com.cinchapi.concourse.util.Random;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
 
 /**
- * Tests for {@link Runway} streaming, query operations, derived/computed data
- * queries, and static analysis.
+ * Tests for {@link Runway} query operations, derived/computed data queries, and
+ * static analysis.
  *
  * @author Jeff Nelson
  */
 public class RunwayQueryTest extends AbstractRunwayTest {
-
-    @Test
-    public void testStreaminBulkSelect() {
-        runway.bulkSelectTimeoutMillis = 0; // force
-                                            // streaming
-                                            // bulk select
-        Set<Manager> expected = Sets.newHashSet();
-        Reflection.set("streamingReadBufferSize",
-                new java.util.Random().nextInt(10) + 1, runway);
-        for (int i = 0; i < Random.getScaleCount(); ++i) {
-            Manager manager = new Manager("" + Time.now());
-            manager.save();
-            expected.add(manager);
-        }
-        Set<Manager> actual = runway.load(Manager.class);
-        Assert.assertEquals(expected, actual);
-    }
-
-    @Test
-    public void testStreamingBulkSelectSkipSupport() {
-        int bulkSelectTimeoutMillis = runway.bulkSelectTimeoutMillis;
-        int streamingReadBufferSize = Reflection.get("streamingReadBufferSize",
-                runway);
-        try {
-            runway.bulkSelectTimeoutMillis = 0; // force
-                                                // streaming
-                                                // bulk
-                                                // select
-            Set<Manager> expected = Sets.newLinkedHashSet();
-            Reflection.set("streamingReadBufferSize",
-                    new java.util.Random().nextInt(10) + 1, runway);
-            for (int i = 0; i < Random.getScaleCount(); ++i) {
-                Manager manager = new Manager("" + Time.now());
-                manager.save();
-                expected.add(manager);
-            }
-            Set<Manager> actual = runway.load(Manager.class);
-            Set<Manager> $expected = Sets.newLinkedHashSet();
-            int i = 0;
-            int skip = expected.size() / 3;
-            for (Manager manager : runway.load(Manager.class)) {
-                if(i >= skip) {
-                    $expected.add(manager);
-                }
-                ++i;
-            }
-            actual = actual.stream().skip(skip).collect(Collectors.toSet());
-            Assert.assertEquals($expected, actual);
-        }
-        finally {
-            runway.bulkSelectTimeoutMillis = bulkSelectTimeoutMillis;
-            Reflection.set("streamingReadBufferSize", streamingReadBufferSize,
-                    runway);
-        }
-    }
 
     @Test
     public void testFindAnyAndInstantiateBaseClass() {
@@ -142,39 +79,6 @@ public class RunwayQueryTest extends AbstractRunwayTest {
                 Criteria.where().key("organization.name")
                         .operator(Operator.EQUALS).value("Cinchapi"));
         Assert.assertEquals(ImmutableSet.of(a), people);
-    }
-
-    @Test
-    public void testPreventOutOfSequenceResponse() {
-        int bulkSelectTimeoutMillis = runway.bulkSelectTimeoutMillis;
-        runway.bulkSelectTimeoutMillis = 1;
-        List<Long> ids = Lists.newArrayList();
-        try {
-            for (int i = 0; i < 10000; ++i) {
-                Admin admin = new Admin("Jeff Nelson", "foo");
-                admin.save();
-                ids.add(admin.id());
-            }
-            runway.load(Admin.class);
-            AtomicBoolean done = new AtomicBoolean(false);
-            AtomicBoolean failed = new AtomicBoolean(false);
-            long now = System.currentTimeMillis();
-            while (!done.get() && System.currentTimeMillis() - now <= 3000) {
-                try {
-                    runway.load(Admin.class,
-                            ids.get(Math.abs(Random.getInt()) % ids.size()));
-                }
-                catch (Exception e) {
-                    e.printStackTrace();
-                    done.set(true);
-                    failed.set(true);
-                }
-            }
-            Assert.assertFalse(failed.get());
-        }
-        finally {
-            runway.bulkSelectTimeoutMillis = bulkSelectTimeoutMillis;
-        }
     }
 
     @Test
