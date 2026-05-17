@@ -26,16 +26,91 @@ import javax.annotation.concurrent.NotThreadSafe;
 import com.google.common.base.Preconditions;
 
 /**
- * A {@link Pending} is a value that is eventually produced by a {@link Reader}.
+ * A {@link Pending} is a value that resolves at some point in the future.
  * <p>
- * Composition operators ({@link #map}, {@link #then}) build new {@link Pending
- * Pendings} from existing ones, and {@link #onResolve} delivers the value to a
- * {@link Consumer}.
+ * Some {@link Pending Pendings} are already resolved when constructed &mdash;
+ * for example, one returned by {@link #of}. Others stand in for a value that
+ * will be supplied later, such as the result of a deferred read recorded by a
+ * {@link Reader}. In either case, the contract is the same: callers do not read
+ * the value out of a {@link Pending}; instead, they register a {@link Consumer}
+ * and the {@link Pending} delivers the value to that {@link Consumer} when one
+ * is available.
+ * </p>
+ *
+ * <h2>Push, not pull</h2>
+ * <p>
+ * A natural alternative would expose a pull-style accessor &mdash; something
+ * like {@code T get()} that the caller invokes when it wants the value,
+ * blocking or polling until one is available. {@link Pending} works the other
+ * way around: the caller registers a {@link Consumer} via {@link #onResolve},
+ * and the {@link Pending} pushes the value to that {@link Consumer} as soon as
+ * one is known. If the value is already known at the moment {@link #onResolve}
+ * is called, delivery happens synchronously during that call; otherwise the
+ * {@link Consumer} is held until the value arrives, at which point every
+ * registered {@link Consumer} receives it.
  * </p>
  * <p>
- * A {@link Pending} value is <strong>not thread-safe</strong>: it is associated
- * with a single {@link Reader} and must be touched only from that {@link Reader
- * Reader's} owning thread.
+ * The push model lets whatever produces the value choose when resolution
+ * happens &mdash; for example, batching many deferred reads behind a single
+ * round trip &mdash; without callers having to coordinate the timing
+ * themselves. Callers wire up what should happen with the value and move on.
+ * </p>
+ *
+ * <h2>Composition</h2>
+ * <p>
+ * Because the work that depends on the value is described rather than executed
+ * inline, it can be expressed <em>before</em> the value is known. Two operators
+ * build new {@link Pending Pendings} from existing ones:
+ * </p>
+ * <ul>
+ * <li>{@link #map} applies a synchronous function to the value and yields a
+ * {@link Pending} of the transformed result. Use it when the next step is a
+ * plain transformation of what you already have.</li>
+ * <li>{@link #then} applies a function that itself returns a {@link Pending},
+ * and yields a {@link Pending} that resolves to the follow-on {@link Pending
+ * Pending's} value. Use it when the next step is itself asynchronous &mdash;
+ * for example, when its value depends on another deferred read.</li>
+ * </ul>
+ * <p>
+ * Operators can be chained: the {@link Pending} returned by one is the input to
+ * the next. A {@link Consumer} registered on the final {@link Pending} in a
+ * chain receives the fully transformed value.
+ * </p>
+ *
+ * <h2>Examples</h2>
+ *
+ * <p>
+ * Transform a value with {@link #map}:
+ * </p>
+ *
+ * <pre>
+ * {@code
+ * reader.find(criteria)
+ *       .map(Set::size)
+ *       .onResolve(n -> System.out.println("matched " + n));
+ * }
+ * </pre>
+ *
+ * <p>
+ * Chain a follow-on read with {@link #then}. The second read cannot be
+ * expressed until the first read's value is known, so {@link #then} captures
+ * the dependency:
+ * </p>
+ *
+ * <pre>
+ * {@code
+ * reader.find(byEmail)
+ *       .map(ids -> ids.iterator().next())
+ *       .then(id -> reader.select(id))
+ *       .map(record -> record.get("name"))
+ *       .onResolve(name -> System.out.println(name));
+ * }
+ * </pre>
+ *
+ * <p>
+ * A {@link Pending} is <strong>not thread-safe</strong>: composition,
+ * {@link #onResolve} registration, and resolution itself must all happen on the
+ * same thread.
  * </p>
  *
  * @param <T> the value type
