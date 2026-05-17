@@ -17,11 +17,14 @@ package com.cinchapi.runway;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.google.common.collect.ImmutableList;
@@ -1069,10 +1072,64 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
                 p -> p.startsWith("directReports*.directReports*.")));
     }
 
-    // NOTE: Performance benchmark tests were removed because
-    // timing-based assertions are inherently flaky on localhost
-    // where server work dominates latency. The optimization
-    // benefit is proven over network round trips.
+    /**
+     * <strong>Goal:</strong> Verify that the number of read RPCs a load issues
+     * does not grow with the depth of a self-referential
+     * {@link java.util.Collection Collection&lt;Record&gt;} chain.
+     * <p>
+     * <strong>Start state:</strong> A two-{@link Node} chain and a
+     * six-{@link Node} chain saved to the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a shallow chain and a deep chain of {@link Node Nodes} linked
+     * through the {@code friends} collection.</li>
+     * <li>Reflectively replace the {@link Runway} connection pool with a
+     * {@link CountingConcourseConnectionPool} that tallies read RPCs.</li>
+     * <li>Load the root of each chain, recording the RPC count for each.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The deep chain loads fully, and its load
+     * issues the same number of read RPCs as the shallow chain &mdash; proving
+     * the prefetch collapses N+1 loading into a depth-independent constant.
+     */
+    @Test
+    public void testLoadRpcCountIsIndependentOfChainDepth() {
+        Node s1 = new Node("s1");
+        Node s2 = new Node("s2");
+        s1.friends.add(s2);
+        s1.save();
+        Node d1 = new Node("d1");
+        Node d2 = new Node("d2");
+        Node d3 = new Node("d3");
+        Node d4 = new Node("d4");
+        Node d5 = new Node("d5");
+        Node d6 = new Node("d6");
+        d1.friends.add(d2);
+        d2.friends.add(d3);
+        d3.friends.add(d4);
+        d4.friends.add(d5);
+        d5.friends.add(d6);
+        d1.save();
+        AtomicInteger rpcs = new AtomicInteger();
+        Reflection.set("connections", new CountingConcourseConnectionPool(
+                () -> new CountingConcourse(Concourse.connect("localhost",
+                        server.getClientPort(), "admin", "admin"), rpcs)),
+                runway); // (authorized)
+        rpcs.set(0);
+        runway.load(Node.class, s1.id());
+        int shallow = rpcs.get();
+        rpcs.set(0);
+        Node deep = runway.load(Node.class, d1.id());
+        int deepRpcs = rpcs.get();
+        Node node = deep;
+        for (String label : new String[] { "d2", "d3", "d4", "d5", "d6" }) {
+            node = node.friends.get(0);
+            Assert.assertEquals(label, node.label);
+        }
+        Assert.assertTrue(shallow > 0);
+        Assert.assertEquals(shallow, deepRpcs);
+    }
 
     /**
      * A {@link Record} with a {@link java.util.Collection
