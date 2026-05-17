@@ -896,8 +896,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             }
                         }
                         restore(snapshots);
-                        if(current != null) {
-                            current.errors.add(t);
+                        // A deferred Unique check throws from commit() after
+                        // the loop advances #current, so blame the Record
+                        // the violation names rather than the last one.
+                        Record named = null;
+                        if(t instanceof ConstraintViolationException) {
+                            named = ((ConstraintViolationException) t).record();
+                        }
+                        Record offender;
+                        if(named != null) {
+                            offender = named;
+                        }
+                        else {
+                            offender = current;
+                        }
+                        if(offender != null) {
+                            offender.errors.add(t);
                         }
                         return false;
                     }

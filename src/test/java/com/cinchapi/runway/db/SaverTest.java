@@ -299,27 +299,6 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link Saver#concourse()} returns the
-     * underlying {@link Concourse} that the {@link Saver} was constructed with
-     * so cascade-read fallthrough has a connection to use.
-     * <p>
-     * <strong>Start state:</strong> No prior state needed.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Construct a {@link Saver}.</li>
-     * <li>Call {@link Saver#concourse()}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The returned reference is non-{@code null}.
-     */
-    @Test
-    public void testConcourseReturnsTheUnderlyingConnection() {
-        Saver saver = newSaver();
-        Assert.assertNotNull(saver.concourse());
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that {@link Saver#commit()} returns
      * {@code true} when the staged transaction commits cleanly with no recorded
      * operations beyond stage.

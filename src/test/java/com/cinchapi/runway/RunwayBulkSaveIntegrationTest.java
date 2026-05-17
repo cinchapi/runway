@@ -26,6 +26,7 @@ import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
 import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.google.common.collect.ImmutableSet;
 
 /**
@@ -159,8 +160,8 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that a save which violates a {@link Unique}
-     * constraint throws {@link IllegalStateException} and leaves the database
-     * unchanged.
+     * constraint throws {@link ConstraintViolationException} and leaves the
+     * database unchanged.
      * <p>
      * <strong>Start state:</strong> A {@link UniqueNamed} record with name
      * {@code "Alpha"} is already saved.
@@ -174,8 +175,8 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Expected:</strong> The second save returns {@code false} and the
      * {@link UniqueNamed Record's} {@code errors} list contains an
-     * {@link IllegalStateException} mentioning uniqueness. Only one record
-     * exists in the database.
+     * {@link ConstraintViolationException} mentioning uniqueness. Only one
+     * record exists in the database.
      */
     @Test
     public void testBulkSaveRejectsUniquenessViolation() {
@@ -187,7 +188,7 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
 
         Assert.assertFalse(duplicate.errors.isEmpty());
         Throwable err = duplicate.errors.iterator().next();
-        Assert.assertTrue(err instanceof IllegalStateException);
+        Assert.assertTrue(err instanceof ConstraintViolationException);
         Assert.assertTrue(err.getMessage().toLowerCase().contains("unique"));
 
         Assert.assertEquals(1, runway.load(UniqueNamed.class).size());
@@ -287,7 +288,7 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save returns {@code false}, at least one
-     * of the records carries an {@link IllegalStateException} mentioning
+     * of the records carries an {@link ConstraintViolationException} mentioning
      * uniqueness in its {@code errors} list, and zero {@link UniqueNamed}
      * records exist in the database.
      */
@@ -299,14 +300,55 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
         Assert.assertFalse(runway.save(first, second));
 
         boolean rejected = first.errors.stream()
-                .anyMatch(t -> t instanceof IllegalStateException
+                .anyMatch(t -> t instanceof ConstraintViolationException
                         && t.getMessage().toLowerCase().contains("unique"))
-                || second.errors.stream()
-                        .anyMatch(t -> t instanceof IllegalStateException && t
+                || second.errors.stream().anyMatch(
+                        t -> t instanceof ConstraintViolationException && t
                                 .getMessage().toLowerCase().contains("unique"));
         Assert.assertTrue("expected an intra-batch uniqueness violation",
                 rejected);
         Assert.assertEquals(0, runway.load(UniqueNamed.class).size());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that when one record in a multi-record save
+     * violates a {@link Unique} constraint, the resulting exception is recorded
+     * on the offending {@link Record} &mdash; not on whichever {@link Record}
+     * happened to be processed last.
+     * <p>
+     * <strong>Start state:</strong> A {@link UniqueNamed} record named
+     * {@code "Taken"} already exists in the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct {@code offender}, a new {@link UniqueNamed} that reuses the
+     * name {@code "Taken"}.</li>
+     * <li>Construct {@code innocent}, a new {@link UniqueNamed} with an unused
+     * name.</li>
+     * <li>Save {@code offender} and {@code innocent} together, ordered so that
+     * {@code offender} is not the last record processed.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code false},
+     * {@code offender.errors} carries the {@link ConstraintViolationException},
+     * and {@code innocent.errors} is empty.
+     */
+    @Test
+    public void testBulkSaveAttributesUniquenessFailureToOffendingRecord() {
+        UniqueNamed existing = new UniqueNamed("Taken");
+        Assert.assertTrue(runway.save(existing));
+
+        UniqueNamed offender = new UniqueNamed("Taken");
+        UniqueNamed innocent = new UniqueNamed("Free");
+        Assert.assertFalse(runway.save(offender, innocent));
+
+        boolean offenderBlamed = offender.errors.stream()
+                .anyMatch(t -> t instanceof ConstraintViolationException
+                        && t.getMessage().toLowerCase().contains("unique"));
+        Assert.assertTrue("uniqueness error must land on the offender",
+                offenderBlamed);
+        Assert.assertTrue("the innocent record must carry no error",
+                innocent.errors.isEmpty());
     }
 
     /**
@@ -327,7 +369,7 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save returns {@code false}, at least one
-     * of the records carries an {@link IllegalStateException} mentioning
+     * of the records carries an {@link ConstraintViolationException} mentioning
      * uniqueness in its {@code errors} list, and zero {@link CompoundUnique}
      * records exist in the database.
      */
@@ -341,10 +383,10 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
         Assert.assertFalse(runway.save(a, b));
 
         boolean rejected = a.errors.stream()
-                .anyMatch(t -> t instanceof IllegalStateException
+                .anyMatch(t -> t instanceof ConstraintViolationException
                         && t.getMessage().toLowerCase().contains("unique"))
-                || b.errors.stream()
-                        .anyMatch(t -> t instanceof IllegalStateException && t
+                || b.errors.stream().anyMatch(
+                        t -> t instanceof ConstraintViolationException && t
                                 .getMessage().toLowerCase().contains("unique"));
         Assert.assertTrue(
                 "expected an intra-batch overlap conflict on the compound "

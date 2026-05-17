@@ -15,33 +15,57 @@
  */
 package com.cinchapi.runway;
 
-import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
-import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.common.profile.Benchmark;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.test.CrossVersionTest;
 import com.cinchapi.concourse.test.runners.CrossVersionTestRunner.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 
 /**
- * Cross-version regression tests for {@link Runway#select(Selection...)}
- * multi-selection dispatch.
+ * Cross-version benchmarks for {@link Runway#select(Selection...)}
+ * multi-selection dispatch and {@link Runway#save(Record...)} bulk persist.
  * <p>
  * The {@code 0.12.8} server lacks the Concourse Command API, so
- * {@code select(Selection...)} dispatches through the combinable/isolated path.
- * The latest server supports {@code prepare()}/{@code submit()}, so
- * {@code select(Selection...)} dispatches every {@link Selection} through a
- * single batched {@link com.cinchapi.runway.db.BatchReader}. Running the same
- * {@link Test} body against both versions guards against either path regressing
- * relative to the other.
+ * {@code select(Selection...)} dispatches through the combinable/isolated path
+ * and {@code save(Record...)} dispatches per-record. The latest server supports
+ * {@code prepare()}/{@code submit()}, so {@code select(Selection...)} batches
+ * every {@link Selection} through a single
+ * {@link com.cinchapi.runway.db.BatchReader} and {@code save(Record...)}
+ * batches every {@link Record} through a single-round-trip
+ * {@link com.cinchapi.runway.db.BatchSaver}. Each {@link Test} records a
+ * latency stat that surfaces in the cross-version comparison table at the end
+ * of the run, exposing how the new paths perform relative to the legacy ones.
+ * Correctness for the dispatch and bulk-save paths is covered by the
+ * single-version integration tests; the methods here exist solely to produce
+ * timings.
+ * <p>
+ * Every benchmark uses the {@link Benchmark} builder with
+ * {@link Benchmark.ConfigStage#warmups(int) warmups} so the JIT (and the
+ * server-side reflective dispatch path on Command-API-capable versions) is warm
+ * before measurement begins.
  *
  * @author Jeff Nelson
  */
 @Versions({ "0.12.8", Testing.CONCOURSE_VERSION })
 public class MultiSelectCrossVersionTest extends CrossVersionTest {
+
+    /**
+     * The number of warmup iterations executed before each timed run. Chosen to
+     * push every code path past HotSpot's reflective-dispatch inflation
+     * threshold (~15 invocations per call site) even for the smallest benchmark
+     * (two commands per iteration produces 100 calls warmed).
+     */
+    private static final int WARMUPS = 50;
+
+    /**
+     * The number of timed iterations averaged into each recorded stat.
+     */
+    private static final int ITERATIONS = 10;
 
     private Runway runway;
 
@@ -61,175 +85,156 @@ public class MultiSelectCrossVersionTest extends CrossVersionTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a multi-selection call mixing every
-     * {@link DatabaseSelection} subtype the dispatch can handle &mdash;
-     * load-by-id, find-by-criteria, load-class, count, and unique &mdash;
-     * resolves each {@link Selection} to the same result on both the
-     * combinable/isolated and bulk paths.
+     * <strong>Goal:</strong> Measure the average end-to-end latency of a
+     * multi-selection dispatch mixing every {@link DatabaseSelection} subtype
+     * &mdash; load-by-id, find, load-class, count, and unique &mdash; so the
+     * combinable/isolated path on older servers and the batched
+     * {@link com.cinchapi.runway.db.BatchReader} path on newer servers can be
+     * compared head-to-head.
      * <p>
-     * <strong>Start state:</strong> Three {@link Widget Widgets} saved with
-     * scores 10, 50, and 90; one {@link Gadget} saved with the name
-     * {@code "target"}.
+     * <strong>Start state:</strong> 100 {@link Widget Widgets} with unique
+     * scores {@code 0..99} and one {@link Gadget} named {@code "target"} are
+     * persisted.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Build a load-by-id {@link Selection} for the {@code "target"}
-     * {@link Gadget}.</li>
-     * <li>Build a find {@link Selection} for {@link Widget Widgets} with score
-     * &gt; 25.</li>
-     * <li>Build a load-class {@link Selection} for all {@link Widget
-     * Widgets}.</li>
-     * <li>Build a count {@link Selection} for {@link Widget Widgets} with score
-     * &gt; 25.</li>
-     * <li>Build a unique {@link Selection} for the {@link Widget} with score =
-     * 90.</li>
-     * <li>Execute all five in a single
-     * {@link Runway#select(Selection...)}.</li>
+     * <li>Persist the workload.</li>
+     * <li>Build a {@link Benchmark} whose action constructs five fresh
+     * {@link Selection Selections} (one of each subtype) and submits them in a
+     * single {@link Runway#select(Selection...)} call.</li>
+     * <li>Run {@value #WARMUPS} warmups, then average the action over
+     * {@value #ITERATIONS} timed iterations.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> Each {@link Selection} yields the
-     * corresponding direct-call result: the {@code "target"} {@link Gadget},
-     * two {@link Widget Widgets} for the find, three {@link Widget Widgets} for
-     * the load-class, {@code 2} for the count, and the score-90 {@link Widget}
-     * for the unique.
+     * <strong>Expected:</strong> The average per-call latency is recorded
+     * against the running server version for the cross-version comparison
+     * table.
      */
     @Test
-    public void testMixedSubtypesReturnCorrectResults() {
-        Widget low = new Widget("low", 10);
-        low.save();
-        Widget mid = new Widget("mid", 50);
-        mid.save();
-        Widget high = new Widget("high", 90);
-        high.save();
+    public void testMixedSubtypesBenchmark() {
+        for (int i = 0; i < 100; ++i) {
+            new Widget("w" + i, i).save();
+        }
         Gadget target = new Gadget("target", "red");
         target.save();
+        long targetId = target.id();
 
         Criteria scoreGt25 = Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(25).build();
-        Criteria scoreEq90 = Criteria.where().key("score")
-                .operator(Operator.EQUALS).value(90).build();
+        Criteria scoreEq50 = Criteria.where().key("score")
+                .operator(Operator.EQUALS).value(50).build();
 
-        Selection<Gadget> byId = Selection.of(Gadget.class).id(target.id())
-                .build();
-        Selection<Widget> byCriteria = Selection.of(Widget.class)
-                .criteria(scoreGt25).build();
-        Selection<Widget> byClass = Selection.of(Widget.class).build();
-        Selection<Widget> byCount = Selection.of(Widget.class)
-                .criteria(scoreGt25).count().build();
-        Selection<Widget> byUnique = Selection.of(Widget.class)
-                .criteria(scoreEq90).unique().build();
-
-        runway.select(byId, byCriteria, byClass, byCount, byUnique);
-
-        Gadget loadedGadget = byId.get();
-        Set<Widget> filtered = byCriteria.get();
-        Set<Widget> all = byClass.get();
-        int count = byCount.get();
-        Widget unique = byUnique.get();
-
-        Assert.assertNotNull(loadedGadget);
-        Assert.assertEquals("target", loadedGadget.name);
-        Assert.assertEquals(2, filtered.size());
-        Assert.assertEquals(3, all.size());
-        Assert.assertEquals(2, count);
-        Assert.assertNotNull(unique);
-        Assert.assertEquals("high", unique.name);
+        double avg = Benchmark.measure(() -> {
+            Selection<Gadget> byId = Selection.of(Gadget.class).id(targetId)
+                    .build();
+            Selection<Widget> byCriteria = Selection.of(Widget.class)
+                    .criteria(scoreGt25).build();
+            Selection<Widget> byClass = Selection.of(Widget.class).build();
+            Selection<Widget> byCount = Selection.of(Widget.class)
+                    .criteria(scoreGt25).count().build();
+            Selection<Widget> byUnique = Selection.of(Widget.class)
+                    .criteria(scoreEq50).unique().build();
+            runway.select(byId, byCriteria, byClass, byCount, byUnique);
+        }).in(TimeUnit.MILLISECONDS).warmups(WARMUPS).average(ITERATIONS)
+                .join();
+        record("Multi-Select (Mixed Subtypes)", avg);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that same-class {@link Selection
+     * <strong>Goal:</strong> Measure the average end-to-end latency of a
+     * multi-selection dispatch carrying two same-class {@link Selection
      * Selections} with divergent criteria &mdash; the case the
      * combinable/isolated dispatch isolates to avoid {@code demux}
-     * cross-contamination &mdash; resolve to their own criteria's matches and
-     * do not share results on either path.
+     * cross-contamination &mdash; so the isolation cost on older servers and
+     * the batched cost on newer servers can be compared head-to-head.
      * <p>
-     * <strong>Start state:</strong> Four {@link Widget Widgets} saved with
-     * scores 10, 30, 60, and 90.
+     * <strong>Start state:</strong> 100 {@link Widget Widgets} with unique
+     * scores {@code 0..99} are persisted.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Build a find {@link Selection} for score &lt; 25.</li>
-     * <li>Build a find {@link Selection} for score &gt; 75.</li>
-     * <li>Execute both in a single {@link Runway#select(Selection...)}.</li>
+     * <li>Persist the workload.</li>
+     * <li>Build a {@link Benchmark} whose action constructs two fresh
+     * {@link Widget} finds with non-overlapping criteria and submits them in a
+     * single {@link Runway#select(Selection...)} call.</li>
+     * <li>Run {@value #WARMUPS} warmups, then average the action over
+     * {@value #ITERATIONS} timed iterations.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The first yields the score = 10
-     * {@link Widget}; the second yields the score = 90 {@link Widget}; neither
-     * leaks into the other's result.
+     * <strong>Expected:</strong> The average per-call latency is recorded
+     * against the running server version for the cross-version comparison
+     * table.
      */
     @Test
-    public void testSameClassDivergentCriteria() {
-        new Widget("ten", 10).save();
-        new Widget("thirty", 30).save();
-        new Widget("sixty", 60).save();
-        new Widget("ninety", 90).save();
+    public void testSameClassDivergentCriteriaBenchmark() {
+        for (int i = 0; i < 100; ++i) {
+            new Widget("w" + i, i).save();
+        }
 
         Criteria lt25 = Criteria.where().key("score")
                 .operator(Operator.LESS_THAN).value(25).build();
         Criteria gt75 = Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(75).build();
 
-        Selection<Widget> low = Selection.of(Widget.class).criteria(lt25)
-                .build();
-        Selection<Widget> high = Selection.of(Widget.class).criteria(gt75)
-                .build();
-
-        runway.select(low, high);
-
-        Set<Widget> lowResult = low.get();
-        Set<Widget> highResult = high.get();
-
-        Assert.assertEquals(1, lowResult.size());
-        Assert.assertEquals("ten", lowResult.iterator().next().name);
-        Assert.assertEquals(1, highResult.size());
-        Assert.assertEquals("ninety", highResult.iterator().next().name);
+        double avg = Benchmark.measure(() -> {
+            Selection<Widget> low = Selection.of(Widget.class).criteria(lt25)
+                    .build();
+            Selection<Widget> high = Selection.of(Widget.class).criteria(gt75)
+                    .build();
+            runway.select(low, high);
+        }).in(TimeUnit.MILLISECONDS).warmups(WARMUPS).average(ITERATIONS)
+                .join();
+        record("Multi-Select (Divergent Criteria)", avg);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a {@link Selection} whose result is
-     * already in the thread-local reservation cache short-circuits inside the
-     * dispatch without poisoning the rest of the batch on either path.
+     * <strong>Goal:</strong> Measure the average end-to-end latency of a
+     * multi-selection dispatch in which one {@link Selection} is already in the
+     * thread-local reservation cache and short-circuits inside the dispatch
+     * &mdash; so the cost of a mixed cached/uncached batch on older and newer
+     * servers can be compared head-to-head.
      * <p>
-     * <strong>Start state:</strong> Three {@link Widget Widgets} saved with
-     * names {@code "a"}, {@code "b"}, {@code "c"}. A reservation is active.
+     * <strong>Start state:</strong> 50 {@link Widget Widgets} with unique
+     * scores {@code 0..49} are persisted, a reservation is held, and the
+     * reservation cache is pre-warmed with a load-class for {@link Widget}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Pre-warm the reservation cache by executing a load-class
-     * {@link Selection} for {@link Widget}.</li>
-     * <li>Build two new {@link Selection Selections}: a load-class for
-     * {@link Widget} (which should hit the reservation) and a find for the
-     * {@code "a"} {@link Widget} (which should not).</li>
-     * <li>Execute both in a single {@link Runway#select(Selection...)}.</li>
+     * <li>Persist the workload, {@code reserve()}, and pre-warm the cache.</li>
+     * <li>Build a {@link Benchmark} whose action constructs a fresh load-class
+     * {@link Selection} for {@link Widget} (cache hit) and a fresh find
+     * {@link Selection} for one named record (cache miss), then submits both in
+     * a single {@link Runway#select(Selection...)} call.</li>
+     * <li>Run {@value #WARMUPS} warmups, then average the action over
+     * {@value #ITERATIONS} timed iterations.</li>
+     * <li>{@code unreserve()} in a {@code finally} block.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The load-class yields all three {@link Widget
-     * Widgets}; the find yields exactly the {@code "a"} {@link Widget}.
+     * <strong>Expected:</strong> The average per-call latency is recorded
+     * against the running server version for the cross-version comparison
+     * table.
      */
     @Test
-    public void testCachedSelectionShortCircuits() {
-        new Widget("a", 1).save();
-        new Widget("b", 2).save();
-        new Widget("c", 3).save();
+    public void testCachedShortCircuitBenchmark() {
+        for (int i = 0; i < 50; ++i) {
+            new Widget("w" + i, i).save();
+        }
+
+        Criteria nameW0 = Criteria.where().key("name").operator(Operator.EQUALS)
+                .value("w0").build();
 
         runway.reserve();
         try {
             runway.select(Selection.of(Widget.class).build());
 
-            Selection<Widget> all = Selection.of(Widget.class).build();
-            Criteria nameA = Criteria.where().key("name")
-                    .operator(Operator.EQUALS).value("a").build();
-            Selection<Widget> findA = Selection.of(Widget.class).criteria(nameA)
-                    .build();
-
-            runway.select(all, findA);
-
-            Set<Widget> allResult = all.get();
-            Set<Widget> findAResult = findA.get();
-
-            Assert.assertEquals(3, allResult.size());
-            Assert.assertEquals(1, findAResult.size());
-            Assert.assertEquals("a", findAResult.iterator().next().name);
+            double avg = Benchmark.measure(() -> {
+                Selection<Widget> all = Selection.of(Widget.class).build();
+                Selection<Widget> find = Selection.of(Widget.class)
+                        .criteria(nameW0).build();
+                runway.select(all, find);
+            }).in(TimeUnit.MILLISECONDS).warmups(WARMUPS).average(ITERATIONS)
+                    .join();
+            record("Multi-Select (Cached Short-Circuit)", avg);
         }
         finally {
             runway.unreserve();
@@ -237,102 +242,147 @@ public class MultiSelectCrossVersionTest extends CrossVersionTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that duplicate {@link Selection Selections}
-     * (objects with the same query parameters) passed in a single dispatched
-     * call all receive the same result on either path.
+     * <strong>Goal:</strong> Measure the average end-to-end latency of a
+     * multi-selection dispatch carrying three duplicate {@link Selection
+     * Selections} (distinct objects, identical query parameters) so the dedup
+     * cost on older and newer servers can be compared head-to-head.
      * <p>
-     * <strong>Start state:</strong> Two {@link Widget Widgets} saved with
-     * scores 10 and 90.
+     * <strong>Start state:</strong> 100 {@link Widget Widgets} with unique
+     * scores {@code 0..99} are persisted.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Build two distinct {@link Selection} objects with identical
-     * criteria.</li>
-     * <li>Execute both in a single {@link Runway#select(Selection...)}.</li>
+     * <li>Persist the workload.</li>
+     * <li>Build a {@link Benchmark} whose action constructs three fresh
+     * {@link Widget} finds with identical criteria and submits them in a single
+     * {@link Runway#select(Selection...)} call.</li>
+     * <li>Run {@value #WARMUPS} warmups, then average the action over
+     * {@value #ITERATIONS} timed iterations.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> Both {@link Selection Selections} yield the
-     * same single-{@link Widget} result &mdash; the score = 90 {@link Widget}.
+     * <strong>Expected:</strong> The average per-call latency is recorded
+     * against the running server version for the cross-version comparison
+     * table.
      */
     @Test
-    public void testDuplicateSelectionsReturnSameResult() {
-        new Widget("low", 10).save();
-        new Widget("high", 90).save();
+    public void testDuplicateSelectionsBenchmark() {
+        for (int i = 0; i < 100; ++i) {
+            new Widget("w" + i, i).save();
+        }
 
         Criteria gt50 = Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(50).build();
 
-        Selection<Widget> a = Selection.of(Widget.class).criteria(gt50).build();
-        Selection<Widget> b = Selection.of(Widget.class).criteria(gt50).build();
-
-        runway.select(a, b);
-
-        Set<Widget> resultA = a.get();
-        Set<Widget> resultB = b.get();
-
-        Assert.assertEquals(1, resultA.size());
-        Assert.assertEquals(1, resultB.size());
-        Assert.assertEquals("high", resultA.iterator().next().name);
-        Assert.assertEquals("high", resultB.iterator().next().name);
+        double avg = Benchmark.measure(() -> {
+            Selection<Widget> a = Selection.of(Widget.class).criteria(gt50)
+                    .build();
+            Selection<Widget> b = Selection.of(Widget.class).criteria(gt50)
+                    .build();
+            Selection<Widget> c = Selection.of(Widget.class).criteria(gt50)
+                    .build();
+            runway.select(a, b, c);
+        }).in(TimeUnit.MILLISECONDS).warmups(WARMUPS).average(ITERATIONS)
+                .join();
+        record("Multi-Select (Duplicates)", avg);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that load-by-id {@link Selection
-     * Selections} targeting a {@link Record} class with descendants &mdash;
-     * forcing the section-lookup branch &mdash; and scoped by {@link Realms}
-     * resolve to the correct records on either path when dispatched alongside
-     * an unrelated {@link Selection}.
+     * <strong>Goal:</strong> Measure the average end-to-end latency of a
+     * multi-selection dispatch carrying load-by-id {@link Selection Selections}
+     * against a {@link Record} class with descendants &mdash; forcing the
+     * section-lookup branch &mdash; and scoped by {@link Realms}, so the
+     * hierarchy + realms dispatch cost on older and newer servers can be
+     * compared head-to-head.
      * <p>
-     * <strong>Start state:</strong> Two {@link SuperWidget} records saved under
-     * realm {@code "alpha"} and one {@link SubWidget} saved under realm
-     * {@code "beta"}.
+     * <strong>Start state:</strong> 50 {@link SuperWidget} records under realm
+     * {@code "alpha"} and 50 {@link SubWidget} records under realm
+     * {@code "beta"} are persisted.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Save the three hierarchy {@link Record Records}.</li>
-     * <li>Build two load-by-id {@link Selection Selections} typed as
-     * {@link SuperWidget} with {@link Realms#only(String) realms("alpha")},
-     * targeting one in-realm record and one out-of-realm
-     * {@link SubWidget}.</li>
-     * <li>Build a third unrelated load-class {@link Selection} to confirm
-     * shared-batch behavior.</li>
-     * <li>Execute all three in a single
-     * {@link Runway#select(Selection...)}.</li>
+     * <li>Persist the workload, capturing one {@link SuperWidget} id from realm
+     * {@code "alpha"} and one {@link SubWidget} id from realm
+     * {@code "beta"}.</li>
+     * <li>Build a {@link Benchmark} whose action constructs two fresh
+     * load-by-id {@link SuperWidget} {@link Selection Selections} scoped to
+     * {@code Realms.only("alpha")} &mdash; one in-realm, one out-of-realm
+     * &mdash; plus a load-class {@link Selection} that includes descendants,
+     * and submits all three in a single {@link Runway#select(Selection...)}
+     * call.</li>
+     * <li>Run {@value #WARMUPS} warmups, then average the action over
+     * {@value #ITERATIONS} timed iterations.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The in-realm load returns the
-     * {@link SuperWidget}; the out-of-realm load returns {@code null}; the
-     * load-class returns all three hierarchy records.
+     * <strong>Expected:</strong> The average per-call latency is recorded
+     * against the running server version for the cross-version comparison
+     * table.
      */
     @Test
-    public void testRecordWithHierarchyAndRealms() {
-        SuperWidget alphaOne = new SuperWidget("alphaOne");
-        alphaOne.addRealm("alpha");
-        alphaOne.save();
-        SuperWidget alphaTwo = new SuperWidget("alphaTwo");
-        alphaTwo.addRealm("alpha");
-        alphaTwo.save();
-        SubWidget betaSub = new SubWidget("betaSub", "extra");
-        betaSub.addRealm("beta");
-        betaSub.save();
+    public void testHierarchyAndRealmsBenchmark() {
+        long alphaId = 0;
+        long betaId = 0;
+        for (int i = 0; i < 50; ++i) {
+            SuperWidget alpha = new SuperWidget("alpha" + i);
+            alpha.addRealm("alpha");
+            alpha.save();
+            if(i == 0) {
+                alphaId = alpha.id();
+            }
+            SubWidget beta = new SubWidget("beta" + i, "extra" + i);
+            beta.addRealm("beta");
+            beta.save();
+            if(i == 0) {
+                betaId = beta.id();
+            }
+        }
+        long inRealmId = alphaId;
+        long outOfRealmId = betaId;
 
-        Selection<SuperWidget> inRealm = Selection.of(SuperWidget.class)
-                .id(alphaOne.id()).realms(Realms.only("alpha")).build();
-        Selection<SuperWidget> outOfRealm = Selection.of(SuperWidget.class)
-                .id(betaSub.id()).realms(Realms.only("alpha")).build();
-        Selection<SuperWidget> all = Selection.of(SuperWidget.class).any()
-                .build();
+        double avg = Benchmark.measure(() -> {
+            Selection<SuperWidget> inRealm = Selection.of(SuperWidget.class)
+                    .id(inRealmId).realms(Realms.only("alpha")).build();
+            Selection<SuperWidget> outOfRealm = Selection.of(SuperWidget.class)
+                    .id(outOfRealmId).realms(Realms.only("alpha")).build();
+            Selection<SuperWidget> all = Selection.of(SuperWidget.class).any()
+                    .build();
+            runway.select(inRealm, outOfRealm, all);
+        }).in(TimeUnit.MILLISECONDS).warmups(WARMUPS).average(ITERATIONS)
+                .join();
+        record("Multi-Select (Hierarchy + Realms)", avg);
+    }
 
-        runway.select(inRealm, outOfRealm, all);
-
-        SuperWidget inRealmResult = inRealm.get();
-        SuperWidget outOfRealmResult = outOfRealm.get();
-        Set<SuperWidget> allResult = all.get();
-
-        Assert.assertNotNull(inRealmResult);
-        Assert.assertEquals("alphaOne", inRealmResult.name);
-        Assert.assertNull(outOfRealmResult);
-        Assert.assertEquals(3, allResult.size());
+    /**
+     * <strong>Goal:</strong> Measure the average end-to-end latency of a
+     * bulk-save call so the per-record dispatch on older servers and the
+     * single-round-trip {@link com.cinchapi.runway.db.BatchSaver} path on newer
+     * servers can be compared head-to-head.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Benchmark} whose action constructs a fresh array of
+     * fifty {@link Widget Widgets} and persists them in a single
+     * {@link Runway#save(Record...)} call.</li>
+     * <li>Run {@value #WARMUPS} warmups, then average the action over
+     * {@value #ITERATIONS} timed iterations.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The average per-call latency is recorded
+     * against the running server version for the cross-version comparison
+     * table.
+     */
+    @Test
+    public void testBulkSaveBenchmark() {
+        double avg = Benchmark.measure(() -> {
+            Widget[] batch = new Widget[50];
+            for (int i = 0; i < batch.length; ++i) {
+                batch[i] = new Widget("w" + i, i);
+            }
+            runway.save(batch);
+        }).in(TimeUnit.MILLISECONDS).warmups(WARMUPS).average(ITERATIONS)
+                .join();
+        record("Bulk Save", avg);
     }
 
     /**
@@ -378,8 +428,7 @@ public class MultiSelectCrossVersionTest extends CrossVersionTest {
     }
 
     /**
-     * A second test {@link Record} type used to verify multi-class dispatched
-     * selections.
+     * A second test {@link Record} type used to vary the dispatch by class.
      */
     class Gadget extends Record {
 

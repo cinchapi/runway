@@ -54,13 +54,6 @@ import com.cinchapi.concourse.lang.Criteria;
 public interface Saver {
 
     /**
-     * Return the underlying {@link Concourse} connection.
-     *
-     * @return the wrapped {@link Concourse} connection
-     */
-    Concourse concourse();
-
-    /**
      * Begin a staged transaction for the save this {@link Saver} represents.
      * <p>
      * Must be called exactly once before any recording method. For synchronous
@@ -125,10 +118,10 @@ public interface Saver {
      * and arrange to apply {@code validator} to the matching record ids.
      * <p>
      * The {@code validator} may throw to signal a validation failure (typically
-     * {@link IllegalStateException} for a {@link com.cinchapi.runway.Unique}
-     * violation); the exception propagates from the recording call for
-     * synchronous implementations and from {@link #commit()} for bulk
-     * implementations.
+     * a {@link com.cinchapi.runway.Unique} violation surfaces as a
+     * {@link com.cinchapi.runway.Record.ConstraintViolationException}); the
+     * exception propagates from the recording call for synchronous
+     * implementations and from {@link #commit()} for bulk implementations.
      * </p>
      *
      * @param criteria the {@link Criteria} that identifies the matching records
@@ -235,31 +228,5 @@ public interface Saver {
      *            {@link #clear(String, long)}
      */
     void reconcile(String key, long record, Object[] values);
-
-    /**
-     * Declare that {@code record} intends to write the value identified by
-     * {@code canonical} within the current save batch, so that batched
-     * implementations can detect intra-batch duplicates that the database
-     * itself cannot see (because writes are deferred until {@link #commit()}).
-     * <p>
-     * Synchronous implementations no-op because each write enters the staged
-     * transaction immediately and the next read observes it. Batched
-     * implementations record each {@code canonical} and arrange for
-     * {@link #commit()} to throw {@link IllegalStateException} carrying
-     * {@code errorMessage} when the same {@code canonical} has been declared by
-     * more than one {@code record} in the batch.
-     * </p>
-     *
-     * @param canonical a value-equal key identifying the uniqueness constraint
-     *            being asserted; equal keys across calls indicate the same
-     *            constraint
-     * @param record the id of the {@link com.cinchapi.runway.Record Record}
-     *            that intends to write this value
-     * @param errorMessage the message attached to the
-     *            {@link IllegalStateException} thrown at {@link #commit()} time
-     *            on an intra-batch conflict
-     */
-    default void declareUniqueIntent(Object canonical, long record,
-            String errorMessage) {/* no-op */}
 
 }

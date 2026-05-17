@@ -169,56 +169,6 @@ public class BatchSaverTest extends SaverTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that an intra-batch uniqueness conflict
-     * declared via {@link Saver#declareUniqueIntent(Object, long, String)}
-     * surfaces from {@link Saver#commit()} even when the caller never records a
-     * paired validation read &mdash; the throw must not depend on the read
-     * pipeline being flushed.
-     * <p>
-     * <strong>Start state:</strong> Two empty target records.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage the {@link BatchSaver}.</li>
-     * <li>Declare the same canonical {@link Object} against both record ids,
-     * with no {@code audit}/{@code find}/{@code select} recorded in
-     * between.</li>
-     * <li>Record a {@code set} write so the staged transaction has at least one
-     * deferred write to attempt.</li>
-     * <li>Call {@link Saver#commit()}; catch the thrown exception.</li>
-     * <li>Call {@link Saver#abort()}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@link Saver#commit()} throws
-     * {@link IllegalStateException} carrying the supplied error message, and
-     * the recorded {@code set} is not visible on the target record.
-     */
-    @Test
-    public void testIntentConflictSurfacesWithoutPairedRead() {
-        long a = client.add("placeholder", 1L);
-        long b = client.add("placeholder", 2L);
-
-        Saver saver = newSaver();
-        saver.stage();
-        saver.declareUniqueIntent("constraint", a, "duplicate intent");
-        saver.declareUniqueIntent("constraint", b, "duplicate intent");
-        saver.set("scratch", "value", a);
-
-        boolean caught = false;
-        try {
-            saver.commit();
-        }
-        catch (IllegalStateException e) {
-            caught = true;
-            Assert.assertEquals("duplicate intent", e.getMessage());
-            saver.abort();
-        }
-
-        Assert.assertTrue(caught);
-        Assert.assertTrue(client.select("scratch", a).isEmpty());
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that a {@code consumer} passed to
      * {@link Saver#select(String, Criteria, java.util.function.Consumer)
      * select} can record another nested

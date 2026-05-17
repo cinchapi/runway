@@ -18,7 +18,6 @@ package com.cinchapi.runway.db;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -100,19 +99,6 @@ public final class BatchSaver implements Saver {
     private final List<Consumer<CommandGroup>> deferredWriteOps;
 
     /**
-     * Intra-batch uniqueness intents declared via
-     * {@link #declareUniqueIntent(Object, long, String)}, keyed by canonical
-     * constraint identifier and valued by the declaring record id.
-     */
-    private final Map<Object, Long> uniqueIntents;
-
-    /**
-     * Exceptions raised by intra-batch uniqueness conflicts detected during
-     * {@link #declareUniqueIntent(Object, long, String)}.
-     */
-    private final List<RuntimeException> intentConflicts;
-
-    /**
      * Construct a new {@link BatchSaver} that submits against
      * {@code concourse}.
      *
@@ -127,13 +113,6 @@ public final class BatchSaver implements Saver {
         this.postWriteReadOps = new ArrayList<>();
         this.pendingValidators = new ArrayList<>();
         this.deferredWriteOps = new ArrayList<>();
-        this.uniqueIntents = new HashMap<>();
-        this.intentConflicts = new ArrayList<>();
-    }
-
-    @Override
-    public Concourse concourse() {
-        return concourse;
     }
 
     @Override
@@ -235,38 +214,20 @@ public final class BatchSaver implements Saver {
     }
 
     @Override
-    public void declareUniqueIntent(Object canonical, long record,
-            String errorMessage) {
-        Long prior = uniqueIntents.putIfAbsent(canonical, record);
-        if(prior != null && prior.longValue() != record) {
-            // Surfaced from commit() only after the read pipeline has
-            // run, so any staleness or database-uniqueness exception
-            // takes precedence and the throw fires regardless of whether
-            // the caller also recorded a paired find.
-            intentConflicts.add(new IllegalStateException(errorMessage));
-        }
-    }
-
-    @Override
     public boolean commit() {
         flushReads();
-        if(intentConflicts.isEmpty()) {
-            CommandGroup writes = concourse.prepare();
-            if(stageRequested && !stageBundled) {
-                writes.stage();
-                stageBundled = true;
-            }
-            for (Consumer<CommandGroup> op : deferredWriteOps) {
-                op.accept(writes);
-            }
-            int commitSlot = writes.commands().size();
-            writes.commit();
-            List<Object> results = concourse.submit(writes);
-            return (Boolean) results.get(commitSlot);
+        CommandGroup writes = concourse.prepare();
+        if(stageRequested && !stageBundled) {
+            writes.stage();
+            stageBundled = true;
         }
-        else {
-            throw intentConflicts.get(0);
+        for (Consumer<CommandGroup> op : deferredWriteOps) {
+            op.accept(writes);
         }
+        int commitSlot = writes.commands().size();
+        writes.commit();
+        List<Object> results = concourse.submit(writes);
+        return (Boolean) results.get(commitSlot);
     }
 
     @Override

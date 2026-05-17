@@ -40,7 +40,6 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1765,6 +1764,13 @@ public abstract class Record implements Comparable<Record> {
      * save operation should be aborted. If an exception is thrown, the
      * transaction will be rolled back.
      * </p>
+     * <p>
+     * <strong>Note:</strong> An invocation of this hook does not guarantee that
+     * the save completes. It may run for a save that is ultimately rejected
+     * &mdash; for example, a {@link Unique} or stale-data conflict &mdash; or
+     * that is retried after a spurious failure. Implementations must therefore
+     * be idempotent and free of external side effects.
+     * </p>
      */
     protected void beforeSave() {}
 
@@ -2923,57 +2929,12 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         Criteria criteria = $criteria.get();
-        // The errorMessage carries through two independent paths: it's
-        // attached to each declareUniqueIntent below (where a batched Saver
-        // throws on an intra-batch collision) and to the find validator
-        // (which throws on a database-side collision). Synchronous Savers
-        // ignore declareUniqueIntent because each staged write is visible
-        // to the next read, so the database's own find catches duplicates
-        // between records in the same save. Sequence-valued fields expand
-        // into the cartesian product of (field, item) pairs so an overlap
-        // on any single item under a compound constraint produces a
-        // canonical that matches between records.
         String errorMessage = AnyStrings.format("{} must be unique in {}",
                 errorName, __);
-        List<List<Object>> bindings = new ArrayList<>();
-        bindings.add(new ArrayList<>());
-        for (Entry<String, Object> entry : new TreeMap<>(data).entrySet()) {
-            Object value = entry.getValue();
-            if(value == null) {
-                continue;
-            }
-            String key = entry.getKey();
-            List<Object> options = new ArrayList<>();
-            if(Sequences.isSequence(value)) {
-                Sequences.forEach(value,
-                        item -> options.add(serializeScalarValue(item)));
-            }
-            else {
-                options.add(serializeScalarValue(value));
-            }
-            List<List<Object>> next = new ArrayList<>(
-                    bindings.size() * options.size());
-            for (List<Object> partial : bindings) {
-                for (Object option : options) {
-                    List<Object> extended = new ArrayList<>(partial.size() + 2);
-                    extended.addAll(partial);
-                    extended.add(key);
-                    extended.add(option);
-                    next.add(extended);
-                }
-            }
-            bindings = next;
-        }
-        for (List<Object> binding : bindings) {
-            List<Object> canonical = new ArrayList<>(binding.size() + 1);
-            canonical.add(getClass().getName());
-            canonical.addAll(binding);
-            saver.declareUniqueIntent(canonical, id, errorMessage);
-        }
         saver.find(criteria, records -> {
             if(!(records.isEmpty()
                     || (records.contains(id) && records.size() == 1))) {
-                throw new IllegalStateException(errorMessage);
+                throw new ConstraintViolationException(this, errorMessage);
             }
         });
     }
@@ -4492,12 +4453,41 @@ public abstract class Record implements Comparable<Record> {
         private static final long serialVersionUID = 1L;
 
         /**
+         * The {@link Record} whose constraint was violated, or {@code null}
+         * when the violation is not attributed to a specific {@link Record}.
+         */
+        @Nullable
+        private final transient Record record;
+
+        /**
          * Construct a new instance.
-         * 
-         * @param message
+         *
+         * @param message the detail message describing the violation
          */
         public ConstraintViolationException(String message) {
+            this(null, message);
+        }
+
+        /**
+         * Construct a new instance attributed to {@code record}.
+         *
+         * @param record the {@link Record} whose constraint was violated
+         * @param message the detail message describing the violation
+         */
+        ConstraintViolationException(@Nullable Record record, String message) {
             super(message);
+            this.record = record;
+        }
+
+        /**
+         * Return the {@link Record} whose constraint was violated.
+         *
+         * @return the offending {@link Record}, or {@code null} when the
+         *         violation is not attributed to a specific {@link Record}
+         */
+        @Nullable
+        Record record() {
+            return record;
         }
 
     }

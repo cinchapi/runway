@@ -60,11 +60,6 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
-    public Concourse concourse() {
-        return concourse;
-    }
-
-    @Override
     public void stage() {
         concourse.stage();
     }
