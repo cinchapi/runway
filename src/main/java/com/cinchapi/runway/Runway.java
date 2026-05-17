@@ -433,10 +433,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * <p>
      * This functionality is supported in Concourse 0.11.3+
      * </p>
-     * <p>
-     * For diagnostic purposes, this value can be disabled, regardless of
-     * Concourse version, using {@link Builder#disablePreSelectLinkedRecords()}.
-     * </p>
      */
     private final boolean supportsPreSelectLinkedRecords;
 
@@ -459,12 +455,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * </p>
      */
     private final boolean supportsBulkCommands;
-
-    /**
-     * The strategy for pre-selecting data for {@link Collection
-     * Collection&lt;Record&gt;} fields.
-     */
-    private CollectionPreSelectStrategy collectionPreSelectStrategy = CollectionPreSelectStrategy.NAVIGATE;
 
     /**
      * A queue of records that have been successfully saved and are waiting for
@@ -1190,36 +1180,29 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * If the {@link #collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NAVIGATE}, return the navigate paths
-     * for {@code clazz} and all descendants.
+     * Return the navigate paths for {@code clazz} and all descendants.
      *
      * @param clazz
-     * @return the navigate paths, or {@code null} if unsupported or no
-     *         pre-fetchable destinations are reachable
+     * @return the navigate paths, or {@code null} if no pre-fetchable
+     *         destinations are reachable
      */
     final Set<String> getNavigatePathsForClassHierarchyIfSupported(
             Class<? extends Record> clazz) {
-        Set<String> paths = collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
-                ? StaticAnalysis.instance().getNavigatePathsHierarchy(clazz)
-                : null;
+        Set<String> paths = StaticAnalysis.instance()
+                .getNavigatePathsHierarchy(clazz);
         return paths != null && !paths.isEmpty() ? paths : null;
     }
 
     /**
-     * If the {@link #collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NAVIGATE}, return the navigate paths
-     * for {@code clazz}.
+     * Return the navigate paths for {@code clazz}.
      *
      * @param clazz
-     * @return the navigate paths, or {@code null} if unsupported or no
-     *         pre-fetchable destinations are reachable
+     * @return the navigate paths, or {@code null} if no pre-fetchable
+     *         destinations are reachable
      */
     final Set<String> getNavigatePathsForClassIfSupported(
             Class<? extends Record> clazz) {
-        Set<String> paths = collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE
-                ? StaticAnalysis.instance().getNavigatePaths(clazz)
-                : null;
+        Set<String> paths = StaticAnalysis.instance().getNavigatePaths(clazz);
         return paths != null && !paths.isEmpty() ? paths : null;
     }
 
@@ -1801,16 +1784,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         // apply; otherwise the hierarchy-wide paths cover every possible
         // subclass at the cost of fetching a few paths the actual subclass
         // does not use.
-        Pending<Map<Long, Map<String, Set<Object>>>> nav = null;
-        if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NAVIGATE) {
-            Set<String> navigatePaths = needsSectionLookup
-                    ? getNavigatePathsForClassHierarchyIfSupported(initialClazz)
-                    : getNavigatePathsForClassIfSupported(initialClazz);
-            if(navigatePaths != null) {
-                nav = reader.navigate(navigatePaths, id);
-            }
-        }
-        Pending<Map<Long, Map<String, Set<Object>>>> navPending = nav;
+        Set<String> navigatePaths = needsSectionLookup
+                ? getNavigatePathsForClassHierarchyIfSupported(initialClazz)
+                : getNavigatePathsForClassIfSupported(initialClazz);
+        Pending<Map<Long, Map<String, Set<Object>>>> navPending = navigatePaths != null
+                ? reader.navigate(navigatePaths, id)
+                : null;
         return data.then($data -> {
             if($data == null || $data.isEmpty()) {
                 return Pending.of(new SelectResult<>(null));
@@ -1832,33 +1811,28 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             Class<T> resolvedClazz = clazz;
-            Pending<Map<Long, Map<String, Set<Object>>>> targets;
-            if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NONE) {
-                targets = Pending.of(null);
+            // After the navigate() prefetch, a bulk-select() cleanup BFS
+            // closes any reachable targets the navigate paths cannot cover
+            // (e.g., mutual-reference cycles whose field names alternate, or
+            // links into unknown Record classes).
+            Pending<Map<Long, Map<String, Set<Object>>>> navigated;
+            if(navPending != null) {
+                navigated = navPending;
             }
             else {
-                // After the navigate() prefetch, a bulk-select() cleanup BFS
-                // closes any reachable targets the navigate paths cannot cover
-                // (e.g., mutual-reference cycles whose field names alternate,
-                // or links into unknown Record classes).
-                Pending<Map<Long, Map<String, Set<Object>>>> navigated;
-                if(navPending != null) {
-                    navigated = navPending;
-                }
-                else {
-                    navigated = Pending.of(ImmutableMap.of());
-                }
-                targets = navigated.then($navigated -> {
-                    Map<Long, Map<String, Set<Object>>> pool = new HashMap<>(
-                            $navigated);
-                    Set<Long> covered = new HashSet<>(pool.keySet());
-                    covered.add(id);
-                    Set<Long> frontier = extractLinkTargets(
-                            ImmutableMap.of(id, $data), covered);
-                    frontier.addAll(extractLinkTargets(pool, covered));
-                    return prefetchLinks(reader, pool, covered, frontier);
-                });
+                navigated = Pending.of(ImmutableMap.of());
             }
+            Pending<Map<Long, Map<String, Set<Object>>>> targets = navigated
+                    .then($navigated -> {
+                        Map<Long, Map<String, Set<Object>>> pool = new HashMap<>(
+                                $navigated);
+                        Set<Long> covered = new HashSet<>(pool.keySet());
+                        covered.add(id);
+                        Set<Long> frontier = extractLinkTargets(
+                                ImmutableMap.of(id, $data), covered);
+                        frontier.addAll(extractLinkTargets(pool, covered));
+                        return prefetchLinks(reader, pool, covered, frontier);
+                    });
             return targets.map($targets -> {
                 T record = instantiate(resolvedClazz, id, $data, $targets);
                 if(record != null && hasFilter) {
@@ -2601,9 +2575,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            each record's class is recovered from its section key
      * @param data the initial query data
      * @return pre-fetched targets keyed by destination record ID, or
-     *         {@code null} when the configured
-     *         {@link #collectionPreSelectStrategy} is
-     *         {@link CollectionPreSelectStrategy#NONE}
+     *         {@code null} when {@code data} is empty
      */
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollections(
             @Nullable Class<? extends Record> clazz,
@@ -2621,9 +2593,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param data the initial query data
      * @param ids the record ids to pass to {@code navigate()}
      * @return pre-fetched targets keyed by destination record ID, or
-     *         {@code null} when the configured
-     *         {@link #collectionPreSelectStrategy} is
-     *         {@link CollectionPreSelectStrategy#NONE}
+     *         {@code null} when {@code data} and {@code ids} are both empty
      */
     private Map<Long, Map<String, Set<Object>>> resolveLinkCollectionsHierarchy(
             @Nullable Class<? extends Record> clazz,
@@ -2639,9 +2609,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The pre-fetch runs a single {@code navigate()} per class (single call for
      * typed loads; one per discovered class for untyped loads) followed by a
      * bulk-{@code select()} cleanup sweep that closes any gaps the navigate
-     * paths cannot reach. Returns {@code null} when the configured
-     * {@link #collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NONE}.
+     * paths cannot reach. Returns {@code null} when {@code data} and
+     * {@code navigateIds} are both empty.
      * </p>
      *
      * @param clazz the target class, or {@code null} for untyped loads where
@@ -2659,8 +2628,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Map<Long, Map<String, Set<Object>>> resolveLinkedCollections(
             @Nullable Class<? extends Record> clazz, boolean hierarchy,
             Set<Long> navigateIds, Map<Long, Map<String, Set<Object>>> data) {
-        if(collectionPreSelectStrategy == CollectionPreSelectStrategy.NONE
-                || (data.isEmpty() && navigateIds.isEmpty())) {
+        if(data.isEmpty() && navigateIds.isEmpty()) {
             return null;
         }
         else {
@@ -2875,10 +2843,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private ReadStrategy readStrategy = null;
         private int streamingReadBufferSize = 100;
         private String username = "admin";
-        private boolean disablePreSelectLinkedRecords = false;
         private List<Map.Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
-        private CollectionPreSelectStrategy collectionPreSelectStrategy = null;
 
         /**
          * Build the configured {@link Runway} and return the instance.
@@ -2896,13 +2862,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
-            }
-            if(disablePreSelectLinkedRecords) {
-                Reflection.set("supportsPreSelectLinkedRecords", false, db); // (authorized)
-                collectionPreSelectStrategy = CollectionPreSelectStrategy.NONE;
-            }
-            if(collectionPreSelectStrategy != null) {
-                db.collectionPreSelectStrategy = collectionPreSelectStrategy;
             }
 
             // Initialize save notification components if a listener is provided
@@ -2954,36 +2913,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
 
             return db;
-        }
-
-        /**
-         * Set the strategy for pre-selecting data for {@link Collection
-         * Collection&lt;Record&gt;} fields.
-         * <p>
-         * The default is {@link CollectionPreSelectStrategy#NAVIGATE}.
-         * </p>
-         *
-         * @param strategy the {@link CollectionPreSelectStrategy} to use
-         * @return this builder
-         */
-        public Builder collectionPreSelectStrategy(
-                CollectionPreSelectStrategy strategy) {
-            this.collectionPreSelectStrategy = strategy;
-            return this;
-        }
-
-        /**
-         * Disable the "pre-select" feature that improves performance by
-         * selecting data for linked records instead of making multiple database
-         * roundtrips. Generally speaking, it is never advised to disable
-         * pre-select, but this option exists for debugging the behaviour of
-         * reading using the new functionality vs the legacy method.
-         *
-         * @return this builder
-         */
-        public Builder disablePreSelectLinkedRecords() {
-            this.disablePreSelectLinkedRecords = true;
-            return this;
         }
 
         /**
@@ -3203,29 +3132,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @author Jeff Nelson
      */
     public class Properties {
-
-        /**
-         * Return the current {@link CollectionPreSelectStrategy} for this
-         * {@link Runway} instance.
-         *
-         * @return the {@link CollectionPreSelectStrategy}
-         */
-        public CollectionPreSelectStrategy collectionPreSelectStrategy() {
-            return collectionPreSelectStrategy;
-        }
-
-        /**
-         * Set the {@link CollectionPreSelectStrategy} for this {@link Runway}
-         * instance.
-         *
-         * @param strategy the {@link CollectionPreSelectStrategy} to use
-         * @return this {@link Properties} for chaining
-         */
-        public Properties collectionPreSelectStrategy(
-                CollectionPreSelectStrategy strategy) {
-            collectionPreSelectStrategy = strategy;
-            return this;
-        }
 
         /**
          * Register a listener that will be called <strong>after</strong> any

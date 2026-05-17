@@ -393,7 +393,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE}.</li>
      * <li>Call {@link Runway#getNavigatePathsForClassIfSupported(Class)} for
      * {@link TreeNode}, which has only a cyclic {@code parent: TreeNode}
      * field.</li>
@@ -404,19 +403,10 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testNavigateGateFiresForCyclicSingleRecordOnlyClass() {
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.NAVIGATE);
-        try {
-            Set<String> paths = runway
-                    .getNavigatePathsForClassIfSupported(TreeNode.class);
-            Assert.assertNotNull(paths);
-            Assert.assertTrue(paths.contains("parent*._"));
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
+        Set<String> paths = runway
+                .getNavigatePathsForClassIfSupported(TreeNode.class);
+        Assert.assertNotNull(paths);
+        Assert.assertTrue(paths.contains("parent*._"));
     }
 
     /**
@@ -429,7 +419,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE}.</li>
      * <li>Call {@link Runway#getNavigatePathsForClassIfSupported(Class)} for
      * {@link Document}, which has {@code metadata: Metadata} and
      * {@link Metadata} contains {@code tags: List<TagRecord>}.</li>
@@ -440,19 +429,10 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testNavigateGateFiresForClassReachingCollectionThroughSingleRecord() {
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.NAVIGATE);
-        try {
-            Set<String> paths = runway
-                    .getNavigatePathsForClassIfSupported(Document.class);
-            Assert.assertNotNull(paths);
-            Assert.assertTrue(paths.contains("metadata.tags._"));
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
+        Set<String> paths = runway
+                .getNavigatePathsForClassIfSupported(Document.class);
+        Assert.assertNotNull(paths);
+        Assert.assertTrue(paths.contains("metadata.tags._"));
     }
 
     /**
@@ -464,7 +444,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE}.</li>
      * <li>Call {@link Runway#getNavigatePathsForClassIfSupported(Class)} for
      * {@link Simple}, which has only a {@link String} field.</li>
      * </ul>
@@ -473,23 +452,14 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testNavigateGateReturnsNullForClassWithoutDestinations() {
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.NAVIGATE);
-        try {
-            Assert.assertNull(
-                    runway.getNavigatePathsForClassIfSupported(Simple.class));
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
+        Assert.assertNull(
+                runway.getNavigatePathsForClassIfSupported(Simple.class));
     }
 
     /**
      * <strong>Goal:</strong> Verify that loading a cyclic single-{@link Record}
-     * chain with {@link CollectionPreSelectStrategy#NAVIGATE} populates every
-     * level of the chain via the {@code *} transitive modifier.
+     * chain populates every level of the chain via the {@code *} transitive
+     * modifier.
      * <p>
      * <strong>Start state:</strong> A three-level {@link TreeNode} chain (leaf
      * &rarr; mid &rarr; root) saved to the database.
@@ -497,7 +467,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Create and save a chain of three {@link TreeNode TreeNodes}.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE}.</li>
      * <li>Load the leaf {@link TreeNode} and verify that every ancestor is
      * populated.</li>
      * </ul>
@@ -516,28 +485,19 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         leaf.name = "leaf";
         leaf.parent = mid;
         leaf.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.NAVIGATE);
-        try {
-            TreeNode loadedLeaf = runway.load(TreeNode.class, leaf.id());
-            Assert.assertEquals("leaf", loadedLeaf.name);
-            Assert.assertNotNull(loadedLeaf.parent);
-            Assert.assertEquals("mid", loadedLeaf.parent.name);
-            Assert.assertNotNull(loadedLeaf.parent.parent);
-            Assert.assertEquals("root", loadedLeaf.parent.parent.name);
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
+        TreeNode loadedLeaf = runway.load(TreeNode.class, leaf.id());
+        Assert.assertEquals("leaf", loadedLeaf.name);
+        Assert.assertNotNull(loadedLeaf.parent);
+        Assert.assertEquals("mid", loadedLeaf.parent.name);
+        Assert.assertNotNull(loadedLeaf.parent.parent);
+        Assert.assertEquals("root", loadedLeaf.parent.parent.name);
     }
 
     /**
      * <strong>Goal:</strong> Verify that loading a self-referential
-     * {@link java.util.Collection Collection&lt;Record&gt;} chain with
-     * {@link CollectionPreSelectStrategy#NAVIGATE} populates every level of the
-     * chain via the {@code *} transitive modifier in a single navigate RPC.
+     * {@link java.util.Collection Collection&lt;Record&gt;} chain populates
+     * every level of the chain via the {@code *} transitive modifier in a
+     * single navigate RPC.
      * <p>
      * <strong>Start state:</strong> A three-level {@link Node} chain (a &rarr;
      * b &rarr; c) saved to the database.
@@ -546,7 +506,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Create and save a chain of {@link Node Nodes} where each {@link Node}
      * has exactly one friend at the next level.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE}.</li>
      * <li>Load the root {@link Node} and verify that the entire chain is
      * populated through every level.</li>
      * </ul>
@@ -562,21 +521,12 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         a.friends.add(b);
         b.friends.add(c);
         a.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.NAVIGATE);
-        try {
-            Node loadedA = runway.load(Node.class, a.id());
-            Assert.assertEquals(1, loadedA.friends.size());
-            Node loadedB = loadedA.friends.get(0);
-            Assert.assertEquals("b", loadedB.label);
-            Assert.assertEquals(1, loadedB.friends.size());
-            Assert.assertEquals("c", loadedB.friends.get(0).label);
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
+        Node loadedA = runway.load(Node.class, a.id());
+        Assert.assertEquals(1, loadedA.friends.size());
+        Node loadedB = loadedA.friends.get(0);
+        Assert.assertEquals("b", loadedB.label);
+        Assert.assertEquals(1, loadedB.friends.size());
+        Assert.assertEquals("c", loadedB.friends.get(0).label);
     }
 
     /**
@@ -951,130 +901,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link CollectionPreSelectStrategy#BULK_SELECT} correctly loads
-     * {@link java.util.Collection Collection&lt;Record&gt;} fields with the
-     * same values as the default strategy.
-     * <p>
-     * <strong>Start state:</strong> A {@link Lock} with three {@link Dock
-     * Docks} saved to the database.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Create and save a {@link Lock} with three {@link Dock} elements.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
-     * <li>Load the {@link Lock} and verify each {@link Dock Dock's} value.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The loaded collection has three elements whose
-     * {@code dock} values match the originals.
-     */
-    @Test
-    public void testBulkSelectLoadsCollectionFieldsCorrectly() {
-        Lock lock = new Lock(ImmutableList.of(new Dock("one"), new Dock("two"),
-                new Dock("three")));
-        lock.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.BULK_SELECT);
-        try {
-            Lock loaded = runway.load(Lock.class, lock.id());
-            Assert.assertEquals(3, loaded.docks.size());
-            Set<String> dockValues = loaded.docks.stream().map(d -> d.dock)
-                    .collect(Collectors.toSet());
-            Assert.assertTrue(dockValues.contains("one"));
-            Assert.assertTrue(dockValues.contains("two"));
-            Assert.assertTrue(dockValues.contains("three"));
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link CollectionPreSelectStrategy#BULK_SELECT} correctly handles
-     * multi-level link chains (two hops deep).
-     * <p>
-     * <strong>Start state:</strong> A {@link Vessel} with a {@link Port} and
-     * {@link Cargo} saved to the database.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Create and save a {@link Vessel} with both single and collection
-     * {@link Record} fields.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
-     * <li>Load the {@link Vessel} and verify both field types.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The loaded {@link Vessel} has a populated
-     * {@code home} {@link Port} and correct {@link Cargo} values.
-     */
-    @Test
-    public void testBulkSelectHandlesMultiLevelLinks() {
-        Port port = new Port("marina");
-        Vessel vessel = new Vessel(port,
-                ImmutableList.of(new Cargo("grain", 100)));
-        vessel.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.BULK_SELECT);
-        try {
-            Vessel loaded = runway.load(Vessel.class, vessel.id());
-            Assert.assertNotNull(loaded.home);
-            Assert.assertEquals("marina", loaded.home.name);
-            Assert.assertEquals(1, loaded.cargo.size());
-            Assert.assertEquals("grain", loaded.cargo.get(0).description);
-            Assert.assertEquals(100, loaded.cargo.get(0).weight);
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link CollectionPreSelectStrategy#BULK_SELECT} correctly handles
-     * self-referential {@link java.util.Collection Collection&lt;Record&gt;}
-     * fields.
-     * <p>
-     * <strong>Start state:</strong> A {@link Node} graph where A has friend B.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Create and save a two-node graph.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
-     * <li>Load the root and verify the friend is populated.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The loaded {@link Node} has 1 friend with the
-     * correct label.
-     */
-    @Test
-    public void testBulkSelectHandlesSelfReferentialCollections() {
-        Node a = new Node("alpha");
-        Node b = new Node("beta");
-        a.friends.add(b);
-        a.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.BULK_SELECT);
-        try {
-            Node loaded = runway.load(Node.class, a.id());
-            Assert.assertEquals(1, loaded.friends.size());
-            Assert.assertEquals("beta", loaded.friends.get(0).label);
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link CollectionPreSelectStrategy#NAVIGATE} correctly populates
+     * <strong>Goal:</strong> Verify that navigate pre-fetch correctly populates
      * {@link java.util.Collection Collection&lt;Record&gt;} fields when loading
      * a single {@link Record} via {@code runway.load(Class, id)}.
      * <p>
@@ -1084,7 +911,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Create and save a {@link Lock} with three {@link Dock} elements.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE}.</li>
      * <li>Load the {@link Lock} via single-record
      * {@code runway.load(Lock.class, id)}.</li>
      * <li>Verify each {@link Dock Dock's} value.</li>
@@ -1098,252 +924,13 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Lock lock = new Lock(ImmutableList.of(new Dock("one"), new Dock("two"),
                 new Dock("three")));
         lock.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.NAVIGATE);
-        try {
-            Lock loaded = runway.load(Lock.class, lock.id());
-            Assert.assertEquals(3, loaded.docks.size());
-            Set<String> dockValues = loaded.docks.stream().map(d -> d.dock)
-                    .collect(Collectors.toSet());
-            Assert.assertTrue(dockValues.contains("one"));
-            Assert.assertTrue(dockValues.contains("two"));
-            Assert.assertTrue(dockValues.contains("three"));
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Runway.Builder#collectionPreSelectStrategy(CollectionPreSelectStrategy)}
-     * sets the strategy on the constructed {@link Runway}.
-     * <p>
-     * <strong>Start state:</strong> No prior state needed.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Build a {@link Runway} with
-     * {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
-     * <li>Assert the field value.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#BULK_SELECT}.
-     */
-    @Test
-    public void testBuilderSetsCollectionPreSelectStrategy() throws Exception {
-        Runway custom = Runway.builder().port(server.getClientPort())
-                .collectionPreSelectStrategy(
-                        CollectionPreSelectStrategy.BULK_SELECT)
-                .build();
-        try {
-            Assert.assertEquals(CollectionPreSelectStrategy.BULK_SELECT,
-                    custom.properties().collectionPreSelectStrategy());
-        }
-        finally {
-            custom.close();
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Runway.Builder#disablePreSelectLinkedRecords()} resets
-     * {@code collectionPreSelectStrategy} to
-     * {@link CollectionPreSelectStrategy#NONE}.
-     * <p>
-     * <strong>Start state:</strong> No prior state needed.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Build a {@link Runway} with pre-select disabled.</li>
-     * <li>Assert the strategy is {@code NONE}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NONE}.
-     */
-    @Test
-    public void testDisablePreSelectResetsStrategy() throws Exception {
-        Runway custom = Runway.builder().port(server.getClientPort())
-                .disablePreSelectLinkedRecords().build();
-        try {
-            Assert.assertEquals(CollectionPreSelectStrategy.NONE,
-                    custom.properties().collectionPreSelectStrategy());
-        }
-        finally {
-            custom.close();
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Runway.Builder#disablePreSelectLinkedRecords()} overrides an
-     * explicit {@link CollectionPreSelectStrategy} set earlier in the
-     * {@link Runway.Builder} chain.
-     * <p>
-     * <strong>Start state:</strong> No prior state needed.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Build a {@link Runway} setting
-     * {@link CollectionPreSelectStrategy#NAVIGATE} followed by
-     * {@link Runway.Builder#disablePreSelectLinkedRecords()}.</li>
-     * <li>Assert the strategy is {@code NONE}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NONE} because the disable call takes
-     * precedence.
-     */
-    @Test
-    public void testDisablePreSelectOverridesExplicitStrategy()
-            throws Exception {
-        Runway custom = Runway.builder().port(server.getClientPort())
-                .collectionPreSelectStrategy(
-                        CollectionPreSelectStrategy.NAVIGATE)
-                .disablePreSelectLinkedRecords().build();
-        try {
-            Assert.assertEquals(CollectionPreSelectStrategy.NONE,
-                    custom.properties().collectionPreSelectStrategy());
-        }
-        finally {
-            custom.close();
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Runway.Builder#disablePreSelectLinkedRecords()} overrides an
-     * explicit {@link CollectionPreSelectStrategy} even when the disable call
-     * comes <em>after</em> the explicit strategy in the builder chain.
-     * <p>
-     * <strong>Start state:</strong> No prior state needed.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Build a {@link Runway} calling
-     * {@link Runway.Builder#disablePreSelectLinkedRecords()} after
-     * {@link Runway.Builder#collectionPreSelectStrategy(CollectionPreSelectStrategy)
-     * collectionPreSelectStrategy(NAVIGATE)}.</li>
-     * <li>Assert the strategy is {@code NONE}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NONE} because the disable call takes
-     * precedence regardless of ordering.
-     */
-    @Test
-    public void testDisablePreSelectOverridesExplicitStrategyReverseOrder()
-            throws Exception {
-        Runway custom = Runway.builder().port(server.getClientPort())
-                .disablePreSelectLinkedRecords().collectionPreSelectStrategy(
-                        CollectionPreSelectStrategy.NAVIGATE)
-                .build();
-        try {
-            Assert.assertEquals(CollectionPreSelectStrategy.NONE,
-                    custom.properties().collectionPreSelectStrategy());
-        }
-        finally {
-            custom.close();
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that the default
-     * {@link CollectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NAVIGATE} so loads use the unified
-     * navigate-plus-cleanup path out of the box.
-     * <p>
-     * <strong>Start state:</strong> No prior state needed.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Build a {@link Runway} without calling
-     * {@link Runway.Builder#collectionPreSelectStrategy
-     * collectionPreSelectStrategy}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NAVIGATE}.
-     */
-    @Test
-    public void testDefaultStrategyIsNavigate() throws Exception {
-        Runway custom = Runway.builder().port(server.getClientPort()).build();
-        try {
-            Assert.assertEquals(CollectionPreSelectStrategy.NAVIGATE,
-                    custom.properties().collectionPreSelectStrategy());
-        }
-        finally {
-            custom.close();
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that selecting the deprecated
-     * {@link CollectionPreSelectStrategy#BULK_SELECT} alias produces the same
-     * loaded {@link Record Records} as
-     * {@link CollectionPreSelectStrategy#NAVIGATE} &mdash; the two strategies
-     * are now unified.
-     * <p>
-     * <strong>Start state:</strong> A {@link Conversation} with two
-     * {@link Exchange Exchanges} saved to the database.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a small {@link Conversation} graph.</li>
-     * <li>Load it once under {@link CollectionPreSelectStrategy#NAVIGATE} and
-     * once under {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
-     * <li>Compare the loaded data on both sides.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> Both loads populate the same {@link Exchange}
-     * text values and the same nested {@link Prompt} data.
-     */
-    @Test
-    @SuppressWarnings("deprecation")
-    public void testBulkSelectBehavesAsAliasForNavigate() {
-        Conversation convo = new Conversation();
-        Exchange e1 = new Exchange();
-        e1.text = "first";
-        Prompt p1 = new Prompt();
-        p1.text = "prompt-one";
-        e1.prompt = p1;
-        Exchange e2 = new Exchange();
-        e2.text = "second";
-        Prompt p2 = new Prompt();
-        p2.text = "prompt-two";
-        e2.prompt = p2;
-        convo.root.add(e1);
-        convo.root.add(e2);
-        convo.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        try {
-            runway.properties().collectionPreSelectStrategy(
-                    CollectionPreSelectStrategy.NAVIGATE);
-            Conversation viaNavigate = runway.load(Conversation.class,
-                    convo.id());
-            runway.properties().collectionPreSelectStrategy(
-                    CollectionPreSelectStrategy.BULK_SELECT);
-            Conversation viaBulkSelect = runway.load(Conversation.class,
-                    convo.id());
-            Set<String> navigateTexts = viaNavigate.root.stream()
-                    .map(e -> e.text).collect(Collectors.toSet());
-            Set<String> bulkSelectTexts = viaBulkSelect.root.stream()
-                    .map(e -> e.text).collect(Collectors.toSet());
-            Assert.assertEquals(navigateTexts, bulkSelectTexts);
-            Set<String> navigatePromptTexts = viaNavigate.root.stream()
-                    .map(e -> e.prompt.text).collect(Collectors.toSet());
-            Set<String> bulkSelectPromptTexts = viaBulkSelect.root.stream()
-                    .map(e -> e.prompt.text).collect(Collectors.toSet());
-            Assert.assertEquals(navigatePromptTexts, bulkSelectPromptTexts);
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
+        Lock loaded = runway.load(Lock.class, lock.id());
+        Assert.assertEquals(3, loaded.docks.size());
+        Set<String> dockValues = loaded.docks.stream().map(d -> d.dock)
+                .collect(Collectors.toSet());
+        Assert.assertTrue(dockValues.contains("one"));
+        Assert.assertTrue(dockValues.contains("two"));
+        Assert.assertTrue(dockValues.contains("three"));
     }
 
     /**
@@ -1359,8 +946,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save the chain through {@code A1}.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE} (the unified
-     * resolve path).</li>
      * <li>Load {@code A1} and walk every level of the chain.</li>
      * </ul>
      * <p>
@@ -1391,29 +976,20 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         a3.betas.add(b3);
         b3.alphas.add(a4);
         a1.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.NAVIGATE);
-        try {
-            Alpha loadedA1 = runway.load(Alpha.class, a1.id());
-            Assert.assertEquals("a1", loadedA1.label);
-            Beta loadedB1 = loadedA1.betas.get(0);
-            Assert.assertEquals("b1", loadedB1.label);
-            Alpha loadedA2 = loadedB1.alphas.get(0);
-            Assert.assertEquals("a2", loadedA2.label);
-            Beta loadedB2 = loadedA2.betas.get(0);
-            Assert.assertEquals("b2", loadedB2.label);
-            Alpha loadedA3 = loadedB2.alphas.get(0);
-            Assert.assertEquals("a3", loadedA3.label);
-            Beta loadedB3 = loadedA3.betas.get(0);
-            Assert.assertEquals("b3", loadedB3.label);
-            Alpha loadedA4 = loadedB3.alphas.get(0);
-            Assert.assertEquals("a4", loadedA4.label);
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
+        Alpha loadedA1 = runway.load(Alpha.class, a1.id());
+        Assert.assertEquals("a1", loadedA1.label);
+        Beta loadedB1 = loadedA1.betas.get(0);
+        Assert.assertEquals("b1", loadedB1.label);
+        Alpha loadedA2 = loadedB1.alphas.get(0);
+        Assert.assertEquals("a2", loadedA2.label);
+        Beta loadedB2 = loadedA2.betas.get(0);
+        Assert.assertEquals("b2", loadedB2.label);
+        Alpha loadedA3 = loadedB2.alphas.get(0);
+        Assert.assertEquals("a3", loadedA3.label);
+        Beta loadedB3 = loadedA3.betas.get(0);
+        Assert.assertEquals("b3", loadedB3.label);
+        Alpha loadedA4 = loadedB3.alphas.get(0);
+        Assert.assertEquals("a4", loadedA4.label);
     }
 
     /**
@@ -1428,7 +1004,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save the {@link Lock} with a distinguishing tag.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE}.</li>
      * <li>Invoke {@code findAny(Lock.class, criteria)}, which takes the untyped
      * {@code instantiateAll(Set)} path with {@code any=true}.</li>
      * </ul>
@@ -1442,26 +1017,17 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
                 new Dock("beta"), new Dock("gamma")));
         lock.tag = "untyped-lock-tag";
         lock.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.NAVIGATE);
-        try {
-            Set<Lock> loaded = runway.findAny(Lock.class,
-                    Criteria.where().key("tag").operator(Operator.EQUALS)
-                            .value("untyped-lock-tag").build());
-            Assert.assertEquals(1, loaded.size());
-            Lock loadedLock = loaded.iterator().next();
-            Assert.assertEquals(3, loadedLock.docks.size());
-            Set<String> dockValues = loadedLock.docks.stream().map(d -> d.dock)
-                    .collect(Collectors.toSet());
-            Assert.assertTrue(dockValues.contains("alpha"));
-            Assert.assertTrue(dockValues.contains("beta"));
-            Assert.assertTrue(dockValues.contains("gamma"));
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
+        Set<Lock> loaded = runway.findAny(Lock.class,
+                Criteria.where().key("tag").operator(Operator.EQUALS)
+                        .value("untyped-lock-tag").build());
+        Assert.assertEquals(1, loaded.size());
+        Lock loadedLock = loaded.iterator().next();
+        Assert.assertEquals(3, loadedLock.docks.size());
+        Set<String> dockValues = loadedLock.docks.stream().map(d -> d.dock)
+                .collect(Collectors.toSet());
+        Assert.assertTrue(dockValues.contains("alpha"));
+        Assert.assertTrue(dockValues.contains("beta"));
+        Assert.assertTrue(dockValues.contains("gamma"));
     }
 
     // NOTE: Performance benchmark tests were removed because
