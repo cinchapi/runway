@@ -3531,24 +3531,54 @@ public abstract class Record implements Comparable<Record> {
                     .getOrDefault(clazz, ImmutableMap.of()).values();
             for (Field field : fields) {
                 Class<?> type = field.getType();
-                if(Record.class.isAssignableFrom(type)
-                        && !isCyclic((Class<? extends Record>) type,
-                                hierarchies, ancestors)) {
-                    // Non-cyclic single-Record edge: recurse to discover
-                    // Collection<Record> fields reachable through this link.
-                    // The bare field name is intentionally not emitted here
-                    // because computePaths handles single-Record traversal
-                    // for the select-side path set.
-                    Class<? extends Record> nested = (Class<? extends Record>) type;
-                    Collection<Class<?>> hierarchy = hierarchies.get(nested);
-                    for (Class<?> descendant : hierarchy) {
-                        navigatePaths.addAll(computeNavigatePaths(
-                                (Class<? extends Record>) descendant,
-                                hierarchies, fieldsByClass,
-                                fieldTypeArgumentsByClass,
-                                prefix + field.getName() + ".",
-                                new HashSet<>(ancestors),
-                                new HashSet<>(visitedEdges)));
+                if(Record.class.isAssignableFrom(type)) {
+                    if(!isCyclic((Class<? extends Record>) type, hierarchies,
+                            ancestors)) {
+                        // Non-cyclic single-Record edge: recurse to discover
+                        // Collection<Record> fields reachable through this
+                        // link. The bare field name is intentionally not
+                        // emitted here because computePaths handles
+                        // single-Record traversal for the select-side path set.
+                        Class<? extends Record> nested = (Class<? extends Record>) type;
+                        Collection<Class<?>> hierarchy = hierarchies
+                                .get(nested);
+                        for (Class<?> descendant : hierarchy) {
+                            navigatePaths.addAll(computeNavigatePaths(
+                                    (Class<? extends Record>) descendant,
+                                    hierarchies, fieldsByClass,
+                                    fieldTypeArgumentsByClass,
+                                    prefix + field.getName() + ".",
+                                    new HashSet<>(ancestors),
+                                    new HashSet<>(visitedEdges)));
+                        }
+
+                    }
+                    else {
+                        // Cyclic single-Record edge: emit *-suffixed paths so a
+                        // single navigate RPC follows the link transitively.
+                        Class<? extends Record> recordType = (Class<? extends Record>) type;
+                        TransitiveEdge edge = new TransitiveEdge(clazz,
+                                field.getName());
+                        if(!visitedEdges.contains(edge)) {
+                            String fieldPrefix = prefix + field.getName()
+                                    + "*.";
+                            Set<TransitiveEdge> nextEdges = Sets
+                                    .union(visitedEdges, ImmutableSet.of(edge));
+                            Collection<Class<?>> hierarchy = hierarchies
+                                    .get(recordType);
+                            for (Class<?> descendant : hierarchy) {
+                                navigatePaths.addAll(computePaths(
+                                        (Class<? extends Record>) descendant,
+                                        hierarchies, fieldsByClass, fieldPrefix,
+                                        new HashSet<>(ancestors), true));
+                                navigatePaths.addAll(computeNavigatePaths(
+                                        (Class<? extends Record>) descendant,
+                                        hierarchies, fieldsByClass,
+                                        fieldTypeArgumentsByClass, fieldPrefix,
+                                        new HashSet<>(ancestors),
+                                        new HashSet<>(nextEdges)));
+                            }
+                        }
                     }
                 }
                 else if(Collection.class.isAssignableFrom(type)) {
@@ -3566,82 +3596,41 @@ public abstract class Record implements Comparable<Record> {
                                     .getOrDefault(field.getName(),
                                             ImmutableList.of()),
                                     null);
-                    if(elementType == null
-                            || !Record.class.isAssignableFrom(elementType)) {
-                        continue;
-                    }
-                    Class<? extends Record> recordType = (Class<? extends Record>) elementType;
-                    boolean cyclic = isCyclic(recordType, hierarchies,
-                            ancestors);
-                    TransitiveEdge edge = cyclic
-                            ? new TransitiveEdge(clazz, field.getName())
-                            : null;
-                    if(cyclic && visitedEdges.contains(edge)) {
-                        continue;
-                    }
-                    String fieldPrefix = cyclic
-                            ? prefix + field.getName() + "*."
-                            : prefix + field.getName() + ".";
-                    Set<TransitiveEdge> nextEdges = cyclic
-                            ? plus(visitedEdges, edge)
-                            : visitedEdges;
-                    Collection<Class<?>> hierarchy = hierarchies
-                            .get(recordType);
-                    for (Class<?> descendant : hierarchy) {
-                        navigatePaths.addAll(computePaths(
-                                (Class<? extends Record>) descendant,
-                                hierarchies, fieldsByClass, fieldPrefix,
-                                new HashSet<>(ancestors), true));
-                        navigatePaths.addAll(computeNavigatePaths(
-                                (Class<? extends Record>) descendant,
-                                hierarchies, fieldsByClass,
-                                fieldTypeArgumentsByClass, fieldPrefix,
-                                new HashSet<>(ancestors),
-                                new HashSet<>(nextEdges)));
-                    }
-                }
-                else if(Record.class.isAssignableFrom(type)) {
-                    // Cyclic single-Record edge: emit *-suffixed paths so a
-                    // single navigate RPC follows the link transitively.
-                    Class<? extends Record> recordType = (Class<? extends Record>) type;
-                    TransitiveEdge edge = new TransitiveEdge(clazz,
-                            field.getName());
-                    if(visitedEdges.contains(edge)) {
-                        continue;
-                    }
-                    String fieldPrefix = prefix + field.getName() + "*.";
-                    Set<TransitiveEdge> nextEdges = plus(visitedEdges, edge);
-                    Collection<Class<?>> hierarchy = hierarchies
-                            .get(recordType);
-                    for (Class<?> descendant : hierarchy) {
-                        navigatePaths.addAll(computePaths(
-                                (Class<? extends Record>) descendant,
-                                hierarchies, fieldsByClass, fieldPrefix,
-                                new HashSet<>(ancestors), true));
-                        navigatePaths.addAll(computeNavigatePaths(
-                                (Class<? extends Record>) descendant,
-                                hierarchies, fieldsByClass,
-                                fieldTypeArgumentsByClass, fieldPrefix,
-                                new HashSet<>(ancestors),
-                                new HashSet<>(nextEdges)));
+                    if(elementType != null
+                            && Record.class.isAssignableFrom(elementType)) {
+                        Class<? extends Record> recordType = (Class<? extends Record>) elementType;
+                        boolean cyclic = isCyclic(recordType, hierarchies,
+                                ancestors);
+                        TransitiveEdge edge = cyclic
+                                ? new TransitiveEdge(clazz, field.getName())
+                                : null;
+                        if(!cyclic || !visitedEdges.contains(edge)) {
+                            String fieldPrefix = cyclic
+                                    ? prefix + field.getName() + "*."
+                                    : prefix + field.getName() + ".";
+                            Set<TransitiveEdge> nextEdges = cyclic
+                                    ? Sets.union(visitedEdges,
+                                            ImmutableSet.of(edge))
+                                    : visitedEdges;
+                            Collection<Class<?>> hierarchy = hierarchies
+                                    .get(recordType);
+                            for (Class<?> descendant : hierarchy) {
+                                navigatePaths.addAll(computePaths(
+                                        (Class<? extends Record>) descendant,
+                                        hierarchies, fieldsByClass, fieldPrefix,
+                                        new HashSet<>(ancestors), true));
+                                navigatePaths.addAll(computeNavigatePaths(
+                                        (Class<? extends Record>) descendant,
+                                        hierarchies, fieldsByClass,
+                                        fieldTypeArgumentsByClass, fieldPrefix,
+                                        new HashSet<>(ancestors),
+                                        new HashSet<>(nextEdges)));
+                            }
+                        }
                     }
                 }
             }
             return navigatePaths;
-        }
-
-        /**
-         * Return a new {@link Set} that contains every element of {@code set}
-         * plus {@code element}.
-         *
-         * @param set the source {@link Set}
-         * @param element the additional element
-         * @return a {@link Set} containing {@code set} and {@code element}
-         */
-        private static <T> Set<T> plus(Set<T> set, T element) {
-            Set<T> next = new HashSet<>(set);
-            next.add(element);
-            return next;
         }
 
         /**
