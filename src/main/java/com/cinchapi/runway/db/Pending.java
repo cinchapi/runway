@@ -29,12 +29,11 @@ import com.google.common.base.Preconditions;
  * A {@link Pending} is a value that resolves at some point in the future.
  * <p>
  * Some {@link Pending Pendings} are already resolved when constructed &mdash;
- * for example, one returned by {@link #of}. Others stand in for a value that
- * will be supplied later, such as the result of a deferred read recorded by a
- * {@link Reader}. In either case, the contract is the same: callers do not read
- * the value out of a {@link Pending}; instead, they register a {@link Consumer}
- * and the {@link Pending} delivers the value to that {@link Consumer} when one
- * is available.
+ * for example, one returned by {@link #of}. Others stand in for a value that is
+ * not yet known, to be supplied later by whatever computes it. In either case,
+ * the contract is the same: callers do not read the value out of a
+ * {@link Pending}; instead, they register a {@link Consumer} and the
+ * {@link Pending} delivers the value to that {@link Consumer} once it is known.
  * </p>
  *
  * <h2>Push, not pull</h2>
@@ -51,9 +50,10 @@ import com.google.common.base.Preconditions;
  * </p>
  * <p>
  * The push model lets whatever produces the value choose when resolution
- * happens &mdash; for example, batching many deferred reads behind a single
- * round trip &mdash; without callers having to coordinate the timing
- * themselves. Callers wire up what should happen with the value and move on.
+ * happens &mdash; for example, deferring work until many outstanding
+ * {@link Pending Pendings} can be resolved together &mdash; without callers
+ * having to coordinate the timing themselves. Callers describe what should
+ * happen with the value and move on.
  * </p>
  *
  * <h2>Composition</h2>
@@ -63,13 +63,12 @@ import com.google.common.base.Preconditions;
  * build new {@link Pending Pendings} from existing ones:
  * </p>
  * <ul>
- * <li>{@link #map} applies a synchronous function to the value and yields a
- * {@link Pending} of the transformed result. Use it when the next step is a
- * plain transformation of what you already have.</li>
- * <li>{@link #then} applies a function that itself returns a {@link Pending},
- * and yields a {@link Pending} that resolves to the follow-on {@link Pending
- * Pending's} value. Use it when the next step is itself asynchronous &mdash;
- * for example, when its value depends on another deferred read.</li>
+ * <li>{@link #map} transforms the value with a function and yields a
+ * {@link Pending} of the result. Use it for a synchronous step that produces a
+ * plain value.</li>
+ * <li>{@link #then} transforms the value with a function that itself returns a
+ * {@link Pending}, and yields a {@link Pending} of that follow-on value. Use it
+ * for a step that is itself asynchronous.</li>
  * </ul>
  * <p>
  * Operators can be chained: the {@link Pending} returned by one is the input to
@@ -85,25 +84,24 @@ import com.google.common.base.Preconditions;
  *
  * <pre>
  * {@code
- * reader.find(criteria)
- *       .map(Set::size)
- *       .onResolve(n -> System.out.println("matched " + n));
+ * fetchName(userId)
+ *         .map(String::toUpperCase)
+ *         .onResolve(name -> System.out.println(name));
  * }
  * </pre>
  *
  * <p>
- * Chain a follow-on read with {@link #then}. The second read cannot be
- * expressed until the first read's value is known, so {@link #then} captures
- * the dependency:
+ * Chain a follow-on step with {@link #then}. The second step cannot be
+ * expressed until the first value is known, so {@link #then} captures the
+ * dependency:
  * </p>
  *
  * <pre>
  * {@code
- * reader.find(byEmail)
- *       .map(ids -> ids.iterator().next())
- *       .then(id -> reader.select(id))
- *       .map(record -> record.get("name"))
- *       .onResolve(name -> System.out.println(name));
+ * fetchUserId(email)
+ *         .then(id -> fetchProfile(id))
+ *         .map(profile -> profile.name())
+ *         .onResolve(name -> System.out.println(name));
  * }
  * </pre>
  *
