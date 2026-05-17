@@ -827,9 +827,6 @@ public abstract class Record implements Comparable<Record> {
     /**
      * An internal flag that tracks whether {@link #_realms} have been
      * {@link #addRealm(String) added} or {@link #removeRealm(String) removed}.
-     * This flag is necessary so that this {@link Record Record's} data cache
-     * isn't unnecessarily invalidated when reconciling the realms on
-     * {@link #saveWithinTransaction(Concourse, Map, Map)}.
      */
     private transient boolean _hasModifiedRealms = false;
 
@@ -909,9 +906,8 @@ public abstract class Record implements Comparable<Record> {
     private Set<Record> waitingToBeDeleted = new LinkedHashSet<>();
 
     /**
-     * The {@link Record}'s checksum that is generated and cached on
-     * {@link #load(Concourse, ConcurrentMap, Map, String) load} and
-     * {@link #saveWithinTransaction(Concourse, Map, Map) save} events.
+     * This {@link Record Record's} checksum as of the most recent time it was
+     * loaded or persisted.
      * <p>
      * This value is <strong>NOT</strong> returned from {@link #checksum()}, but
      * is instead compared against the value returned from that method to
@@ -2210,7 +2206,10 @@ public abstract class Record implements Comparable<Record> {
      *            {@link Record} has been externally modified
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
      *             and this {@link Record} has stale data
-     * @throws IllegalStateException if field constraints are violated
+     * @throws IllegalStateException if a {@link Required} or
+     *             {@link ValidatedBy} field constraint is violated
+     * @throws ConstraintViolationException if a {@link Unique} field constraint
+     *             is violated
      */
     void saveWithinTransaction(final Saver saver, Map<Record, Boolean> seen,
             @Nullable Map<Record, Snapshot> snapshots,
@@ -2894,7 +2893,7 @@ public abstract class Record implements Comparable<Record> {
      * @param data the (key, value) pairs that collectively identify the
      *            constraint being asserted
      * @param errorName the human-readable name attached to the
-     *            {@link IllegalStateException} thrown on a violation
+     *            {@link ConstraintViolationException} thrown on a violation
      */
     private void enqueueUniquenessCheck(Saver saver, Map<String, Object> data,
             String errorName) {
