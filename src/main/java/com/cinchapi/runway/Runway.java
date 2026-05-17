@@ -979,164 +979,110 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         "Selection has already been submitted"))
                 .map(DatabaseSelection::resolve)
                 .toArray(DatabaseSelection[]::new);
-        Concourse concourse = null;
-        try {
-            if(selections.length == 1) {
-                DatabaseSelection<?> selection = selections[0];
-                if(selection.state == Selection.State.RESOLVED) {
-                    selection.setState(Selection.State.FINISHED);
-                }
-                else {
-                    Object cached = recallAndPossiblyFilter(selection);
-                    Set<AdHocDataSource<?>> sources = cached != null ? null
-                            : (selection.any
-                                    ? getAttachedSourcesForHierarchy(
-                                            selection.clazz)
-                                    : getAttachedSources(selection.clazz));
-                    if(cached != null
-                            || (sources != null && !sources.isEmpty())) {
-                        // No database connection needed; sources/cache
-                        // resolve the selection in $selectWithPossibleSources
-                        // before the reader is touched.
-                        $selectWithPossibleSources(null, selection, sources);
-                    }
-                    else {
-                        concourse = ensureValidConnection(concourse);
-                        Reader reader = new IncrementalReader(concourse);
-                        // Forward the already-resolved (empty) sources so
-                        // $selectWithPossibleSources doesn't re-issue
-                        // getAttachedSources for every cache-missing single
-                        // selection.
-                        $selectWithPossibleSources(reader, selection, sources);
-                        reader.drain();
-                    }
-                    reserve(selection);
-                }
-                return new Selections(selections);
+        if(selections.length == 1) {
+            DatabaseSelection<?> selection = selections[0];
+            if(selection.state == Selection.State.RESOLVED) {
+                selection.setState(Selection.State.FINISHED);
             }
             else {
-                List<DatabaseSelection<?>> unique = Arrays.stream(selections)
-                        .map(SelectionKey::new).distinct()
-                        .map(key -> key.selection).collect(Collectors.toList());
-                if(supportsBulkCommands) {
-                    Reader reader = null;
-                    List<DatabaseSelection<?>> dispatched = new ArrayList<>();
+                try (Reader reader = new IncrementalReader(connections)) {
+                    $selectWithPossibleSources(reader, selection, null);
+                    reader.drain();
+                }
+                reserve(selection);
+            }
+            return new Selections(selections);
+        }
+        else {
+            List<DatabaseSelection<?>> unique = Arrays.stream(selections)
+                    .map(SelectionKey::new).distinct().map(key -> key.selection)
+                    .collect(Collectors.toList());
+            if(supportsBulkCommands) {
+                List<DatabaseSelection<?>> dispatched = new ArrayList<>();
+                try (Reader reader = new BatchReader(connections)) {
                     for (DatabaseSelection<?> selection : unique) {
                         if(selection.state == Selection.State.RESOLVED) {
                             selection.setState(Selection.State.FINISHED);
                         }
                         else {
-                            Object cached = recallAndPossiblyFilter(selection);
-                            Set<AdHocDataSource<?>> sources = cached != null
-                                    ? null
-                                    : (selection.any
-                                            ? getAttachedSourcesForHierarchy(
-                                                    selection.clazz)
-                                            : getAttachedSources(
-                                                    selection.clazz));
-                            if(cached != null
-                                    || (sources != null
-                                            && !sources.isEmpty())) {
-                                // No database connection needed; sources/cache
-                                // resolve the selection in
-                                // $selectWithPossibleSources before the reader
-                                // is touched.
-                                $selectWithPossibleSources(null, selection,
-                                        sources);
-                            }
-                            else {
-                                if(reader == null) {
-                                    concourse = ensureValidConnection(
-                                            concourse);
-                                    reader = new BatchReader(concourse);
-                                }
-                                // Forward the already-resolved (empty) sources
-                                // so $selectWithPossibleSources doesn't
-                                // re-issue getAttachedSources for every
-                                // cache-missing selection.
-                                $selectWithPossibleSources(reader, selection,
-                                        sources);
-                            }
+                            $selectWithPossibleSources(reader, selection, null);
                             dispatched.add(selection);
                         }
                     }
-                    if(reader != null) {
-                        reader.drain();
-                    }
-                    for (DatabaseSelection<?> selection : dispatched) {
-                        reserve(selection);
-                    }
+                    reader.drain();
                 }
-                else {
-                    List<DatabaseSelection<?>> isolated = new ArrayList<>();
-                    List<DatabaseSelection<?>> combinable = new ArrayList<>();
-                    Set<String> combinedClasses = Sets.newHashSet();
-                    outer: for (DatabaseSelection<?> selection : unique) {
-                        if(selection.state == Selection.State.RESOLVED) {
-                            selection.setState(Selection.State.FINISHED);
-                            continue outer; /* (authorized short circuit) */
-                        }
-                        // NOTE: Must manually attempt to recall here because it
-                        // won't register as cached when dispatching route if a
-                        // combination occurs and gets dispatched
-                        Object cached = recallAndPossiblyFilter(selection);
-                        if(cached != null) {
-                            selection.setResult(cached);
-                            selection.setState(Selection.State.FINISHED);
-                            continue outer;
-                        }
-                        Set<AdHocDataSource<?>> sources = selection.any
-                                ? getAttachedSourcesForHierarchy(
-                                        selection.clazz)
-                                : getAttachedSources(selection.clazz);
-                        if(!sources.isEmpty()) {
-                            concourse = ensureValidConnection(concourse);
-                            Reader reader = new IncrementalReader(concourse);
+                for (DatabaseSelection<?> selection : dispatched) {
+                    reserve(selection);
+                }
+            }
+            else {
+                List<DatabaseSelection<?>> isolated = new ArrayList<>();
+                List<DatabaseSelection<?>> combinable = new ArrayList<>();
+                Set<String> combinedClasses = Sets.newHashSet();
+                outer: for (DatabaseSelection<?> selection : unique) {
+                    if(selection.state == Selection.State.RESOLVED) {
+                        selection.setState(Selection.State.FINISHED);
+                        continue outer; /* (authorized short circuit) */
+                    }
+                    // NOTE: Must manually attempt to recall here because it
+                    // won't register as cached when dispatching route if a
+                    // combination occurs and gets dispatched
+                    Object cached = recallAndPossiblyFilter(selection);
+                    if(cached != null) {
+                        selection.setResult(cached);
+                        selection.setState(Selection.State.FINISHED);
+                        continue outer;
+                    }
+                    Set<AdHocDataSource<?>> sources = selection.any
+                            ? getAttachedSourcesForHierarchy(selection.clazz)
+                            : getAttachedSources(selection.clazz);
+                    if(!sources.isEmpty()) {
+                        try (Reader reader = new IncrementalReader(
+                                connections)) {
                             $selectWithPossibleSources(reader, selection,
                                     sources);
                             reader.drain();
-                            reserve(selection);
+                        }
+                        reserve(selection);
+                        continue outer;
+                    }
+                    else if(selection.isCombinable()) {
+                        // NOTE: #demux partitions combined results by class
+                        // name only, so same-class selections with different
+                        // criteria would each receive the union. Isolate
+                        // conflicting ones to ensure correct per-criteria
+                        // filtering.
+                        Set<String> classes = selection.any
+                                ? StaticAnalysis.instance()
+                                        .getClassHierarchy(selection.clazz)
+                                        .stream().map(Class::getName)
+                                        .collect(Collectors.toSet())
+                                : ImmutableSet.of(selection.clazz.getName());
+                        boolean conflict = false;
+                        for (String clazz : classes) {
+                            if(combinedClasses.contains(clazz)) {
+                                conflict = true;
+                                break;
+                            }
+                        }
+                        if(!conflict) {
+                            combinedClasses.addAll(classes);
+                            combinable.add(selection);
                             continue outer;
                         }
-                        else if(selection.isCombinable()) {
-                            // NOTE: #demux partitions combined results by class
-                            // name only, so same-class selections with
-                            // different criteria would each receive the union.
-                            // Isolate conflicting ones to ensure correct
-                            // per-criteria filtering.
-                            Set<String> classes = selection.any
-                                    ? StaticAnalysis.instance()
-                                            .getClassHierarchy(selection.clazz)
-                                            .stream().map(Class::getName)
-                                            .collect(Collectors.toSet())
-                                    : ImmutableSet
-                                            .of(selection.clazz.getName());
-                            boolean conflict = false;
-                            for (String clazz : classes) {
-                                if(combinedClasses.contains(clazz)) {
-                                    conflict = true;
-                                    break;
-                                }
-                            }
-                            if(!conflict) {
-                                combinedClasses.addAll(classes);
-                                combinable.add(selection);
-                                continue outer;
-                            }
-                        }
-                        isolated.add(selection);
                     }
-                    BuildableState combined = null;
-                    for (DatabaseSelection<?> selection : combinable) {
-                        selection.ensurePending();
-                        Criteria criteria = buildSelectionCriteria(selection);
-                        combined = combined == null
-                                ? Criteria.where().group(criteria)
-                                : combined.or().group(criteria);
-                    }
-                    if(combined != null) {
-                        concourse = ensureValidConnection(concourse);
-                        Reader reader = new IncrementalReader(concourse);
+                    isolated.add(selection);
+                }
+                BuildableState combined = null;
+                for (DatabaseSelection<?> selection : combinable) {
+                    selection.ensurePending();
+                    Criteria criteria = buildSelectionCriteria(selection);
+                    combined = combined == null
+                            ? Criteria.where().group(criteria)
+                            : combined.or().group(criteria);
+                }
+                if(combined != null) {
+                    try (Reader reader = new IncrementalReader(connections)) {
                         AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
                         read(reader, null, combined, null, null)
                                 .onResolve(data::set);
@@ -1145,66 +1091,56 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             demux(selection, data.get());
                         }
                     }
-                    if(!isolated.isEmpty()) {
-                        Runnable[] tasks = new Runnable[isolated.size()];
-                        for (int i = 0; i < isolated.size(); i++) {
-                            DatabaseSelection<?> selection = isolated.get(i);
-                            tasks[i] = () -> {
-                                Concourse _concourse = connections.request();
-                                try {
-                                    Reader reader = new IncrementalReader(
-                                            _concourse);
-                                    $select(reader, selection);
-                                    reader.drain();
-                                }
-                                finally {
-                                    connections.release(_concourse);
-                                }
-                            };
-                        }
-                        selector.join(tasks);
+                }
+                if(!isolated.isEmpty()) {
+                    Runnable[] tasks = new Runnable[isolated.size()];
+                    for (int i = 0; i < isolated.size(); i++) {
+                        DatabaseSelection<?> selection = isolated.get(i);
+                        tasks[i] = () -> {
+                            try (Reader reader = new IncrementalReader(
+                                    connections)) {
+                                $select(reader, selection);
+                                reader.drain();
+                            }
+                        };
+                    }
+                    selector.join(tasks);
 
-                        // Reservation cannot happen in the async threads above
-                        // because it needs access to the #reservations thread
-                        // local.
-                        for (DatabaseSelection<?> selection : isolated) {
-                            reserve(selection);
-                        }
+                    // Reservation cannot happen in the async threads above
+                    // because it needs access to the #reservations thread
+                    // local.
+                    for (DatabaseSelection<?> selection : isolated) {
+                        reserve(selection);
                     }
                 }
+            }
 
-                // Propagate results to duplicates
-                for (DatabaseSelection<?> selection : selections) {
-                    if(selection.state == Selection.State.RESOLVED) {
+            // Propagate results to duplicates
+            for (DatabaseSelection<?> selection : selections) {
+                if(selection.state == Selection.State.RESOLVED) {
+                    selection.setState(Selection.State.FINISHED);
+                }
+                else if(selection.state != Selection.State.FINISHED) {
+                    if(DatabaseSelection.isNoFilter(selection.filter)) {
+                        DatabaseSelection<?> canonical = unique.stream()
+                                .filter(item -> item.reservation()
+                                        .equals(selection.reservation()))
+                                .findFirst()
+                                .orElseThrow(() -> new IllegalStateException(
+                                        "No canonical selection found for "
+                                                + selection));
+                        selection.setResult(canonical.result);
                         selection.setState(Selection.State.FINISHED);
                     }
-                    else if(selection.state != Selection.State.FINISHED) {
-                        if(DatabaseSelection.isNoFilter(selection.filter)) {
-                            DatabaseSelection<?> canonical = unique.stream()
-                                    .filter(item -> item.reservation()
-                                            .equals(selection.reservation()))
-                                    .findFirst().orElseThrow(
-                                            () -> new IllegalStateException(
-                                                    "No canonical selection found for "
-                                                            + selection));
-                            selection.setResult(canonical.result);
-                            selection.setState(Selection.State.FINISHED);
-                        }
-                        else {
-                            throw new IllegalStateException(
-                                    "Filtered duplicate selection was not "
-                                            + "independently executed: "
-                                            + selection);
-                        }
+                    else {
+                        throw new IllegalStateException(
+                                "Filtered duplicate selection was not "
+                                        + "independently executed: "
+                                        + selection);
                     }
                 }
-                return new Selections(selections);
             }
-        }
-        finally {
-            if(concourse != null) {
-                connections.release(concourse);
-            }
+            return new Selections(selections);
         }
     }
 
@@ -1520,29 +1456,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // sorting/pagination is requested, the database can handle the
             // query directly without client-side stream manipulation.
             if(hasFilter && page != null) {
-                AtomicReference<Concourse> connection = new AtomicReference<>(
-                        null);
-                try {
+                try (Reader sharedReader = new IncrementalReader(connections)) {
                     Function<Page, Set<T>> retriever = $page -> {
-                        Concourse concourse = ensureValidConnection(connection);
-                        Reader _reader = new IncrementalReader(concourse);
                         Pending<Map<Long, Map<String, Set<Object>>>> data = any
-                                ? $loadAny(_reader, clazz, order, $page, realms)
-                                : $load(_reader, clazz, order, $page, realms);
+                                ? $loadAny(sharedReader, clazz, order, $page,
+                                        realms)
+                                : $load(sharedReader, clazz, order, $page,
+                                        realms);
                         AtomicReference<Set<T>> records = new AtomicReference<>();
                         data.onResolve(
                                 $data -> records.set(any ? instantiateAll($data)
                                         : instantiateAll(clazz, $data)));
-                        _reader.drain();
+                        sharedReader.drain();
                         return records.get();
                     };
                     return Pending.of(new SelectResult<>(Pagination
                             .applyFilterAndPage(retriever, filter, page)));
-                }
-                finally {
-                    if(connection.get() != null) {
-                        connections.release(connection.get());
-                    }
                 }
             }
             else {
@@ -1660,24 +1589,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             boolean dbResolvable = Record.isDatabaseResolvableCondition(clazz,
                     criteria);
             if(hasFilter && page != null) {
-                AtomicReference<Concourse> connection = new AtomicReference<>(
-                        null);
-                try {
+                try (Reader sharedReader = new IncrementalReader(connections)) {
                     Function<Page, Set<T>> retriever = $page -> {
                         if(dbResolvable) {
-                            Concourse concourse = ensureValidConnection(
-                                    connection);
-                            Reader _reader = new IncrementalReader(concourse);
                             Pending<Map<Long, Map<String, Set<Object>>>> data = any
-                                    ? $findAny(_reader, clazz, criteria, order,
-                                            $page, realms)
-                                    : $find(_reader, clazz, criteria, order,
-                                            $page, realms);
+                                    ? $findAny(sharedReader, clazz, criteria,
+                                            order, $page, realms)
+                                    : $find(sharedReader, clazz, criteria,
+                                            order, $page, realms);
                             AtomicReference<Set<T>> records = new AtomicReference<>();
                             data.onResolve($data -> records
                                     .set(any ? instantiateAll($data)
                                             : instantiateAll(clazz, $data)));
-                            _reader.drain();
+                            sharedReader.drain();
                             return records.get();
                         }
                         else {
@@ -1690,11 +1614,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     };
                     return Pending.of(new SelectResult<>(Pagination
                             .applyFilterAndPage(retriever, filter, page)));
-                }
-                finally {
-                    if(connection.get() != null) {
-                        connections.release(connection.get());
-                    }
                 }
             }
             else if(dbResolvable) {
@@ -2123,36 +2042,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             });
         }
-    }
-
-    /**
-     * Return a valid {@link Concourse} connection, reusing the one held by
-     * {@code connection} if present or requesting a fresh one from the pool and
-     * storing it in {@code connection} otherwise. This variant is safe to
-     * capture in lambdas.
-     *
-     * @param connection a holder for the lazily acquired connection
-     * @return a non-{@code null} {@link Concourse} connection
-     */
-    private Concourse ensureValidConnection(
-            AtomicReference<Concourse> connection) {
-        if(connection.get() == null) {
-            connection.set(connections.request());
-        }
-        return connection.get();
-    }
-
-    /**
-     * Return a valid {@link Concourse} connection, reusing {@code connection}
-     * if it is non-{@code null} or requesting a fresh one from the pool
-     * otherwise.
-     *
-     * @param connection the existing connection to reuse, or {@code null} if
-     *            none has been acquired yet
-     * @return a non-{@code null} {@link Concourse} connection
-     */
-    private Concourse ensureValidConnection(Concourse connection) {
-        return connection == null ? connections.request() : connection;
     }
 
     /**

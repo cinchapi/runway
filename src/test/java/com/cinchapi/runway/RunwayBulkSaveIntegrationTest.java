@@ -333,17 +333,17 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Construct a second in-memory {@link UniqueNamed} with the same name
      * and call {@link Record#save save}; the call returns {@code false}.</li>
-     * <li>Delete the conflicting first {@link UniqueNamed} so the same name
-     * is now free.</li>
+     * <li>Delete the conflicting first {@link UniqueNamed} so the same name is
+     * now free.</li>
      * <li>Call {@link Record#save save} on the original duplicate
      * {@link UniqueNamed} instance again, with no in-memory changes between
      * calls.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> Exactly one {@link UniqueNamed} exists in
-     * the database after the second save, with name {@code "Alpha"} &mdash;
-     * proving the failed save did not silently mark the in-memory record
-     * clean and that the second save actually wrote the record's fields.
+     * <strong>Expected:</strong> Exactly one {@link UniqueNamed} exists in the
+     * database after the second save, with name {@code "Alpha"} &mdash; proving
+     * the failed save did not silently mark the in-memory record clean and that
+     * the second save actually wrote the record's fields.
      */
     @Test
     public void testFailedBulkSaveLeavesRecordReSavable() {
@@ -367,14 +367,14 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * <strong>Goal:</strong> Verify that a {@link Runway#save save} that fails
      * with a {@link StaleDataException} on the bulk path under
      * {@code preventStaleWrites=true} leaves the in-memory {@link Record} in
-     * its pre-save state, so a subsequent {@link Runway#save save} of the
-     * same instance &mdash; even with the staleness check disabled and no
+     * its pre-save state, so a subsequent {@link Runway#save save} of the same
+     * instance &mdash; even with the staleness check disabled and no
      * intervening reload &mdash; still observes the in-memory mutation and
      * writes it to the database.
      * <p>
-     * <strong>Start state:</strong> A {@link Person} has been saved and
-     * loaded; a second {@link Runway} writes an external modification to the
-     * same database row so the in-memory copy is now stale.
+     * <strong>Start state:</strong> A {@link Person} has been saved and loaded;
+     * a second {@link Runway} writes an external modification to the same
+     * database row so the in-memory copy is now stale.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -391,8 +391,8 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * field mutations.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The forced save returns {@code true} and
-     * the in-memory mutation is persisted &mdash; proving that the
+     * <strong>Expected:</strong> The forced save returns {@code true} and the
+     * in-memory mutation is persisted &mdash; proving that the
      * {@link StaleDataException} did not silently update the record's
      * {@code __checksum} to match its current field state, which would
      * otherwise cause the forced save to skip the write loop entirely.
@@ -433,12 +433,11 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that the
-     * {@link CaptureDelete @CaptureDelete} cascade lookup on the bulk save
-     * path observes link mutations queued earlier in the same
-     * {@link Runway#save save} call, so that a record whose link was
-     * <em>moved</em> away from the deletion target in this save is not
-     * falsely identified as still pointing at the target and therefore is
-     * not nulled out by the cascade cleanup.
+     * {@link CaptureDelete @CaptureDelete} cascade lookup on the bulk save path
+     * observes link mutations queued earlier in the same {@link Runway#save
+     * save} call, so that a record whose link was <em>moved</em> away from the
+     * deletion target in this save is not falsely identified as still pointing
+     * at the target and therefore is not nulled out by the cascade cleanup.
      * <p>
      * <strong>Start state:</strong> A {@link Custodian} record is saved with
      * {@code captured} pointing at an existing {@link Holding}.

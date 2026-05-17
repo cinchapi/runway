@@ -22,6 +22,7 @@ import java.util.Set;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -36,119 +37,133 @@ import com.cinchapi.concourse.lang.sort.Order;
 public class IncrementalReader extends AbstractReader {
 
     /**
-     * Construct a new {@link IncrementalReader}.
+     * Construct an {@link IncrementalReader} that borrows a {@link Concourse}
+     * connection from {@code pool} and returns it to {@code pool} on
+     * {@link #close()}.
      *
-     * @param concourse the {@link Concourse} connection against which reads are
-     *            issued; must not be {@code null}
+     * @param pool the {@link ConnectionPool} that owns the {@link Concourse}
+     *            connection; must not be {@code null}
      */
-    public IncrementalReader(Concourse concourse) {
-        super(concourse);
+    public IncrementalReader(ConnectionPool pool) {
+        super(pool);
+    }
+
+    /**
+     * Construct an {@link IncrementalReader} that issues against
+     * {@code connection}. The caller retains ownership of the connection
+     * lifecycle; {@link #close()} does <strong>not</strong> close it.
+     *
+     * @param connection the {@link Concourse} connection against which reads
+     *            are issued; must not be {@code null}
+     */
+    public IncrementalReader(Concourse connection) {
+        super(connection);
     }
 
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> select(
             Criteria criteria) {
-        return Pending.of(concourse.select(criteria));
+        return Pending.of(concourse().select(criteria));
     }
 
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
             Criteria criteria) {
-        return Pending.of(concourse.select(keys, criteria));
+        return Pending.of(concourse().select(keys, criteria));
     }
 
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> select(
             Criteria criteria, Order order) {
-        return Pending.of(concourse.select(criteria, order));
+        return Pending.of(concourse().select(criteria, order));
     }
 
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
             Criteria criteria, Order order) {
-        return Pending.of(concourse.select(keys, criteria, order));
+        return Pending.of(concourse().select(keys, criteria, order));
     }
 
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> select(
             Criteria criteria, Page page) {
-        return Pending.of(concourse.select(criteria, page));
+        return Pending.of(concourse().select(criteria, page));
     }
 
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
             Criteria criteria, Page page) {
-        return Pending.of(concourse.select(keys, criteria, page));
+        return Pending.of(concourse().select(keys, criteria, page));
     }
 
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> select(
             Criteria criteria, Order order, Page page) {
-        return Pending.of(concourse.select(criteria, order, page));
+        return Pending.of(concourse().select(criteria, order, page));
     }
 
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
             Criteria criteria, Order order, Page page) {
-        return Pending.of(concourse.select(keys, criteria, order, page));
+        return Pending.of(concourse().select(keys, criteria, order, page));
     }
 
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> select(
             Collection<Long> records) {
-        return Pending.of(concourse.select(records));
+        return Pending.of(concourse().select(records));
     }
 
     @Override
     public Pending<Map<String, Set<Object>>> select(long record) {
-        return Pending.of(concourse.select(record));
+        return Pending.of(concourse().select(record));
     }
 
     @Override
     public Pending<Map<String, Set<Object>>> select(Set<String> keys,
             long record) {
-        return Pending.of(concourse.select(keys, record));
+        return Pending.of(concourse().select(keys, record));
     }
 
     @Override
     public Pending<Set<Object>> select(String key, long record) {
-        return Pending.of(concourse.select(key, record));
+        return Pending.of(concourse().select(key, record));
     }
 
     @Override
     public Pending<Object> get(String key, long record) {
-        return Pending.of(concourse.get(key, record));
+        return Pending.of(concourse().get(key, record));
     }
 
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
             Set<String> keys, long record) {
-        return Pending.of(concourse.navigate(keys, record));
+        return Pending.of(concourse().navigate(keys, record));
     }
 
     @Override
     public Pending<Set<Long>> find(Criteria criteria) {
-        return Pending.of(concourse.find(criteria));
+        return Pending.of(concourse().find(criteria));
     }
 
     @Override
     public Pending<Set<Long>> find(Criteria criteria, Order order) {
-        return Pending.of(concourse.find(criteria, order));
+        return Pending.of(concourse().find(criteria, order));
     }
 
     @Override
     public Pending<Set<Long>> find(Criteria criteria, Page page) {
-        return Pending.of(concourse.find(criteria, page));
+        return Pending.of(concourse().find(criteria, page));
     }
 
     @Override
     public Pending<Set<Long>> find(Criteria criteria, Order order, Page page) {
-        return Pending.of(concourse.find(criteria, order, page));
+        return Pending.of(concourse().find(criteria, order, page));
     }
 
     @Override
     public Pending<Long> count(String key, Criteria criteria) {
-        return Pending.of(concourse.calculate().count(key, criteria));
+        return Pending.of(concourse().calculate().count(key, criteria));
     }
 
     @Override

@@ -33,16 +33,16 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.google.common.base.Preconditions;
 
 /**
- * A {@link Saver} that batches save-pipeline interaction into the
- * smallest number of {@link CommandGroup} submissions a given save
- * permits. Recording calls accumulate deferred operations rather than
- * touching the server; submissions happen at {@link #commit()} and
- * whenever a save-time {@link #select(String, Criteria, Consumer)
- * select} requires its result inline.
+ * A {@link Saver} that batches save-pipeline interaction into the smallest
+ * number of {@link CommandGroup} submissions a given save permits. Recording
+ * calls accumulate deferred operations rather than touching the server;
+ * submissions happen at {@link #commit()} and whenever a save-time
+ * {@link #select(String, Criteria, Consumer) select} requires its result
+ * inline.
  * <p>
  * If any queued {@link Consumer} throws during a submission, the staged
- * transaction has already been opened on the server; the caller is
- * responsible for calling {@link #abort()} after handling the exception.
+ * transaction has already been opened on the server; the caller is responsible
+ * for calling {@link #abort()} after handling the exception.
  * </p>
  * <p>
  * This {@link Saver} is <strong>not thread-safe</strong>.
@@ -65,11 +65,11 @@ public final class BatchSaver implements Saver {
     private boolean stageRequested;
 
     /**
-     * Whether {@link #stage()} has been included in a submitted
+     * Whether {@link #stage()} has been bundled into a submitted
      * {@link CommandGroup}; once {@code true} subsequent flushes and the writes
      * submission do not re-record it.
      */
-    private boolean stageSubmitted;
+    private boolean stageBundled;
 
     /**
      * Deferred read recordings in the active batch. Each entry records its own
@@ -97,8 +97,8 @@ public final class BatchSaver implements Saver {
     private final Map<Object, Long> uniqueIntents;
 
     /**
-     * Exceptions raised by intra-batch uniqueness conflicts detected
-     * during {@link #declareUniqueIntent(Object, long, String)}.
+     * Exceptions raised by intra-batch uniqueness conflicts detected during
+     * {@link #declareUniqueIntent(Object, long, String)}.
      */
     private final List<RuntimeException> intentConflicts;
 
@@ -112,7 +112,7 @@ public final class BatchSaver implements Saver {
     public BatchSaver(Concourse concourse) {
         this.concourse = Preconditions.checkNotNull(concourse);
         this.stageRequested = false;
-        this.stageSubmitted = false;
+        this.stageBundled = false;
         this.deferredReadOps = new ArrayList<>();
         this.pendingValidators = new ArrayList<>();
         this.deferredWriteOps = new ArrayList<>();
@@ -141,8 +141,8 @@ public final class BatchSaver implements Saver {
             group.audit(record);
         });
         pendingValidators.add(results -> {
-            Map<Timestamp, List<String>> result =
-                    (Map<Timestamp, List<String>>) results.get(slot[0]);
+            Map<Timestamp, List<String>> result = (Map<Timestamp, List<String>>) results
+                    .get(slot[0]);
             validator.accept(result);
         });
     }
@@ -241,9 +241,9 @@ public final class BatchSaver implements Saver {
         flushReads();
         if(intentConflicts.isEmpty()) {
             CommandGroup writes = concourse.prepare();
-            if(stageRequested && !stageSubmitted) {
+            if(stageRequested && !stageBundled) {
                 writes.stage();
-                stageSubmitted = true;
+                stageBundled = true;
             }
             for (Consumer<CommandGroup> op : deferredWriteOps) {
                 op.accept(writes);
@@ -260,9 +260,7 @@ public final class BatchSaver implements Saver {
 
     @Override
     public void abort() {
-        if(stageSubmitted) {
-            concourse.abort();
-        }
+        concourse.abort();
     }
 
     /**
@@ -270,27 +268,22 @@ public final class BatchSaver implements Saver {
      * {@link Consumer Consumer} against the result list in recording order.
      * No-op when no reads have been recorded since the previous flush.
      * <p>
-     * Deferred writes accumulated up to this point are submitted in the
-     * same {@link CommandGroup} immediately before the reads, so reads
-     * observe those writes in the staged transaction.
+     * Deferred writes accumulated up to this point are submitted in the same
+     * {@link CommandGroup} immediately before the reads, so reads observe those
+     * writes in the staged transaction.
      * </p>
      */
     private void flushReads() {
         if(!deferredReadOps.isEmpty()) {
             CommandGroup group = concourse.prepare();
-            if(stageRequested && !stageSubmitted) {
+            if(stageRequested && !stageBundled) {
                 // NOTE: STAGE inside this CommandGroup relies on the driver
                 // to adopt the resulting TransactionToken and to clear it
                 // when a later submission's COMMIT runs, so the
                 // reads-then-writes pair shares one staged transaction
                 // (cinchapi/concourse#735).
                 group.stage();
-                // Mark the stage as submitted before sending so that a
-                // mid-flight submit failure still routes through to
-                // concourse.abort() in abort(), matching the writes-submit
-                // path in commit() and mirroring the unconditional abort()
-                // in IncrementalSaver.
-                stageSubmitted = true;
+                stageBundled = true;
             }
             for (Consumer<CommandGroup> op : deferredWriteOps) {
                 op.accept(group);

@@ -17,25 +17,34 @@ package com.cinchapi.runway.db;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.google.common.base.Preconditions;
 
 /**
- * Base class for {@link Reader} implementations that wrap a single
- * {@link Concourse} connection. Provides the shared {@link #drain()} template
- * and the package-private {@link #register(Runnable)} hook that {@link Pending}
- * uses to schedule its own resolution.
+ * Base class for {@link Reader} implementations. Owns the {@link Concourse}
+ * connection lifecycle behind {@link #concourse()} and {@link #close()}, the
+ * shared {@link #drain()} template, and the package-private
+ * {@link #register(Runnable)} hook that {@link Pending} uses to schedule its
+ * own resolution.
  *
  * @author Jeff Nelson
  */
 public abstract class AbstractReader implements Reader {
 
     /**
-     * The {@link Concourse} connection against which reads are issued or
-     * submitted.
+     * Yields the {@link Concourse} connection that backs this {@link Reader}.
      */
-    protected final Concourse concourse;
+    private final Supplier<Concourse> acquirer;
+
+    /**
+     * Receives the {@link Concourse} connection produced by {@link #acquirer}
+     * for cleanup.
+     */
+    private final Consumer<Concourse> releaser;
 
     /**
      * Resolution work registered via {@link #register(Runnable)} and run by
@@ -44,18 +53,67 @@ public abstract class AbstractReader implements Reader {
     private final List<Runnable> registered;
 
     /**
-     * Construct a new {@link AbstractReader}.
+     * The {@link Concourse} connection that backs this {@link Reader}, or
+     * {@code null} when none has been acquired.
+     */
+    private Concourse concourse;
+
+    /**
+     * Whether {@link #close()} has run.
+     */
+    private boolean closed;
+
+    /**
+     * Construct an {@link AbstractReader} that borrows a {@link Concourse}
+     * connection from {@code pool} and returns it to {@code pool} on
+     * {@link #close()}.
      *
-     * @param concourse the {@link Concourse} connection; must not be
+     * @param pool the {@link ConnectionPool} that owns the {@link Concourse}
+     *            connection; must not be {@code null}
+     */
+    protected AbstractReader(ConnectionPool pool) {
+        this(Preconditions.checkNotNull(pool)::request, pool::release);
+    }
+
+    /**
+     * Construct an {@link AbstractReader} that uses {@code connection}
+     * directly. The caller retains ownership of the connection lifecycle;
+     * {@link #close()} does <strong>not</strong> close it.
+     *
+     * @param connection the {@link Concourse} connection to use; must not be
      *            {@code null}
      */
-    protected AbstractReader(Concourse concourse) {
-        this.concourse = Preconditions.checkNotNull(concourse);
+    protected AbstractReader(Concourse connection) {
+        this(() -> Preconditions.checkNotNull(connection),
+                c -> {/* caller owns */});
+    }
+
+    /**
+     * Construct an {@link AbstractReader} backed by a custom acquire/release
+     * pair.
+     *
+     * @param acquirer yields the {@link Concourse} connection
+     * @param releaser receives the connection when one was acquired and
+     *            {@link #close()} runs
+     */
+    private AbstractReader(Supplier<Concourse> acquirer,
+            Consumer<Concourse> releaser) {
+        this.acquirer = acquirer;
+        this.releaser = releaser;
         this.registered = new ArrayList<>();
+        this.concourse = null;
+        this.closed = false;
     }
 
     @Override
     public final Concourse concourse() {
+        if(concourse == null) {
+            Preconditions.checkState(!closed,
+                    "Reader has been closed; no new connection can be "
+                            + "acquired");
+            concourse = Preconditions.checkNotNull(acquirer.get(),
+                    "Acquirer returned a null Concourse connection");
+        }
         return concourse;
     }
 
@@ -67,6 +125,17 @@ public abstract class AbstractReader implements Reader {
             registered.clear();
             for (Runnable work : snapshot) {
                 work.run();
+            }
+        }
+    }
+
+    @Override
+    public final void close() {
+        if(!closed) {
+            closed = true;
+            if(concourse != null) {
+                releaser.accept(concourse);
+                concourse = null;
             }
         }
     }

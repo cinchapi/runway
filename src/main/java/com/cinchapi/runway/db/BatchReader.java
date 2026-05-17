@@ -23,6 +23,7 @@ import java.util.Set;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.lang.CommandGroup;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
@@ -64,13 +65,27 @@ public final class BatchReader extends AbstractReader {
     private Batch current;
 
     /**
-     * Construct a new {@link BatchReader}.
+     * Construct a {@link BatchReader} that borrows a {@link Concourse}
+     * connection from {@code pool} and returns it to {@code pool} on
+     * {@link #close()}.
      *
-     * @param concourse the {@link Concourse} connection against which reads are
-     *            submitted; must not be {@code null}
+     * @param pool the {@link ConnectionPool} that owns the {@link Concourse}
+     *            connection; must not be {@code null}
      */
-    public BatchReader(Concourse concourse) {
-        super(concourse);
+    public BatchReader(ConnectionPool pool) {
+        super(pool);
+    }
+
+    /**
+     * Construct a {@link BatchReader} that submits against {@code connection}.
+     * The caller retains ownership of the connection lifecycle;
+     * {@link #close()} does <strong>not</strong> close it.
+     *
+     * @param connection the {@link Concourse} connection against which reads
+     *            are submitted; must not be {@code null}
+     */
+    public BatchReader(Concourse connection) {
+        super(connection);
     }
 
     @Override
@@ -184,7 +199,7 @@ public final class BatchReader extends AbstractReader {
         Batch batch = batch();
         int slot = batch.size();
         batch.group.get(key, record);
-        return Pending.deferred(this, () -> batch.flush(concourse).get(slot));
+        return Pending.deferred(this, () -> batch.flush(concourse()).get(slot));
     }
 
     @Override
@@ -234,13 +249,14 @@ public final class BatchReader extends AbstractReader {
         int slot = batch.size();
         batch.group.count(key, criteria);
         return Pending.deferred(this,
-                () -> ((Number) batch.flush(concourse).get(slot)).longValue());
+                () -> ((Number) batch.flush(concourse()).get(slot))
+                        .longValue());
     }
 
     @Override
     protected void prepareDrain() {
         if(current != null && !current.flushed() && current.size() > 0) {
-            current.flush(concourse);
+            current.flush(concourse());
         }
     }
 
@@ -268,7 +284,7 @@ public final class BatchReader extends AbstractReader {
      */
     @SuppressWarnings("unchecked")
     private Set<Long> ids(Batch batch, int slot) {
-        return (Set<Long>) batch.flush(concourse).get(slot);
+        return (Set<Long>) batch.flush(concourse()).get(slot);
     }
 
     /**
@@ -282,7 +298,7 @@ public final class BatchReader extends AbstractReader {
     @SuppressWarnings("unchecked")
     private Map<Long, Map<String, Set<Object>>> mapByRecord(Batch batch,
             int slot) {
-        return (Map<Long, Map<String, Set<Object>>>) batch.flush(concourse)
+        return (Map<Long, Map<String, Set<Object>>>) batch.flush(concourse())
                 .get(slot);
     }
 
@@ -296,7 +312,7 @@ public final class BatchReader extends AbstractReader {
      */
     @SuppressWarnings("unchecked")
     private Map<String, Set<Object>> recordData(Batch batch, int slot) {
-        return (Map<String, Set<Object>>) batch.flush(concourse).get(slot);
+        return (Map<String, Set<Object>>) batch.flush(concourse()).get(slot);
     }
 
     /**
@@ -304,7 +320,7 @@ public final class BatchReader extends AbstractReader {
      * {@link CommandGroup}.
      */
     private void rollover() {
-        current = new Batch(concourse.prepare());
+        current = new Batch(concourse().prepare());
     }
 
     /**
@@ -317,7 +333,7 @@ public final class BatchReader extends AbstractReader {
      */
     @SuppressWarnings("unchecked")
     private Set<Object> values(Batch batch, int slot) {
-        return (Set<Object>) batch.flush(concourse).get(slot);
+        return (Set<Object>) batch.flush(concourse()).get(slot);
     }
 
     /**

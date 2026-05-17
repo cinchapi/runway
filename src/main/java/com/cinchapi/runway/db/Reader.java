@@ -34,10 +34,16 @@ import com.cinchapi.concourse.lang.sort.Order;
  * {@link Reader}. Discarding without draining leaves any unresolved
  * {@link Pending Pendings} unresolved.
  * </p>
+ * <p>
+ * A {@link Reader} is {@link AutoCloseable}: implementations that manage their
+ * own {@link com.cinchapi.concourse.ConnectionPool ConnectionPool}-backed
+ * {@link Concourse} connection release it on {@link #close()}, making
+ * try-with-resources the recommended usage pattern.
+ * </p>
  *
  * @author Jeff Nelson
  */
-public interface Reader {
+public interface Reader extends AutoCloseable {
 
     /**
      * Record a select for every record matching the {@code criteria}.
@@ -241,7 +247,9 @@ public interface Reader {
 
     /**
      * Return the underlying {@link Concourse} connection that this
-     * {@link Reader} wraps.
+     * {@link Reader} wraps, acquiring one from the
+     * {@link com.cinchapi.concourse.ConnectionPool ConnectionPool} if the
+     * connection has not yet been needed.
      *
      * @return the {@link Concourse} connection
      */
@@ -254,5 +262,16 @@ public interface Reader {
      * a call with nothing recorded is a no-op.
      */
     void drain();
+
+    /**
+     * Release any {@link com.cinchapi.concourse.ConnectionPool
+     * ConnectionPool}-backed {@link Concourse} connection that this
+     * {@link Reader} acquired. Safe to call when no connection was ever
+     * acquired; idempotent on repeated calls. Implementations that wrap an
+     * externally-managed {@link Concourse} treat this as a no-op &mdash; the
+     * connection lifecycle remains with the caller.
+     */
+    @Override
+    void close();
 
 }
