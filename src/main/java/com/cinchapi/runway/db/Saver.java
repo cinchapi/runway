@@ -69,16 +69,19 @@ public interface Saver {
      * <p>
      * For synchronous implementations this delegates straight to the underlying
      * connection's commit. Bulk implementations submit accumulated recordings
-     * with as few round trips as the save permits: a single submission carrying
-     * {@link #stage()}, every write, and the terminal commit when no validation
-     * reads were recorded; otherwise the reads submission first (running every
-     * queued validator against its result list) followed by the
-     * writes-plus-commit submission.
+     * with as few round trips as the save permits. When no validation reads
+     * were recorded, a single submission carries {@link #stage()}, every write,
+     * and the terminal commit. When validation reads were recorded, they are
+     * submitted first &mdash; alongside the writes &mdash; so every queued
+     * validator can run against the result; the commit then follows in a second
+     * submission once validation passes.
      * </p>
      * <p>
-     * If any queued validator throws, the writes are <strong>not</strong>
-     * submitted; the exception propagates and the caller is responsible for
-     * calling {@link #abort()}.
+     * If a queued validator throws, the commit is <strong>not</strong>
+     * submitted. The writes share the validation submission and have therefore
+     * already reached the server within the staged transaction; the exception
+     * propagates and the caller is responsible for calling {@link #abort()} to
+     * roll them back.
      * </p>
      *
      * @return {@code true} if the staged transaction committed; {@code false}
