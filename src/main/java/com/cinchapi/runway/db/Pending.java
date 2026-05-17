@@ -27,26 +27,15 @@ import com.google.common.base.Preconditions;
 
 /**
  * A {@link Pending} is a value that resolves at some point in the future.
- * <p>
- * Some {@link Pending Pendings} are already resolved when constructed &mdash;
- * for example, one returned by {@link #of}. Others stand in for a value that is
- * not yet known, to be supplied later by whatever computes it. In either case,
- * the contract is the same: callers do not read the value out of a
- * {@link Pending}; instead, they register a {@link Consumer} and the
- * {@link Pending} delivers the value to that {@link Consumer} once it is known.
- * </p>
  *
  * <h2>Push, not pull</h2>
  * <p>
- * A natural alternative would expose a pull-style accessor &mdash; something
- * like {@code T get()} that the caller invokes when it wants the value,
- * blocking or polling until one is available. {@link Pending} works the other
- * way around: the caller registers a {@link Consumer} via {@link #onResolve},
- * and the {@link Pending} pushes the value to that {@link Consumer} as soon as
- * one is known. If the value is already known at the moment {@link #onResolve}
- * is called, delivery happens synchronously during that call; otherwise the
- * {@link Consumer} is held until the value arrives, at which point every
- * registered {@link Consumer} receives it.
+ * A {@link java.util.concurrent.Future Future} is <em>pull</em>-based: its
+ * holder decides when to read the value, calling {@code get()} and blocking
+ * until it is available. A {@link Pending} inverts that model. It is
+ * <em>push</em>-based: the holder registers a {@link Consumer} with
+ * {@link #onResolve}, and the value is delivered to that {@link Consumer} when
+ * it resolves. The caller never asks for the value and never blocks.
  * </p>
  * <p>
  * The push model lets whatever produces the value choose when resolution
