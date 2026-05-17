@@ -1787,9 +1787,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Set<String> navigatePaths = needsSectionLookup
                 ? getNavigatePathsForClassHierarchyIfSupported(initialClazz)
                 : getNavigatePathsForClassIfSupported(initialClazz);
-        Pending<Map<Long, Map<String, Set<Object>>>> navPending = navigatePaths != null
+        Pending<Map<Long, Map<String, Set<Object>>>> navigated = navigatePaths != null
                 ? reader.navigate(navigatePaths, id)
-                : null;
+                : Pending.of(ImmutableMap.of());
         return data.then($data -> {
             if($data == null || $data.isEmpty()) {
                 return Pending.of(new SelectResult<>(null));
@@ -1815,13 +1815,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // closes any reachable targets the navigate paths cannot cover
             // (e.g., mutual-reference cycles whose field names alternate, or
             // links into unknown Record classes).
-            Pending<Map<Long, Map<String, Set<Object>>>> navigated;
-            if(navPending != null) {
-                navigated = navPending;
-            }
-            else {
-                navigated = Pending.of(ImmutableMap.of());
-            }
             Pending<Map<Long, Map<String, Set<Object>>>> targets = navigated
                     .then($navigated -> {
                         Map<Long, Map<String, Set<Object>>> pool = new HashMap<>(
@@ -1998,7 +1991,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             else {
                 classNames = ImmutableSet.of(selection.clazz.getName());
             }
-            for (Map.Entry<Long, Map<String, Set<Object>>> entry : data
+            for (Entry<Long, Map<String, Set<Object>>> entry : data
                     .entrySet()) {
                 Set<Object> sections = entry.getValue().get(Record.SECTION_KEY);
                 if(sections != null) {
@@ -2634,7 +2627,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             Concourse connection = connections.request();
             try {
-                Map<Long, Map<String, Set<Object>>> targets = Maps.newHashMap();
+                Map<Long, Map<String, Set<Object>>> targets = new HashMap<>();
                 // Phase 1: NAVIGATE — pre-fetch destination Record data.
                 // select() can fold a one-to-one Link's destination into
                 // the source record's flat result (e.g., owner.name
@@ -2661,7 +2654,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 else {
                     Map<Class<? extends Record>, Set<Long>> grouped = groupBySectionKey(
                             data, navigateIds);
-                    for (Map.Entry<Class<? extends Record>, Set<Long>> entry : grouped
+                    for (Entry<Class<? extends Record>, Set<Long>> entry : grouped
                             .entrySet()) {
                         Set<String> paths = getNavigatePathsForClassIfSupported(
                                 entry.getKey());
@@ -2843,7 +2836,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private ReadStrategy readStrategy = null;
         private int streamingReadBufferSize = 100;
         private String username = "admin";
-        private List<Map.Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
+        private List<Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
         /**
