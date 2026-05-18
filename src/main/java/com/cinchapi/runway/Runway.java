@@ -370,15 +370,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private int streamingReadBufferSize = 1000;
 
     /**
-     * A flag that indicates if the connected server has enough functionality to
-     * facilitate pre-selecting linked {@link Record Records}.
-     * <p>
-     * This functionality is supported in Concourse 0.11.3+
-     * </p>
-     */
-    private final boolean supportsPreSelectLinkedRecords;
-
-    /**
      * A flag that indicates if the connected server supports native
      * {@code count} calculations using the {@code $id$} identifier key, which
      * efficiently counts matching {@link Record Records} without transferring
@@ -459,8 +450,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         try {
             Version actual = Versions
                     .parseSemanticVersion(concourse.getServerVersion());
-            this.supportsPreSelectLinkedRecords = isActualVersionGreaterThanOrEquals(
-                    actual, Version.forIntegers(0, 11, 3));
             this.supportsNativeCount = isActualVersionGreaterThanOrEquals(
                     actual, Version.forIntegers(0, 12, 2));
             this.supportsBulkCommands = isActualVersionGreaterThanOrEquals(
@@ -1078,33 +1067,31 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * If this instance {@link #supportsPreSelectLinkedRecords} return the
-     * {@link #PATHS_BY_CLASS_HIERARCHY} for {@code clazz}.
+     * Return the pre-select paths for {@code clazz} and all descendants.
      *
      * @param clazz
-     * @return the paths
+     * @return the paths, or {@code null} if no linked {@link Record} fields
+     *         exist in the hierarchy
      */
     final Set<String> getPathsForClassHierarchyIfSupported(
             Class<? extends Record> clazz) {
-        return supportsPreSelectLinkedRecords && StaticAnalysis.instance()
-                .hasFieldOfTypeRecordInClassHierarchy(clazz)
-                        ? StaticAnalysis.instance().getPathsHierarchy(clazz)
+        return StaticAnalysis.instance().hasFieldOfTypeRecordInClassHierarchy(
+                clazz) ? StaticAnalysis.instance().getPathsHierarchy(clazz)
                         : null;
     }
 
     /**
-     * If this instance {@link #supportsPreSelectLinkedRecords} return the
-     * {@link #PATHS_BY_CLASS} for {@code clazz}.
+     * Return the pre-select paths for {@code clazz}.
      *
      * @param clazz
-     * @return the paths
+     * @return the paths, or {@code null} if {@code clazz} has no linked
+     *         {@link Record} fields
      */
     final Set<String> getPathsForClassIfSupported(
             Class<? extends Record> clazz) {
-        return supportsPreSelectLinkedRecords
-                && StaticAnalysis.instance().hasFieldOfTypeRecordInClass(clazz)
-                        ? StaticAnalysis.instance().getPaths(clazz)
-                        : null;
+        return StaticAnalysis.instance().hasFieldOfTypeRecordInClass(clazz)
+                ? StaticAnalysis.instance().getPaths(clazz)
+                : null;
     }
 
     /**
@@ -2917,15 +2904,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return onSave(Record.class, listener);
         }
 
-        /**
-         * Return {@code true} if this {@link Runway} client and the underlying
-         * {@link Concourse} deployment allow linked records to be pre-selected.
-         *
-         * @return a boolean that indicates if pre-selection is supported
-         */
-        public boolean supportsPreSelectLinkedRecords() {
-            return supportsPreSelectLinkedRecords;
-        }
     }
 
     /**

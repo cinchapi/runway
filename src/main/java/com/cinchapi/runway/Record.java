@@ -45,7 +45,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
-import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -94,7 +93,6 @@ import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.concourse.validate.Keys;
 import com.cinchapi.runway.db.Saver;
-import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.validation.Validator;
@@ -1217,23 +1215,6 @@ public abstract class Record implements Comparable<Record> {
         return get(key, Record::isReadableField);
     }
 
-    /**
-     * Return a map that contains all of the data for the readable {@code keys}
-     * in this {@link Record}.
-     * <p>
-     * If you want to return all the readable data, use the {@link #map()}
-     * method.
-     * </p>
-     *
-     * @return the data in this record
-     * @deprecated use {@link #map(String...)} instead
-     */
-    @Deprecated
-    public Map<String, Object> get(String... keys) {
-        return Arrays.asList(keys).stream()
-                .collect(Collectors.toMap(Function.identity(), this::get));
-    }
-
     @Override
     public int hashCode() {
         return Objects.hash(id);
@@ -1317,49 +1298,6 @@ public abstract class Record implements Comparable<Record> {
      */
     public String json() {
         return json(SerializationOptions.defaults());
-    }
-
-    /**
-     * Return a JSON string containing this {@link Record}'s readable and
-     * temporary data.
-     *
-     * @param flattenSingleElementCollections
-     * @return json string
-     * @deprecated use {@link #json(SerializationOptions) instead}
-     */
-    @Deprecated
-    public String json(boolean flattenSingleElementCollections) {
-        return json(
-                SerializationOptions.builder()
-                        .flattenSingleElementCollections(
-                                flattenSingleElementCollections)
-                        .build(),
-                HashMultimap.create());
-    }
-
-    /**
-     * Return a JSON string containing this {@link Record}'s readable and
-     * temporary data from the specified {@code keys}.
-     * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
-     * </p>
-     *
-     * @param flattenSingleElementCollections
-     * @param keys
-     * @return json string
-     * @deprecated use {@link #json(SerializationOptions, String...)} instead
-     */
-    @Deprecated
-    public String json(boolean flattenSingleElementCollections,
-            String... keys) {
-        return json(
-                SerializationOptions.builder()
-                        .flattenSingleElementCollections(
-                                flattenSingleElementCollections)
-                        .build(),
-                HashMultimap.create(), keys);
     }
 
     /**
@@ -1801,27 +1739,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its native fields and is "computed" on-demand.
-     * <p>
-     * Unlike {@link #derived()} attributes, computed data is generally
-     * expensive to generate and should only be calculated when explicitly
-     * requested.
-     * </p>
-     * <p>
-     * NOTE: Computed attributes are never cached. Each time one is requested,
-     * the computation that generates the value is done anew.
-     * </p>
-     *
-     * @return the computed data
-     * @deprecated Use the {@link Computed} annotation instead
-     */
-    @Deprecated
-    protected Map<String, Supplier<Object>> computed() {
-        return Collections.emptyMap();
-    }
-
-    /**
      * Return the result of {@code supplier}, computing it at most once per
      * {@link Record} instance for the given {@code key}. Subsequent calls with
      * the same {@code key} return the cached result.
@@ -1852,45 +1769,6 @@ public abstract class Record implements Comparable<Record> {
             _computeOnceCache = new HashMap<>();
         }
         return (T) _computeOnceCache.computeIfAbsent(key, k -> supplier.get());
-    }
-
-    /**
-     * Provide additional data about this Record that might not be encapsulated
-     * in its fields. For example, this is a good way to provide template
-     * specific information that isn't persisted to the database.
-     *
-     * @return the additional data
-     * @deprecated Use the {@link Derived} annotation instead
-     */
-    @Deprecated
-    protected Map<String, Object> derived() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
-     *
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
-     * @deprecated use {@link #typeAdapters()} instead
-     */
-    @Deprecated
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeHierarchyWriters() {
-        return Maps.newHashMap();
-    }
-
-    /**
-     * Return additional {@link JsonTypeWriter JsonTypeWriters} that should be
-     * use when generating the {@link #json()} for this {@link Record}.
-     *
-     * @return a mapping from a {@link Class} to a corresponding
-     *         {@link JsonTypeWriter}.
-     * @deprecated use {@link #typeAdapters()} instead
-     */
-    @Deprecated
-    protected Map<Class<?>, JsonTypeWriter<?>> jsonTypeWriters() {
-        return Maps.newHashMap();
     }
 
     /**
@@ -2056,10 +1934,7 @@ public abstract class Record implements Comparable<Record> {
                     : concourse.select(id);
             // @formatter:on
         }
-        if(prefix == null
-                || !runway.properties().supportsPreSelectLinkedRecords()) {
-            prefix = "";
-        }
+        prefix = prefix == null ? "" : prefix;
         checkConstraints(concourse, data, prefix);
         if(inZombieState(id, concourse, data)) {
             concourse.clear(id);
@@ -2338,7 +2213,6 @@ public abstract class Record implements Comparable<Record> {
     private Map<String, Supplier<Object>> $computed() {
         if(computed == null) {
             computed = new HashMap<>();
-            computed.putAll(computed());
             Stream<Method> defaults = Arrays.stream(Reflection
                     .getAllNonOverriddenDefaultInterfaceMethods(this));
             Stream<Method> declareds = Arrays
@@ -2389,7 +2263,6 @@ public abstract class Record implements Comparable<Record> {
     private Map<String, Object> $derived() {
         if(derived == null) {
             derived = new HashMap<>();
-            derived.putAll(derived());
             Stream<Method> defaults = Arrays.stream(Reflection
                     .getAllNonOverriddenDefaultInterfaceMethods(this));
             Stream<Method> declareds = Arrays
@@ -3093,14 +2966,7 @@ public abstract class Record implements Comparable<Record> {
         builder.registerTypeAdapterFactory(
                 generateDynamicRecordTypeAdapterFactory(options, this, links))
                 .setPrettyPrinting().disableHtmlEscaping();
-        Map<Class<?>, TypeAdapter<?>> adapters = Maps.newLinkedHashMap();
-        Streams.concat(jsonTypeWriters().entrySet().stream(),
-                jsonTypeHierarchyWriters().entrySet().stream())
-                .forEach(entry -> {
-                    Class<?> clazz = entry.getKey();
-                    TypeAdapter<?> adapter = entry.getValue().typeAdapter();
-                    adapters.put(clazz, adapter);
-                });
+        Map<Class<?>, TypeAdapter<?>> adapters = new LinkedHashMap<>();
         adapters.putAll(typeAdapters());
         adapters.forEach((clazz, adapter) -> {
             builder.registerTypeAdapterFactory(new TypeAdapterFactory() {

@@ -15,12 +15,8 @@
  */
 package com.cinchapi.runway;
 
-import java.util.Map;
-import java.util.function.Supplier;
-
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.concourse.test.ClientServerTest;
-import com.google.common.collect.ImmutableMap;
 
 /**
  * Base test class for {@link Runway} tests that use the
@@ -61,24 +57,25 @@ public abstract class RunwayBaseClientServerTest extends ClientServerTest {
             this.score = score;
         }
 
-        @Override
-        protected Map<String, Object> derived() {
-            return ImmutableMap.of("isAllstar", score > 20);
+        @Derived
+        public boolean isAllstar() {
+            return score > 20;
         }
 
-        @Override
-        protected Map<String, Supplier<Object>> computed() {
-            return ImmutableMap.of("isAboveAverage", () -> {
-                double average = db.load(Player.class).stream()
-                        .mapToInt(player -> player.score).summaryStatistics()
-                        .getAverage();
-                return score > average;
-            }, "isBelowAverage", () -> {
-                double average = db.load(Player.class).stream()
-                        .mapToInt(player -> player.score).summaryStatistics()
-                        .getAverage();
-                return score < average;
-            });
+        @Computed
+        public boolean isAboveAverage() {
+            double average = db.load(Player.class).stream()
+                    .mapToInt(player -> player.score).summaryStatistics()
+                    .getAverage();
+            return score > average;
+        }
+
+        @Computed
+        public boolean isBelowAverage() {
+            double average = db.load(Player.class).stream()
+                    .mapToInt(player -> player.score).summaryStatistics()
+                    .getAverage();
+            return score < average;
         }
 
     }

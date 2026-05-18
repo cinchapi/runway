@@ -15,16 +15,13 @@
  */
 package com.cinchapi.runway;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import javax.annotation.Nullable;
 
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
@@ -43,11 +40,9 @@ public abstract class AbstractRunwayTest extends RunwayBaseClientServerTest {
 
         String name;
 
-        @Override
-        protected Map<String, Object> derived() {
-            Map<String, Object> derived = new HashMap<>();
-            derived.put("isAllStar", null);
-            return derived;
+        @Derived
+        public Object isAllStar() {
+            return null;
         }
 
     }
@@ -144,14 +139,10 @@ public abstract class AbstractRunwayTest extends RunwayBaseClientServerTest {
             this.name = name;
         }
 
+        @Derived
         public Set<Person> members() {
             return db.find(Person.class, Criteria.where().key("organization")
                     .operator(Operator.LINKS_TO).value(id()));
-        }
-
-        @Override
-        protected Map<String, Object> derived() {
-            return ImmutableMap.of("members", members());
         }
     }
 

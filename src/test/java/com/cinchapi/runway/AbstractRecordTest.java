@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.Supplier;
 
 import com.cinchapi.common.collect.Continuation;
 import com.cinchapi.concourse.Tag;
@@ -198,9 +197,9 @@ public abstract class AbstractRecordTest extends RunwayBaseClientServerTest {
             return "Atlanta";
         }
 
-        @Override
-        public Map<String, Object> derived() {
-            return ImmutableMap.of("city", "Atlanta");
+        @Derived("city")
+        public String cityName() {
+            return "Atlanta";
         }
 
     }
@@ -216,23 +215,20 @@ public abstract class AbstractRecordTest extends RunwayBaseClientServerTest {
             return "Fulton";
         }
 
-        @Override
-        public Map<String, Supplier<Object>> computed() {
-            return ImmutableMap.of("state", () -> {
-                long stop = System.currentTimeMillis() + 1000;
-                while (System.currentTimeMillis() < stop) {
-                    continue;
-                }
-                return "Georgia";
-            });
+        @Computed
+        public String state() {
+            long stop = System.currentTimeMillis() + 1000;
+            while (System.currentTimeMillis() < stop) {
+                continue;
+            }
+            return "Georgia";
         }
     }
 
     class Bock extends Nock {
-        @Override
-        public Map<String, Supplier<Object>> computed() {
-            return ImmutableMap.of("state",
-                    () -> Continuation.of(UUID::randomUUID));
+        @Computed
+        public Object state() {
+            return Continuation.of(UUID::randomUUID);
         }
     }
 
@@ -359,14 +355,10 @@ public abstract class AbstractRecordTest extends RunwayBaseClientServerTest {
             this.name = name;
         }
 
+        @Computed
         public Set<User> users() {
             return db.find(User.class, Criteria.where().key("company")
                     .operator(Operator.LINKS_TO).value(id()));
-        }
-
-        @Override
-        public Map<String, Supplier<Object>> computed() {
-            return ImmutableMap.of("users", () -> users());
         }
     }
 
