@@ -197,6 +197,30 @@ public interface Reader extends AutoCloseable {
             long record);
 
     /**
+     * Record a navigate that traverses the {@code keys} starting from every
+     * record matching the {@code criteria}.
+     *
+     * @param keys the link traversal paths
+     * @param criteria the {@link Criteria} that identifies the starting records
+     * @return a {@link Pending} of the navigation result keyed by destination
+     *         record id
+     */
+    Pending<Map<Long, Map<String, Set<Object>>>> navigate(Set<String> keys,
+            Criteria criteria);
+
+    /**
+     * Record a navigate that traverses the {@code keys} starting from each of
+     * the {@code records}.
+     *
+     * @param keys the link traversal paths
+     * @param records the starting record ids
+     * @return a {@link Pending} of the navigation result keyed by destination
+     *         record id
+     */
+    Pending<Map<Long, Map<String, Set<Object>>>> navigate(Set<String> keys,
+            Collection<Long> records);
+
+    /**
      * Record a find for the ids of every record matching the {@code criteria}.
      *
      * @param criteria the {@link Criteria} that identifies the records

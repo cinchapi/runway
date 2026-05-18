@@ -104,6 +104,13 @@ class CountingConcourse extends ForwardingConcourse {
     }
 
     @Override
+    public <T> Map<Long, Map<String, Set<T>>> navigate(Collection<String> keys,
+            Criteria criteria) {
+        rpcs.incrementAndGet();
+        return super.navigate(keys, criteria);
+    }
+
+    @Override
     public Set<Long> search(String key, String query) {
         rpcs.incrementAndGet();
         return super.search(key, query);

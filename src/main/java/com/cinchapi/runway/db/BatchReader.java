@@ -212,6 +212,24 @@ public final class BatchReader extends AbstractReader {
     }
 
     @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, Criteria criteria) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.navigate(ImmutableList.copyOf(keys), criteria);
+        return Pending.deferred(this, () -> mapByRecord(batch, slot));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, Collection<Long> records) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.navigate(ImmutableList.copyOf(keys), records);
+        return Pending.deferred(this, () -> mapByRecord(batch, slot));
+    }
+
+    @Override
     public Pending<Set<Long>> find(Criteria criteria) {
         Batch batch = batch();
         int slot = batch.size();

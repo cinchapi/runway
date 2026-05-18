@@ -952,14 +952,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> Set<T> search(Class<T> clazz, String query,
             String... keys) {
+        Set<Long> ids;
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $search(concourse, clazz, query, keys);
-            return instantiateAll(clazz, ids);
+            ids = $search(concourse, clazz, query, keys);
         }
         finally {
             connections.release(concourse);
         }
+        Map<Long, Map<String, Set<Object>>> data = stream(
+                getPathsForClassHierarchyIfSupported(clazz), ids);
+        Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
+                getNavigatePathsForClassHierarchyIfSupported(clazz), ids, data);
+        return instantiateAll(clazz, data, targets);
     }
 
     /**
@@ -973,14 +978,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> Set<T> searchAny(Class<T> clazz, String query,
             String... keys) {
+        Set<Long> ids;
         Concourse concourse = connections.request();
         try {
-            Set<Long> ids = $searchAny(concourse, clazz, query, keys);
-            return instantiateAll(ids);
+            ids = $searchAny(concourse, clazz, query, keys);
         }
         finally {
             connections.release(concourse);
         }
+        Map<Long, Map<String, Set<Object>>> data = stream(
+                getPathsForClassHierarchyIfSupported(clazz), ids);
+        Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
+                getNavigatePathsForClassHierarchyIfSupported(clazz), ids, data);
+        return instantiateAll(data, targets);
     }
 
     @Override
@@ -999,7 +1009,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 selection.setState(Selection.State.FINISHED);
             }
             else {
-                try (Reader reader = new IncrementalReader(connections)) {
+                try (Reader reader = supportsBulkCommands
+                        ? new BatchReader(connections)
+                        : new IncrementalReader(connections)) {
                     $selectWithPossibleSources(reader, selection, null);
                     reader.drain();
                 }
@@ -1102,7 +1114,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 .onResolve(data::set);
                         reader.drain();
                         for (DatabaseSelection<?> selection : combinable) {
-                            demux(selection, data.get());
+                            demux(reader, selection, data.get());
                         }
                     }
                 }
@@ -1267,9 +1279,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Record on {@code reader} a read for the {@link Record Records} of
      * {@code clazz} that match {@code criteria}, scoped to {@code realms} and
-     * shaped by {@code order} and {@code page}.
+     * shaped by {@code order} and {@code page}, together with the
+     * {@code navigate()} pre-fetch of their {@link Link} targets.
      *
-     * @param reader the {@link Reader} that records the read
+     * @param reader the {@link Reader} that records the reads
      * @param clazz the target {@link Record} class (used to scope the lookup to
      *            instances of exactly this class)
      * @param criteria the {@link Criteria} that identifies the records
@@ -1279,24 +1292,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            for the full result set
      * @param realms the {@link Realms} that scope the lookup
      * @param <T> the {@link Record} type
-     * @return a {@link Pending} of the matching records' data
+     * @return a {@link Read} pairing the matching records' data with the
+     *         navigate pre-fetch of their {@link Link} targets
      */
-    private <T extends Record> Pending<Map<Long, Map<String, Set<Object>>>> $find(
-            Reader reader, Class<T> clazz, Criteria criteria,
-            @Nullable Order order, @Nullable Page page,
+    private <T extends Record> Read $find(Reader reader, Class<T> clazz,
+            Criteria criteria, @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
         criteria = $Criteria.amongRealms(realms,
                 $Criteria.withinClass(clazz, criteria));
         Set<String> paths = getPathsForClassIfSupported(clazz);
-        return read(reader, paths, criteria, order, page);
+        Set<String> navigatePaths = getNavigatePathsForClassIfSupported(clazz);
+        Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
+                criteria, order, page);
+        Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
+                reader, navigatePaths, criteria, page, data);
+        return new Read(data, navigated);
     }
 
     /**
      * Record on {@code reader} a read for the {@link Record Records} across
      * {@code clazz}'s hierarchy that match {@code criteria}, scoped to
-     * {@code realms} and shaped by {@code order} and {@code page}.
+     * {@code realms} and shaped by {@code order} and {@code page}, together
+     * with the {@code navigate()} pre-fetch of their {@link Link} targets.
      *
-     * @param reader the {@link Reader} that records the read
+     * @param reader the {@link Reader} that records the reads
      * @param clazz the {@link Record} class whose hierarchy is queried
      * @param criteria the {@link Criteria} that identifies the records
      * @param order the {@link Order} to apply to the result set, or
@@ -1305,24 +1324,31 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            for the full result set
      * @param realms the {@link Realms} that scope the lookup
      * @param <T> the {@link Record} type
-     * @return a {@link Pending} of the matching records' data
+     * @return a {@link Read} pairing the matching records' data with the
+     *         navigate pre-fetch of their {@link Link} targets
      */
-    private <T extends Record> Pending<Map<Long, Map<String, Set<Object>>>> $findAny(
-            Reader reader, Class<T> clazz, Criteria criteria,
-            @Nullable Order order, @Nullable Page page,
+    private <T extends Record> Read $findAny(Reader reader, Class<T> clazz,
+            Criteria criteria, @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
         criteria = $Criteria.amongRealms(realms,
                 $Criteria.accrossClassHierachy(clazz, criteria));
         Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-        return read(reader, paths, criteria, order, page);
+        Set<String> navigatePaths = getNavigatePathsForClassHierarchyIfSupported(
+                clazz);
+        Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
+                criteria, order, page);
+        Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
+                reader, navigatePaths, criteria, page, data);
+        return new Read(data, navigated);
     }
 
     /**
      * Record on {@code reader} a read for every {@link Record} of
      * {@code clazz}, scoped to {@code realms} and shaped by {@code order} and
-     * {@code page}.
+     * {@code page}, together with the {@code navigate()} pre-fetch of their
+     * {@link Link} targets.
      *
-     * @param reader the {@link Reader} that records the read
+     * @param reader the {@link Reader} that records the reads
      * @param clazz the target {@link Record} class (used to scope the lookup to
      *            instances of exactly this class)
      * @param order the {@link Order} to apply to the result set, or
@@ -1331,23 +1357,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            for the full result set
      * @param realms the {@link Realms} that scope the lookup
      * @param <T> the {@link Record} type
-     * @return a {@link Pending} of the records' data
+     * @return a {@link Read} pairing the records' data with the navigate
+     *         pre-fetch of their {@link Link} targets
      */
-    private <T extends Record> Pending<Map<Long, Map<String, Set<Object>>>> $load(
-            Reader reader, Class<T> clazz, @Nullable Order order,
-            @Nullable Page page, @Nonnull Realms realms) {
+    private <T extends Record> Read $load(Reader reader, Class<T> clazz,
+            @Nullable Order order, @Nullable Page page,
+            @Nonnull Realms realms) {
         Criteria criteria = $Criteria.amongRealms(realms,
                 $Criteria.forClass(clazz));
         Set<String> paths = getPathsForClassIfSupported(clazz);
-        return read(reader, paths, criteria, order, page);
+        Set<String> navigatePaths = getNavigatePathsForClassIfSupported(clazz);
+        Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
+                criteria, order, page);
+        Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
+                reader, navigatePaths, criteria, page, data);
+        return new Read(data, navigated);
     }
 
     /**
      * Record on {@code reader} a read for every {@link Record} in
      * {@code clazz}'s hierarchy, scoped to {@code realms} and shaped by
-     * {@code order} and {@code page}.
+     * {@code order} and {@code page}, together with the {@code navigate()}
+     * pre-fetch of their {@link Link} targets.
      *
-     * @param reader the {@link Reader} that records the read
+     * @param reader the {@link Reader} that records the reads
      * @param clazz the {@link Record} class whose hierarchy is queried
      * @param order the {@link Order} to apply to the result set, or
      *            {@code null} for unsorted results
@@ -1355,15 +1388,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            for the full result set
      * @param realms the {@link Realms} that scope the lookup
      * @param <T> the {@link Record} type
-     * @return a {@link Pending} of the records' data
+     * @return a {@link Read} pairing the records' data with the navigate
+     *         pre-fetch of their {@link Link} targets
      */
-    private <T extends Record> Pending<Map<Long, Map<String, Set<Object>>>> $loadAny(
-            Reader reader, Class<T> clazz, @Nullable Order order,
-            @Nullable Page page, Realms realms) {
+    private <T extends Record> Read $loadAny(Reader reader, Class<T> clazz,
+            @Nullable Order order, @Nullable Page page, Realms realms) {
         Criteria criteria = $Criteria.amongRealms(realms,
                 $Criteria.forClassHierarchy(clazz));
         Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-        return read(reader, paths, criteria, order, page);
+        Set<String> navigatePaths = getNavigatePathsForClassHierarchyIfSupported(
+                clazz);
+        Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
+                criteria, order, page);
+        Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
+                reader, navigatePaths, criteria, page, data);
+        return new Read(data, navigated);
     }
 
     /**
@@ -1462,15 +1501,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             if(hasFilter && page != null) {
                 try (Reader sharedReader = new IncrementalReader(connections)) {
                     Function<Page, Set<T>> retriever = $page -> {
-                        Pending<Map<Long, Map<String, Set<Object>>>> data = any
+                        Read read = any
                                 ? $loadAny(sharedReader, clazz, order, $page,
                                         realms)
                                 : $load(sharedReader, clazz, order, $page,
                                         realms);
                         AtomicReference<Set<T>> records = new AtomicReference<>();
-                        data.onResolve(
-                                $data -> records.set(any ? instantiateAll($data)
-                                        : instantiateAll(clazz, $data)));
+                        read.data
+                                .then($data -> read.navigated
+                                        .then($navigated -> resolveLinkTargets(
+                                                sharedReader, $data,
+                                                $navigated))
+                                        .map($targets -> instantiateAll(clazz,
+                                                any, $data, $targets)))
+                                .onResolve(records::set);
                         sharedReader.drain();
                         return records.get();
                     };
@@ -1479,11 +1523,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             else {
-                Pending<Map<Long, Map<String, Set<Object>>>> data = any
-                        ? $loadAny(reader, clazz, order, page, realms)
+                Read read = any ? $loadAny(reader, clazz, order, page, realms)
                         : $load(reader, clazz, order, page, realms);
-                return data.map($data -> finalizeSet(clazz, any, $data,
-                        hasFilter, filter));
+                return read.data.then($data -> read.navigated
+                        .then($navigated -> resolveLinkTargets(reader, $data,
+                                $navigated))
+                        .map($targets -> finalizeSet(clazz, any, $data,
+                                $targets, hasFilter, filter)));
             }
         }
         else {
@@ -1596,15 +1642,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 try (Reader sharedReader = new IncrementalReader(connections)) {
                     Function<Page, Set<T>> retriever = $page -> {
                         if(dbResolvable) {
-                            Pending<Map<Long, Map<String, Set<Object>>>> data = any
+                            Read read = any
                                     ? $findAny(sharedReader, clazz, criteria,
                                             order, $page, realms)
                                     : $find(sharedReader, clazz, criteria,
                                             order, $page, realms);
                             AtomicReference<Set<T>> records = new AtomicReference<>();
-                            data.onResolve($data -> records
-                                    .set(any ? instantiateAll($data)
-                                            : instantiateAll(clazz, $data)));
+                            read.data.then($data -> read.navigated
+                                    .then($navigated -> resolveLinkTargets(
+                                            sharedReader, $data, $navigated))
+                                    .map($targets -> instantiateAll(clazz, any,
+                                            $data, $targets)))
+                                    .onResolve(records::set);
                             sharedReader.drain();
                             return records.get();
                         }
@@ -1621,11 +1670,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             else if(dbResolvable) {
-                Pending<Map<Long, Map<String, Set<Object>>>> data = any
+                Read read = any
                         ? $findAny(reader, clazz, criteria, order, page, realms)
                         : $find(reader, clazz, criteria, order, page, realms);
-                return data.map($data -> finalizeSet(clazz, any, $data,
-                        hasFilter, filter));
+                return read.data.then($data -> read.navigated
+                        .then($navigated -> resolveLinkTargets(reader, $data,
+                                $navigated))
+                        .map($targets -> finalizeSet(clazz, any, $data,
+                                $targets, hasFilter, filter)));
             }
             else {
                 Set<T> records = any
@@ -1811,21 +1863,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             Class<T> resolvedClazz = clazz;
-            // After the navigate() prefetch, a bulk-select() cleanup BFS
-            // closes any reachable targets the navigate paths cannot cover
-            // (e.g., mutual-reference cycles whose field names alternate, or
-            // links into unknown Record classes).
             Pending<Map<Long, Map<String, Set<Object>>>> targets = navigated
-                    .then($navigated -> {
-                        Map<Long, Map<String, Set<Object>>> pool = new HashMap<>(
-                                $navigated);
-                        Set<Long> covered = new HashSet<>(pool.keySet());
-                        covered.add(id);
-                        Set<Long> frontier = extractLinkTargets(
-                                ImmutableMap.of(id, $data), covered);
-                        frontier.addAll(extractLinkTargets(pool, covered));
-                        return prefetchLinks(reader, pool, covered, frontier);
-                    });
+                    .then($navigated -> resolveLinkTargets(reader,
+                            ImmutableMap.of(id, $data), $navigated));
             return targets.map($targets -> {
                 T record = instantiate(resolvedClazz, id, $data, $targets);
                 if(record != null && hasFilter) {
@@ -1956,13 +1996,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Partition the results of a combined multi-select query back into a single
-     * {@link Selection} and populate its result.
+     * {@link Selection} and populate its result, recording the {@link Link}
+     * pre-fetch for the partition on {@code reader}.
      *
+     * @param reader the {@link Reader} that records the {@link Link} pre-fetch
      * @param selection the {@link Selection} to populate
      * @param data the combined query results
      */
     @SuppressWarnings({ "unchecked", "rawtypes" })
-    private void demux(DatabaseSelection<?> selection,
+    private void demux(Reader reader, DatabaseSelection<?> selection,
             Map<Long, Map<String, Set<Object>>> data) {
         Object result = null;
         if(selection instanceof LoadRecordSelection) {
@@ -2001,8 +2043,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     }
                 }
             }
-            result = selection.any ? instantiateAll(filtered)
-                    : instantiateAll((Class) selection.clazz, filtered);
+            Set<String> navigatePaths = selection.any
+                    ? getNavigatePathsForClassHierarchyIfSupported(
+                            selection.clazz)
+                    : getNavigatePathsForClassIfSupported(selection.clazz);
+            Pending<Map<Long, Map<String, Set<Object>>>> navigated = navigatePaths != null
+                    ? reader.navigate(navigatePaths, filtered.keySet())
+                    : Pending.of(ImmutableMap.of());
+            AtomicReference<Object> resolved = new AtomicReference<>();
+            navigated
+                    .then($navigated -> resolveLinkTargets(reader, filtered,
+                            $navigated))
+                    .map($targets -> instantiateAll((Class) selection.clazz,
+                            selection.any, filtered, $targets))
+                    .onResolve(resolved::set);
+            reader.drain();
+            result = resolved.get();
         }
         selection.setResult(result);
         selection.setState(Selection.State.FINISHED);
@@ -2112,12 +2168,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Build a {@link SelectResult} of {@link Record Records} from {@code data},
-     * applying {@code filter} when {@code hasFilter} is {@code true}.
+     * Build a {@link SelectResult} of {@link Record Records} from {@code data}
+     * and pre-fetched {@code targets}, applying {@code filter} when
+     * {@code hasFilter} is {@code true}.
      *
      * @param clazz the target {@link Record} class
      * @param any whether to query across the class hierarchy
      * @param data the matching record data
+     * @param targets the pre-fetched {@link Link} targets keyed by destination
+     *            record id
      * @param hasFilter whether {@code filter} is non-trivial
      * @param filter the client-side filter
      * @param <T> the {@link Record} type
@@ -2125,9 +2184,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> SelectResult<Set<T>> finalizeSet(Class<T> clazz,
             boolean any, Map<Long, Map<String, Set<Object>>> data,
-            boolean hasFilter, Predicate<T> filter) {
-        Set<T> records = any ? instantiateAll(data)
-                : instantiateAll(clazz, data);
+            Map<Long, Map<String, Set<Object>>> targets, boolean hasFilter,
+            Predicate<T> filter) {
+        Set<T> records = instantiateAll(clazz, any, data, targets);
         if(hasFilter) {
             return new SelectResult<>(
                     records.stream().filter(filter).collect(
@@ -2292,92 +2351,57 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Create a {@link Record} instance of type {@code clazz} (or one of its
-     * descendants) for each entry in the {@code data}
+     * descendants) for each entry in {@code data}.
      *
-     * @param clazz
-     * @param data
-     * @return the instantiated {@link Record}s
+     * @param clazz the target {@link Record} class
+     * @param data the record data keyed by record id
+     * @param targets the pre-fetched {@link Link} targets keyed by destination
+     *            record id
+     * @return the instantiated {@link Record Records}
      */
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
-            Map<Long, Map<String, Set<Object>>> data) {
+            Map<Long, Map<String, Set<Object>>> data,
+            Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        Map<Long, Map<String, Set<Object>>> targets = resolveLinkCollections(
-                clazz, data);
-        Map<Long, Map<String, Set<Object>>> $targets = targets;
-        Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
-            return instantiate(clazz, entry.getKey(), loaded, entry.getValue(),
-                    $targets);
-        });
-        return records;
+        return LazyTransformSet.of(data.entrySet(), entry -> instantiate(clazz,
+                entry.getKey(), loaded, entry.getValue(), targets));
     }
 
     /**
-     * Create a {@link Record} instance of type {@code clazz} (or one of its
-     * descendants) for each of the {@code ids}.
+     * Create a {@link Record} instance for each entry in {@code data}, with
+     * each record's class determined by its stored section key.
      *
-     * @param clazz
-     * @param ids
-     * @return the instantiated {@link Record}s
-     */
-    private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
-            Set<Long> ids) {
-        AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
-        AtomicReference<Map<Long, Map<String, Set<Object>>>> dests = new AtomicReference<>();
-        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        Set<T> records = LazyTransformSet.of(ids, id -> {
-            if(data.get() == null) {
-                Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-                data.set(stream(paths, ids));
-                dests.set(resolveLinkCollectionsHierarchy(clazz, data.get(),
-                        ids));
-            }
-            return instantiate(clazz, id, loaded, data.get().get(id),
-                    dests.get());
-        });
-        return records;
-    }
-
-    /**
-     * Create a {@link Record} instance for each entry in the {@code data}
-     *
-     * @param data
-     * @return the instantiated {@link Record}s
+     * @param data the record data keyed by record id
+     * @param targets the pre-fetched {@link Link} targets keyed by destination
+     *            record id
+     * @return the instantiated {@link Record Records}
      */
     private <T extends Record> Set<T> instantiateAll(
-            Map<Long, Map<String, Set<Object>>> data) {
+            Map<Long, Map<String, Set<Object>>> data,
+            Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        Map<Long, Map<String, Set<Object>>> targets = resolveLinkCollections(
-                null, data);
-        Map<Long, Map<String, Set<Object>>> $targets = targets;
-        Set<T> records = LazyTransformSet.of(data.entrySet(), entry -> {
-            return instantiate(entry.getKey(), loaded, entry.getValue(),
-                    $targets);
-        });
-        return records;
+        return LazyTransformSet.of(data.entrySet(),
+                entry -> instantiate(entry.getKey(), loaded, entry.getValue(),
+                        targets));
     }
 
     /**
-     * Create a {@link Record} instance for each of the {@code ids}.
-     * <p>
-     * The {@link Record} class will be determined by the data stored for each
-     * of the {@code ids}.
-     * </p>
+     * Create a {@link Record} instance for each entry in {@code data}, either
+     * across {@code clazz}'s hierarchy when {@code any} is {@code true} or as
+     * exact instances of {@code clazz} otherwise.
      *
-     * @param ids
-     * @return the instantiated {@link Record}s
+     * @param clazz the target {@link Record} class
+     * @param any whether to instantiate across the class hierarchy
+     * @param data the record data keyed by record id
+     * @param targets the pre-fetched {@link Link} targets keyed by destination
+     *            record id
+     * @return the instantiated {@link Record Records}
      */
-    private <T extends Record> Set<T> instantiateAll(Set<Long> ids) {
-        AtomicReference<Map<Long, Map<String, Set<Object>>>> data = new AtomicReference<>();
-        AtomicReference<Map<Long, Map<String, Set<Object>>>> dests = new AtomicReference<>();
-        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        Set<T> records = LazyTransformSet.of(ids, id -> {
-            if(data.get() == null) {
-                data.set(stream(null, ids));
-                dests.set(resolveLinkCollections(null, data.get()));
-            }
-            return instantiate(id, loaded, data.get().get(id), dests.get());
-        });
-        return records;
+    private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
+            boolean any, Map<Long, Map<String, Set<Object>>> data,
+            Map<Long, Map<String, Set<Object>>> targets) {
+        return any ? instantiateAll(data, targets)
+                : instantiateAll(clazz, data, targets);
     }
 
     /**
@@ -2561,171 +2585,96 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Resolve destination {@link Record} data for every {@link Link} reachable
-     * from {@code data}.
+     * Record on {@code reader} the cleanup BFS that closes any {@link Link}
+     * targets the navigate phase did not reach, returning a {@link Pending} of
+     * the complete target pool.
      *
-     * @param clazz the target class, or {@code null} for untyped loads where
-     *            each record's class is recovered from its section key
-     * @param data the initial query data
-     * @return pre-fetched targets keyed by destination record ID, or
-     *         {@code null} when {@code data} is empty
+     * @param reader the {@link Reader} that records each cleanup select
+     * @param sources the source records whose {@link Link Links} seed the
+     *            traversal
+     * @param navigated the navigate phase result
+     * @return a {@link Pending} of the target pool keyed by destination record
+     *         id
      */
-    private Map<Long, Map<String, Set<Object>>> resolveLinkCollections(
-            @Nullable Class<? extends Record> clazz,
-            Map<Long, Map<String, Set<Object>>> data) {
-        return resolveLinkedCollections(clazz, false, data.keySet(), data);
+    private Pending<Map<Long, Map<String, Set<Object>>>> resolveLinkTargets(
+            Reader reader, Map<Long, Map<String, Set<Object>>> sources,
+            Map<Long, Map<String, Set<Object>>> navigated) {
+        Map<Long, Map<String, Set<Object>>> pool = new HashMap<>(navigated);
+        Set<Long> covered = new HashSet<>(pool.keySet());
+        covered.addAll(sources.keySet());
+        Set<Long> frontier = extractLinkTargets(sources, covered);
+        frontier.addAll(extractLinkTargets(pool, covered));
+        return prefetchLinks(reader, pool, covered, frontier);
     }
 
     /**
-     * Resolve destination {@link Record} data for every {@link Link} reachable
-     * from {@code data}, using paths that span {@code clazz} and all of its
-     * descendants.
-     *
-     * @param clazz the target class, or {@code null} for untyped loads where
-     *            each record's class is recovered from its section key
-     * @param data the initial query data
-     * @param ids the record ids to pass to {@code navigate()}
-     * @return pre-fetched targets keyed by destination record ID, or
-     *         {@code null} when {@code data} and {@code ids} are both empty
-     */
-    private Map<Long, Map<String, Set<Object>>> resolveLinkCollectionsHierarchy(
-            @Nullable Class<? extends Record> clazz,
-            Map<Long, Map<String, Set<Object>>> data, Set<Long> ids) {
-        return resolveLinkedCollections(clazz, true, ids, data);
-    }
-
-    /**
-     * Resolve destination {@link Record} data for every {@link Link} reachable
-     * from {@code data} or {@code navigateIds}, returning the complete set
-     * keyed by destination record ID.
+     * Record on {@code reader} the {@code navigate()} that pre-fetches the
+     * {@link Link} targets reachable from a criteria query.
      * <p>
-     * The pre-fetch runs a single {@code navigate()} per class (single call for
-     * typed loads; one per discovered class for untyped loads) followed by a
-     * bulk-{@code select()} cleanup sweep that closes any gaps the navigate
-     * paths cannot reach. Returns {@code null} when {@code data} and
-     * {@code navigateIds} are both empty.
+     * An unpaginated query navigates from the {@code criteria} itself, so the
+     * navigate can share a batch with the query's own read; a paginated query
+     * navigates from the resolved page's record ids, since only the page
+     * &mdash; not the full criteria result &mdash; should be traversed.
      * </p>
      *
-     * @param clazz the target class, or {@code null} for untyped loads where
-     *            each record's class is recovered from its section key
-     * @param hierarchy if {@code true}, resolve navigate paths across the full
-     *            class hierarchy; if {@code false}, resolve for {@code clazz}
-     *            alone (ignored when {@code clazz} is {@code null})
-     * @param navigateIds the record ids to pass to {@code navigate()}
-     * @param data the initial query data, scanned for {@link Link} values
-     *            during the cleanup pass and for section keys when grouping
-     *            untyped ids by class
-     * @return pre-fetched targets keyed by destination record ID, or
-     *         {@code null}
+     * @param reader the {@link Reader} that records the navigate
+     * @param navigatePaths the navigate paths, or {@code null} when navigation
+     *            is unsupported for the query's class
+     * @param criteria the {@link Criteria} that identifies the starting records
+     * @param page the {@link Page} that limits the query, or {@code null} when
+     *            unpaginated
+     * @param data a {@link Pending} of the query's record data, used to source
+     *            the starting ids of a paginated query
+     * @return a {@link Pending} of the navigate result keyed by destination
+     *         record id
      */
-    private Map<Long, Map<String, Set<Object>>> resolveLinkedCollections(
-            @Nullable Class<? extends Record> clazz, boolean hierarchy,
-            Set<Long> navigateIds, Map<Long, Map<String, Set<Object>>> data) {
-        if(data.isEmpty() && navigateIds.isEmpty()) {
-            return null;
+    private Pending<Map<Long, Map<String, Set<Object>>>> prefetchNavigate(
+            Reader reader, @Nullable Set<String> navigatePaths,
+            Criteria criteria, @Nullable Page page,
+            Pending<Map<Long, Map<String, Set<Object>>>> data) {
+        if(navigatePaths == null) {
+            return Pending.of(ImmutableMap.of());
+        }
+        else if(page == null) {
+            return reader.navigate(navigatePaths, criteria);
         }
         else {
-            Concourse connection = connections.request();
-            try {
-                Map<Long, Map<String, Set<Object>>> targets = new HashMap<>();
-                // Phase 1: NAVIGATE — pre-fetch destination Record data.
-                // select() can fold a one-to-one Link's destination into
-                // the source record's flat result (e.g., owner.name
-                // appears as a key on the source), but for a multi-valued
-                // Link it would flatten every destination's values into a
-                // single set with no per-destination grouping, making it
-                // impossible to reconstruct individual destination
-                // Records. navigate() returns data keyed by destination
-                // record ID instead, which preserves the association.
-                // When the source class is known, dispatch a single
-                // navigate() per request; for untyped loads, group the
-                // records by their section key so each class group
-                // dispatches its own navigate() with class-specific
-                // paths.
-                if(clazz != null) {
-                    Set<String> paths = hierarchy
-                            ? getNavigatePathsForClassHierarchyIfSupported(
-                                    clazz)
-                            : getNavigatePathsForClassIfSupported(clazz);
-                    if(paths != null && !navigateIds.isEmpty()) {
-                        targets.putAll(connection.navigate(paths, navigateIds));
-                    }
-                }
-                else {
-                    Map<Class<? extends Record>, Set<Long>> grouped = groupBySectionKey(
-                            data, navigateIds);
-                    for (Entry<Class<? extends Record>, Set<Long>> entry : grouped
-                            .entrySet()) {
-                        Set<String> paths = getNavigatePathsForClassIfSupported(
-                                entry.getKey());
-                        if(paths != null) {
-                            targets.putAll(connection.navigate(paths,
-                                    entry.getValue()));
-                        }
-                    }
-                }
-                // Phase 2: Cleanup BFS — close any gaps the navigate
-                // phase missed (multi-field cycles that Concourse's
-                // same-field transitive modifier cannot traverse,
-                // schema-unknown links, etc.). Iterating bulk select()s
-                // converges in O(depth-of-tail) round trips on top of the
-                // single navigate() above.
-                Set<Long> covered = Sets.newHashSet(data.keySet());
-                covered.addAll(targets.keySet());
-                Set<Long> frontier = extractLinkTargets(data, covered);
-                frontier.addAll(extractLinkTargets(targets, covered));
-                while (!frontier.isEmpty()) {
-                    Map<Long, Map<String, Set<Object>>> batch = connection
-                            .select(frontier);
-                    targets.putAll(batch);
-                    covered.addAll(frontier);
-                    frontier = extractLinkTargets(batch, covered);
-                }
-                return targets;
-            }
-            finally {
-                connections.release(connection);
-            }
+            return data.then(
+                    $data -> reader.navigate(navigatePaths, $data.keySet()));
         }
     }
 
     /**
-     * Group {@code navigateIds} by the {@link Record} {@link Class} reported by
-     * each record's {@link Record#SECTION_KEY section key} in {@code data}. Ids
-     * missing from {@code data}, missing a section key, or whose section key
-     * does not resolve to a known {@link Record} subclass are skipped.
+     * Pre-fetch, through a dedicated {@link Reader}, the {@link Link} targets
+     * reachable from {@code data}.
      *
-     * @param data the data already in hand for the {@link Record Records} being
-     *            loaded
-     * @param navigateIds the ids whose class to determine
-     * @return a {@link Map} from each discovered {@link Record} class to the
-     *         ids in {@code navigateIds} that belong to that class
+     * @param navigatePaths the navigate paths, or {@code null} when navigation
+     *            is unsupported for the records' class
+     * @param ids the record ids to navigate from
+     * @param data the source records' data, scanned while the cleanup traversal
+     *            closes targets the navigate did not reach
+     * @return the pre-fetched targets keyed by destination record id
      */
-    private Map<Class<? extends Record>, Set<Long>> groupBySectionKey(
-            Map<Long, Map<String, Set<Object>>> data, Set<Long> navigateIds) {
-        Map<Class<? extends Record>, Set<Long>> grouped = Maps.newHashMap();
-        for (long id : navigateIds) {
-            Map<String, Set<Object>> record = data.get(id);
-            if(record == null) {
-                continue;
-            }
-            Set<Object> sections = record.getOrDefault(Record.SECTION_KEY,
-                    ImmutableSet.of());
-            String section = (String) Iterables.getFirst(sections, null);
-            if(section == null) {
-                continue;
-            }
-            Class<? extends Record> recordClass;
-            try {
-                recordClass = Reflection.getClassCasted(section);
-            }
-            catch (Exception e) {
-                continue;
-            }
-            grouped.computeIfAbsent(recordClass, $ -> Sets.newHashSet())
-                    .add(id);
+    private Map<Long, Map<String, Set<Object>>> prefetchLinkTargets(
+            @Nullable Set<String> navigatePaths, Set<Long> ids,
+            Map<Long, Map<String, Set<Object>>> data) {
+        if(ids.isEmpty()) {
+            return ImmutableMap.of();
         }
-        return grouped;
+        else {
+            try (Reader reader = supportsBulkCommands
+                    ? new BatchReader(connections)
+                    : new IncrementalReader(connections)) {
+                Pending<Map<Long, Map<String, Set<Object>>>> navigated = navigatePaths != null
+                        ? reader.navigate(navigatePaths, ids)
+                        : Pending.of(ImmutableMap.of());
+                AtomicReference<Map<Long, Map<String, Set<Object>>>> targets = new AtomicReference<>();
+                navigated.then($navigated -> resolveLinkTargets(reader, data,
+                        $navigated)).onResolve(targets::set);
+                reader.drain();
+                return targets.get();
+            }
+        }
     }
 
     /**
@@ -3364,6 +3313,41 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         @Override
         public int hashCode() {
             return Objects.hash(reservation, System.identityHashCode(filter));
+        }
+
+    }
+
+    /**
+     * The pair of reads recorded for a class or criteria query: the matching
+     * {@link Record Records'} own data, and the {@code navigate()} pre-fetch of
+     * the {@link Link} targets reachable from them.
+     *
+     * @author Jeff Nelson
+     */
+    private static final class Read {
+
+        /**
+         * A {@link Pending} of the matching records' data.
+         */
+        final Pending<Map<Long, Map<String, Set<Object>>>> data;
+
+        /**
+         * A {@link Pending} of the {@code navigate()} pre-fetch of the
+         * {@link Link} targets reachable from the matching records.
+         */
+        final Pending<Map<Long, Map<String, Set<Object>>>> navigated;
+
+        /**
+         * Construct a new {@link Read}.
+         *
+         * @param data a {@link Pending} of the matching records' data
+         * @param navigated a {@link Pending} of the {@code navigate()}
+         *            pre-fetch
+         */
+        Read(Pending<Map<Long, Map<String, Set<Object>>>> data,
+                Pending<Map<Long, Map<String, Set<Object>>>> navigated) {
+            this.data = data;
+            this.navigated = navigated;
         }
 
     }

@@ -1132,6 +1132,79 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the number of read RPCs a multi-record
+     * {@code find()} issues does not grow with the depth of the
+     * self-referential {@link java.util.Collection Collection&lt;Record&gt;}
+     * chains reachable from the matched {@link Node Nodes}.
+     * <p>
+     * <strong>Start state:</strong> Three {@link Node Nodes} with a
+     * single-friend chain and three {@link Node Nodes} with a five-deep friend
+     * chain saved to the database, distinguished by label.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save three {@code "shallow"} roots, each linked to one friend, and
+     * three {@code "deep"} roots, each linked to a five-deep friend chain.</li>
+     * <li>Reflectively replace the {@link Runway} connection pool with a
+     * {@link CountingConcourseConnectionPool} that tallies read RPCs.</li>
+     * <li>Run a {@code find()} for the shallow roots and a {@code find()} for
+     * the deep roots, walking every matched chain and recording the RPC count
+     * of each.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The deep {@code find()} fully populates every
+     * matched chain and issues the same number of read RPCs as the shallow
+     * {@code find()} &mdash; proving the criteria query and its navigate
+     * pre-fetch stay depth-independent.
+     */
+    @Test
+    public void testFindRpcCountIsIndependentOfChainDepth() {
+        for (int i = 0; i < 3; ++i) {
+            Node root = new Node("shallow");
+            root.friends.add(new Node("shallowfriend"));
+            root.save();
+        }
+        for (int i = 0; i < 3; ++i) {
+            Node root = new Node("deep");
+            Node tail = root;
+            for (int depth = 0; depth < 5; ++depth) {
+                Node next = new Node("deepfriend");
+                tail.friends.add(next);
+                tail = next;
+            }
+            root.save();
+        }
+        AtomicInteger rpcs = new AtomicInteger();
+        Reflection.set("connections", new CountingConcourseConnectionPool(
+                () -> new CountingConcourse(Concourse.connect("localhost",
+                        server.getClientPort(), "admin", "admin"), rpcs)),
+                runway); // (authorized)
+        rpcs.set(0);
+        Set<Node> shallowRoots = runway.find(Node.class,
+                Criteria.where().key("label").operator(Operator.EQUALS)
+                        .value("shallow").build());
+        for (Node root : shallowRoots) {
+            Assert.assertEquals(1, root.friends.size());
+        }
+        int shallow = rpcs.get();
+        rpcs.set(0);
+        Set<Node> deepRoots = runway.find(Node.class, Criteria.where()
+                .key("label").operator(Operator.EQUALS).value("deep").build());
+        for (Node root : deepRoots) {
+            Node node = root;
+            for (int depth = 0; depth < 5; ++depth) {
+                Assert.assertEquals(1, node.friends.size());
+                node = node.friends.get(0);
+            }
+        }
+        int deep = rpcs.get();
+        Assert.assertEquals(3, shallowRoots.size());
+        Assert.assertEquals(3, deepRoots.size());
+        Assert.assertTrue(shallow > 0);
+        Assert.assertEquals(shallow, deep);
+    }
+
+    /**
      * A {@link Record} with a {@link java.util.Collection
      * Collection&lt;Record&gt;} field for testing navigate prefetching of
      * linked {@link Dock Docks}.

@@ -142,6 +142,18 @@ public class IncrementalReader extends AbstractReader {
     }
 
     @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, Criteria criteria) {
+        return Pending.of(concourse().navigate(keys, criteria));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, Collection<Long> records) {
+        return Pending.of(concourse().navigate(keys, records));
+    }
+
+    @Override
     public Pending<Set<Long>> find(Criteria criteria) {
         return Pending.of(concourse().find(criteria));
     }
