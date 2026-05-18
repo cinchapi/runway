@@ -27,6 +27,7 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.CountingConcourseConnectionPool.CountingConcourse;
 import com.google.common.collect.ImmutableList;
@@ -1273,6 +1274,32 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(3, deepRoots.size());
         Assert.assertTrue(shallow > 0);
         Assert.assertEquals(shallow, deep);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a paginated load whose page falls
+     * beyond the result set returns an empty {@link Set} rather than throwing,
+     * for a class that has navigate paths.
+     * <p>
+     * <strong>Start state:</strong> A single {@link Lock} saved to the
+     * database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save one {@link Lock}.</li>
+     * <li>Load {@link Lock} with a {@link Page} that begins past the only saved
+     * record.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Set} is empty; the empty
+     * page does not drive a {@code navigate()} from zero records.
+     */
+    @Test
+    public void testPaginatedLoadBeyondResultsReturnsEmpty() {
+        Lock lock = new Lock(ImmutableList.of(new Dock("solo")));
+        lock.save();
+        Set<Lock> page = runway.load(Lock.class, Page.limit(10).goTo(2));
+        Assert.assertTrue(page.isEmpty());
     }
 
     /**

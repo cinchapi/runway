@@ -70,6 +70,51 @@ public class RunwaySearchTest extends AbstractRunwayTest {
         Assert.assertEquals(2, records.size());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a {@code search} with no {@code keys}
+     * returns an empty result rather than throwing.
+     * <p>
+     * <strong>Start state:</strong> A single {@link Manager} saved to the
+     * database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Manager}.</li>
+     * <li>Call {@code search} with a query but no search keys.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Set} is empty.
+     */
+    @Test
+    public void testSearchWithoutKeysReturnsEmpty() {
+        runway.save(new Manager("John Doern"));
+        Set<Manager> records = runway.search(Manager.class, "Doe");
+        Assert.assertTrue(records.isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code searchAny} with no
+     * {@code keys} returns an empty result rather than throwing.
+     * <p>
+     * <strong>Start state:</strong> A single {@link Manager} saved to the
+     * database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Manager}.</li>
+     * <li>Call {@code searchAny} for the {@link User} hierarchy with a query
+     * but no search keys.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Set} is empty.
+     */
+    @Test
+    public void testSearchAnyWithoutKeysReturnsEmpty() {
+        runway.save(new Manager("John Doern"));
+        Set<User> records = runway.searchAny(User.class, "Doe");
+        Assert.assertTrue(records.isEmpty());
+    }
+
     @Test
     public void testLoadDeferredReference() {
         Jock jock = new Jock("A");

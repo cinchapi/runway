@@ -954,7 +954,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> Set<T> search(Class<T> clazz, String query,
             String... keys) {
-        if(supportsContainsOperator) {
+        if(keys.length == 0) {
+            return ImmutableSet.of();
+        }
+        else if(supportsContainsOperator) {
             return find(clazz, $Criteria.search(query, keys));
         }
         else {
@@ -988,7 +991,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> Set<T> searchAny(Class<T> clazz, String query,
             String... keys) {
-        if(supportsContainsOperator) {
+        if(keys.length == 0) {
+            return ImmutableSet.of();
+        }
+        else if(supportsContainsOperator) {
             return findAny(clazz, $Criteria.search(query, keys));
         }
         else {
@@ -2395,8 +2401,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return reader.navigate(navigatePaths, criteria);
         }
         else {
-            return data.then(
-                    $data -> reader.navigate(navigatePaths, $data.keySet()));
+            return data.then($data -> {
+                if($data.isEmpty()) {
+                    return Pending.of(ImmutableMap.of());
+                }
+                else {
+                    return reader.navigate(navigatePaths, $data.keySet());
+                }
+            });
         }
     }
 
