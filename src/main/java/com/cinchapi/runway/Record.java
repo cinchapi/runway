@@ -3468,11 +3468,11 @@ public abstract class Record implements Comparable<Record> {
          * pre-fetch destination {@link Record} data reachable from
          * {@code clazz}.
          * <p>
-         * Paths follow single-{@link Record} and {@link Collection
-         * Collection&lt;Record&gt;} edges recursively. Edges that cycle back to
-         * a previously visited {@link Record} type emit the {@code *}
-         * transitive modifier so a single {@code navigate()} RPC traverses the
-         * reachable graph to arbitrary depth via server-side BFS.
+         * Paths descend through both single-{@link Record} and
+         * {@link Collection Collection&lt;Record&gt;} edges. An edge that
+         * cycles back to an already-traversed {@link Record} type yields a path
+         * bearing the {@code *} transitive modifier, which directs a single
+         * {@code navigate()} RPC to follow that edge to arbitrary depth.
          * </p>
          *
          * @param clazz
@@ -3497,12 +3497,10 @@ public abstract class Record implements Comparable<Record> {
          * {@code clazz}; all prefixed with {@code prefix} and using
          * {@code ancestors} and {@code visitedEdges} for cycle detection.
          * <p>
-         * The traversal crosses both single-{@link Record} and
-         * {@link Collection Collection&lt;Record&gt;} field edges. When an edge
-         * cycles back to a {@link Record} type already in {@code ancestors}, a
-         * {@code *}-suffixed prefix is emitted to delegate transitive traversal
-         * to the server; {@code visitedEdges} prevents re-emission of the same
-         * cyclic {@code (sourceClass, field)} edge within a single lineage.
+         * An edge that cycles back to a {@link Record} type already in
+         * {@code ancestors} yields a {@code *}-suffixed prefix, and
+         * {@code visitedEdges} keeps the same cyclic edge from being re-emitted
+         * within a single lineage.
          * </p>
          *
          * @param clazz
@@ -3771,8 +3769,8 @@ public abstract class Record implements Comparable<Record> {
                     // key produces the Link values, and navigate() (driven
                     // by computeNavigatePaths) returns each destination's
                     // data keyed by destination ID. Cyclic single-Record
-                    // edges that need transitive {@code *} expansion are
-                    // emitted by computeNavigatePaths Branch 3.
+                    // edges that need transitive expansion are emitted by
+                    // computeNavigatePaths.
                     paths.add(prefix + field.getName());
                 }
             }

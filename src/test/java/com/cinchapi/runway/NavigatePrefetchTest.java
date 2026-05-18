@@ -185,7 +185,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <strong>Goal:</strong> Verify that navigate paths recurse through a
      * non-cyclic single-{@link Record} field to discover and enumerate
      * {@link java.util.Collection Collection&lt;Record&gt;} fields nested
-     * behind it (Gap A).
+     * behind it.
      * <p>
      * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
      * instance.
@@ -217,7 +217,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     /**
      * <strong>Goal:</strong> Verify that a non-cyclic
      * {@link java.util.Collection Collection&lt;Record&gt;} field reached under
-     * a transitive ({@code *}) stop is still fully enumerated (Gap B).
+     * a transitive ({@code *}) stop is still fully enumerated.
      * <p>
      * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
      * instance.
@@ -251,7 +251,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     /**
      * <strong>Goal:</strong> Verify that a cyclic single-{@link Record} field
      * on the navigate-root class emits {@code *}-suffixed paths from
-     * {@code computeNavigatePaths} itself (Branch 3).
+     * {@code computeNavigatePaths} itself.
      * <p>
      * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
      * instance.
@@ -325,7 +325,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     /**
      * <strong>Goal:</strong> Verify that a cyclic single-{@link Record} field
      * encountered deep inside a non-cyclic chain emits {@code *}-suffixed paths
-     * through {@code computePaths} (the literal scope of #98).
+     * through {@code computePaths}.
      * <p>
      * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
      * instance.

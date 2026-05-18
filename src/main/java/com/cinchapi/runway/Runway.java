@@ -2675,7 +2675,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code reader} the cleanup BFS that closes any {@link Link}
+     * Record on {@code reader} the cleanup reads that close any {@link Link}
      * targets the navigate phase did not reach, returning a {@link Pending} of
      * the complete target pool.
      *

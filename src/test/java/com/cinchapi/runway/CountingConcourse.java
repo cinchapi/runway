@@ -31,8 +31,8 @@ import com.cinchapi.concourse.lang.sort.Order;
 /**
  * A {@link ForwardingConcourse} that tallies the read RPCs issued against it
  * &mdash; the {@code find}, {@code get}, {@code navigate}, {@code search},
- * {@code select}, and batch {@code submit} forms that Runway uses &mdash; so a
- * test can assert how many round trips an operation takes.
+ * {@code select}, and batch {@code submit} forms that {@link Runway} uses
+ * &mdash; so a test can assert how many round trips an operation takes.
  *
  * @author Jeff Nelson
  */
