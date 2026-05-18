@@ -421,6 +421,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean supportsPreSelectLinkedRecords;
 
     /**
+     * A flag that indicates if the connected server supports the
+     * {@code CONTAINS} operator, which performs full-text search within a
+     * {@link Criteria}.
+     * <p>
+     * This functionality is supported in Concourse 0.12.0+
+     * </p>
+     */
+    private final boolean supportsContainsOperator;
+
+    /**
      * A flag that indicates if the connected server supports native
      * {@code count} calculations using the {@code $id$} identifier key, which
      * efficiently counts matching {@link Record Records} without transferring
@@ -521,6 +531,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     actual, Version.forIntegers(0, 10));
             this.supportsPreSelectLinkedRecords = isActualVersionGreaterThanOrEquals(
                     actual, Version.forIntegers(0, 11, 3));
+            this.supportsContainsOperator = isActualVersionGreaterThanOrEquals(
+                    actual, Version.forIntegers(0, 12, 0));
             this.supportsNativeCount = isActualVersionGreaterThanOrEquals(
                     actual, Version.forIntegers(0, 12, 2));
             Version v1_0_0 = Version.forIntegers(1, 0, 0);
@@ -550,12 +562,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * instance and implements {@link AutoCloseable} to automatically detach all
      * sources when closed. Both the returned handle and this {@link Runway}
      * instance can be used for queries while sources are attached.
-     * </p>
-     * <p>
-     * <strong>Note:</strong> Full-text {@link #search} operations are not
-     * supported for attached sources. Search always queries the underlying
-     * database. Use {@link #find} with appropriate {@link Criteria} for
-     * filtering ad-hoc data.
      * </p>
      * <h2>Usage</h2>
      *
@@ -948,21 +954,27 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> Set<T> search(Class<T> clazz, String query,
             String... keys) {
-        Set<Long> ids;
-        Map<Long, Map<String, Set<Object>>> data;
-        Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-        Concourse concourse = connections.request();
-        try {
-            ids = $search(concourse, clazz, query, keys);
-            data = paths != null ? concourse.select(paths, ids)
-                    : concourse.select(ids);
+        if(supportsContainsOperator) {
+            return find(clazz, $Criteria.search(query, keys));
         }
-        finally {
-            connections.release(concourse);
+        else {
+            Set<Long> ids;
+            Map<Long, Map<String, Set<Object>>> data;
+            Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
+            Concourse concourse = connections.request();
+            try {
+                ids = $search(concourse, clazz, query, keys);
+                data = paths != null ? concourse.select(paths, ids)
+                        : concourse.select(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+            Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
+                    getNavigatePathsForClassHierarchyIfSupported(clazz), ids,
+                    data);
+            return instantiateAll(clazz, data, targets);
         }
-        Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
-                getNavigatePathsForClassHierarchyIfSupported(clazz), ids, data);
-        return instantiateAll(clazz, data, targets);
     }
 
     /**
@@ -976,21 +988,27 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> Set<T> searchAny(Class<T> clazz, String query,
             String... keys) {
-        Set<Long> ids;
-        Map<Long, Map<String, Set<Object>>> data;
-        Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-        Concourse concourse = connections.request();
-        try {
-            ids = $searchAny(concourse, clazz, query, keys);
-            data = paths != null ? concourse.select(paths, ids)
-                    : concourse.select(ids);
+        if(supportsContainsOperator) {
+            return findAny(clazz, $Criteria.search(query, keys));
         }
-        finally {
-            connections.release(concourse);
+        else {
+            Set<Long> ids;
+            Map<Long, Map<String, Set<Object>>> data;
+            Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
+            Concourse concourse = connections.request();
+            try {
+                ids = $searchAny(concourse, clazz, query, keys);
+                data = paths != null ? concourse.select(paths, ids)
+                        : concourse.select(ids);
+            }
+            finally {
+                connections.release(concourse);
+            }
+            Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
+                    getNavigatePathsForClassHierarchyIfSupported(clazz), ids,
+                    data);
+            return instantiateAll(data, targets);
         }
-        Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
-                getNavigatePathsForClassHierarchyIfSupported(clazz), ids, data);
-        return instantiateAll(data, targets);
     }
 
     @Override
@@ -1125,7 +1143,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         tasks[i] = () -> {
                             try (Reader reader = new IncrementalReader(
                                     connections)) {
-                                $selectWithPossibleSources(reader, selection, null);
+                                $selectWithPossibleSources(reader, selection,
+                                        null);
                                 reader.drain();
                             }
                         };
@@ -1401,8 +1420,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             if(hasFilter && page != null) {
                 try (Reader sharedReader = new IncrementalReader(connections)) {
                     Function<Page, Set<T>> retriever = $page -> {
-                        Read read = enqueueRead(sharedReader, any, clazz, criteria,
-                                order, $page);
+                        Read read = enqueueRead(sharedReader, any, clazz,
+                                criteria, order, $page);
                         AtomicReference<Set<T>> records = new AtomicReference<>();
                         read.data
                                 .then($data -> read.navigated
@@ -1420,7 +1439,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             else {
-                Read read = enqueueRead(reader, any, clazz, criteria, order, page);
+                Read read = enqueueRead(reader, any, clazz, criteria, order,
+                        page);
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
@@ -1541,8 +1561,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 try (Reader sharedReader = new IncrementalReader(connections)) {
                     Function<Page, Set<T>> retriever = $page -> {
                         if(dbResolvable) {
-                            Read read = enqueueRead(sharedReader, any, clazz, scoped,
-                                    order, $page);
+                            Read read = enqueueRead(sharedReader, any, clazz,
+                                    scoped, order, $page);
                             AtomicReference<Set<T>> records = new AtomicReference<>();
                             read.data.then($data -> read.navigated
                                     .then($navigated -> resolveLinkTargets(
@@ -1566,7 +1586,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             else if(dbResolvable) {
-                Read read = enqueueRead(reader, any, clazz, scoped, order, page);
+                Read read = enqueueRead(reader, any, clazz, scoped, order,
+                        page);
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
@@ -2937,6 +2958,29 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 else {
                     criteria.or().key(Record.SECTION_KEY)
                             .operator(Operator.EQUALS).value(cls.getName());
+                }
+            }
+            return criteria.build();
+        }
+
+        /**
+         * Return a {@link Criteria} to find records containing {@code query} in
+         * any of the {@code keys}.
+         *
+         * @param query
+         * @param keys
+         * @return the {@link Criteria}
+         */
+        public static Criteria search(String query, String... keys) {
+            BuildableState criteria = null;
+            for (String key : keys) {
+                if(criteria == null) {
+                    criteria = Criteria.where().key(key)
+                            .operator(Operator.CONTAINS).value(query);
+                }
+                else {
+                    criteria.or().key(key).operator(Operator.CONTAINS)
+                            .value(query);
                 }
             }
             return criteria.build();
