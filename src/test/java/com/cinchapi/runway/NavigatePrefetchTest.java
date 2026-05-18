@@ -1303,6 +1303,37 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code getDeferredReferencePaths}
+     * reports the paths that name a {@link DeferredReference} field &mdash;
+     * both a top-level field and one nested behind a single-{@link Record} edge
+     * &mdash; and excludes non-deferred fields.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve the deferred reference paths for {@link Ledger}, which has a
+     * top-level {@code archive} {@link DeferredReference} field and a
+     * {@code vault} edge into {@link Vault}, which has its own {@code archive}
+     * {@link DeferredReference} field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The paths contain {@code archive} and
+     * {@code vault.archive}, and contain neither the {@code vault} edge nor
+     * {@link Vault Vault's} non-deferred {@code vault.label} field.
+     */
+    @Test
+    public void testDeferredReferencePathsDetectedFlatAndNested() {
+        Set<String> deferred = Record.StaticAnalysis.instance()
+                .getDeferredReferencePaths(Ledger.class);
+        Assert.assertTrue(deferred.contains("archive"));
+        Assert.assertTrue(deferred.contains("vault.archive"));
+        Assert.assertFalse(deferred.contains("vault"));
+        Assert.assertFalse(deferred.contains("vault.label"));
+    }
+
+    /**
      * A {@link Record} with a {@link java.util.Collection
      * Collection&lt;Record&gt;} field for testing navigate prefetching of
      * linked {@link Dock Docks}.
@@ -1692,6 +1723,54 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
          * The {@link Employee Employees} who report to this {@link Manager}.
          */
         public List<Employee> directReports = Lists.newArrayList();
+    }
+
+    /**
+     * A {@link Record} with a top-level {@link DeferredReference} field
+     * ({@code archive}) and a single-{@link Record} edge to {@link Vault}, used
+     * to verify that {@link DeferredReference} paths are detected both at the
+     * top level and nested behind a single-{@link Record} edge.
+     */
+    class Ledger extends Record {
+
+        /**
+         * The {@link Archive} referenced by this {@link Ledger}.
+         */
+        public DeferredReference<Archive> archive;
+
+        /**
+         * The {@link Vault} of this {@link Ledger}.
+         */
+        public Vault vault;
+    }
+
+    /**
+     * The single-{@link Record} target of {@link Ledger#vault}, with its own
+     * {@link DeferredReference} field used to verify nested detection.
+     */
+    class Vault extends Record {
+
+        /**
+         * The {@link Archive} referenced by this {@link Vault}.
+         */
+        public DeferredReference<Archive> archive;
+
+        /**
+         * A label for this {@link Vault}.
+         */
+        public String label;
+    }
+
+    /**
+     * A leaf {@link Record} used as the target of the {@link DeferredReference}
+     * fields in {@link Ledger} and {@link Vault}.
+     */
+    class Archive extends Record {
+
+        /**
+         * A label for this {@link Archive}.
+         */
+        public String label;
     }
 
 }

@@ -251,6 +251,27 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Return the keys in {@code record} that name a {@link DeferredReference}
+     * field.
+     *
+     * @param record the record data, keyed by field
+     * @return the {@link DeferredReference} keys, or an empty {@link Set} when
+     *         the record's class cannot be identified
+     */
+    private static Set<String> deferredReferenceKeys(
+            Map<String, Set<Object>> record) {
+        Set<Object> sections = record.get(Record.SECTION_KEY);
+        if(sections == null || sections.isEmpty()) {
+            return ImmutableSet.of();
+        }
+        else {
+            Class<? extends Record> clazz = Reflection
+                    .getClassCasted((String) Iterables.getLast(sections));
+            return StaticAnalysis.instance().getDeferredReferencePaths(clazz);
+        }
+    }
+
+    /**
      * Return {@code true} if the given {@link Order} and {@link Page} indicate
      * that no sorting or pagination is requested, meaning the query can be
      * handled without client-side stream manipulation.
@@ -1310,41 +1331,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code reader} the read for the {@link Record Records} that
-     * match {@code criteria} &mdash; resolved against {@code clazz} alone or
-     * its full hierarchy per {@code any} and shaped by {@code order} and
-     * {@code page} &mdash; together with the {@code navigate()} pre-fetch of
-     * their {@link Link} targets.
-     *
-     * @param reader the {@link Reader} that records the reads
-     * @param any whether {@code clazz} is resolved across its hierarchy
-     * @param clazz the target {@link Record} class
-     * @param criteria the realm-scoped {@link Criteria} that identifies the
-     *            records
-     * @param order the {@link Order} to apply to the result set, or
-     *            {@code null} for unsorted results
-     * @param page the {@link Page} that limits the result set, or {@code null}
-     *            for the full result set
-     * @param <T> the {@link Record} type
-     * @return a {@link Read} pairing the matching records' data with the
-     *         navigate pre-fetch of their {@link Link} targets
-     */
-    private <T extends Record> Read enqueueRead(Reader reader, boolean any,
-            Class<T> clazz, Criteria criteria, @Nullable Order order,
-            @Nullable Page page) {
-        Set<String> paths = any ? getPathsForClassHierarchyIfSupported(clazz)
-                : getPathsForClassIfSupported(clazz);
-        Set<String> navigatePaths = any
-                ? getNavigatePathsForClassHierarchyIfSupported(clazz)
-                : getNavigatePathsForClassIfSupported(clazz);
-        Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
-                criteria, order, page);
-        Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
-                reader, navigatePaths, criteria, page, data);
-        return new Read(data, navigated);
-    }
-
-    /**
      * Perform a search.
      *
      * @param concourse
@@ -1969,8 +1955,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             selection.clazz)
                     : getNavigatePathsForClassIfSupported(selection.clazz);
             Pending<Map<Long, Map<String, Set<Object>>>> navigated = navigatePaths != null
-                    ? reader.navigate(navigatePaths, filtered.keySet())
-                    : Pending.of(ImmutableMap.of());
+                    && !filtered.isEmpty()
+                            ? reader.navigate(navigatePaths, filtered.keySet())
+                            : Pending.of(ImmutableMap.of());
             AtomicReference<Object> resolved = new AtomicReference<>();
             navigated
                     .then($navigated -> resolveLinkTargets(reader, filtered,
@@ -1984,6 +1971,41 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         selection.setResult(result);
         selection.setState(Selection.State.FINISHED);
         reserve(selection);
+    }
+
+    /**
+     * Record on {@code reader} the read for the {@link Record Records} that
+     * match {@code criteria} &mdash; resolved against {@code clazz} alone or
+     * its full hierarchy per {@code any} and shaped by {@code order} and
+     * {@code page} &mdash; together with the {@code navigate()} pre-fetch of
+     * their {@link Link} targets.
+     *
+     * @param reader the {@link Reader} that records the reads
+     * @param any whether {@code clazz} is resolved across its hierarchy
+     * @param clazz the target {@link Record} class
+     * @param criteria the realm-scoped {@link Criteria} that identifies the
+     *            records
+     * @param order the {@link Order} to apply to the result set, or
+     *            {@code null} for unsorted results
+     * @param page the {@link Page} that limits the result set, or {@code null}
+     *            for the full result set
+     * @param <T> the {@link Record} type
+     * @return a {@link Read} pairing the matching records' data with the
+     *         navigate pre-fetch of their {@link Link} targets
+     */
+    private <T extends Record> Read enqueueRead(Reader reader, boolean any,
+            Class<T> clazz, Criteria criteria, @Nullable Order order,
+            @Nullable Page page) {
+        Set<String> paths = any ? getPathsForClassHierarchyIfSupported(clazz)
+                : getPathsForClassIfSupported(clazz);
+        Set<String> navigatePaths = any
+                ? getNavigatePathsForClassHierarchyIfSupported(clazz)
+                : getNavigatePathsForClassIfSupported(clazz);
+        Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
+                criteria, order, page);
+        Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
+                reader, navigatePaths, criteria, page, data);
+        return new Read(data, navigated);
     }
 
     /**
@@ -2023,8 +2045,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Scan all values in {@code data} for {@link Link} instances whose targets
-     * are not in {@code fetched}.
+     * Scan {@code data} for {@link Link} instances whose targets are not in
+     * {@code fetched}, skipping any stored under a {@link DeferredReference}
+     * field.
      *
      * @param data the data to scan
      * @param fetched record IDs already known
@@ -2034,12 +2057,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> data, Set<Long> fetched) {
         Set<Long> targets = new HashSet<>();
         for (Map<String, Set<Object>> record : data.values()) {
-            for (Set<Object> values : record.values()) {
-                for (Object value : values) {
-                    if(value instanceof Link) {
-                        long target = ((Link) value).longValue();
-                        if(!fetched.contains(target)) {
-                            targets.add(target);
+            Set<String> deferred = deferredReferenceKeys(record);
+            for (Entry<String, Set<Object>> entry : record.entrySet()) {
+                // A DeferredReference field is meant to load its target only
+                // when accessed, so following its Link here would pre-fetch
+                // data the caller chose not to load up front.
+                if(!deferred.contains(entry.getKey())) {
+                    for (Object value : entry.getValue()) {
+                        if(value instanceof Link) {
+                            long target = ((Link) value).longValue();
+                            if(!fetched.contains(target)) {
+                                targets.add(target);
+                            }
                         }
                     }
                 }

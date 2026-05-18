@@ -3632,25 +3632,6 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
-         * Return {@code true} if an edge whose declared destination is
-         * {@code recordType} closes a cycle &mdash; that is, if
-         * {@code recordType}, or any of its subtypes, is among the
-         * {@code ancestors} already traversed.
-         *
-         * @param recordType the declared destination {@link Record} type
-         * @param hierarchies the {@link Record} type hierarchies
-         * @param ancestors the {@link Record} types already traversed on the
-         *            current lineage
-         * @return {@code true} if the edge closes a cycle
-         */
-        private static boolean isCyclic(Class<? extends Record> recordType,
-                Multimap<Class<? extends Record>, Class<?>> hierarchies,
-                Set<Class<? extends Record>> ancestors) {
-            return hierarchies.get(recordType).stream()
-                    .anyMatch(ancestors::contains);
-        }
-
-        /**
          * Perform {@link #computeNavigatePaths(Class, Multimap, Map, Map)} for
          * each {@link Class} in the {@link #hierarchies hierarchy} of
          * {@code clazz}.
@@ -3868,6 +3849,25 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
+         * Return {@code true} if an edge whose declared destination is
+         * {@code recordType} closes a cycle &mdash; that is, if
+         * {@code recordType}, or any of its subtypes, is among the
+         * {@code ancestors} already traversed.
+         *
+         * @param recordType the declared destination {@link Record} type
+         * @param hierarchies the {@link Record} type hierarchies
+         * @param ancestors the {@link Record} types already traversed on the
+         *            current lineage
+         * @return {@code true} if the edge closes a cycle
+         */
+        private static boolean isCyclic(Class<? extends Record> recordType,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Set<Class<? extends Record>> ancestors) {
+            return hierarchies.get(recordType).stream()
+                    .anyMatch(ancestors::contains);
+        }
+
+        /**
          * Return {@code true} if the current JVM is Java 9 or higher.
          *
          * @return {@code true} if running on Java 9 or higher
@@ -3943,6 +3943,13 @@ public abstract class Record implements Comparable<Record> {
          * {@link #hierarchies hierarchy}.
          */
         private Map<Class<? extends Record>, Set<String>> navigatePathsByClassHierarchy;
+
+        /**
+         * A mapping from each {@link Record} class to the subset of its
+         * {@link #pathsByClass paths} that terminate in a
+         * {@link DeferredReference} field.
+         */
+        private Map<Class<? extends Record>, Set<String>> deferredReferencePathsByClass;
 
         /**
          * A collection containing each {@link Record} class that has at least
@@ -4037,6 +4044,7 @@ public abstract class Record implements Comparable<Record> {
             this.pathsByClassHierarchy = new HashMap<>();
             this.navigatePathsByClass = new HashMap<>();
             this.navigatePathsByClassHierarchy = new HashMap<>();
+            this.deferredReferencePathsByClass = new HashMap<>();
             this.fieldsByClass = new HashMap<>();
             this.fieldTypeArgumentsByClass = new HashMap<>();
             this.hasRecordFieldTypeByClass = new HashSet<>();
@@ -4205,6 +4213,20 @@ public abstract class Record implements Comparable<Record> {
         public <T extends Record> Collection<Class<?>> getClassHierarchy(
                 Class<T> clazz) {
             return hierarchies.get(clazz);
+        }
+
+        /**
+         * Return the {@link #getPaths(Class) paths} for {@code clazz} that name
+         * a {@link DeferredReference} field.
+         *
+         * @param clazz the {@link Record} class
+         * @return the paths that name a {@link DeferredReference} field, or an
+         *         empty {@link Set} if there are none
+         */
+        public Set<String> getDeferredReferencePaths(
+                Class<? extends Record> clazz) {
+            return deferredReferencePathsByClass.getOrDefault(clazz,
+                    ImmutableSet.of());
         }
 
         /**
@@ -4463,7 +4485,28 @@ public abstract class Record implements Comparable<Record> {
                 navigatePathsByClassHierarchy.put(type,
                         computeNavigatePathsHierarchy(type, hierarchies,
                                 fieldsByClass, fieldTypeArgumentsByClass));
+                deferredReferencePathsByClass.put(type,
+                        computeDeferredReferencePaths(type));
             });
+        }
+
+        /**
+         * Return the {@link #getPaths(Class) paths} for {@code clazz} that name
+         * a {@link DeferredReference} field.
+         *
+         * @param clazz the {@link Record} class
+         * @return the paths that name a {@link DeferredReference} field
+         */
+        private Set<String> computeDeferredReferencePaths(
+                Class<? extends Record> clazz) {
+            Set<String> deferred = new LinkedHashSet<>();
+            for (String path : pathsByClass.getOrDefault(clazz,
+                    ImmutableSet.of())) {
+                if(isDeferredReferencePath(clazz, path)) {
+                    deferred.add(path);
+                }
+            }
+            return deferred;
         }
 
         /**
@@ -4529,6 +4572,46 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
             return condition;
+        }
+
+        /**
+         * Return {@code true} if {@code path}, rooted at {@code clazz}, names a
+         * field whose type is {@link DeferredReference}.
+         *
+         * @param clazz the {@link Record} class at the root of {@code path}
+         * @param path the dotted navigation path
+         * @return {@code true} if {@code path} names a
+         *         {@link DeferredReference} field
+         */
+        private boolean isDeferredReferencePath(Class<? extends Record> clazz,
+                String path) {
+            Class<?> current = clazz;
+            int start = 0;
+            int dot;
+            boolean traversable = true;
+            while (traversable && (dot = path.indexOf('.', start)) >= 0) {
+                Field field = fieldsByClass
+                        .getOrDefault(current, ImmutableMap.of())
+                        .get(path.substring(start, dot));
+                if(field != null
+                        && Record.class.isAssignableFrom(field.getType())) {
+                    current = field.getType();
+                    start = dot + 1;
+                }
+                else {
+                    traversable = false;
+                }
+            }
+            if(traversable) {
+                Field field = fieldsByClass
+                        .getOrDefault(current, ImmutableMap.of())
+                        .get(path.substring(start));
+                return field != null
+                        && field.getType() == DeferredReference.class;
+            }
+            else {
+                return false;
+            }
         }
 
         /**
