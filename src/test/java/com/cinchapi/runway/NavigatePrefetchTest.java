@@ -25,8 +25,10 @@ import org.junit.Test;
 
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.CountingConcourseConnectionPool.CountingConcourse;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 
@@ -1176,11 +1178,13 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         d4.friends.add(d5);
         d5.friends.add(d6);
         d1.save();
-        AtomicInteger rpcs = new AtomicInteger();
-        Reflection.set("connections", new CountingConcourseConnectionPool(
-                () -> new CountingConcourse(Concourse.connect("localhost",
-                        server.getClientPort(), "admin", "admin"), rpcs)),
-                runway); // (authorized)
+        ConnectionPool pool = new CountingConcourseConnectionPool(
+                Concourse.connect("localhost", server.getClientPort(), "admin",
+                        "admin"));
+        Reflection.set("connections", pool, runway); // (authorized)
+        Concourse connection = pool.request();
+        AtomicInteger rpcs = ((CountingConcourse) connection).rpcs();
+        pool.release(connection);
         rpcs.set(0);
         runway.load(Node.class, s1.id());
         int shallow = rpcs.get();
@@ -1239,11 +1243,13 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
             }
             root.save();
         }
-        AtomicInteger rpcs = new AtomicInteger();
-        Reflection.set("connections", new CountingConcourseConnectionPool(
-                () -> new CountingConcourse(Concourse.connect("localhost",
-                        server.getClientPort(), "admin", "admin"), rpcs)),
-                runway); // (authorized)
+        ConnectionPool pool = new CountingConcourseConnectionPool(
+                Concourse.connect("localhost", server.getClientPort(), "admin",
+                        "admin"));
+        Reflection.set("connections", pool, runway); // (authorized)
+        Concourse connection = pool.request();
+        AtomicInteger rpcs = ((CountingConcourse) connection).rpcs();
+        pool.release(connection);
         rpcs.set(0);
         Set<Node> shallowRoots = runway.find(Node.class,
                 Criteria.where().key("label").operator(Operator.EQUALS)
