@@ -269,6 +269,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Return {@code true} if a server running {@code actual} provides a feature
+     * gated on {@code target} &mdash; either {@code actual} is at least
+     * {@code target}, or it is the {@link #DEVELOPMENT_VERSION}, which is
+     * treated as providing every feature.
+     * 
+     * @param actual the connected server's {@link Version}
+     * @param target the minimum {@link Version} that provides the feature
+     *
+     * @return {@code true} if {@code actual} provides the feature
+     */
+    private static boolean isActualVersionGreaterThanOrEquals(Version actual,
+            Version target) {
+        return actual.greaterThanOrEqualTo(target)
+                || actual.equals(DEVELOPMENT_VERSION);
+    }
+
+    /**
      * Call
      * {@link Record#load(Class, long, TLongObjectMap, ConnectionPool, Runway, Map)}
      * and handle any errors with the {@link #onLoadFailureHandler}.
@@ -328,23 +345,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         for (Entry<Record, Record.Snapshot> entry : snapshot.entrySet()) {
             entry.getKey().restore(entry.getValue());
         }
-    }
-
-    /**
-     * Return {@code true} if a server running {@code actual} provides a feature
-     * gated on {@code target} &mdash; either {@code actual} is at least
-     * {@code target}, or it is the {@link #DEVELOPMENT_VERSION}, which is
-     * treated as providing every feature.
-     * 
-     * @param actual the connected server's {@link Version}
-     * @param target the minimum {@link Version} that provides the feature
-     *
-     * @return {@code true} if {@code actual} provides the feature
-     */
-    private static boolean isActualVersionGreaterThanOrEquals(Version actual,
-            Version target) {
-        return actual.greaterThanOrEqualTo(target)
-                || actual.equals(DEVELOPMENT_VERSION);
     }
 
     /**
@@ -2350,6 +2350,25 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Create a {@link Record} instance for each entry in {@code data}, either
+     * across {@code clazz}'s hierarchy when {@code any} is {@code true} or as
+     * exact instances of {@code clazz} otherwise.
+     *
+     * @param clazz the target {@link Record} class
+     * @param any whether to instantiate across the class hierarchy
+     * @param data the record data keyed by record id
+     * @param targets the pre-fetched {@link Link} targets keyed by destination
+     *            record id
+     * @return the instantiated {@link Record Records}
+     */
+    private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
+            boolean any, Map<Long, Map<String, Set<Object>>> data,
+            Map<Long, Map<String, Set<Object>>> targets) {
+        return any ? instantiateAll(data, targets)
+                : instantiateAll(clazz, data, targets);
+    }
+
+    /**
      * Create a {@link Record} instance of type {@code clazz} (or one of its
      * descendants) for each entry in {@code data}.
      *
@@ -2386,25 +2405,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Create a {@link Record} instance for each entry in {@code data}, either
-     * across {@code clazz}'s hierarchy when {@code any} is {@code true} or as
-     * exact instances of {@code clazz} otherwise.
-     *
-     * @param clazz the target {@link Record} class
-     * @param any whether to instantiate across the class hierarchy
-     * @param data the record data keyed by record id
-     * @param targets the pre-fetched {@link Link} targets keyed by destination
-     *            record id
-     * @return the instantiated {@link Record Records}
-     */
-    private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
-            boolean any, Map<Long, Map<String, Set<Object>>> data,
-            Map<Long, Map<String, Set<Object>>> targets) {
-        return any ? instantiateAll(data, targets)
-                : instantiateAll(clazz, data, targets);
-    }
-
-    /**
      * Recursively resolve link-graph targets through {@code reader}, recording
      * one {@link Reader#select(Collection)} per BFS frontier so each depth is
      * shared across sibling {@link Pending Pendings} that drain together.
@@ -2432,6 +2432,76 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return prefetchLinks(reader, pool, fetched,
                     extractLinkTargets(batch, fetched));
         });
+    }
+
+    /**
+     * Pre-fetch, through a dedicated {@link Reader}, the {@link Link} targets
+     * reachable from {@code data}.
+     *
+     * @param navigatePaths the navigate paths, or {@code null} when navigation
+     *            is unsupported for the records' class
+     * @param ids the record ids to navigate from
+     * @param data the source records' data, scanned while the cleanup traversal
+     *            closes targets the navigate did not reach
+     * @return the pre-fetched targets keyed by destination record id
+     */
+    private Map<Long, Map<String, Set<Object>>> prefetchLinkTargets(
+            @Nullable Set<String> navigatePaths, Set<Long> ids,
+            Map<Long, Map<String, Set<Object>>> data) {
+        if(ids.isEmpty()) {
+            return ImmutableMap.of();
+        }
+        else {
+            try (Reader reader = supportsBulkCommands
+                    ? new BatchReader(connections)
+                    : new IncrementalReader(connections)) {
+                Pending<Map<Long, Map<String, Set<Object>>>> navigated = navigatePaths != null
+                        ? reader.navigate(navigatePaths, ids)
+                        : Pending.of(ImmutableMap.of());
+                AtomicReference<Map<Long, Map<String, Set<Object>>>> targets = new AtomicReference<>();
+                navigated.then($navigated -> resolveLinkTargets(reader, data,
+                        $navigated)).onResolve(targets::set);
+                reader.drain();
+                return targets.get();
+            }
+        }
+    }
+
+    /**
+     * Record on {@code reader} the {@code navigate()} that pre-fetches the
+     * {@link Link} targets reachable from a criteria query.
+     * <p>
+     * An unpaginated query navigates from the {@code criteria} itself, so the
+     * navigate can share a batch with the query's own read; a paginated query
+     * navigates from the resolved page's record ids, since only the page
+     * &mdash; not the full criteria result &mdash; should be traversed.
+     * </p>
+     *
+     * @param reader the {@link Reader} that records the navigate
+     * @param navigatePaths the navigate paths, or {@code null} when navigation
+     *            is unsupported for the query's class
+     * @param criteria the {@link Criteria} that identifies the starting records
+     * @param page the {@link Page} that limits the query, or {@code null} when
+     *            unpaginated
+     * @param data a {@link Pending} of the query's record data, used to source
+     *            the starting ids of a paginated query
+     * @return a {@link Pending} of the navigate result keyed by destination
+     *         record id
+     */
+    private Pending<Map<Long, Map<String, Set<Object>>>> prefetchNavigate(
+            Reader reader, @Nullable Set<String> navigatePaths,
+            Criteria criteria, @Nullable Page page,
+            Pending<Map<Long, Map<String, Set<Object>>>> data) {
+        if(navigatePaths == null) {
+            return Pending.of(ImmutableMap.of());
+        }
+        else if(page == null) {
+            return reader.navigate(navigatePaths, criteria);
+        }
+        else {
+            return data.then(
+                    $data -> reader.navigate(navigatePaths, $data.keySet()));
+        }
     }
 
     /**
@@ -2605,76 +2675,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Set<Long> frontier = extractLinkTargets(sources, covered);
         frontier.addAll(extractLinkTargets(pool, covered));
         return prefetchLinks(reader, pool, covered, frontier);
-    }
-
-    /**
-     * Record on {@code reader} the {@code navigate()} that pre-fetches the
-     * {@link Link} targets reachable from a criteria query.
-     * <p>
-     * An unpaginated query navigates from the {@code criteria} itself, so the
-     * navigate can share a batch with the query's own read; a paginated query
-     * navigates from the resolved page's record ids, since only the page
-     * &mdash; not the full criteria result &mdash; should be traversed.
-     * </p>
-     *
-     * @param reader the {@link Reader} that records the navigate
-     * @param navigatePaths the navigate paths, or {@code null} when navigation
-     *            is unsupported for the query's class
-     * @param criteria the {@link Criteria} that identifies the starting records
-     * @param page the {@link Page} that limits the query, or {@code null} when
-     *            unpaginated
-     * @param data a {@link Pending} of the query's record data, used to source
-     *            the starting ids of a paginated query
-     * @return a {@link Pending} of the navigate result keyed by destination
-     *         record id
-     */
-    private Pending<Map<Long, Map<String, Set<Object>>>> prefetchNavigate(
-            Reader reader, @Nullable Set<String> navigatePaths,
-            Criteria criteria, @Nullable Page page,
-            Pending<Map<Long, Map<String, Set<Object>>>> data) {
-        if(navigatePaths == null) {
-            return Pending.of(ImmutableMap.of());
-        }
-        else if(page == null) {
-            return reader.navigate(navigatePaths, criteria);
-        }
-        else {
-            return data.then(
-                    $data -> reader.navigate(navigatePaths, $data.keySet()));
-        }
-    }
-
-    /**
-     * Pre-fetch, through a dedicated {@link Reader}, the {@link Link} targets
-     * reachable from {@code data}.
-     *
-     * @param navigatePaths the navigate paths, or {@code null} when navigation
-     *            is unsupported for the records' class
-     * @param ids the record ids to navigate from
-     * @param data the source records' data, scanned while the cleanup traversal
-     *            closes targets the navigate did not reach
-     * @return the pre-fetched targets keyed by destination record id
-     */
-    private Map<Long, Map<String, Set<Object>>> prefetchLinkTargets(
-            @Nullable Set<String> navigatePaths, Set<Long> ids,
-            Map<Long, Map<String, Set<Object>>> data) {
-        if(ids.isEmpty()) {
-            return ImmutableMap.of();
-        }
-        else {
-            try (Reader reader = supportsBulkCommands
-                    ? new BatchReader(connections)
-                    : new IncrementalReader(connections)) {
-                Pending<Map<Long, Map<String, Set<Object>>>> navigated = navigatePaths != null
-                        ? reader.navigate(navigatePaths, ids)
-                        : Pending.of(ImmutableMap.of());
-                AtomicReference<Map<Long, Map<String, Set<Object>>>> targets = new AtomicReference<>();
-                navigated.then($navigated -> resolveLinkTargets(reader, data,
-                        $navigated)).onResolve(targets::set);
-                reader.drain();
-                return targets.get();
-            }
-        }
     }
 
     /**
@@ -3262,6 +3262,41 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * The pair of reads recorded for a class or criteria query: the matching
+     * {@link Record Records'} own data, and the {@code navigate()} pre-fetch of
+     * the {@link Link} targets reachable from them.
+     *
+     * @author Jeff Nelson
+     */
+    private static final class Read {
+
+        /**
+         * A {@link Pending} of the matching records' data.
+         */
+        final Pending<Map<Long, Map<String, Set<Object>>>> data;
+
+        /**
+         * A {@link Pending} of the {@code navigate()} pre-fetch of the
+         * {@link Link} targets reachable from the matching records.
+         */
+        final Pending<Map<Long, Map<String, Set<Object>>>> navigated;
+
+        /**
+         * Construct a new {@link Read}.
+         *
+         * @param data a {@link Pending} of the matching records' data
+         * @param navigated a {@link Pending} of the {@code navigate()}
+         *            pre-fetch
+         */
+        Read(Pending<Map<Long, Map<String, Set<Object>>>> data,
+                Pending<Map<Long, Map<String, Set<Object>>>> navigated) {
+            this.data = data;
+            this.navigated = navigated;
+        }
+
+    }
+
+    /**
      * A dedup key for {@link DatabaseSelection DatabaseSelections} in a batch
      * {@link #select} call. Two {@link SelectionKey SelectionKeys} are equal
      * when they have the same {@link Reservation} and the same filter instance.
@@ -3313,41 +3348,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         @Override
         public int hashCode() {
             return Objects.hash(reservation, System.identityHashCode(filter));
-        }
-
-    }
-
-    /**
-     * The pair of reads recorded for a class or criteria query: the matching
-     * {@link Record Records'} own data, and the {@code navigate()} pre-fetch of
-     * the {@link Link} targets reachable from them.
-     *
-     * @author Jeff Nelson
-     */
-    private static final class Read {
-
-        /**
-         * A {@link Pending} of the matching records' data.
-         */
-        final Pending<Map<Long, Map<String, Set<Object>>>> data;
-
-        /**
-         * A {@link Pending} of the {@code navigate()} pre-fetch of the
-         * {@link Link} targets reachable from the matching records.
-         */
-        final Pending<Map<Long, Map<String, Set<Object>>>> navigated;
-
-        /**
-         * Construct a new {@link Read}.
-         *
-         * @param data a {@link Pending} of the matching records' data
-         * @param navigated a {@link Pending} of the {@code navigate()}
-         *            pre-fetch
-         */
-        Read(Pending<Map<Long, Map<String, Set<Object>>>> data,
-                Pending<Map<Long, Map<String, Set<Object>>>> navigated) {
-            this.data = data;
-            this.navigated = navigated;
         }
 
     }
