@@ -1125,7 +1125,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         tasks[i] = () -> {
                             try (Reader reader = new IncrementalReader(
                                     connections)) {
-                                $select(reader, selection);
+                                $selectWithPossibleSources(reader, selection, null);
                                 reader.drain();
                             }
                         };
@@ -1285,66 +1285,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code reader} a read for the {@link Record Records} that match
-     * {@code criteria}, scoped to {@code realms} and shaped by {@code order}
-     * and {@code page}, together with the {@code navigate()} pre-fetch of their
-     * {@link Link} targets.
-     *
-     * @param reader the {@link Reader} that records the reads
-     * @param any whether to query across {@code clazz}'s hierarchy or only
-     *            instances of exactly {@code clazz}
-     * @param clazz the target {@link Record} class
-     * @param criteria the {@link Criteria} that identifies the records
-     * @param order the {@link Order} to apply to the result set, or
-     *            {@code null} for unsorted results
-     * @param page the {@link Page} that limits the result set, or {@code null}
-     *            for the full result set
-     * @param realms the {@link Realms} that scope the lookup
-     * @param <T> the {@link Record} type
-     * @return a {@link Read} pairing the matching records' data with the
-     *         navigate pre-fetch of their {@link Link} targets
-     */
-    private <T extends Record> Read $find(Reader reader, boolean any,
-            Class<T> clazz, Criteria criteria, @Nullable Order order,
-            @Nullable Page page, @Nonnull Realms realms) {
-        return $read(reader, any, clazz,
-                $Criteria.amongRealms(realms,
-                        any ? $Criteria.accrossClassHierachy(clazz, criteria)
-                                : $Criteria.withinClass(clazz, criteria)),
-                order, page);
-    }
-
-    /**
-     * Record on {@code reader} a read for every {@link Record} of
-     * {@code clazz}, scoped to {@code realms} and shaped by {@code order} and
-     * {@code page}, together with the {@code navigate()} pre-fetch of their
-     * {@link Link} targets.
-     *
-     * @param reader the {@link Reader} that records the reads
-     * @param any whether to load across {@code clazz}'s hierarchy or only
-     *            instances of exactly {@code clazz}
-     * @param clazz the target {@link Record} class
-     * @param order the {@link Order} to apply to the result set, or
-     *            {@code null} for unsorted results
-     * @param page the {@link Page} that limits the result set, or {@code null}
-     *            for the full result set
-     * @param realms the {@link Realms} that scope the lookup
-     * @param <T> the {@link Record} type
-     * @return a {@link Read} pairing the records' data with the navigate
-     *         pre-fetch of their {@link Link} targets
-     */
-    private <T extends Record> Read $load(Reader reader, boolean any,
-            Class<T> clazz, @Nullable Order order, @Nullable Page page,
-            @Nonnull Realms realms) {
-        return $read(reader, any, clazz,
-                $Criteria
-                        .amongRealms(realms,
-                                any ? $Criteria.forClassHierarchy(clazz)
-                                        : $Criteria.forClass(clazz)),
-                order, page);
-    }
-
-    /**
      * Record on {@code reader} the read for the {@link Record Records} that
      * match {@code criteria} &mdash; resolved against {@code clazz} alone or
      * its full hierarchy per {@code any} and shaped by {@code order} and
@@ -1364,7 +1304,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return a {@link Read} pairing the matching records' data with the
      *         navigate pre-fetch of their {@link Link} targets
      */
-    private <T extends Record> Read $read(Reader reader, boolean any,
+    private <T extends Record> Read enqueueRead(Reader reader, boolean any,
             Class<T> clazz, Criteria criteria, @Nullable Order order,
             @Nullable Page page) {
         Set<String> paths = any ? getPathsForClassHierarchyIfSupported(clazz)
@@ -1429,23 +1369,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Resolve {@code selection} against the database (or any matching
-     * {@link AdHocDataSource AdHocDataSources}), recording any required reads
-     * on {@code reader} and mutating {@code selection} with its result.
-     * Equivalent to invoking
-     * {@link #$selectWithPossibleSources(Reader, DatabaseSelection, Set)} with
-     * no pre-supplied {@link AdHocDataSource} set.
-     *
-     * @param reader the {@link Reader} that records any required reads
-     * @param selection the {@link DatabaseSelection} to resolve
-     * @param <T> the {@link Record} type
-     */
-    private <T extends Record> void $select(Reader reader,
-            DatabaseSelection<T> selection) {
-        $selectWithPossibleSources(reader, selection, null);
-    }
-
-    /**
      * Record on {@code reader} the read required to resolve {@code selection}
      * and return a {@link Pending} of the {@link SelectResult} holding the
      * matching {@link Record Records}.
@@ -1472,11 +1395,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // When native sorting/pagination is supported OR no
             // sorting/pagination is requested, the database can handle the
             // query directly without client-side stream manipulation.
+            Criteria criteria = $Criteria.amongRealms(realms,
+                    any ? $Criteria.forClassHierarchy(clazz)
+                            : $Criteria.forClass(clazz));
             if(hasFilter && page != null) {
                 try (Reader sharedReader = new IncrementalReader(connections)) {
                     Function<Page, Set<T>> retriever = $page -> {
-                        Read read = $load(sharedReader, any, clazz, order,
-                                $page, realms);
+                        Read read = enqueueRead(sharedReader, any, clazz, criteria,
+                                order, $page);
                         AtomicReference<Set<T>> records = new AtomicReference<>();
                         read.data
                                 .then($data -> read.navigated
@@ -1494,7 +1420,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             else {
-                Read read = $load(reader, any, clazz, order, page, realms);
+                Read read = enqueueRead(reader, any, clazz, criteria, order, page);
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
@@ -1608,12 +1534,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // query directly without client-side stream manipulation.
             boolean dbResolvable = Record.isDatabaseResolvableCondition(clazz,
                     criteria);
+            Criteria scoped = $Criteria.amongRealms(realms,
+                    any ? $Criteria.accrossClassHierachy(clazz, criteria)
+                            : $Criteria.withinClass(clazz, criteria));
             if(hasFilter && page != null) {
                 try (Reader sharedReader = new IncrementalReader(connections)) {
                     Function<Page, Set<T>> retriever = $page -> {
                         if(dbResolvable) {
-                            Read read = $find(sharedReader, any, clazz,
-                                    criteria, order, $page, realms);
+                            Read read = enqueueRead(sharedReader, any, clazz, scoped,
+                                    order, $page);
                             AtomicReference<Set<T>> records = new AtomicReference<>();
                             read.data.then($data -> read.navigated
                                     .then($navigated -> resolveLinkTargets(
@@ -1637,8 +1566,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             else if(dbResolvable) {
-                Read read = $find(reader, any, clazz, criteria, order, page,
-                        realms);
+                Read read = enqueueRead(reader, any, clazz, scoped, order, page);
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
