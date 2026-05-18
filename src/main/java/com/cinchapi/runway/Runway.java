@@ -457,6 +457,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean supportsBulkCommands;
 
     /**
+     * A flag that indicates if the connected server supports the {@code *}
+     * transitive modifier on {@code navigate()} paths.
+     * <p>
+     * This functionality is supported in Concourse 1.0.0+
+     * </p>
+     */
+    private final boolean supportsTransitiveNavigation;
+
+    /**
      * A queue of records that have been successfully saved and are waiting for
      * save notification processing.
      */
@@ -530,8 +539,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     actual, Version.forIntegers(0, 11, 3));
             this.supportsNativeCount = isActualVersionGreaterThanOrEquals(
                     actual, Version.forIntegers(0, 12, 2));
+            Version v1_0_0 = Version.forIntegers(1, 0, 0);
             this.supportsBulkCommands = isActualVersionGreaterThanOrEquals(
-                    actual, Version.forIntegers(1, 0, 0));
+                    actual, v1_0_0);
+            this.supportsTransitiveNavigation = isActualVersionGreaterThanOrEquals(
+                    actual, v1_0_0);
         }
         finally {
             connections.release(concourse);
@@ -1202,6 +1214,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Class<? extends Record> clazz) {
         Set<String> paths = StaticAnalysis.instance()
                 .getNavigatePathsHierarchy(clazz);
+        if(paths != null && !supportsTransitiveNavigation) {
+            paths = paths.stream().filter(path -> !path.contains("*"))
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
         return paths != null && !paths.isEmpty() ? paths : null;
     }
 
@@ -1215,6 +1231,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     final Set<String> getNavigatePathsForClassIfSupported(
             Class<? extends Record> clazz) {
         Set<String> paths = StaticAnalysis.instance().getNavigatePaths(clazz);
+        if(paths != null && !supportsTransitiveNavigation) {
+            paths = paths.stream().filter(path -> !path.contains("*"))
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
         return paths != null && !paths.isEmpty() ? paths : null;
     }
 

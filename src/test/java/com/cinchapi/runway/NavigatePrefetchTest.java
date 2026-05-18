@@ -460,6 +460,71 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#getNavigatePathsForClassIfSupported(Class)} drops
+     * transitive ({@code *}) paths but keeps non-transitive paths when the
+     * connected server does not support transitive navigation.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} connected to a server that
+     * supports transitive navigation.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve the navigate paths for {@link Conversation} and confirm at
+     * least one bears the {@code *} modifier.</li>
+     * <li>Reflectively clear the {@code supportsTransitiveNavigation}
+     * flag.</li>
+     * <li>Retrieve the navigate paths for {@link Conversation} again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second result contains no {@code *} path
+     * yet still includes the non-transitive {@code root.prompt.text} path.
+     */
+    @Test
+    public void testNavigateGateOmitsTransitivePathsWhenUnsupported() {
+        Set<String> supported = runway
+                .getNavigatePathsForClassIfSupported(Conversation.class);
+        Assert.assertNotNull(supported);
+        Assert.assertTrue(supported.stream().anyMatch(p -> p.contains("*")));
+        // (authorized)
+        Reflection.set("supportsTransitiveNavigation", false, runway);
+        Set<String> unsupported = runway
+                .getNavigatePathsForClassIfSupported(Conversation.class);
+        Assert.assertNotNull(unsupported);
+        Assert.assertTrue(unsupported.stream().noneMatch(p -> p.contains("*")));
+        Assert.assertTrue(unsupported.contains("root.prompt.text"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#getNavigatePathsForClassHierarchyIfSupported(Class)}
+     * returns {@code null} for a class whose every navigate path is transitive
+     * when the connected server does not support transitive navigation.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} connected to a server that
+     * supports transitive navigation.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Reflectively clear the {@code supportsTransitiveNavigation}
+     * flag.</li>
+     * <li>Retrieve the hierarchy navigate paths for {@link Node}, whose only
+     * navigate paths bear the {@code *} modifier.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned value is {@code null}, since
+     * dropping the transitive paths leaves nothing to navigate.
+     */
+    @Test
+    public void testNavigateGateHierarchyNullWhenTransitiveUnsupported() {
+        // (authorized)
+        Reflection.set("supportsTransitiveNavigation", false, runway);
+        Set<String> paths = runway
+                .getNavigatePathsForClassHierarchyIfSupported(Node.class);
+        Assert.assertNull(paths);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that loading a cyclic single-{@link Record}
      * chain populates every level of the chain via the {@code *} transitive
      * modifier.
