@@ -159,21 +159,6 @@ public class IncrementalReader extends AbstractReader {
     }
 
     @Override
-    public Pending<Set<Long>> find(Criteria criteria, Order order) {
-        return Pending.of(concourse().find(criteria, order));
-    }
-
-    @Override
-    public Pending<Set<Long>> find(Criteria criteria, Page page) {
-        return Pending.of(concourse().find(criteria, page));
-    }
-
-    @Override
-    public Pending<Set<Long>> find(Criteria criteria, Order order, Page page) {
-        return Pending.of(concourse().find(criteria, order, page));
-    }
-
-    @Override
     public Pending<Long> count(String key, Criteria criteria) {
         return Pending.of(concourse().calculate().count(key, criteria));
     }

@@ -251,30 +251,6 @@ public final class BatchReader extends AbstractReader {
     }
 
     @Override
-    public Pending<Set<Long>> find(Criteria criteria, Order order) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.find(criteria, order);
-        return Pending.deferred(this, () -> ids(batch, slot));
-    }
-
-    @Override
-    public Pending<Set<Long>> find(Criteria criteria, Page page) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.find(criteria, page);
-        return Pending.deferred(this, () -> ids(batch, slot));
-    }
-
-    @Override
-    public Pending<Set<Long>> find(Criteria criteria, Order order, Page page) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.find(criteria, order, page);
-        return Pending.deferred(this, () -> ids(batch, slot));
-    }
-
-    @Override
     public Pending<Long> count(String key, Criteria criteria) {
         Batch batch = batch();
         int slot = batch.size();

@@ -1285,14 +1285,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Record on {@code reader} a read for the {@link Record Records} of
-     * {@code clazz} that match {@code criteria}, scoped to {@code realms} and
-     * shaped by {@code order} and {@code page}, together with the
-     * {@code navigate()} pre-fetch of their {@link Link} targets.
+     * Record on {@code reader} a read for the {@link Record Records} that match
+     * {@code criteria}, scoped to {@code realms} and shaped by {@code order}
+     * and {@code page}, together with the {@code navigate()} pre-fetch of their
+     * {@link Link} targets.
      *
      * @param reader the {@link Reader} that records the reads
-     * @param clazz the target {@link Record} class (used to scope the lookup to
-     *            instances of exactly this class)
+     * @param any whether to query across {@code clazz}'s hierarchy or only
+     *            instances of exactly {@code clazz}
+     * @param clazz the target {@link Record} class
      * @param criteria the {@link Criteria} that identifies the records
      * @param order the {@link Order} to apply to the result set, or
      *            {@code null} for unsorted results
@@ -1303,51 +1304,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return a {@link Read} pairing the matching records' data with the
      *         navigate pre-fetch of their {@link Link} targets
      */
-    private <T extends Record> Read $find(Reader reader, Class<T> clazz,
-            Criteria criteria, @Nullable Order order, @Nullable Page page,
-            @Nonnull Realms realms) {
-        criteria = $Criteria.amongRealms(realms,
-                $Criteria.withinClass(clazz, criteria));
-        Set<String> paths = getPathsForClassIfSupported(clazz);
-        Set<String> navigatePaths = getNavigatePathsForClassIfSupported(clazz);
-        Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
-                criteria, order, page);
-        Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
-                reader, navigatePaths, criteria, page, data);
-        return new Read(data, navigated);
-    }
-
-    /**
-     * Record on {@code reader} a read for the {@link Record Records} across
-     * {@code clazz}'s hierarchy that match {@code criteria}, scoped to
-     * {@code realms} and shaped by {@code order} and {@code page}, together
-     * with the {@code navigate()} pre-fetch of their {@link Link} targets.
-     *
-     * @param reader the {@link Reader} that records the reads
-     * @param clazz the {@link Record} class whose hierarchy is queried
-     * @param criteria the {@link Criteria} that identifies the records
-     * @param order the {@link Order} to apply to the result set, or
-     *            {@code null} for unsorted results
-     * @param page the {@link Page} that limits the result set, or {@code null}
-     *            for the full result set
-     * @param realms the {@link Realms} that scope the lookup
-     * @param <T> the {@link Record} type
-     * @return a {@link Read} pairing the matching records' data with the
-     *         navigate pre-fetch of their {@link Link} targets
-     */
-    private <T extends Record> Read $findAny(Reader reader, Class<T> clazz,
-            Criteria criteria, @Nullable Order order, @Nullable Page page,
-            @Nonnull Realms realms) {
-        criteria = $Criteria.amongRealms(realms,
-                $Criteria.accrossClassHierachy(clazz, criteria));
-        Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-        Set<String> navigatePaths = getNavigatePathsForClassHierarchyIfSupported(
-                clazz);
-        Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
-                criteria, order, page);
-        Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
-                reader, navigatePaths, criteria, page, data);
-        return new Read(data, navigated);
+    private <T extends Record> Read $find(Reader reader, boolean any,
+            Class<T> clazz, Criteria criteria, @Nullable Order order,
+            @Nullable Page page, @Nonnull Realms realms) {
+        return $read(reader, any, clazz,
+                $Criteria.amongRealms(realms,
+                        any ? $Criteria.accrossClassHierachy(clazz, criteria)
+                                : $Criteria.withinClass(clazz, criteria)),
+                order, page);
     }
 
     /**
@@ -1357,8 +1321,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * {@link Link} targets.
      *
      * @param reader the {@link Reader} that records the reads
-     * @param clazz the target {@link Record} class (used to scope the lookup to
-     *            instances of exactly this class)
+     * @param any whether to load across {@code clazz}'s hierarchy or only
+     *            instances of exactly {@code clazz}
+     * @param clazz the target {@link Record} class
      * @param order the {@link Order} to apply to the result set, or
      *            {@code null} for unsorted results
      * @param page the {@link Page} that limits the result set, or {@code null}
@@ -1368,44 +1333,45 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return a {@link Read} pairing the records' data with the navigate
      *         pre-fetch of their {@link Link} targets
      */
-    private <T extends Record> Read $load(Reader reader, Class<T> clazz,
-            @Nullable Order order, @Nullable Page page,
+    private <T extends Record> Read $load(Reader reader, boolean any,
+            Class<T> clazz, @Nullable Order order, @Nullable Page page,
             @Nonnull Realms realms) {
-        Criteria criteria = $Criteria.amongRealms(realms,
-                $Criteria.forClass(clazz));
-        Set<String> paths = getPathsForClassIfSupported(clazz);
-        Set<String> navigatePaths = getNavigatePathsForClassIfSupported(clazz);
-        Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
-                criteria, order, page);
-        Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
-                reader, navigatePaths, criteria, page, data);
-        return new Read(data, navigated);
+        return $read(reader, any, clazz,
+                $Criteria
+                        .amongRealms(realms,
+                                any ? $Criteria.forClassHierarchy(clazz)
+                                        : $Criteria.forClass(clazz)),
+                order, page);
     }
 
     /**
-     * Record on {@code reader} a read for every {@link Record} in
-     * {@code clazz}'s hierarchy, scoped to {@code realms} and shaped by
-     * {@code order} and {@code page}, together with the {@code navigate()}
-     * pre-fetch of their {@link Link} targets.
+     * Record on {@code reader} the read for the {@link Record Records} that
+     * match {@code criteria} &mdash; resolved against {@code clazz} alone or
+     * its full hierarchy per {@code any} and shaped by {@code order} and
+     * {@code page} &mdash; together with the {@code navigate()} pre-fetch of
+     * their {@link Link} targets.
      *
      * @param reader the {@link Reader} that records the reads
-     * @param clazz the {@link Record} class whose hierarchy is queried
+     * @param any whether {@code clazz} is resolved across its hierarchy
+     * @param clazz the target {@link Record} class
+     * @param criteria the realm-scoped {@link Criteria} that identifies the
+     *            records
      * @param order the {@link Order} to apply to the result set, or
      *            {@code null} for unsorted results
      * @param page the {@link Page} that limits the result set, or {@code null}
      *            for the full result set
-     * @param realms the {@link Realms} that scope the lookup
      * @param <T> the {@link Record} type
-     * @return a {@link Read} pairing the records' data with the navigate
-     *         pre-fetch of their {@link Link} targets
+     * @return a {@link Read} pairing the matching records' data with the
+     *         navigate pre-fetch of their {@link Link} targets
      */
-    private <T extends Record> Read $loadAny(Reader reader, Class<T> clazz,
-            @Nullable Order order, @Nullable Page page, Realms realms) {
-        Criteria criteria = $Criteria.amongRealms(realms,
-                $Criteria.forClassHierarchy(clazz));
-        Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
-        Set<String> navigatePaths = getNavigatePathsForClassHierarchyIfSupported(
-                clazz);
+    private <T extends Record> Read $read(Reader reader, boolean any,
+            Class<T> clazz, Criteria criteria, @Nullable Order order,
+            @Nullable Page page) {
+        Set<String> paths = any ? getPathsForClassHierarchyIfSupported(clazz)
+                : getPathsForClassIfSupported(clazz);
+        Set<String> navigatePaths = any
+                ? getNavigatePathsForClassHierarchyIfSupported(clazz)
+                : getNavigatePathsForClassIfSupported(clazz);
         Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
                 criteria, order, page);
         Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
@@ -1509,11 +1475,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             if(hasFilter && page != null) {
                 try (Reader sharedReader = new IncrementalReader(connections)) {
                     Function<Page, Set<T>> retriever = $page -> {
-                        Read read = any
-                                ? $loadAny(sharedReader, clazz, order, $page,
-                                        realms)
-                                : $load(sharedReader, clazz, order, $page,
-                                        realms);
+                        Read read = $load(sharedReader, any, clazz, order,
+                                $page, realms);
                         AtomicReference<Set<T>> records = new AtomicReference<>();
                         read.data
                                 .then($data -> read.navigated
@@ -1531,8 +1494,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             else {
-                Read read = any ? $loadAny(reader, clazz, order, page, realms)
-                        : $load(reader, clazz, order, page, realms);
+                Read read = $load(reader, any, clazz, order, page, realms);
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
@@ -1650,11 +1612,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 try (Reader sharedReader = new IncrementalReader(connections)) {
                     Function<Page, Set<T>> retriever = $page -> {
                         if(dbResolvable) {
-                            Read read = any
-                                    ? $findAny(sharedReader, clazz, criteria,
-                                            order, $page, realms)
-                                    : $find(sharedReader, clazz, criteria,
-                                            order, $page, realms);
+                            Read read = $find(sharedReader, any, clazz,
+                                    criteria, order, $page, realms);
                             AtomicReference<Set<T>> records = new AtomicReference<>();
                             read.data.then($data -> read.navigated
                                     .then($navigated -> resolveLinkTargets(
@@ -1678,9 +1637,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             else if(dbResolvable) {
-                Read read = any
-                        ? $findAny(reader, clazz, criteria, order, page, realms)
-                        : $find(reader, clazz, criteria, order, page, realms);
+                Read read = $find(reader, any, clazz, criteria, order, page,
+                        realms);
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
@@ -2265,27 +2223,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param clazz
      * @param id
-     * @param loaded
-     * @param existing
-     * @param data
-     * @return the loaded {@link Record} instance
-     */
-    private <T extends Record> T instantiate(Class<T> clazz, long id,
-            ConcurrentMap<Long, Record> loaded,
-            @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
-        return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
-                targets);
-    }
-
-    /**
-     * Internal method to help recursively load records by keeping tracking of
-     * which ones currently exist. Ultimately this method will load the Record
-     * that is contained within the specified {@code clazz} and has the
-     * specified {@code id}.
-     *
-     * @param clazz
-     * @param id
      * @param existing
      * @param data
      * @return the loaded {@link Record} instance
@@ -2293,7 +2230,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
-        return instantiate(clazz, id, new ConcurrentHashMap<>(), data, targets);
+        return loadWithErrorHandling(clazz, id, new ConcurrentHashMap<>(),
+                connections, this, data, targets);
     }
 
     /**
@@ -2390,8 +2328,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        return LazyTransformSet.of(data.entrySet(), entry -> instantiate(clazz,
-                entry.getKey(), loaded, entry.getValue(), targets));
+        return LazyTransformSet.of(data.entrySet(),
+                entry -> loadWithErrorHandling(clazz, entry.getKey(), loaded,
+                        connections, this, entry.getValue(), targets));
     }
 
     /**

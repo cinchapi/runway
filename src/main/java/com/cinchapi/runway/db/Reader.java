@@ -229,37 +229,6 @@ public interface Reader extends AutoCloseable {
     Pending<Set<Long>> find(Criteria criteria);
 
     /**
-     * Record a find for the ids of every record matching the {@code criteria},
-     * sorted by {@code order}.
-     *
-     * @param criteria the {@link Criteria} that identifies the records
-     * @param order the {@link Order} that determines the sort
-     * @return a {@link Pending} of the matching record ids
-     */
-    Pending<Set<Long>> find(Criteria criteria, Order order);
-
-    /**
-     * Record a find for the ids of every record matching the {@code criteria},
-     * limited to the requested {@code page}.
-     *
-     * @param criteria the {@link Criteria} that identifies the records
-     * @param page the {@link Page} that limits the result set
-     * @return a {@link Pending} of the matching record ids
-     */
-    Pending<Set<Long>> find(Criteria criteria, Page page);
-
-    /**
-     * Record a find for the ids of every record matching the {@code criteria},
-     * sorted by {@code order} and limited to the requested {@code page}.
-     *
-     * @param criteria the {@link Criteria} that identifies the records
-     * @param order the {@link Order} that determines the sort
-     * @param page the {@link Page} that limits the result set
-     * @return a {@link Pending} of the matching record ids
-     */
-    Pending<Set<Long>> find(Criteria criteria, Order order, Page page);
-
-    /**
      * Record a count of the values stored under {@code key} in every record
      * matching the {@code criteria}.
      *
