@@ -1125,23 +1125,6 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Create a {@link Gateway} instance that provides intelligent routing to
-     * the appropriate database operations based on the parameters provided. The
-     * gateway simplifies database access by automatically choosing between
-     * {@link #find} and {@link #load} operations.
-     *
-     * @return a new gateway instance for this database interface
-     * @deprecated Use
-     *             {@link Selection#of(Class, Criteria, Order, Page, Realms)} or
-     *             {@link Selection#ofAny(Class, Criteria, Order, Page, Realms)}
-     *             with {@link #fetch(Selection...)} instead.
-     */
-    @Deprecated
-    public default Gateway gateway() {
-        return Gateway.to(this);
-    }
-
-    /**
      * Load all the Records that are contained within the specified
      * {@code clazz}.
      *

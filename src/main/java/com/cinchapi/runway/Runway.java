@@ -157,43 +157,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return a {@link Runway} instance that is connected to Concourse using the
-     * provided connection parameters.
-     *
-     * @param host
-     * @param port
-     * @param username
-     * @param password
-     * @return a {@link Runway} instance
-     * @deprecated use {@link #builder()} instead
-     */
-    @Deprecated
-    public static Runway connect(String host, int port, String username,
-            String password) {
-        return builder().host(host).port(port).username(username)
-                .password(password).build();
-    }
-
-    /**
-     * Return a {@link Runway} instance that is connected to Concourse using the
-     * provided connection parameters.
-     *
-     * @param host
-     * @param port
-     * @param username
-     * @param password
-     * @param environment
-     * @return a {@link Runway} instance
-     * @deprecated use {@link #builder()} instead
-     */
-    @Deprecated
-    public static Runway connect(String host, int port, String username,
-            String password, String environment) {
-        return builder().host(host).port(port).username(username)
-                .password(password).environment(environment).build();
-    }
-
-    /**
      * Return all known {@link Record} types.
      *
      * @return a {@link Set} containing all the known {@link Record} subclasses
@@ -453,13 +416,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Consumer<Record> saveListener;
 
     /**
-     * The cached {@link Gateway} instance that provides intelligent routing to
-     * database operations. Lazily initialized when first accessed.
-     */
-    @SuppressWarnings("deprecation")
-    private Gateway gateway = null;
-
-    /**
      * Thread-local storage for attached {@link AdHocDataSource} instances. Each
      * thread maintains its own set of attached sources, enabling request-scoped
      * or context-scoped attachment.
@@ -616,46 +572,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
     }
 
-    /**
-     * Find the one record of type {@code clazz} that matches the
-     * {@code criteria}. If more than one record matches, throw a
-     * {@link DuplicateEntryException}.
-     *
-     * @param clazz
-     * @param criteria
-     * @return the one matching record
-     * @throws DuplicateEntryException
-     * @deprecated use {@link #findUnique(Class, BuildableState)}
-     */
-    public <T extends Record> T findOne(Class<T> clazz,
-            BuildableState criteria) {
-        return findUnique(clazz, criteria);
-    }
-
-    /**
-     * Find the one record of type {@code clazz} that matches the
-     * {@code criteria}. If more than one record matches, throw a
-     * {@link DuplicateEntryException}.
-     *
-     * @param clazz
-     * @param criteria
-     * @return the one matching record
-     * @throws DuplicateEntryException
-     * @deprecated use {@link, #findUnique(Class, Criteria)}
-     */
-    public <T extends Record> T findOne(Class<T> clazz, Criteria criteria) {
-        return findUnique(clazz, criteria);
-    }
-
-    @SuppressWarnings("deprecation")
-    @Override
-    public Gateway gateway() {
-        if(gateway == null) {
-            gateway = DatabaseInterface.super.gateway();
-        }
-        return gateway;
-    }
-
     @Override
     public <T extends Record> T loadNullSafe(Class<T> clazz, long id,
             Realms realms) {
@@ -666,40 +582,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             onLoadFailureHandler.accept(clazz, id, e);
             throw e;
         }
-    }
-
-    /**
-     * Register a listener that will be called <strong>after</strong> any
-     * {@link Record} of the specified {@code type} (or a subclass) is
-     * successfully saved.
-     *
-     * @param type the {@link Record} type (or superclass) to listen for
-     * @param listener a consumer that processes saved {@link Record Records} of
-     *            the specified type
-     * @return this for chaining
-     * @deprecated Use {@link Properties#onSave(Class, Consumer)} via
-     *             {@link #properties()} instead.
-     */
-    @Deprecated
-    public <T extends Record> Runway onSave(Class<T> type,
-            Consumer<T> listener) {
-        properties().onSave(type, listener);
-        return this;
-    }
-
-    /**
-     * Register a listener that will be called <strong>after</strong> any
-     * {@link Record} is successfully saved.
-     *
-     * @param listener a consumer that processes saved {@link Record Records}
-     * @return this for chaining
-     * @deprecated Use {@link Properties#onSave(Consumer)} via
-     *             {@link #properties()} instead.
-     */
-    @Deprecated
-    public Runway onSave(Consumer<Record> listener) {
-        properties().onSave(Record.class, listener);
-        return this;
     }
 
     /**
@@ -2922,21 +2804,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder readStrategy(ReadStrategy readStrategy) {
             this.readStrategy = readStrategy;
             return this;
-        }
-
-        /**
-         * Set the maximum number of records that should be buffered in memory
-         * when streaming data from the database. This is only relevant if the
-         * {@link #readStrategy(ReadStrategy) read strategy} is not
-         * {@link ReadStrategy#BULK}.
-         *
-         * @param max
-         * @return this builder
-         * @deprecated use {@link #streamingReadBufferSize(int)} instead
-         */
-        @Deprecated
-        public Builder recordsPerSelectBufferSize(int max) {
-            return streamingReadBufferSize(max);
         }
 
         /**
