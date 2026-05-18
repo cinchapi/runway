@@ -45,7 +45,6 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -255,20 +254,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return {@code true} if the given {@link Order} and {@link Page} indicate
-     * that no sorting or pagination is requested, meaning the query can be
-     * handled without client-side stream manipulation.
-     *
-     * @param order
-     * @param page
-     * @return {@code true} if neither sorting nor pagination is required
-     */
-    private static boolean doesNotRequireSortingOrPagination(Order order,
-            Page page) {
-        return order == null && page == null;
-    }
-
-    /**
      * Return {@code true} if a server running {@code actual} provides a feature
      * gated on {@code target} &mdash; either {@code actual} is at least
      * {@code target}, or it is the {@link #DEVELOPMENT_VERSION}, which is
@@ -397,12 +382,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /* package */ final ConnectionPool connections;
 
     /**
-     * A flag that indicates whether the connected server supports result set
-     * sorting and pagination.
-     */
-    private final boolean hasNativeSortingAndPagination;
-
-    /**
      * Whenever an exception is thrown during a {@link Runway#load(long) load}
      * operation, the provided {@code onLoadFailureHandler} receives the
      * record's class, id and error for processing.
@@ -524,8 +503,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         try {
             Version actual = Versions
                     .parseSemanticVersion(concourse.getServerVersion());
-            this.hasNativeSortingAndPagination = isActualVersionGreaterThanOrEquals(
-                    actual, Version.forIntegers(0, 10));
             this.supportsPreSelectLinkedRecords = isActualVersionGreaterThanOrEquals(
                     actual, Version.forIntegers(0, 11, 3));
             this.supportsNativeCount = isActualVersionGreaterThanOrEquals(
@@ -1493,62 +1470,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Realms realms = selection.realms;
         Predicate<T> filter = selection.filter;
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
-        if(hasNativeSortingAndPagination
-                || doesNotRequireSortingOrPagination(order, page)) {
-            // When native sorting/pagination is supported OR no
-            // sorting/pagination is requested, the database can handle the
-            // query directly without client-side stream manipulation.
-            if(hasFilter && page != null) {
-                try (Reader sharedReader = new IncrementalReader(connections)) {
-                    Function<Page, Set<T>> retriever = $page -> {
-                        Read read = any
-                                ? $loadAny(sharedReader, clazz, order, $page,
-                                        realms)
-                                : $load(sharedReader, clazz, order, $page,
-                                        realms);
-                        AtomicReference<Set<T>> records = new AtomicReference<>();
-                        read.data
-                                .then($data -> read.navigated
-                                        .then($navigated -> resolveLinkTargets(
-                                                sharedReader, $data,
-                                                $navigated))
-                                        .map($targets -> instantiateAll(clazz,
-                                                any, $data, $targets)))
-                                .onResolve(records::set);
-                        sharedReader.drain();
-                        return records.get();
-                    };
-                    return Pending.of(new SelectResult<>(Pagination
-                            .applyFilterAndPage(retriever, filter, page)));
-                }
-            }
-            else {
-                Read read = any ? $loadAny(reader, clazz, order, page, realms)
-                        : $load(reader, clazz, order, page, realms);
-                return read.data.then($data -> read.navigated
-                        .then($navigated -> resolveLinkTargets(reader, $data,
-                                $navigated))
-                        .map($targets -> finalizeSet(clazz, any, $data,
-                                $targets, hasFilter, filter)));
+        if(hasFilter && page != null) {
+            try (Reader sharedReader = new IncrementalReader(connections)) {
+                Function<Page, Set<T>> retriever = $page -> {
+                    Read read = any
+                            ? $loadAny(sharedReader, clazz, order, $page,
+                                    realms)
+                            : $load(sharedReader, clazz, order, $page, realms);
+                    AtomicReference<Set<T>> records = new AtomicReference<>();
+                    read.data
+                            .then($data -> read.navigated
+                                    .then($navigated -> resolveLinkTargets(
+                                            sharedReader, $data, $navigated))
+                                    .map($targets -> instantiateAll(clazz, any,
+                                            $data, $targets)))
+                            .onResolve(records::set);
+                    sharedReader.drain();
+                    return records.get();
+                };
+                return Pending.of(new SelectResult<>(Pagination
+                        .applyFilterAndPage(retriever, filter, page)));
             }
         }
         else {
-            // Legacy servers lack native sorting/pagination, so results must
-            // be fetched and processed client-side.
-            Set<T> records = fetch(Selection.of(clazz).any(any).realms(realms));
-            if(order != null) {
-                records = DatabaseInterface.sort(records,
-                        backwardsCompatible(order));
-            }
-            Stream<T> stream = records.stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty());
-            if(page != null) {
-                stream = stream.skip(page.skip()).limit(page.limit());
-            }
-            return Pending.of(new SelectResult<>(stream
-                    .collect(Collectors.toCollection(LinkedHashSet::new))));
+            Read read = any ? $loadAny(reader, clazz, order, page, realms)
+                    : $load(reader, clazz, order, page, realms);
+            return read.data.then($data -> read.navigated.then(
+                    $navigated -> resolveLinkTargets(reader, $data, $navigated))
+                    .map($targets -> finalizeSet(clazz, any, $data, $targets,
+                            hasFilter, filter)));
         }
     }
 
@@ -1631,89 +1581,62 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Realms realms = selection.realms;
         Predicate<T> filter = selection.filter;
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
-        if(hasNativeSortingAndPagination
-                || doesNotRequireSortingOrPagination(order, page)) {
-            // When native sorting/pagination is supported OR no
-            // sorting/pagination is requested, the database can handle the
-            // query directly without client-side stream manipulation.
-            boolean dbResolvable = Record.isDatabaseResolvableCondition(clazz,
-                    criteria);
-            if(hasFilter && page != null) {
-                try (Reader sharedReader = new IncrementalReader(connections)) {
-                    Function<Page, Set<T>> retriever = $page -> {
-                        if(dbResolvable) {
-                            Read read = any
-                                    ? $findAny(sharedReader, clazz, criteria,
-                                            order, $page, realms)
-                                    : $find(sharedReader, clazz, criteria,
-                                            order, $page, realms);
-                            AtomicReference<Set<T>> records = new AtomicReference<>();
-                            read.data.then($data -> read.navigated
-                                    .then($navigated -> resolveLinkTargets(
-                                            sharedReader, $data, $navigated))
-                                    .map($targets -> instantiateAll(clazz, any,
-                                            $data, $targets)))
-                                    .onResolve(records::set);
-                            sharedReader.drain();
-                            return records.get();
-                        }
-                        else {
-                            return any
-                                    ? filterAny(clazz, criteria, order, $page,
-                                            realms)
-                                    : filter(clazz, criteria, order, $page,
-                                            realms);
-                        }
-                    };
-                    return Pending.of(new SelectResult<>(Pagination
-                            .applyFilterAndPage(retriever, filter, page)));
-                }
-            }
-            else if(dbResolvable) {
-                Read read = any
-                        ? $findAny(reader, clazz, criteria, order, page, realms)
-                        : $find(reader, clazz, criteria, order, page, realms);
-                return read.data.then($data -> read.navigated
-                        .then($navigated -> resolveLinkTargets(reader, $data,
-                                $navigated))
-                        .map($targets -> finalizeSet(clazz, any, $data,
-                                $targets, hasFilter, filter)));
-            }
-            else {
-                Set<T> records = any
-                        ? filterAny(clazz, criteria, order, page, realms)
-                        : filter(clazz, criteria, order, page, realms);
-                if(hasFilter) {
-                    return Pending
-                            .of(new SelectResult<>(
-                                    records.stream().filter(filter)
-                                            .collect(Collectors.toCollection(
-                                                    LinkedHashSet::new)),
-                                    records));
-                }
-                else {
-                    return Pending.of(new SelectResult<>(records));
-                }
+        boolean isDbResolvable = Record.isDatabaseResolvableCondition(clazz,
+                criteria);
+        if(hasFilter && page != null) {
+            try (Reader sharedReader = new IncrementalReader(connections)) {
+                Function<Page, Set<T>> retriever = $page -> {
+                    if(isDbResolvable) {
+                        Read read = any
+                                ? $findAny(sharedReader, clazz, criteria, order,
+                                        $page, realms)
+                                : $find(sharedReader, clazz, criteria, order,
+                                        $page, realms);
+                        AtomicReference<Set<T>> records = new AtomicReference<>();
+                        read.data
+                                .then($data -> read.navigated
+                                        .then($navigated -> resolveLinkTargets(
+                                                sharedReader, $data,
+                                                $navigated))
+                                        .map($targets -> instantiateAll(clazz,
+                                                any, $data, $targets)))
+                                .onResolve(records::set);
+                        sharedReader.drain();
+                        return records.get();
+                    }
+                    else {
+                        return any
+                                ? filterAny(clazz, criteria, order, $page,
+                                        realms)
+                                : filter(clazz, criteria, order, $page, realms);
+                    }
+                };
+                return Pending.of(new SelectResult<>(Pagination
+                        .applyFilterAndPage(retriever, filter, page)));
             }
         }
+        else if(isDbResolvable) {
+            Read read = any
+                    ? $findAny(reader, clazz, criteria, order, page, realms)
+                    : $find(reader, clazz, criteria, order, page, realms);
+            return read.data.then($data -> read.navigated.then(
+                    $navigated -> resolveLinkTargets(reader, $data, $navigated))
+                    .map($targets -> finalizeSet(clazz, any, $data, $targets,
+                            hasFilter, filter)));
+        }
         else {
-            // Legacy servers lack native sorting/pagination, so results must
-            // be fetched and processed client-side.
-            Set<T> records = fetch(
-                    Selection.of(clazz).any(any).where(criteria));
-            if(order != null) {
-                records = DatabaseInterface.sort(records,
-                        backwardsCompatible(order));
+            Set<T> records = any
+                    ? filterAny(clazz, criteria, order, page, realms)
+                    : filter(clazz, criteria, order, page, realms);
+            if(hasFilter) {
+                return Pending.of(new SelectResult<>(
+                        records.stream().filter(filter).collect(
+                                Collectors.toCollection(LinkedHashSet::new)),
+                        records));
             }
-            Stream<T> stream = records.stream()
-                    .filter(record -> realms.names().isEmpty() || !Sets
-                            .intersection(record.realms(), realms.names())
-                            .isEmpty());
-            if(page != null) {
-                stream = stream.skip(page.skip()).limit(page.limit());
+            else {
+                return Pending.of(new SelectResult<>(records));
             }
-            return Pending.of(new SelectResult<>(stream
-                    .collect(Collectors.toCollection(LinkedHashSet::new))));
         }
     }
 
