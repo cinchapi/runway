@@ -17,7 +17,6 @@ package com.cinchapi.runway;
 
 import static com.cinchapi.runway.DatabaseInterface.duplicateEntryException;
 
-import java.util.AbstractMap;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,7 +29,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
-import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -83,14 +81,12 @@ import com.cinchapi.runway.db.Saver;
 import com.cinchapi.runway.util.Obligations;
 import com.cinchapi.runway.util.Pagination;
 import com.github.zafarkhaja.semver.Version;
-import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
 
 import gnu.trove.map.TLongObjectMap;
@@ -410,22 +406,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = DEFAULT_ON_LOAD_FAILURE_HANDLER;
 
     /**
-     * The strategy for loading data from the database.
-     */
-    private ReadStrategy readStrategy = ReadStrategy.BULK;
-
-    /**
      * The strategy for handling spurious {@link TransactionException
      * TransactionExceptions} during {@link #save(Record...) save} operations.
      */
     private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
-
-    /**
-     * The maximum number of records to buffer in memory when selecting data
-     * from the database. This is only relevant when the {@link #readStrategy}
-     * is not {@link ReadStrategy#BULK}.
-     */
-    private int streamingReadBufferSize = 1000;
 
     /**
      * A flag that indicates if the connected server has enough functionality to
@@ -965,15 +949,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> search(Class<T> clazz, String query,
             String... keys) {
         Set<Long> ids;
+        Map<Long, Map<String, Set<Object>>> data;
+        Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
         Concourse concourse = connections.request();
         try {
             ids = $search(concourse, clazz, query, keys);
+            data = paths != null ? concourse.select(paths, ids)
+                    : concourse.select(ids);
         }
         finally {
             connections.release(concourse);
         }
-        Map<Long, Map<String, Set<Object>>> data = stream(
-                getPathsForClassHierarchyIfSupported(clazz), ids);
         Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
                 getNavigatePathsForClassHierarchyIfSupported(clazz), ids, data);
         return instantiateAll(clazz, data, targets);
@@ -991,15 +977,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> Set<T> searchAny(Class<T> clazz, String query,
             String... keys) {
         Set<Long> ids;
+        Map<Long, Map<String, Set<Object>>> data;
+        Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
         Concourse concourse = connections.request();
         try {
             ids = $searchAny(concourse, clazz, query, keys);
+            data = paths != null ? concourse.select(paths, ids)
+                    : concourse.select(ids);
         }
         finally {
             connections.release(concourse);
         }
-        Map<Long, Map<String, Set<Object>>> data = stream(
-                getPathsForClassHierarchyIfSupported(clazz), ids);
         Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
                 getNavigatePathsForClassHierarchyIfSupported(clazz), ids, data);
         return instantiateAll(data, targets);
@@ -2527,7 +2515,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Record a read on {@code reader} for every record matching
      * {@code criteria}, restricted to {@code paths} when non-{@code null} and
-     * shaped by the configured {@link #readStrategy}.
+     * shaped by {@code order} and {@code page}.
      *
      * @param reader the {@link Reader} on which to record the read
      * @param paths the field names whose values should be returned, or
@@ -2542,40 +2530,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Pending<Map<Long, Map<String, Set<Object>>>> read(Reader reader,
             @Nullable Set<String> paths, Criteria criteria,
             @Nullable Order order, @Nullable Page page) {
-        if(readStrategy == ReadStrategy.BULK) {
-            if(order != null && page != null) {
-                return paths != null
-                        ? reader.select(paths, criteria, order, page)
-                        : reader.select(criteria, order, page);
-            }
-            else if(order != null) {
-                return paths != null ? reader.select(paths, criteria, order)
-                        : reader.select(criteria, order);
-            }
-            else if(page != null) {
-                return paths != null ? reader.select(paths, criteria, page)
-                        : reader.select(criteria, page);
-            }
-            else {
-                return paths != null ? reader.select(paths, criteria)
-                        : reader.select(criteria);
-            }
+        if(order != null && page != null) {
+            return paths != null ? reader.select(paths, criteria, order, page)
+                    : reader.select(criteria, order, page);
         }
-        else { // STREAM
-            Pending<Set<Long>> ids;
-            if(order != null && page != null) {
-                ids = reader.find(criteria, order, page);
-            }
-            else if(order != null) {
-                ids = reader.find(criteria, order);
-            }
-            else if(page != null) {
-                ids = reader.find(criteria, page);
-            }
-            else {
-                ids = reader.find(criteria);
-            }
-            return ids.map($ids -> stream(paths, $ids));
+        else if(order != null) {
+            return paths != null ? reader.select(paths, criteria, order)
+                    : reader.select(criteria, order);
+        }
+        else if(page != null) {
+            return paths != null ? reader.select(paths, criteria, page)
+                    : reader.select(criteria, page);
+        }
+        else {
+            return paths != null ? reader.select(paths, criteria)
+                    : reader.select(criteria);
         }
     }
 
@@ -2677,116 +2646,25 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Record on {@code reader} the cleanup reads that close any {@link Link}
      * targets the navigate phase did not reach, returning a {@link Pending} of
-     * the complete target pool.
+     * the complete pool of {@link Record} data &mdash; the {@code sources}
+     * themselves and every {@link Link} target reachable from them.
      *
      * @param reader the {@link Reader} that records each cleanup select
-     * @param sources the source records whose {@link Link Links} seed the
-     *            traversal
+     * @param sources the source records, folded into the pool and whose
+     *            {@link Link Links} seed the traversal
      * @param navigated the navigate phase result
-     * @return a {@link Pending} of the target pool keyed by destination record
-     *         id
+     * @return a {@link Pending} of the pool keyed by record id
      */
     private Pending<Map<Long, Map<String, Set<Object>>>> resolveLinkTargets(
             Reader reader, Map<Long, Map<String, Set<Object>>> sources,
             Map<Long, Map<String, Set<Object>>> navigated) {
         Map<Long, Map<String, Set<Object>>> pool = new HashMap<>(navigated);
+        // Fold the sources into the pool so a Link from one source record
+        // to another resolves here instead of via a per-Link select().
+        pool.putAll(sources);
         Set<Long> covered = new HashSet<>(pool.keySet());
-        covered.addAll(sources.keySet());
-        Set<Long> frontier = extractLinkTargets(sources, covered);
-        frontier.addAll(extractLinkTargets(pool, covered));
+        Set<Long> frontier = extractLinkTargets(pool, covered);
         return prefetchLinks(reader, pool, covered, frontier);
-    }
-
-    /**
-     * Intelligently select all the data for the {@code ids} from
-     * {@code concourse}.
-     * <p>
-     * This method assumes that it will be executed asynchronously from a normal
-     * read operations so it takes its own connection from the
-     * {@link #connections} pool instead of being passed one.
-     * </p>
-     *
-     * @param concourse
-     * @param ids
-     * @return the selected data
-     */
-    private Map<Long, Map<String, Set<Object>>> stream(
-            @Nullable Set<String> paths, Set<Long> ids) {
-        // The data for the ids is asynchronously selected in the background in
-        // a manner that staggers/buffers the amount of data by only selecting
-        // {@link #recordsPerSelectBufferSize} from the database at a time.
-        return new AbstractMap<Long, Map<String, Set<Object>>>() {
-
-            /**
-             * The cached {@link #entrySet()}.
-             */
-            Set<Entry<Long, Map<String, Set<Object>>>> entrySet = null;
-
-            /**
-             * The data that has been loaded from the data into memory. For the
-             * items that have been pulled from the {@link #pending} queue.
-             */
-            Map<Long, Map<String, Set<Object>>> loaded = Maps
-                    .newHashMapWithExpectedSize(ids.size()); // TODO: create
-                                                             // compound
-                                                             // hashmap... that
-                                                             // will look across
-                                                             // multiple
-                                                             // hashmaps until
-                                                             // it finds the
-                                                             // right value
-
-            /**
-             * A FIFO list of record ids that are pending database selection.
-             * Items from this queue are popped off in increments of
-             * {@value #BULK_SELECT_BUFFER_SIZE} and selected from Concourse.
-             */
-            Queue<Long> pending = Queues.newArrayDeque(ids);
-
-            @Override
-            public Set<Entry<Long, Map<String, Set<Object>>>> entrySet() {
-                if(entrySet == null) {
-                    entrySet = LazyTransformSet.of(ids, id -> {
-                        Map<String, Set<Object>> data = loaded.get(id);
-                        while (data == null) {
-                            // There is currently no data loaded OR the
-                            // currently loaded data does not contain the id. If
-                            // that is the case, assume that all unconsumed ids
-                            // prior to this one have been skipped and buffer in
-                            // data incrementally until the data for this id is
-                            // found.
-                            int i = 0;
-                            Set<Long> records = Sets
-                                    .newLinkedHashSetWithExpectedSize(
-                                            streamingReadBufferSize);
-                            while (pending.peek() != null
-                                    && i < streamingReadBufferSize) {
-                                records.add(pending.poll());
-                            }
-                            Concourse concourse = connections.request();
-                            try {
-                                loaded.putAll(paths != null
-                                        ? concourse.select(paths, records)
-                                        : concourse.select(records));
-                            }
-                            finally {
-                                connections.release(concourse);
-                            }
-                            data = loaded.get(id);
-                        }
-                        return new AbstractMap.SimpleImmutableEntry<>(id, data);
-                    });
-                }
-                return entrySet;
-            }
-
-            @Override
-            public Set<Long> keySet() {
-                return ids;
-            }
-
-        };
-
     }
 
     /**
@@ -2802,8 +2680,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = null;
         private String password = "admin";
         private int port = 1717;
-        private ReadStrategy readStrategy = null;
-        private int streamingReadBufferSize = 100;
         private String username = "admin";
         private List<Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
@@ -2818,9 +2694,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             ConnectionPool connections = ConnectionPool.newCachedConnectionPool(
                     host, port, username, password, environment);
             Runway db = new Runway(connections);
-            db.streamingReadBufferSize = streamingReadBufferSize;
-            db.readStrategy = MoreObjects.firstNonNull(readStrategy,
-                    ReadStrategy.BULK);
             db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
@@ -3011,32 +2884,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         }
 
         /**
-         * Set the {@link ReadStrategy} for the {@link Runway} instance.
-         *
-         * @param readStrategy
-         * @return this builder
-         */
-        public Builder readStrategy(ReadStrategy readStrategy) {
-            this.readStrategy = readStrategy;
-            return this;
-        }
-
-        /**
-         * Set the maximum number of records that should be buffered in memory
-         * when streaming data from the database. This is only relevant if the
-         * {@link #readStrategy(ReadStrategy) read strategy} is not
-         * {@link ReadStrategy#BULK}.
-         *
-         * @param max
-         * @return this builder
-         * @deprecated use {@link #streamingReadBufferSize(int)} instead
-         */
-        @Deprecated
-        public Builder recordsPerSelectBufferSize(int max) {
-            return streamingReadBufferSize(max);
-        }
-
-        /**
          * Set the {@link SpuriousSaveFailureStrategy} for the {@link Runway}
          * instance.
          * <p>
@@ -3057,20 +2904,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder spuriousSaveFailureStrategy(
                 SpuriousSaveFailureStrategy strategy) {
             this.spuriousSaveFailureStrategy = strategy;
-            return this;
-        }
-
-        /**
-         * Set the maximum number of records that should be buffered in memory
-         * when streaming data from the database. This is only relevant if the
-         * {@link #readStrategy(ReadStrategy) read strategy} is not
-         * {@link ReadStrategy#BULK}.
-         *
-         * @param max
-         * @return this builder
-         */
-        public Builder streamingReadBufferSize(int max) {
-            this.streamingReadBufferSize = max;
             return this;
         }
 
@@ -3156,29 +2989,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public boolean supportsPreSelectLinkedRecords() {
             return supportsPreSelectLinkedRecords;
         }
-    }
-
-    /**
-     * The {@link ReadStrategy} determines how {@link Runway} reads data from
-     * Concourse in response to a request.
-     *
-     * @author Jeff Nelson
-     */
-    public enum ReadStrategy {
-        /**
-         * Use Concourse's {@code select} method to read all the data for all
-         * the records that match a request, at once.
-         */
-        BULK,
-
-        /**
-         * Use Concourse's {@code find} method to find the ids of all the
-         * records that match a request and incrementally read the data for
-         * those records on-the-fly, as needed. When using this strategy,
-         * further tuning is possible using
-         * {@link Runway#Builder#streamingReadBufferSize(int)}.
-         */
-        STREAM
     }
 
     /**
