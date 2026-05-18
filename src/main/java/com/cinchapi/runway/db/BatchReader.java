@@ -29,6 +29,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 
 /**
  * A {@link Reader} that batches recorded reads into a single
@@ -163,10 +164,22 @@ public final class BatchReader extends AbstractReader {
     @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> select(
             Collection<Long> records) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.select(records);
-        return Pending.deferred(this, () -> mapByRecord(batch, slot));
+        if(records.size() == 1) {
+            // https://github.com/cinchapi/concourse/issues/751:
+            // CommandGroup.select(Collection) collapses a single-element
+            // collection into a single-record select, whose result is one
+            // record's field data rather than a record-keyed map. Route
+            // through the single-record select and restore the record-keyed
+            // shape so the contract holds regardless of collection size.
+            long record = records.iterator().next();
+            return select(record).map(data -> ImmutableMap.of(record, data));
+        }
+        else {
+            Batch batch = batch();
+            int slot = batch.size();
+            batch.group.select(records);
+            return Pending.deferred(this, () -> mapByRecord(batch, slot));
+        }
     }
 
     @Override
