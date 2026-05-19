@@ -488,9 +488,4 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
         }
     }
 
-    @Override
-    protected boolean reuseServerAcrossTests() {
-        return true;
-    }
-
 }
