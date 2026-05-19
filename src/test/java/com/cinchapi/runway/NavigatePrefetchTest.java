@@ -15,7 +15,11 @@
  */
 package com.cinchapi.runway;
 
+import java.lang.reflect.Field;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -30,8 +34,10 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.CountingConcourseConnectionPool.CountingConcourse;
+import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
 
 /**
  * Tests for the navigate-based prefetching optimization that eliminates N+1
@@ -286,9 +292,10 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the {@code visitedEdges} set permits
-     * crossing different cyclic edges in the same lineage but blocks
-     * re-emission of the same cyclic edge.
+     * <strong>Goal:</strong> Verify that a navigate path carries at most one
+     * transitive ({@code *}) stop, so transitive stops never chain &mdash; the
+     * bound that keeps navigate-path computation from growing combinatorially
+     * with the number of cyclic edges.
      * <p>
      * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
      * instance.
@@ -296,33 +303,31 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Retrieve navigate paths for {@link Exchange}, which has two cyclic
-     * edges: a single-{@link Record} {@code parent: Exchange} and a
-     * {@link java.util.Collection Collection&lt;Record&gt;} {@code children:
-     * List<Exchange>}.</li>
-     * <li>Assert that paths crossing the two distinct edges in either order are
-     * emitted.</li>
-     * <li>Assert that no path re-emits the same cyclic edge twice in its
-     * lineage.</li>
+     * self-referential edges: a single-{@link Record} {@code parent: Exchange}
+     * and a {@link java.util.Collection Collection&lt;Record&gt;}
+     * {@code children: List<Exchange>}.</li>
+     * <li>Assert that each cyclic edge is emitted as its own transitive
+     * stop.</li>
+     * <li>Assert that no path contains a second transitive stop.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> At least one path begins with
-     * {@code parent*.children*.} and at least one with
-     * {@code children*.parent*.}; no path begins with {@code parent*.parent*.}
-     * or {@code children*.children*.}.
+     * <strong>Expected:</strong> Paths under {@code parent*.} and
+     * {@code children*.} are present, but no path contains two {@code *}
+     * segments &mdash; in particular none begins with
+     * {@code parent*.children*.}, {@code children*.parent*.},
+     * {@code parent*.parent*.}, or {@code children*.children*.}.
      */
     @Test
-    public void testNavigatePathsCrossEdgesButNotSameEdgeUnderTransitiveStop() {
+    public void testNavigatePathsCarryAtMostOneTransitiveStop() {
         Set<String> navigatePaths = Record.StaticAnalysis.instance()
                 .getNavigatePaths(Exchange.class);
         Assert.assertNotNull(navigatePaths);
+        Assert.assertTrue(
+                navigatePaths.stream().anyMatch(p -> p.startsWith("parent*.")));
         Assert.assertTrue(navigatePaths.stream()
-                .anyMatch(p -> p.startsWith("parent*.children*.")));
+                .anyMatch(p -> p.startsWith("children*.")));
         Assert.assertTrue(navigatePaths.stream()
-                .anyMatch(p -> p.startsWith("children*.parent*.")));
-        Assert.assertTrue(navigatePaths.stream()
-                .noneMatch(p -> p.startsWith("parent*.parent*.")));
-        Assert.assertTrue(navigatePaths.stream()
-                .noneMatch(p -> p.startsWith("children*.children*.")));
+                .noneMatch(p -> p.indexOf('*') != p.lastIndexOf('*')));
     }
 
     /**
@@ -1334,6 +1339,53 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that navigate-path computation completes in
+     * bounded time for a {@link Record} whose graph contains many distinct
+     * cyclic edges, instead of growing combinatorially with the number of such
+     * edges.
+     * <p>
+     * <strong>Start state:</strong> Synthetic {@code hierarchies} and
+     * {@code fieldsByClass} describing one {@link Record} class with sixteen
+     * self-referential single-{@link Record} fields &mdash; sixteen distinct
+     * cyclic edges.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build the static-analysis maps for the synthetic class from the
+     * {@link ManyCyclicEdges} field holder.</li>
+     * <li>Invoke {@code computeNavigatePaths} on the synthetic class.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns within the test timeout with
+     * a non-empty path set in which every cyclic field is emitted with the
+     * {@code *} transitive modifier.
+     */
+    @Test(timeout = 15000)
+    public void testComputeNavigatePathsTerminatesWithManyCyclicEdges() {
+        Multimap<Class<? extends Record>, Class<?>> hierarchies = HashMultimap
+                .create();
+        hierarchies.put(Simple.class, Simple.class);
+        Map<String, Field> fields = new HashMap<>();
+        for (Field field : ManyCyclicEdges.class.getDeclaredFields()) {
+            if(Record.class.isAssignableFrom(field.getType())) {
+                fields.put(field.getName(), field);
+            }
+        }
+        Map<Class<? extends Record>, Map<String, Field>> fieldsByClass = new HashMap<>();
+        fieldsByClass.put(Simple.class, fields);
+        Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArguments = new HashMap<>();
+        Set<String> navigatePaths = Record.StaticAnalysis.computeNavigatePaths(
+                Simple.class, hierarchies, fieldsByClass, fieldTypeArguments);
+        Assert.assertFalse(navigatePaths.isEmpty());
+        for (String name : fields.keySet()) {
+            Assert.assertTrue(
+                    "Expected a transitive path for cyclic edge " + name,
+                    navigatePaths.stream()
+                            .anyMatch(path -> path.startsWith(name + "*.")));
+        }
+    }
+
+    /**
      * A {@link Record} with a {@link java.util.Collection
      * Collection&lt;Record&gt;} field for testing navigate prefetching of
      * linked {@link Dock Docks}.
@@ -1771,6 +1823,21 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
          * A label for this {@link Archive}.
          */
         public String label;
+    }
+
+    /**
+     * A non-{@link Record} field holder whose sixteen {@link Simple}-typed
+     * fields supply the distinct cyclic edges for
+     * {@link #testComputeNavigatePathsTerminatesWithManyCyclicEdges()}. It is
+     * intentionally not a {@link Record} so that {@link Record.StaticAnalysis}
+     * does not pick it up during its classpath scan.
+     */
+    class ManyCyclicEdges {
+
+        /**
+         * The sixteen self-referential edges of the synthetic cyclic graph.
+         */
+        Simple a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p;
     }
 
 }

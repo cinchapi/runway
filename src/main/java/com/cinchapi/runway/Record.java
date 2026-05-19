@@ -3469,10 +3469,12 @@ public abstract class Record implements Comparable<Record> {
          * {@code clazz}.
          * <p>
          * Paths descend through both single-{@link Record} and
-         * {@link Collection Collection&lt;Record&gt;} edges. An edge that
-         * cycles back to an already-traversed {@link Record} type yields a path
-         * bearing the {@code *} transitive modifier, which directs a single
-         * {@code navigate()} RPC to follow that edge to arbitrary depth.
+         * {@link Collection Collection&lt;Record&gt;} edges. A self-referential
+         * edge yields a single {@code *}-suffixed transitive stop, which
+         * directs one {@code navigate()} RPC to follow that edge to arbitrary
+         * depth; a path therefore carries at most one {@code *}. Cyclic edges
+         * that are not self-referential terminate as bare {@link Link} keys,
+         * leaving their targets to the loader's cleanup traversal.
          * </p>
          *
          * @param clazz
@@ -3481,26 +3483,29 @@ public abstract class Record implements Comparable<Record> {
          * @param fieldTypeArgumentsByClass
          * @return the navigate paths
          */
-        private static Set<String> computeNavigatePaths(
-                Class<? extends Record> clazz,
+        // Visible for Testing
+        static Set<String> computeNavigatePaths(Class<? extends Record> clazz,
                 Multimap<Class<? extends Record>, Class<?>> hierarchies,
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
                 Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass) {
             return computeNavigatePaths(clazz, hierarchies, fieldsByClass,
-                    fieldTypeArgumentsByClass, "", Sets.newHashSet(),
-                    Sets.newHashSet());
+                    fieldTypeArgumentsByClass, "", Sets.newHashSet(), false);
         }
 
         /**
          * Return the paths that should be used with {@code navigate()} to
          * pre-fetch destination {@link Record} data reachable from
          * {@code clazz}; all prefixed with {@code prefix} and using
-         * {@code ancestors} and {@code visitedEdges} for cycle detection.
+         * {@code ancestors} for cycle detection.
          * <p>
-         * An edge that cycles back to a {@link Record} type already in
-         * {@code ancestors} yields a {@code *}-suffixed prefix, and
-         * {@code visitedEdges} keeps the same cyclic edge from being re-emitted
-         * within a single lineage.
+         * Traversal descends every forward edge once. A self-referential edge
+         * &mdash; one whose destination hierarchy includes {@code clazz} itself
+         * &mdash; yields a single {@code *}-suffixed transitive stop under
+         * which the destination's content is re-expanded; {@code starUsed} then
+         * bars any further transitive stop on the lineage, so a path carries at
+         * most one {@code *}. A cyclic edge that is not self-referential
+         * terminates as a bare {@link Link} key for the loader's cleanup
+         * traversal to resolve.
          * </p>
          *
          * @param clazz
@@ -3509,10 +3514,8 @@ public abstract class Record implements Comparable<Record> {
          * @param fieldTypeArgumentsByClass
          * @param prefix
          * @param ancestors
-         * @param visitedEdges the cyclic {@code (sourceClass, field)} edges
-         *            already emitted in this lineage; used to prevent
-         *            re-emission of the same transitive edge under a deeper
-         *            {@code *} stop
+         * @param starUsed whether a transitive ({@code *}) stop has already
+         *            been emitted on the current lineage
          * @return the navigate paths
          */
         @SuppressWarnings("unchecked")
@@ -3522,7 +3525,7 @@ public abstract class Record implements Comparable<Record> {
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
                 Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass,
                 String prefix, Set<Class<? extends Record>> ancestors,
-                Set<TransitiveEdge> visitedEdges) {
+                boolean starUsed) {
             ancestors.add(clazz);
             Set<String> navigatePaths = new LinkedHashSet<>();
             Collection<Field> fields = fieldsByClass
@@ -3530,54 +3533,47 @@ public abstract class Record implements Comparable<Record> {
             for (Field field : fields) {
                 Class<?> type = field.getType();
                 if(Record.class.isAssignableFrom(type)) {
-                    if(!isCyclic((Class<? extends Record>) type, hierarchies,
-                            ancestors)) {
+                    Class<? extends Record> recordType = (Class<? extends Record>) type;
+                    if(!isCyclic(recordType, hierarchies, ancestors)) {
                         // Non-cyclic single-Record edge: recurse to discover
                         // Collection<Record> fields reachable through this
                         // link. The bare field name is intentionally not
                         // emitted here because computePaths handles
-                        // single-Record traversal for the select-side path set.
-                        Class<? extends Record> nested = (Class<? extends Record>) type;
-                        Collection<Class<?>> hierarchy = hierarchies
-                                .get(nested);
-                        for (Class<?> descendant : hierarchy) {
+                        // single-Record traversal for the select-side path
+                        // set.
+                        for (Class<?> descendant : hierarchies
+                                .get(recordType)) {
                             navigatePaths.addAll(computeNavigatePaths(
                                     (Class<? extends Record>) descendant,
                                     hierarchies, fieldsByClass,
                                     fieldTypeArgumentsByClass,
                                     prefix + field.getName() + ".",
-                                    new HashSet<>(ancestors),
-                                    new HashSet<>(visitedEdges)));
-                        }
-
-                    }
-                    else {
-                        // Cyclic single-Record edge: emit *-suffixed paths so a
-                        // single navigate RPC follows the link transitively.
-                        Class<? extends Record> recordType = (Class<? extends Record>) type;
-                        TransitiveEdge edge = new TransitiveEdge(clazz,
-                                field.getName());
-                        if(!visitedEdges.contains(edge)) {
-                            String fieldPrefix = prefix + field.getName()
-                                    + "*.";
-                            Set<TransitiveEdge> nextEdges = Sets
-                                    .union(visitedEdges, ImmutableSet.of(edge));
-                            Collection<Class<?>> hierarchy = hierarchies
-                                    .get(recordType);
-                            for (Class<?> descendant : hierarchy) {
-                                navigatePaths.addAll(computePaths(
-                                        (Class<? extends Record>) descendant,
-                                        hierarchies, fieldsByClass, fieldPrefix,
-                                        new HashSet<>(ancestors), true));
-                                navigatePaths.addAll(computeNavigatePaths(
-                                        (Class<? extends Record>) descendant,
-                                        hierarchies, fieldsByClass,
-                                        fieldTypeArgumentsByClass, fieldPrefix,
-                                        new HashSet<>(ancestors),
-                                        new HashSet<>(nextEdges)));
-                            }
+                                    new HashSet<>(ancestors), starUsed));
                         }
                     }
+                    else if(!starUsed
+                            && isSelfEdge(recordType, hierarchies, clazz)) {
+                        // Cyclic self-referential single-Record edge: emit one
+                        // *-suffixed transitive stop and re-expand the
+                        // destination's content beneath it.
+                        String fieldPrefix = prefix + field.getName() + "*.";
+                        for (Class<?> descendant : hierarchies
+                                .get(recordType)) {
+                            navigatePaths.addAll(computePaths(
+                                    (Class<? extends Record>) descendant,
+                                    hierarchies, fieldsByClass, fieldPrefix,
+                                    new HashSet<>(ancestors), true));
+                            navigatePaths.addAll(computeNavigatePaths(
+                                    (Class<? extends Record>) descendant,
+                                    hierarchies, fieldsByClass,
+                                    fieldTypeArgumentsByClass, fieldPrefix,
+                                    new HashSet<>(ancestors), true));
+                        }
+                    }
+                    // A cyclic edge that is not self-referential, or a
+                    // self-referential edge beyond the lineage's single
+                    // transitive stop, terminates here; the loader's cleanup
+                    // traversal resolves its target.
                 }
                 else if(Collection.class.isAssignableFrom(type)) {
                     // Collection<Record> fields must be pre-fetched via
@@ -3599,20 +3595,11 @@ public abstract class Record implements Comparable<Record> {
                         Class<? extends Record> recordType = (Class<? extends Record>) elementType;
                         boolean cyclic = isCyclic(recordType, hierarchies,
                                 ancestors);
-                        TransitiveEdge edge = cyclic
-                                ? new TransitiveEdge(clazz, field.getName())
-                                : null;
-                        if(!cyclic || !visitedEdges.contains(edge)) {
-                            String fieldPrefix = cyclic
-                                    ? prefix + field.getName() + "*."
-                                    : prefix + field.getName() + ".";
-                            Set<TransitiveEdge> nextEdges = cyclic
-                                    ? Sets.union(visitedEdges,
-                                            ImmutableSet.of(edge))
-                                    : visitedEdges;
-                            Collection<Class<?>> hierarchy = hierarchies
-                                    .get(recordType);
-                            for (Class<?> descendant : hierarchy) {
+                        if(!cyclic) {
+                            // Non-cyclic Collection<Record> edge.
+                            String fieldPrefix = prefix + field.getName() + ".";
+                            for (Class<?> descendant : hierarchies
+                                    .get(recordType)) {
                                 navigatePaths.addAll(computePaths(
                                         (Class<? extends Record>) descendant,
                                         hierarchies, fieldsByClass, fieldPrefix,
@@ -3621,10 +3608,33 @@ public abstract class Record implements Comparable<Record> {
                                         (Class<? extends Record>) descendant,
                                         hierarchies, fieldsByClass,
                                         fieldTypeArgumentsByClass, fieldPrefix,
-                                        new HashSet<>(ancestors),
-                                        new HashSet<>(nextEdges)));
+                                        new HashSet<>(ancestors), starUsed));
                             }
                         }
+                        else if(!starUsed
+                                && isSelfEdge(recordType, hierarchies, clazz)) {
+                            // Cyclic self-referential Collection<Record>
+                            // edge: emit one *-suffixed transitive stop and
+                            // re-expand the destination's content beneath it.
+                            String fieldPrefix = prefix + field.getName()
+                                    + "*.";
+                            for (Class<?> descendant : hierarchies
+                                    .get(recordType)) {
+                                navigatePaths.addAll(computePaths(
+                                        (Class<? extends Record>) descendant,
+                                        hierarchies, fieldsByClass, fieldPrefix,
+                                        new HashSet<>(ancestors), true));
+                                navigatePaths.addAll(computeNavigatePaths(
+                                        (Class<? extends Record>) descendant,
+                                        hierarchies, fieldsByClass,
+                                        fieldTypeArgumentsByClass, fieldPrefix,
+                                        new HashSet<>(ancestors), true));
+                            }
+                        }
+                        // A cyclic non-self-referential Collection<Record>
+                        // edge, or a self-referential one beyond the single
+                        // transitive stop, is left to the loader's cleanup
+                        // traversal.
                     }
                 }
             }
@@ -3865,6 +3875,28 @@ public abstract class Record implements Comparable<Record> {
                 Set<Class<? extends Record>> ancestors) {
             return hierarchies.get(recordType).stream()
                     .anyMatch(ancestors::contains);
+        }
+
+        /**
+         * Return {@code true} if an edge whose declared destination type is
+         * {@code recordType} can point back to an instance of {@code clazz}
+         * &mdash; that is, if {@code clazz} is {@code recordType} or one of its
+         * subtypes.
+         * <p>
+         * A self-referential edge is the single cyclic edge for which a
+         * transitive ({@code *}) navigate stop is emitted; every other cyclic
+         * edge terminates as a bare {@link Link} key.
+         * </p>
+         *
+         * @param recordType the declared destination {@link Record} type
+         * @param hierarchies the {@link Record} type hierarchies
+         * @param clazz the {@link Record} type on which the edge is declared
+         * @return {@code true} if the edge is self-referential
+         */
+        private static boolean isSelfEdge(Class<? extends Record> recordType,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Class<? extends Record> clazz) {
+            return hierarchies.get(recordType).contains(clazz);
         }
 
         /**
@@ -4642,60 +4674,6 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
             return false;
-        }
-
-        /**
-         * A {@link TransitiveEdge} identifies a cyclic {@link Record}-typed
-         * field by the source {@link Class} on which the field is declared and
-         * the field's name.
-         *
-         * @author Jeff Nelson
-         */
-        @Immutable
-        private static final class TransitiveEdge {
-
-            /**
-             * The {@link Class} on which the cyclic field is declared.
-             */
-            private final Class<?> source;
-
-            /**
-             * The name of the cyclic field on {@link #source}.
-             */
-            private final String field;
-
-            /**
-             * Construct a new instance.
-             *
-             * @param source the {@link Class} on which the field is declared
-             * @param field the field name
-             */
-            TransitiveEdge(Class<?> source, String field) {
-                this.source = source;
-                this.field = field;
-            }
-
-            @Override
-            public boolean equals(Object obj) {
-                if(this == obj) {
-                    return true;
-                }
-                if(!(obj instanceof TransitiveEdge)) {
-                    return false;
-                }
-                TransitiveEdge other = (TransitiveEdge) obj;
-                return source.equals(other.source) && field.equals(other.field);
-            }
-
-            @Override
-            public int hashCode() {
-                return Objects.hash(source, field);
-            }
-
-            @Override
-            public String toString() {
-                return source.getSimpleName() + "." + field;
-            }
         }
 
     }
