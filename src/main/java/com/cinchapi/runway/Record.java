@@ -98,6 +98,7 @@ import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.validation.Validator;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.common.collect.HashMultimap;
@@ -3468,13 +3469,9 @@ public abstract class Record implements Comparable<Record> {
          * pre-fetch destination {@link Record} data reachable from
          * {@code clazz}.
          * <p>
-         * Paths descend through both single-{@link Record} and
-         * {@link Collection Collection&lt;Record&gt;} edges. A self-referential
-         * edge yields a single {@code *}-suffixed transitive stop, which
-         * directs one {@code navigate()} RPC to follow that edge to arbitrary
-         * depth; a path therefore carries at most one {@code *}. Cyclic edges
-         * that are not self-referential terminate as bare {@link Link} keys,
-         * leaving their targets to the loader's cleanup traversal.
+         * A returned path carries at most one {@code *} transitive modifier,
+         * which marks an edge for {@code navigate()} to follow to arbitrary
+         * depth.
          * </p>
          *
          * @param clazz
@@ -3483,7 +3480,7 @@ public abstract class Record implements Comparable<Record> {
          * @param fieldTypeArgumentsByClass
          * @return the navigate paths
          */
-        // Visible for Testing
+        @VisibleForTesting
         static Set<String> computeNavigatePaths(Class<? extends Record> clazz,
                 Multimap<Class<? extends Record>, Class<?>> hierarchies,
                 Map<Class<? extends Record>, Map<String, Field>> fieldsByClass,
@@ -3498,14 +3495,9 @@ public abstract class Record implements Comparable<Record> {
          * {@code clazz}; all prefixed with {@code prefix} and using
          * {@code ancestors} for cycle detection.
          * <p>
-         * Traversal descends every forward edge once. A self-referential edge
-         * &mdash; one whose destination hierarchy includes {@code clazz} itself
-         * &mdash; yields a single {@code *}-suffixed transitive stop under
-         * which the destination's content is re-expanded; {@code starUsed} then
-         * bars any further transitive stop on the lineage, so a path carries at
-         * most one {@code *}. A cyclic edge that is not self-referential
-         * terminates as a bare {@link Link} key for the loader's cleanup
-         * traversal to resolve.
+         * A returned path carries at most one {@code *} transitive modifier,
+         * which marks an edge for {@code navigate()} to follow to arbitrary
+         * depth.
          * </p>
          *
          * @param clazz
@@ -3596,7 +3588,6 @@ public abstract class Record implements Comparable<Record> {
                         boolean cyclic = isCyclic(recordType, hierarchies,
                                 ancestors);
                         if(!cyclic) {
-                            // Non-cyclic Collection<Record> edge.
                             String fieldPrefix = prefix + field.getName() + ".";
                             for (Class<?> descendant : hierarchies
                                     .get(recordType)) {
@@ -3878,28 +3869,6 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
-         * Return {@code true} if an edge whose declared destination type is
-         * {@code recordType} can point back to an instance of {@code clazz}
-         * &mdash; that is, if {@code clazz} is {@code recordType} or one of its
-         * subtypes.
-         * <p>
-         * A self-referential edge is the single cyclic edge for which a
-         * transitive ({@code *}) navigate stop is emitted; every other cyclic
-         * edge terminates as a bare {@link Link} key.
-         * </p>
-         *
-         * @param recordType the declared destination {@link Record} type
-         * @param hierarchies the {@link Record} type hierarchies
-         * @param clazz the {@link Record} type on which the edge is declared
-         * @return {@code true} if the edge is self-referential
-         */
-        private static boolean isSelfEdge(Class<? extends Record> recordType,
-                Multimap<Class<? extends Record>, Class<?>> hierarchies,
-                Class<? extends Record> clazz) {
-            return hierarchies.get(recordType).contains(clazz);
-        }
-
-        /**
          * Return {@code true} if the current JVM is Java 9 or higher.
          *
          * @return {@code true} if running on Java 9 or higher
@@ -3924,6 +3893,23 @@ public abstract class Record implements Comparable<Record> {
             // Java 9 and later: "9", "10", "11", "17", "21", etc.
             // If it doesn't start with "1.", it's Java 9+
             return !version.startsWith("1.");
+        }
+
+        /**
+         * Return {@code true} if an edge whose declared destination type is
+         * {@code recordType} can point back to an instance of {@code clazz}
+         * &mdash; that is, if {@code clazz} is {@code recordType} or one of its
+         * subtypes.
+         *
+         * @param recordType the declared destination {@link Record} type
+         * @param hierarchies the {@link Record} type hierarchies
+         * @param clazz the {@link Record} type on which the edge is declared
+         * @return {@code true} if the edge is self-referential
+         */
+        private static boolean isSelfEdge(Class<? extends Record> recordType,
+                Multimap<Class<? extends Record>, Class<?>> hierarchies,
+                Class<? extends Record> clazz) {
+            return hierarchies.get(recordType).contains(clazz);
         }
 
         /**
