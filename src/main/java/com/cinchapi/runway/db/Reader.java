@@ -197,43 +197,36 @@ public interface Reader extends AutoCloseable {
             long record);
 
     /**
+     * Record a navigate that traverses the {@code keys} starting from every
+     * record matching the {@code criteria}.
+     *
+     * @param keys the link traversal paths
+     * @param criteria the {@link Criteria} that identifies the starting records
+     * @return a {@link Pending} of the navigation result keyed by destination
+     *         record id
+     */
+    Pending<Map<Long, Map<String, Set<Object>>>> navigate(Set<String> keys,
+            Criteria criteria);
+
+    /**
+     * Record a navigate that traverses the {@code keys} starting from each of
+     * the {@code records}.
+     *
+     * @param keys the link traversal paths
+     * @param records the starting record ids
+     * @return a {@link Pending} of the navigation result keyed by destination
+     *         record id
+     */
+    Pending<Map<Long, Map<String, Set<Object>>>> navigate(Set<String> keys,
+            Collection<Long> records);
+
+    /**
      * Record a find for the ids of every record matching the {@code criteria}.
      *
      * @param criteria the {@link Criteria} that identifies the records
      * @return a {@link Pending} of the matching record ids
      */
     Pending<Set<Long>> find(Criteria criteria);
-
-    /**
-     * Record a find for the ids of every record matching the {@code criteria},
-     * sorted by {@code order}.
-     *
-     * @param criteria the {@link Criteria} that identifies the records
-     * @param order the {@link Order} that determines the sort
-     * @return a {@link Pending} of the matching record ids
-     */
-    Pending<Set<Long>> find(Criteria criteria, Order order);
-
-    /**
-     * Record a find for the ids of every record matching the {@code criteria},
-     * limited to the requested {@code page}.
-     *
-     * @param criteria the {@link Criteria} that identifies the records
-     * @param page the {@link Page} that limits the result set
-     * @return a {@link Pending} of the matching record ids
-     */
-    Pending<Set<Long>> find(Criteria criteria, Page page);
-
-    /**
-     * Record a find for the ids of every record matching the {@code criteria},
-     * sorted by {@code order} and limited to the requested {@code page}.
-     *
-     * @param criteria the {@link Criteria} that identifies the records
-     * @param order the {@link Order} that determines the sort
-     * @param page the {@link Page} that limits the result set
-     * @return a {@link Pending} of the matching record ids
-     */
-    Pending<Set<Long>> find(Criteria criteria, Order order, Page page);
 
     /**
      * Record a count of the values stored under {@code key} in every record
