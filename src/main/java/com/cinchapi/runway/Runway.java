@@ -1440,15 +1440,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         Read read = enqueueRead(sharedReader, any, clazz,
                                 criteria, order, $page);
                         AtomicReference<Set<T>> records = new AtomicReference<>();
-                        read.data
-                                .then($data -> read.navigated
-                                        .then($navigated -> resolveLinkTargets(
-                                                sharedReader, $data,
-                                                $navigated))
-                                        .then($targets -> read.time
-                                                .map($ts -> instantiateAll($ts,
-                                                        clazz, any, $data,
-                                                        $targets))))
+                        read.data.then($data -> read.navigated
+                                .then($navigated -> resolveLinkTargets(
+                                        sharedReader, $data, $navigated))
+                                .then($targets -> read.time
+                                        .map($ts -> instantiateAll($ts, clazz,
+                                                any, $data, $targets))))
                                 .onResolve(records::set);
                         sharedReader.drain();
                         return records.get();
@@ -1463,9 +1460,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
-                        .then($targets -> read.time.map($ts -> finalizeSet($ts,
-                                clazz, any, $data, $targets, hasFilter,
-                                filter))));
+                        .then($targets -> read.time
+                                .map($ts -> finalizeSet($ts, clazz, any, $data,
+                                        $targets, hasFilter, filter))));
             }
         }
         else {
@@ -1612,9 +1609,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
-                        .then($targets -> read.time.map($ts -> finalizeSet($ts,
-                                clazz, any, $data, $targets, hasFilter,
-                                filter))));
+                        .then($targets -> read.time
+                                .map($ts -> finalizeSet($ts, clazz, any, $data,
+                                        $targets, hasFilter, filter))));
             }
             else {
                 Set<T> records = any
@@ -1805,8 +1802,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     .then($navigated -> resolveLinkTargets(reader,
                             ImmutableMap.of(id, $data), $navigated));
             return targets.then($targets -> time.map($ts -> {
-                T record = instantiate($ts, resolvedClazz, id, $data,
-                        $targets);
+                T record = instantiate($ts, resolvedClazz, id, $data, $targets);
                 if(record != null && hasFilter) {
                     return new SelectResult<>(
                             filter.test(record) ? record : null, record);
