@@ -123,9 +123,9 @@ build counter and a branch-derived suffix:
 | Branch pattern   | Version produced         |
 |------------------|--------------------------|
 | `master`         | `1.0.0.42`               |
-| `release/*`      | `1.0.0.42`               |
+| `release/*`      | `1.0.0.42-rc`            |
 | `develop`        | `1.0.0.42-SNAPSHOT`      |
-| `feature/foo`    | `1.0.0.42-FOO`           |
+| `feature/foo`    | `1.0.0.42-FEATURE-FOO`   |
 
 To set a new base version:
 
