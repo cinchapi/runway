@@ -158,19 +158,6 @@ public interface Saver {
             Consumer<Map<Long, Set<Object>>> consumer);
 
     /**
-     * Record a read of the database server's time as of this save's commit
-     * and arrange to deliver it to {@code consumer}.
-     * <p>
-     * The {@code consumer} runs after a successful {@link #commit()} and does
-     * not run if the commit fails.
-     * </p>
-     *
-     * @param consumer a {@link Consumer} that receives the post-commit server
-     *            time, in microseconds
-     */
-    void time(Consumer<Long> consumer);
-
-    /**
      * Record a {@link Concourse#set(String, Object, long) set} of {@code value}
      * for {@code key} in {@code record}.
      *

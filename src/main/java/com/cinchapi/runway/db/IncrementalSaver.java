@@ -50,12 +50,6 @@ public final class IncrementalSaver implements Saver {
     private final Concourse concourse;
 
     /**
-     * The {@link Consumer} to deliver the post-commit server time to, or
-     * {@code null} when no {@link #time(Consumer) time} read was recorded.
-     */
-    private Consumer<Long> timeConsumer;
-
-    /**
      * Construct a new {@link IncrementalSaver} backed by {@code concourse}.
      *
      * @param concourse the {@link Concourse} connection that every recording
@@ -72,11 +66,7 @@ public final class IncrementalSaver implements Saver {
 
     @Override
     public boolean commit() {
-        boolean committed = concourse.commit();
-        if(committed && timeConsumer != null) {
-            timeConsumer.accept(concourse.time().getMicros());
-        }
-        return committed;
+        return concourse.commit();
     }
 
     @Override
@@ -99,11 +89,6 @@ public final class IncrementalSaver implements Saver {
     public void select(String key, Criteria criteria,
             Consumer<Map<Long, Set<Object>>> consumer) {
         consumer.accept(concourse.select(key, criteria));
-    }
-
-    @Override
-    public void time(Consumer<Long> consumer) {
-        this.timeConsumer = consumer;
     }
 
     @Override
