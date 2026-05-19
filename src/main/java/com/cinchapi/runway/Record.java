@@ -46,6 +46,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -170,6 +171,44 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return true;
+    }
+
+    /**
+     * The server timestamp, in microseconds, as of which the {@link Record}
+     * being loaded on the current thread reflects the database, or {@code null}
+     * when no load is in progress on this thread.
+     */
+    private static final ThreadLocal<Long> LOAD_CHECKPOINT = new ThreadLocal<>();
+
+    /**
+     * Run {@code load} with {@code checkpoint} established as the load
+     * checkpoint for every {@link Record} materialized on the current thread
+     * while it runs.
+     * <p>
+     * Re-entrant: a nested call inherits the checkpoint already in scope rather
+     * than replacing it, so an entire load &mdash; a {@link Record} and every
+     * {@link Record} linked from it &mdash; shares one checkpoint.
+     * {@code checkpoint} is evaluated only when this call establishes the
+     * scope, never when it inherits one.
+     *
+     * @param checkpoint supplies the server timestamp, in microseconds, as of
+     *            which the load reflects the database
+     * @param load the load to run
+     * @return the result of {@code load}
+     */
+    static <T> T withLoadCheckpoint(LongSupplier checkpoint, Supplier<T> load) {
+        if(LOAD_CHECKPOINT.get() != null) {
+            return load.get();
+        }
+        else {
+            LOAD_CHECKPOINT.set(checkpoint.getAsLong());
+            try {
+                return load.get();
+            }
+            finally {
+                LOAD_CHECKPOINT.remove();
+            }
+        }
     }
 
     /**
@@ -2182,7 +2221,9 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         __checksum = checksum();
-        checkpoint(concourse.time().getMicros());
+        Long loadCheckpoint = LOAD_CHECKPOINT.get();
+        checkpoint(loadCheckpoint != null ? loadCheckpoint
+                : concourse.time().getMicros());
     }
 
     /**

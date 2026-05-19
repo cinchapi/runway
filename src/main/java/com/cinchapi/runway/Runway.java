@@ -322,26 +322,45 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             ConnectionPool connections, Runway runway,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
-        try {
-            return Record.load(clazz, id, loaded, connections, runway, data,
-                    targets);
-        }
-        catch (Exception e) {
-            if(e instanceof InvalidRecordException) {
-                // For consistency with Audience framework, return "null" for
-                // invalid records so that they are indistinguishable from valid
-                // Records that are not visible to an Audience.
-                return null;
+        return Record.withLoadCheckpoint(() -> serverTime(connections), () -> {
+            try {
+                return Record.load(clazz, id, loaded, connections, runway, data,
+                        targets);
             }
-            else {
-                if(e instanceof ConstraintViolationException) {
-                    // Backwards compatibility for when constraint violations
-                    // were noted via an IllegalStateException.
-                    e = new IllegalStateException(e.getMessage());
+            catch (Exception e) {
+                if(e instanceof InvalidRecordException) {
+                    // For consistency with Audience framework, return
+                    // "null" for invalid records so that they are
+                    // indistinguishable from valid Records that are not
+                    // visible to an Audience.
+                    return null;
                 }
-                runway.onLoadFailureHandler.accept(clazz, id, e);
-                throw CheckedExceptions.throwAsRuntimeException(e);
+                else {
+                    if(e instanceof ConstraintViolationException) {
+                        // Backwards compatibility for when constraint
+                        // violations were noted via an IllegalStateException.
+                        e = new IllegalStateException(e.getMessage());
+                    }
+                    runway.onLoadFailureHandler.accept(clazz, id, e);
+                    throw CheckedExceptions.throwAsRuntimeException(e);
+                }
             }
+        });
+    }
+
+    /**
+     * Return the database server's current time, in microseconds.
+     *
+     * @param connections the {@link ConnectionPool} to borrow a connection from
+     * @return the server timestamp in microseconds
+     */
+    private static long serverTime(ConnectionPool connections) {
+        Concourse concourse = connections.request();
+        try {
+            return concourse.time().getMicros();
+        }
+        finally {
+            connections.release(concourse);
         }
     }
 
@@ -2313,9 +2332,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
+        long checkpoint = serverTime(connections);
         return LazyTransformSet.of(data.entrySet(),
-                entry -> loadWithErrorHandling(clazz, entry.getKey(), loaded,
-                        connections, this, entry.getValue(), targets));
+                entry -> Record.withLoadCheckpoint(() -> checkpoint,
+                        () -> loadWithErrorHandling(clazz, entry.getKey(),
+                                loaded, connections, this, entry.getValue(),
+                                targets)));
     }
 
     /**
@@ -2331,9 +2353,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
+        long checkpoint = serverTime(connections);
         return LazyTransformSet.of(data.entrySet(),
-                entry -> instantiate(entry.getKey(), loaded, entry.getValue(),
-                        targets));
+                entry -> Record.withLoadCheckpoint(() -> checkpoint,
+                        () -> instantiate(entry.getKey(), loaded,
+                                entry.getValue(), targets)));
     }
 
     /**
