@@ -959,7 +959,6 @@ public abstract class Record implements Comparable<Record> {
             this.connections = PINNED_RUNWAY_INSTANCE.connections;
             this.runway = PINNED_RUNWAY_INSTANCE;
         }
-        checkpoint();
     }
 
     /**
@@ -1952,10 +1951,20 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Mark this {@link Record} as synchronized with the database.
+     * Mark this {@link Record} as synchronized with the database as of
+     * {@code checkpointTs}.
+     * <p>
+     * {@code checkpointTs} must be a server-assigned timestamp &mdash; for
+     * example, from {@link Concourse#time()} &mdash; so that it is directly
+     * comparable to the server-side revision timestamps that stale-data
+     * detection inspects; a client-side timestamp cannot be reliably ordered
+     * against them.
+     *
+     * @param checkpointTs the server timestamp, in microseconds, as of which
+     *            this {@link Record} reflects the database
      */
-    final void checkpoint() {
-        checkpointTs = Time.now();
+    final void checkpoint(long checkpointTs) {
+        this.checkpointTs = checkpointTs;
     }
 
     /**
@@ -2178,7 +2187,7 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         __checksum = checksum();
-        checkpoint();
+        checkpoint(concourse.time().getMicros());
     }
 
     /**
