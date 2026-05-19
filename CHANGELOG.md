@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 2.0.0 (TBD)
+#### Version 2.0.0 (May 19, 2026)
 
 ##### Command API
 This release adopts the Concourse Command API (`prepare()`/`submit()`), introduced in Concourse 1.0.0, to batch Runway's hottest read and write paths into the fewest possible server round trips. When the connected server is older than 1.0.0, Runway transparently falls back to the legacy per-call path.
@@ -22,6 +22,9 @@ Every `load`, `find`, and `findAny` operation now resolves linked `Record` data 
 * Removed the `ReadStrategy` enum and the `Runway.Builder.readStrategy(...)`, `Runway.Builder.streamingReadBufferSize(...)`, and `Runway.Builder.recordsPerSelectBufferSize(...)` configuration. Every read now fetches the matching records in bulk. The former streaming read strategy deferred each record's read until it was consumed, but with linked-`Record` pre-fetching now unconditional it produced the same fully-loaded `Record` graph as a bulk read, so it offered no behavior worth configuring. Callers that set a `ReadStrategy` or buffer size must remove those calls.
 * A `@Unique` constraint violation detected during `Runway.save()` now surfaces as a `Record.ConstraintViolationException` (a subtype of `RunwayException`) rather than a `java.lang.IllegalStateException`. The violation still makes `save()` return `false` with the exception recorded on the offending `Record`, but callers that catch or type-check `IllegalStateException` to detect uniqueness failures must switch to catching `RunwayException`. The change affects every connected server version &mdash; both the new bulk-command save path and the legacy per-call path. ([GH-104](https://github.com/cinchapi/runway/issues/104))
 * Removed the `CollectionPreSelectStrategy` enum and the `Runway.Builder.collectionPreSelectStrategy(...)`, `Runway.Builder.disablePreSelectLinkedRecords()`, and `Runway.Properties.collectionPreSelectStrategy()` configuration. Pre-fetching linked `Record` data is now unconditional &mdash; every load resolves linked records through the navigate-based path described above. The former `BULK_SELECT` and `NONE` strategies produced the same fully-loaded `Record` graph as `NAVIGATE`, only with more database round trips, so they offered no behavioral choice worth configuring. Callers that selected a strategy or called `disablePreSelectLinkedRecords()` must remove those calls; to make an individual linked field load only when accessed, wrap it in a `DeferredReference`.
+
+##### Dependencies
+* Upgraded the `concourse-driver-java` dependency to `1.0.1`, a major-version upgrade from the `0.12.x` line. Applications that pin a transitive Concourse version must update it to match.
 
 #### Version 1.14.6 (May 1, 2026)
 * Fixed a bug where loading a `Record` graph that contained a nested `Record` with a dangling `Link` (one whose target had been cleared) inside a `Collection<Record>` field would throw `InvalidArgumentException`, making the graph unloadable until the dangling `Link` was removed manually. ([GH-94](https://github.com/cinchapi/runway/issues/94))
