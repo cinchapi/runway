@@ -315,19 +315,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            references
      * @param connections
      * @param runway
-     * @param checkpoint the server timestamp, in microseconds, to checkpoint
-     *            the loaded {@link Record} at
      * @param data
      * @return the loaded {@link Record} instance
      */
     private static <T extends Record> T loadWithErrorHandling(Class<T> clazz,
             long id, ConcurrentMap<Long, Record> loaded,
-            ConnectionPool connections, Runway runway, long checkpoint,
+            ConnectionPool connections, Runway runway,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         try {
-            return Record.load(clazz, id, loaded, connections, runway,
-                    checkpoint, data, targets);
+            return Record.load(clazz, id, loaded, connections, runway, data,
+                    targets);
         }
         catch (Exception e) {
             if(e instanceof InvalidRecordException) {
@@ -2254,8 +2252,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> T instantiate(long checkpoint, Class<T> clazz,
             long id, @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
-        return loadWithErrorHandling(clazz, id, new ConcurrentHashMap<>(),
-                connections, this, checkpoint, data, targets);
+        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
+        T record = loadWithErrorHandling(clazz, id, loaded, connections, this,
+                data, targets);
+        loaded.values().forEach(r -> r.checkpoint(checkpoint));
+        return record;
     }
 
     /**
@@ -2276,7 +2277,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param data
      * @return the loaded {@link Record} instance
      */
-    private <T extends Record> T instantiate(long checkpoint, long id,
+    private <T extends Record> T instantiate(long id,
             ConcurrentMap<Long, Record> loaded,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
@@ -2294,8 +2295,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         String section = (String) Iterables
                 .getLast(data.get(Record.SECTION_KEY));
         Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, loaded, connections, this,
-                checkpoint, data, targets);
+        return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
+                targets);
     }
 
     /**
@@ -2318,8 +2319,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private <T extends Record> T instantiate(long checkpoint, long id,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
-        return instantiate(checkpoint, id, new ConcurrentHashMap<>(), data,
-                targets);
+        ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
+        T record = instantiate(id, loaded, data, targets);
+        loaded.values().forEach(r -> r.checkpoint(checkpoint));
+        return record;
     }
 
     /**
@@ -2360,10 +2363,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Class<T> clazz, Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        return LazyTransformSet.of(data.entrySet(),
-                entry -> loadWithErrorHandling(clazz, entry.getKey(), loaded,
-                        connections, this, checkpoint, entry.getValue(),
-                        targets));
+        Set<Long> stamped = ConcurrentHashMap.newKeySet();
+        return LazyTransformSet.of(data.entrySet(), entry -> {
+            T record = loadWithErrorHandling(clazz, entry.getKey(), loaded,
+                    connections, this, entry.getValue(), targets);
+            loaded.forEach((id, r) -> {
+                if(stamped.add(id)) {
+                    r.checkpoint(checkpoint);
+                }
+            });
+            return record;
+        });
     }
 
     /**
@@ -2381,9 +2391,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        return LazyTransformSet.of(data.entrySet(),
-                entry -> instantiate(checkpoint, entry.getKey(), loaded,
-                        entry.getValue(), targets));
+        Set<Long> stamped = ConcurrentHashMap.newKeySet();
+        return LazyTransformSet.of(data.entrySet(), entry -> {
+            T record = instantiate(entry.getKey(), loaded, entry.getValue(),
+                    targets);
+            loaded.forEach((id, r) -> {
+                if(stamped.add(id)) {
+                    r.checkpoint(checkpoint);
+                }
+            });
+            return record;
+        });
     }
 
     /**

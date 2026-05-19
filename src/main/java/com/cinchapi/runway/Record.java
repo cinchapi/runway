@@ -180,19 +180,16 @@ public abstract class Record implements Comparable<Record> {
      * @param id
      * @param existing
      * @param connections
-     * @param checkpoint the server timestamp, in microseconds, to checkpoint
-     *            the loaded {@link Record} at
      * @return the loaded Record
      */
     protected static <T extends Record> T load(Class<?> clazz, long id,
             ConcurrentMap<Long, Record> existing, ConnectionPool connections,
-            Runway runway, long checkpoint,
-            @Nullable Map<String, Set<Object>> data,
+            Runway runway, @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Concourse concourse = connections.request();
         try {
             return load(clazz, id, existing, connections, concourse, runway,
-                    checkpoint, data, null, targets);
+                    data, null, targets);
         }
         finally {
             connections.release(concourse);
@@ -460,8 +457,6 @@ public abstract class Record implements Comparable<Record> {
      * @param connections the {@link ConnectionPool} to use
      * @param concourse the active {@link Concourse} connection
      * @param runway the owning {@link Runway} instance
-     * @param checkpoint the server timestamp, in microseconds, to checkpoint
-     *            the loaded {@link Record} at
      * @param data pre-loaded data for this record, or {@code null} to fetch
      *            from the database
      * @param prefix a key prefix for navigation-style nested keys, or
@@ -474,7 +469,7 @@ public abstract class Record implements Comparable<Record> {
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
             ConcurrentMap<Long, Record> existing, ConnectionPool connections,
-            Concourse concourse, Runway runway, long checkpoint,
+            Concourse concourse, Runway runway,
             @Nullable Map<String, Set<Object>> data, String prefix,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         T record = (T) newDefaultInstance(clazz, connections);
@@ -482,7 +477,6 @@ public abstract class Record implements Comparable<Record> {
         setInternalFieldValue("waitingToBeDeleted", new LinkedHashSet<>(),
                 record);
         record.assign(runway);
-        record.checkpoint(checkpoint);
         record.load(concourse, existing, data, prefix, targets);
         record.onLoad();
         return record;
@@ -2159,8 +2153,8 @@ public abstract class Record implements Comparable<Record> {
                                 value = existing.get(id);
                                 value = value == null
                                         ? load(type, id, existing, connections,
-                                                concourse, runway, checkpointTs,
-                                                data, prepend, targets)
+                                                concourse, runway, data,
+                                                prepend, targets)
                                         : value;
                             }
                         }
@@ -2664,8 +2658,8 @@ public abstract class Record implements Comparable<Record> {
                         Class<? extends Record> targetClass = Reflection
                                 .getClassCasted(section);
                         converted = load(targetClass, target, alreadyLoaded,
-                                connections, concourse, runway, checkpointTs,
-                                data, null, targets);
+                                connections, concourse, runway, data, null,
+                                targets);
                     }
                 }
             }
