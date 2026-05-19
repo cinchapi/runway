@@ -158,6 +158,13 @@ public interface Saver {
             Consumer<Map<Long, Set<Object>>> consumer);
 
     /**
+     * Return the database server's current time, in microseconds.
+     *
+     * @return the server time, in microseconds
+     */
+    long time();
+
+    /**
      * Record a {@link Concourse#set(String, Object, long) set} of {@code value}
      * for {@code key} in {@code record}.
      *

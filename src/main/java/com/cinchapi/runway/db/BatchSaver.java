@@ -171,6 +171,11 @@ public final class BatchSaver implements Saver {
     }
 
     @Override
+    public long time() {
+        return concourse.time().getMicros();
+    }
+
+    @Override
     public void set(String key, Object value, long record) {
         deferredWriteOps.add(group -> group.set(key, value, record));
     }

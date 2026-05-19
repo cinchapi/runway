@@ -92,6 +92,11 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
+    public long time() {
+        return concourse.time().getMicros();
+    }
+
+    @Override
     public void set(String key, Object value, long record) {
         concourse.set(key, value, record);
     }
