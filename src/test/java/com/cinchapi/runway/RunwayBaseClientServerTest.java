@@ -66,11 +66,8 @@ public abstract class RunwayBaseClientServerTest extends ClientServerTest {
      * Return a {@link Runway.Builder} bound to the test {@link #server} and the
      * current test's {@link #environment}.
      * <p>
-     * Tests must construct every {@link Runway} from this builder. Under
-     * {@link #reuseServerAcrossTests() shared-server mode} each test is
-     * isolated on its own {@link #environment}, so a {@link Runway} built
-     * directly from {@link Runway#builder()} would target the shared default
-     * environment and leak data across sibling tests.
+     * Tests must build every {@link Runway} from this method so that each
+     * connects to the per-test {@link #environment}.
      *
      * @return a {@link Runway.Builder} for this test's {@link #server} and
      *         {@link #environment}
