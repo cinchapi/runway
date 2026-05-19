@@ -67,18 +67,6 @@ public final class BatchReader extends AbstractReader {
     private Batch current;
 
     /**
-     * Construct a {@link BatchReader} that borrows a {@link Concourse}
-     * connection from {@code pool} and returns it to {@code pool} on
-     * {@link #close()}.
-     *
-     * @param pool the {@link ConnectionPool} that owns the {@link Concourse}
-     *            connection; must not be {@code null}
-     */
-    public BatchReader(ConnectionPool pool) {
-        super(pool);
-    }
-
-    /**
      * Construct a {@link BatchReader} that submits against {@code connection}.
      * The caller retains ownership of the connection lifecycle;
      * {@link #close()} does <strong>not</strong> close it.
@@ -90,75 +78,68 @@ public final class BatchReader extends AbstractReader {
         super(connection);
     }
 
+    /**
+     * Construct a {@link BatchReader} that borrows a {@link Concourse}
+     * connection from {@code pool} and returns it to {@code pool} on
+     * {@link #close()}.
+     *
+     * @param pool the {@link ConnectionPool} that owns the {@link Concourse}
+     *            connection; must not be {@code null}
+     */
+    public BatchReader(ConnectionPool pool) {
+        super(pool);
+    }
+
     @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(
-            Criteria criteria) {
+    public Pending<Long> count(String key, Criteria criteria) {
         Batch batch = batch();
         int slot = batch.size();
-        batch.group.select(criteria);
+        batch.group.count(key, criteria);
+        return Pending.deferred(this,
+                () -> ((Number) batch.flush(concourse()).get(slot))
+                        .longValue());
+    }
+
+    @Override
+    public Pending<Set<Long>> find(Criteria criteria) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.find(criteria);
+        return Pending.deferred(this, () -> ids(batch, slot));
+    }
+
+    @Override
+    public Pending<Object> get(String key, long record) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.get(key, record);
+        return Pending.deferred(this, () -> batch.flush(concourse()).get(slot));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, Collection<Long> records) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.navigate(ImmutableList.copyOf(keys), records);
         return Pending.deferred(this, () -> mapByRecord(batch, slot));
     }
 
     @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
-            Criteria criteria) {
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, Criteria criteria) {
         Batch batch = batch();
         int slot = batch.size();
-        batch.group.select(ImmutableList.copyOf(keys), criteria);
+        batch.group.navigate(ImmutableList.copyOf(keys), criteria);
         return Pending.deferred(this, () -> mapByRecord(batch, slot));
     }
 
     @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(
-            Criteria criteria, Order order) {
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, long record) {
         Batch batch = batch();
         int slot = batch.size();
-        batch.group.select(criteria, order);
-        return Pending.deferred(this, () -> mapByRecord(batch, slot));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
-            Criteria criteria, Order order) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.select(ImmutableList.copyOf(keys), criteria, order);
-        return Pending.deferred(this, () -> mapByRecord(batch, slot));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(
-            Criteria criteria, Page page) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.select(criteria, page);
-        return Pending.deferred(this, () -> mapByRecord(batch, slot));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
-            Criteria criteria, Page page) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.select(ImmutableList.copyOf(keys), criteria, page);
-        return Pending.deferred(this, () -> mapByRecord(batch, slot));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(
-            Criteria criteria, Order order, Page page) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.select(criteria, order, page);
-        return Pending.deferred(this, () -> mapByRecord(batch, slot));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
-            Criteria criteria, Order order, Page page) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.select(ImmutableList.copyOf(keys), criteria, order, page);
+        batch.group.navigate(ImmutableList.copyOf(keys), record);
         return Pending.deferred(this, () -> mapByRecord(batch, slot));
     }
 
@@ -184,11 +165,83 @@ public final class BatchReader extends AbstractReader {
     }
 
     @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.select(criteria);
+        return Pending.deferred(this, () -> mapByRecord(batch, slot));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria, Order order) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.select(criteria, order);
+        return Pending.deferred(this, () -> mapByRecord(batch, slot));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria, Order order, Page page) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.select(criteria, order, page);
+        return Pending.deferred(this, () -> mapByRecord(batch, slot));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria, Page page) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.select(criteria, page);
+        return Pending.deferred(this, () -> mapByRecord(batch, slot));
+    }
+
+    @Override
     public Pending<Map<String, Set<Object>>> select(long record) {
         Batch batch = batch();
         int slot = batch.size();
         batch.group.select(record);
         return Pending.deferred(this, () -> recordData(batch, slot));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.select(ImmutableList.copyOf(keys), criteria);
+        return Pending.deferred(this, () -> mapByRecord(batch, slot));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Order order) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.select(ImmutableList.copyOf(keys), criteria, order);
+        return Pending.deferred(this, () -> mapByRecord(batch, slot));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Order order, Page page) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.select(ImmutableList.copyOf(keys), criteria, order, page);
+        return Pending.deferred(this, () -> mapByRecord(batch, slot));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Page page) {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.select(ImmutableList.copyOf(keys), criteria, page);
+        return Pending.deferred(this, () -> mapByRecord(batch, slot));
     }
 
     @Override
@@ -209,66 +262,12 @@ public final class BatchReader extends AbstractReader {
     }
 
     @Override
-    public Pending<Object> get(String key, long record) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.get(key, record);
-        return Pending.deferred(this, () -> batch.flush(concourse()).get(slot));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
-            Set<String> keys, long record) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.navigate(ImmutableList.copyOf(keys), record);
-        return Pending.deferred(this, () -> mapByRecord(batch, slot));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
-            Set<String> keys, Criteria criteria) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.navigate(ImmutableList.copyOf(keys), criteria);
-        return Pending.deferred(this, () -> mapByRecord(batch, slot));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
-            Set<String> keys, Collection<Long> records) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.navigate(ImmutableList.copyOf(keys), records);
-        return Pending.deferred(this, () -> mapByRecord(batch, slot));
-    }
-
-    @Override
-    public Pending<Set<Long>> find(Criteria criteria) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.find(criteria);
-        return Pending.deferred(this, () -> ids(batch, slot));
-    }
-
-    @Override
-    public Pending<Long> count(String key, Criteria criteria) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.count(key, criteria);
-        return Pending.deferred(this,
-                () -> ((Number) batch.flush(concourse()).get(slot))
-                        .longValue());
-    }
-
-    @Override
-    public Pending<Long> time() {
+    public Pending<Timestamp> time() {
         Batch batch = batch();
         int slot = batch.size();
         batch.group.time();
         return Pending.deferred(this,
-                () -> ((Timestamp) batch.flush(concourse()).get(slot))
-                        .getMicros());
+                () -> ((Timestamp) batch.flush(concourse()).get(slot)));
     }
 
     @Override

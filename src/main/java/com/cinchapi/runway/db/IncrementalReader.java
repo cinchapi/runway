@@ -23,6 +23,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
+import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -37,18 +38,6 @@ import com.cinchapi.concourse.lang.sort.Order;
 public class IncrementalReader extends AbstractReader {
 
     /**
-     * Construct an {@link IncrementalReader} that borrows a {@link Concourse}
-     * connection from {@code pool} and returns it to {@code pool} on
-     * {@link #close()}.
-     *
-     * @param pool the {@link ConnectionPool} that owns the {@link Concourse}
-     *            connection; must not be {@code null}
-     */
-    public IncrementalReader(ConnectionPool pool) {
-        super(pool);
-    }
-
-    /**
      * Construct an {@link IncrementalReader} that issues against
      * {@code connection}. The caller retains ownership of the connection
      * lifecycle; {@link #close()} does <strong>not</strong> close it.
@@ -60,52 +49,49 @@ public class IncrementalReader extends AbstractReader {
         super(connection);
     }
 
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(
-            Criteria criteria) {
-        return Pending.of(concourse().select(criteria));
+    /**
+     * Construct an {@link IncrementalReader} that borrows a {@link Concourse}
+     * connection from {@code pool} and returns it to {@code pool} on
+     * {@link #close()}.
+     *
+     * @param pool the {@link ConnectionPool} that owns the {@link Concourse}
+     *            connection; must not be {@code null}
+     */
+    public IncrementalReader(ConnectionPool pool) {
+        super(pool);
     }
 
     @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
-            Criteria criteria) {
-        return Pending.of(concourse().select(keys, criteria));
+    public Pending<Long> count(String key, Criteria criteria) {
+        return Pending.of(concourse().calculate().count(key, criteria));
     }
 
     @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(
-            Criteria criteria, Order order) {
-        return Pending.of(concourse().select(criteria, order));
+    public Pending<Set<Long>> find(Criteria criteria) {
+        return Pending.of(concourse().find(criteria));
     }
 
     @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
-            Criteria criteria, Order order) {
-        return Pending.of(concourse().select(keys, criteria, order));
+    public Pending<Object> get(String key, long record) {
+        return Pending.of(concourse().get(key, record));
     }
 
     @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(
-            Criteria criteria, Page page) {
-        return Pending.of(concourse().select(criteria, page));
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, Collection<Long> records) {
+        return Pending.of(concourse().navigate(keys, records));
     }
 
     @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
-            Criteria criteria, Page page) {
-        return Pending.of(concourse().select(keys, criteria, page));
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, Criteria criteria) {
+        return Pending.of(concourse().navigate(keys, criteria));
     }
 
     @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(
-            Criteria criteria, Order order, Page page) {
-        return Pending.of(concourse().select(criteria, order, page));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
-            Criteria criteria, Order order, Page page) {
-        return Pending.of(concourse().select(keys, criteria, order, page));
+    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
+            Set<String> keys, long record) {
+        return Pending.of(concourse().navigate(keys, record));
     }
 
     @Override
@@ -115,8 +101,56 @@ public class IncrementalReader extends AbstractReader {
     }
 
     @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria) {
+        return Pending.of(concourse().select(criteria));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria, Order order) {
+        return Pending.of(concourse().select(criteria, order));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria, Order order, Page page) {
+        return Pending.of(concourse().select(criteria, order, page));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(
+            Criteria criteria, Page page) {
+        return Pending.of(concourse().select(criteria, page));
+    }
+
+    @Override
     public Pending<Map<String, Set<Object>>> select(long record) {
         return Pending.of(concourse().select(record));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria) {
+        return Pending.of(concourse().select(keys, criteria));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Order order) {
+        return Pending.of(concourse().select(keys, criteria, order));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Order order, Page page) {
+        return Pending.of(concourse().select(keys, criteria, order, page));
+    }
+
+    @Override
+    public Pending<Map<Long, Map<String, Set<Object>>>> select(Set<String> keys,
+            Criteria criteria, Page page) {
+        return Pending.of(concourse().select(keys, criteria, page));
     }
 
     @Override
@@ -131,41 +165,8 @@ public class IncrementalReader extends AbstractReader {
     }
 
     @Override
-    public Pending<Object> get(String key, long record) {
-        return Pending.of(concourse().get(key, record));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
-            Set<String> keys, long record) {
-        return Pending.of(concourse().navigate(keys, record));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
-            Set<String> keys, Criteria criteria) {
-        return Pending.of(concourse().navigate(keys, criteria));
-    }
-
-    @Override
-    public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
-            Set<String> keys, Collection<Long> records) {
-        return Pending.of(concourse().navigate(keys, records));
-    }
-
-    @Override
-    public Pending<Set<Long>> find(Criteria criteria) {
-        return Pending.of(concourse().find(criteria));
-    }
-
-    @Override
-    public Pending<Long> count(String key, Criteria criteria) {
-        return Pending.of(concourse().calculate().count(key, criteria));
-    }
-
-    @Override
-    public Pending<Long> time() {
-        return Pending.of(concourse().time().getMicros());
+    public Pending<Timestamp> time() {
+        return Pending.of(concourse().time());
     }
 
     @Override

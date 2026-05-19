@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Set;
 
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -243,7 +244,7 @@ public interface Reader extends AutoCloseable {
      *
      * @return a {@link Pending} of the server time, in microseconds
      */
-    Pending<Long> time();
+    Pending<Timestamp> time();
 
     /**
      * Return the underlying {@link Concourse} connection that this

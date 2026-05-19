@@ -57,6 +57,7 @@ import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.Link;
+import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
@@ -898,12 +899,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         }
                     }
                     if(saver.commit()) {
-                        long checkpoint = saver.time();
-                        seen.entrySet().stream().filter(e -> e.getValue())
-                                .map(e -> e.getKey()).forEach(record -> {
-                                    enqueueSaveNotification(record);
-                                    record.checkpoint(checkpoint);
-                                });
+                        saver.time(ts -> {
+                            long checkpoint = ts.getMicros();
+                            seen.entrySet().stream().filter(e -> e.getValue())
+                                    .map(e -> e.getKey()).forEach(record -> {
+                                        enqueueSaveNotification(record);
+                                        record.checkpoint(checkpoint);
+                                    });
+                        });
                         return true;
                     }
                     else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {
@@ -1443,9 +1446,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         read.data.then($data -> read.navigated
                                 .then($navigated -> resolveLinkTargets(
                                         sharedReader, $data, $navigated))
-                                .then($targets -> read.time
-                                        .map($ts -> instantiateAll($ts, clazz,
-                                                any, $data, $targets))))
+                                .then($targets -> read.time.map(
+                                        $ts -> instantiateAll($ts.getMicros(),
+                                                clazz, any, $data, $targets))))
                                 .onResolve(records::set);
                         sharedReader.drain();
                         return records.get();
@@ -1460,9 +1463,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
-                        .then($targets -> read.time
-                                .map($ts -> finalizeSet($ts, clazz, any, $data,
-                                        $targets, hasFilter, filter))));
+                        .then($targets -> read.time.map(
+                                $ts -> finalizeSet($ts.getMicros(), clazz, any,
+                                        $data, $targets, hasFilter, filter))));
             }
         }
         else {
@@ -1584,9 +1587,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             read.data.then($data -> read.navigated
                                     .then($navigated -> resolveLinkTargets(
                                             sharedReader, $data, $navigated))
-                                    .then($targets -> read.time.map(
-                                            $ts -> instantiateAll($ts, clazz,
-                                                    any, $data, $targets))))
+                                    .then($targets -> read.time
+                                            .map($ts -> instantiateAll(
+                                                    $ts.getMicros(), clazz, any,
+                                                    $data, $targets))))
                                     .onResolve(records::set);
                             sharedReader.drain();
                             return records.get();
@@ -1609,9 +1613,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
-                        .then($targets -> read.time
-                                .map($ts -> finalizeSet($ts, clazz, any, $data,
-                                        $targets, hasFilter, filter))));
+                        .then($targets -> read.time.map(
+                                $ts -> finalizeSet($ts.getMicros(), clazz, any,
+                                        $data, $targets, hasFilter, filter))));
             }
             else {
                 Set<T> records = any
@@ -1762,7 +1766,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 .getClassHierarchy(initialClazz).size() > 1;
         Set<String> paths = needsSectionLookup ? null
                 : getPathsForClassIfSupported(initialClazz);
-        Pending<Long> time = reader.time();
+        Pending<Timestamp> time = reader.time();
         Pending<Map<String, Set<Object>>> data = paths != null
                 ? reader.select(paths, id)
                 : reader.select(id);
@@ -1802,7 +1806,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     .then($navigated -> resolveLinkTargets(reader,
                             ImmutableMap.of(id, $data), $navigated));
             return targets.then($targets -> time.map($ts -> {
-                T record = instantiate($ts, resolvedClazz, id, $data, $targets);
+                T record = instantiate($ts.getMicros(), resolvedClazz, id,
+                        $data, $targets);
                 if(record != null && hasFilter) {
                     return new SelectResult<>(
                             filter.test(record) ? record : null, record);
@@ -2032,7 +2037,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Set<String> navigatePaths = any
                 ? getNavigatePathsForClassHierarchyIfSupported(clazz)
                 : getNavigatePathsForClassIfSupported(clazz);
-        Pending<Long> time = reader.time();
+        Pending<Timestamp> time = reader.time();
         Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
                 criteria, order, page);
         Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
@@ -3111,10 +3116,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         final Pending<Map<Long, Map<String, Set<Object>>>> navigated;
 
         /**
-         * A {@link Pending} of the server time, in microseconds, as of which
-         * the matching records reflect the database.
+         * A {@link Pending} of the server {@link Timestamp} as of which the
+         * matching records reflect the database.
          */
-        final Pending<Long> time;
+        final Pending<Timestamp> time;
 
         /**
          * Construct a new {@link Read}.
@@ -3126,7 +3131,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         Read(Pending<Map<Long, Map<String, Set<Object>>>> data,
                 Pending<Map<Long, Map<String, Set<Object>>>> navigated,
-                Pending<Long> time) {
+                Pending<Timestamp> time) {
             this.data = data;
             this.navigated = navigated;
             this.time = time;
