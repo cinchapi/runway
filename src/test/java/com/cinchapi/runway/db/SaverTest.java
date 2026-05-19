@@ -78,7 +78,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
 
         saver.stage();
         saver.set("foo", "bar", id);
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertEquals(ImmutableSet.of("bar"), client.select("foo", id));
     }
@@ -113,7 +113,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
 
         saver.stage();
         saver.set("foo", "bar", id);
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertEquals(ImmutableSet.of("bar"), client.select("foo", id));
     }
@@ -146,7 +146,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Saver saver = newSaver();
         saver.stage();
         saver.reconcile("tags", id, ImmutableSet.of());
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertTrue(client.select("tags", id).isEmpty());
     }
@@ -178,7 +178,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Saver saver = newSaver();
         saver.stage();
         saver.reconcile("tags", id, new Object[0]);
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertTrue(client.select("tags", id).isEmpty());
     }
@@ -236,7 +236,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         saver.stage();
         AtomicReference<Map<Timestamp, List<String>>> captured = new AtomicReference<>();
         saver.audit(id, captured::set);
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertNotNull(captured.get());
         Assert.assertFalse(captured.get().isEmpty());
@@ -265,7 +265,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Saver saver = newSaver();
         saver.stage();
         saver.clear("drop", id);
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertTrue(client.select("drop", id).isEmpty());
     }
@@ -293,7 +293,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Saver saver = newSaver();
         saver.stage();
         saver.clear(id);
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertTrue(client.select(id).isEmpty());
     }
@@ -317,7 +317,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     public void testEmptyCommitSucceeds() {
         Saver saver = newSaver();
         saver.stage();
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
     }
 
     /**
@@ -350,7 +350,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         AtomicReference<Set<Long>> captured = new AtomicReference<>();
         saver.find(Criteria.where().key("flag").operator(Operator.EQUALS)
                 .value(true), captured::set);
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertEquals(ImmutableSet.of(match1, match2), captured.get());
     }
@@ -380,7 +380,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Saver saver = newSaver();
         saver.stage();
         saver.reconcile("tags", id, new Object[] { "b", "c" });
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertEquals(ImmutableSet.of("b", "c"),
                 client.select("tags", id));
@@ -410,7 +410,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Saver saver = newSaver();
         saver.stage();
         saver.set("foo", "bar", id);
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Set<Object> values = client.select("foo", id);
         Assert.assertEquals(ImmutableSet.of("bar"), values);
@@ -486,7 +486,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Saver saver = newSaver();
         saver.stage();
         saver.verifyOrSet("k", "new", id);
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertEquals(ImmutableSet.of("new"), client.select("k", id));
     }

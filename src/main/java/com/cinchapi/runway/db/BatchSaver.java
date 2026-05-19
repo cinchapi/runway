@@ -148,7 +148,7 @@ public final class BatchSaver implements Saver {
     }
 
     @Override
-    public boolean commit() {
+    public Timestamp commit() {
         flushReads();
         CommandGroup writes = concourse.prepare();
         if(stageRequested && !stageBundled) {
@@ -160,8 +160,15 @@ public final class BatchSaver implements Saver {
         }
         int commitSlot = writes.commands().size();
         writes.commit();
+        int timeSlot = writes.commands().size();
+        writes.time();
         List<Object> results = concourse.submit(writes);
-        return (Boolean) results.get(commitSlot);
+        if((Boolean) results.get(commitSlot)) {
+            return (Timestamp) results.get(timeSlot);
+        }
+        else {
+            return null;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -228,24 +235,6 @@ public final class BatchSaver implements Saver {
     @Override
     public void stage() {
         stageRequested = true;
-    }
-
-    @Override
-    public void time(Consumer<Timestamp> consumer) {
-        if(stageRequested) {
-            int[] slot = new int[1];
-            postWriteReadOps.add(group -> {
-                slot[0] = group.commands().size();
-                group.time();
-            });
-            pendingValidators.add(results -> {
-                consumer.accept((Timestamp) results.get(slot[0]));
-            });
-            flushReads();
-        }
-        else {
-            consumer.accept(concourse.time());
-        }
     }
 
     @Override

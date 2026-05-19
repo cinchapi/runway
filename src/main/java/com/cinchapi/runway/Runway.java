@@ -898,15 +898,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                     preventStaleWrites);
                         }
                     }
-                    if(saver.commit()) {
-                        saver.time(ts -> {
-                            long checkpoint = ts.getMicros();
-                            seen.entrySet().stream().filter(e -> e.getValue())
-                                    .map(e -> e.getKey()).forEach(record -> {
-                                        enqueueSaveNotification(record);
-                                        record.checkpoint(checkpoint);
-                                    });
-                        });
+                    Timestamp ts = saver.commit();
+                    if(ts != null) {
+                        long checkpoint = ts.getMicros();
+                        seen.entrySet().stream().filter(e -> e.getValue())
+                                .map(e -> e.getKey()).forEach(record -> {
+                                    enqueueSaveNotification(record);
+                                    record.checkpoint(checkpoint);
+                                });
                         return true;
                     }
                     else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {

@@ -69,7 +69,7 @@ public class BatchSaverTest extends SaverTest {
         Assert.assertFalse("validator should defer until commit",
                 validatorRan.get());
 
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
         Assert.assertTrue("validator should have run inside commit",
                 validatorRan.get());
     }
@@ -161,7 +161,7 @@ public class BatchSaverTest extends SaverTest {
                 result -> saver.find(Criteria.where().key("flag")
                         .operator(Operator.EQUALS).value(true),
                         nestedResult::set));
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertNotNull(nestedResult.get());
         Assert.assertTrue(nestedResult.get().contains(alpha));
@@ -215,7 +215,7 @@ public class BatchSaverTest extends SaverTest {
                                 Criteria.where().key("category")
                                         .operator(Operator.EQUALS).value("X"),
                                 findResult::set)));
-        Assert.assertTrue(saver.commit());
+        Assert.assertNotNull(saver.commit());
 
         Assert.assertNotNull(findResult.get());
         Assert.assertTrue(findResult.get().contains(match));

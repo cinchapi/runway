@@ -21,6 +21,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import javax.annotation.Nullable;
+
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
@@ -97,17 +99,8 @@ public interface Saver {
     void clear(String key, long record);
 
     /**
-     * Commit the staged transaction.
-     * <p>
-     * For synchronous implementations this delegates straight to the underlying
-     * connection's commit. Bulk implementations submit accumulated recordings
-     * with as few round trips as the save permits. When no validation reads
-     * were recorded, a single submission carries {@link #stage()}, every write,
-     * and the terminal commit. When validation reads were recorded, they are
-     * submitted first &mdash; alongside the writes &mdash; so every queued
-     * validator can run against the result; the commit then follows in a second
-     * submission once validation passes.
-     * </p>
+     * Commit the staged transaction and return the post-commit server
+     * {@link Timestamp}.
      * <p>
      * If a queued validator throws, the commit is <strong>not</strong>
      * submitted. The writes share the validation submission and have therefore
@@ -116,11 +109,12 @@ public interface Saver {
      * roll them back.
      * </p>
      *
-     * @return {@code true} if the staged transaction committed; {@code false}
-     *         if the server rejected the commit (e.g. a spurious commit failure
-     *         that the caller may retry)
+     * @return the server {@link Timestamp} after a successful commit, or
+     *         {@code null} if the server rejected the commit (e.g. a spurious
+     *         commit failure that the caller may retry)
      */
-    boolean commit();
+    @Nullable
+    Timestamp commit();
 
     /**
      * Record a {@link Concourse#find(Criteria) find} for the {@code criteria}
@@ -221,15 +215,6 @@ public interface Saver {
      * </p>
      */
     void stage();
-
-    /**
-     * Record a read of the database server's current time and arrange to apply
-     * {@code consumer} to the resulting {@link Timestamp}.
-     *
-     * @param consumer a {@link Consumer} that receives the server
-     *            {@link Timestamp}
-     */
-    void time(Consumer<Timestamp> consumer);
 
     /**
      * Record a {@link Concourse#verifyOrSet(String, Object, long) verifyOrSet}

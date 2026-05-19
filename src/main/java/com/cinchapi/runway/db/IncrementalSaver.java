@@ -81,8 +81,13 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
-    public boolean commit() {
-        return concourse.commit();
+    public Timestamp commit() {
+        if(concourse.commit()) {
+            return concourse.time();
+        }
+        else {
+            return null;
+        }
     }
 
     @Override
@@ -124,11 +129,6 @@ public final class IncrementalSaver implements Saver {
     @Override
     public void stage() {
         concourse.stage();
-    }
-
-    @Override
-    public void time(Consumer<Timestamp> consumer) {
-        consumer.accept(concourse.time());
     }
 
     @Override
