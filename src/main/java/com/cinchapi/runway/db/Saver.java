@@ -91,6 +91,20 @@ public interface Saver {
     boolean commit();
 
     /**
+     * Return a server timestamp, in microseconds, at or after the commit of the
+     * save this {@link Saver} represents.
+     * <p>
+     * Only meaningful after {@link #commit()} has returned {@code true}. The
+     * value is suitable as a stale-write checkpoint: it is not earlier than any
+     * revision this save wrote, so those revisions are not themselves treated
+     * as stale, and any later external revision is.
+     * </p>
+     *
+     * @return the post-commit server timestamp, in microseconds
+     */
+    long commitTimestamp();
+
+    /**
      * Abort the staged transaction.
      * <p>
      * Safe to call even when nothing has been submitted yet (for bulk

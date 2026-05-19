@@ -50,6 +50,12 @@ public final class IncrementalSaver implements Saver {
     private final Concourse concourse;
 
     /**
+     * The server timestamp at or after the most recent {@link #commit()}, in
+     * microseconds.
+     */
+    private long commitTimestamp;
+
+    /**
      * Construct a new {@link IncrementalSaver} backed by {@code concourse}.
      *
      * @param concourse the {@link Concourse} connection that every recording
@@ -66,7 +72,16 @@ public final class IncrementalSaver implements Saver {
 
     @Override
     public boolean commit() {
-        return concourse.commit();
+        boolean committed = concourse.commit();
+        if(committed) {
+            commitTimestamp = concourse.time().getMicros();
+        }
+        return committed;
+    }
+
+    @Override
+    public long commitTimestamp() {
+        return commitTimestamp;
     }
 
     @Override

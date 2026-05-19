@@ -99,6 +99,12 @@ public final class BatchSaver implements Saver {
     private final List<Consumer<CommandGroup>> deferredWriteOps;
 
     /**
+     * The server timestamp at or after the most recent {@link #commit()}, in
+     * microseconds.
+     */
+    private long commitTimestamp;
+
+    /**
      * Construct a new {@link BatchSaver} that submits against
      * {@code concourse}.
      *
@@ -226,8 +232,18 @@ public final class BatchSaver implements Saver {
         }
         int commitSlot = writes.commands().size();
         writes.commit();
+        // NOTE: time() must follow commit() so the checkpoint timestamp is
+        // not earlier than the revisions this transaction commits.
+        int timeSlot = writes.commands().size();
+        writes.time();
         List<Object> results = concourse.submit(writes);
+        commitTimestamp = ((Timestamp) results.get(timeSlot)).getMicros();
         return (Boolean) results.get(commitSlot);
+    }
+
+    @Override
+    public long commitTimestamp() {
+        return commitTimestamp;
     }
 
     @Override

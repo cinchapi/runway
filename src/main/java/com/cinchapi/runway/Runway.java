@@ -879,7 +879,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         }
                     }
                     if(saver.commit()) {
-                        long checkpointTs = concourse.time().getMicros();
+                        long checkpointTs = saver.commitTimestamp();
                         seen.entrySet().stream().filter(e -> e.getValue())
                                 .map(e -> e.getKey()).forEach(record -> {
                                     enqueueSaveNotification(record);
