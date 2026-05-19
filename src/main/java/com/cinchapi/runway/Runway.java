@@ -1002,6 +1002,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return find(clazz, $Criteria.search(query, keys));
         }
         else {
+            // Capture before the fetch so the checkpoint precedes the read.
+            long checkpoint = serverTime(connections);
             Set<Long> ids;
             Map<Long, Map<String, Set<Object>>> data;
             Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
@@ -1017,7 +1019,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
                     getNavigatePathsForClassHierarchyIfSupported(clazz), ids,
                     data);
-            return instantiateAll(clazz, data, targets);
+            return Record.withLoadCheckpoint(() -> checkpoint,
+                    () -> instantiateAll(clazz, data, targets));
         }
     }
 
@@ -1039,6 +1042,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return findAny(clazz, $Criteria.search(query, keys));
         }
         else {
+            // Capture before the fetch so the checkpoint precedes the read.
+            long checkpoint = serverTime(connections);
             Set<Long> ids;
             Map<Long, Map<String, Set<Object>>> data;
             Set<String> paths = getPathsForClassHierarchyIfSupported(clazz);
@@ -1054,12 +1059,26 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
                     getNavigatePathsForClassHierarchyIfSupported(clazz), ids,
                     data);
-            return instantiateAll(data, targets);
+            return Record.withLoadCheckpoint(() -> checkpoint,
+                    () -> instantiateAll(data, targets));
         }
     }
 
     @Override
     public Selections select(Selection<?>... options) {
+        return Record.withLoadCheckpoint(() -> serverTime(connections),
+                () -> $select(options));
+    }
+
+    /**
+     * Resolve every {@link Selection} in {@code options} against the database,
+     * populating each with its result.
+     *
+     * @param options the {@link Selection Selections} to resolve; must contain
+     *            at least one
+     * @return a {@link Selections} over the resolved {@code options}
+     */
+    private Selections $select(Selection<?>... options) {
         Preconditions.checkArgument(options.length > 0);
         DatabaseSelection<?>[] selections = Arrays.stream(options)
                 .peek(option -> Preconditions.checkState(
@@ -1329,7 +1348,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the loaded record
      */
     <T extends Record> T load(long id) {
-        return instantiate(id, null, null);
+        long checkpoint = serverTime(connections);
+        return Record.withLoadCheckpoint(() -> checkpoint,
+                () -> instantiate(id, null, null));
     }
 
     /**
@@ -1755,6 +1776,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 .getClassHierarchy(initialClazz).size() > 1;
         Set<String> paths = needsSectionLookup ? null
                 : getPathsForClassIfSupported(initialClazz);
+        // Resolve the checkpoint before this record read is issued.
+        Record.touchLoadCheckpoint();
         Pending<Map<String, Set<Object>>> data = paths != null
                 ? reader.select(paths, id)
                 : reader.select(id);
@@ -2332,7 +2355,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        long checkpoint = serverTime(connections);
+        // NOTE: Use the enclosing scope's checkpoint, not a fresh reading;
+        // the data was fetched earlier, so a new timestamp would post-date
+        // the read and could miss a concurrent write.
+        long checkpoint = Record.currentLoadCheckpoint();
         return LazyTransformSet.of(data.entrySet(),
                 entry -> Record.withLoadCheckpoint(() -> checkpoint,
                         () -> loadWithErrorHandling(clazz, entry.getKey(),
@@ -2353,7 +2379,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        long checkpoint = serverTime(connections);
+        // NOTE: Use the enclosing scope's checkpoint, not a fresh reading;
+        // the data was fetched earlier, so a new timestamp would post-date
+        // the read and could miss a concurrent write.
+        long checkpoint = Record.currentLoadCheckpoint();
         return LazyTransformSet.of(data.entrySet(),
                 entry -> Record.withLoadCheckpoint(() -> checkpoint,
                         () -> instantiate(entry.getKey(), loaded,
@@ -2484,6 +2513,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Pending<Map<Long, Map<String, Set<Object>>>> read(Reader reader,
             @Nullable Set<String> paths, Criteria criteria,
             @Nullable Order order, @Nullable Page page) {
+        // Resolve the checkpoint before this record read is issued.
+        Record.touchLoadCheckpoint();
         if(order != null && page != null) {
             return paths != null ? reader.select(paths, criteria, order, page)
                     : reader.select(criteria, order, page);
