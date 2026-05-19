@@ -37,11 +37,6 @@ import com.cinchapi.concourse.Concourse;
  */
 public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
 
-    @Override
-    public void beforeEachTest() {
-        runway = Runway.builder().port(server.getClientPort()).build();
-    }
-
     /**
      * <strong>Goal:</strong> Verify that two concurrent saves of distinct
      * {@link Record Records} that contend on the same {@link Unique @Unique}

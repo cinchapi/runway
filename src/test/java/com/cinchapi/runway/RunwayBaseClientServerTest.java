@@ -35,15 +35,23 @@ public abstract class RunwayBaseClientServerTest extends ClientServerTest {
         return Testing.CONCOURSE_VERSION;
     }
 
+    @Override
+    protected boolean reuseServerAcrossTests() {
+        return true;
+    }
+
     protected Runway runway;
 
     @Override
-    public void beforeEachTest() {
-        runway = Runway.builder().port(server.getClientPort()).build();
+    protected void beforeTestRun() {
+        // NOTE: reuseServerAcrossTests() isolates tests by environment,
+        // so Runway must target the per-test environment to stay isolated.
+        runway = Runway.builder().port(server.getClientPort())
+                .environment(environment).build();
     }
 
     @Override
-    public void afterStartedTest() {
+    protected void afterTestRun() {
         try {
             runway.close();
         }
