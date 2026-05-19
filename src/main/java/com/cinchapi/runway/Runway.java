@@ -314,38 +314,38 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            references
      * @param connections
      * @param runway
+     * @param checkpoint the server timestamp, in microseconds, to checkpoint
+     *            the loaded {@link Record} at
      * @param data
      * @return the loaded {@link Record} instance
      */
     private static <T extends Record> T loadWithErrorHandling(Class<T> clazz,
             long id, ConcurrentMap<Long, Record> loaded,
-            ConnectionPool connections, Runway runway,
+            ConnectionPool connections, Runway runway, long checkpoint,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
-        return Record.withLoadCheckpoint(() -> serverTime(connections), () -> {
-            try {
-                return Record.load(clazz, id, loaded, connections, runway, data,
-                        targets);
+        try {
+            return Record.load(clazz, id, loaded, connections, runway,
+                    checkpoint, data, targets);
+        }
+        catch (Exception e) {
+            if(e instanceof InvalidRecordException) {
+                // For consistency with Audience framework, return
+                // "null" for invalid records so that they are
+                // indistinguishable from valid Records that are not
+                // visible to an Audience.
+                return null;
             }
-            catch (Exception e) {
-                if(e instanceof InvalidRecordException) {
-                    // For consistency with Audience framework, return
-                    // "null" for invalid records so that they are
-                    // indistinguishable from valid Records that are not
-                    // visible to an Audience.
-                    return null;
+            else {
+                if(e instanceof ConstraintViolationException) {
+                    // Backwards compatibility for when constraint
+                    // violations were noted via an IllegalStateException.
+                    e = new IllegalStateException(e.getMessage());
                 }
-                else {
-                    if(e instanceof ConstraintViolationException) {
-                        // Backwards compatibility for when constraint
-                        // violations were noted via an IllegalStateException.
-                        e = new IllegalStateException(e.getMessage());
-                    }
-                    runway.onLoadFailureHandler.accept(clazz, id, e);
-                    throw CheckedExceptions.throwAsRuntimeException(e);
-                }
+                runway.onLoadFailureHandler.accept(clazz, id, e);
+                throw CheckedExceptions.throwAsRuntimeException(e);
             }
-        });
+        }
     }
 
     /**
@@ -897,12 +897,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                     preventStaleWrites);
                         }
                     }
+                    long[] checkpoint = new long[1];
+                    saver.time(ts -> checkpoint[0] = ts);
                     if(saver.commit()) {
-                        long checkpointTs = saver.commitTimestamp();
                         seen.entrySet().stream().filter(e -> e.getValue())
                                 .map(e -> e.getKey()).forEach(record -> {
                                     enqueueSaveNotification(record);
-                                    record.checkpoint(checkpointTs);
+                                    record.checkpoint(checkpoint[0]);
                                 });
                         return true;
                     }
@@ -1019,8 +1020,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
                     getNavigatePathsForClassHierarchyIfSupported(clazz), ids,
                     data);
-            return Record.withLoadCheckpoint(() -> checkpoint,
-                    () -> instantiateAll(clazz, data, targets));
+            return instantiateAll(checkpoint, clazz, data, targets);
         }
     }
 
@@ -1059,26 +1059,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
                     getNavigatePathsForClassHierarchyIfSupported(clazz), ids,
                     data);
-            return Record.withLoadCheckpoint(() -> checkpoint,
-                    () -> instantiateAll(data, targets));
+            return instantiateAll(checkpoint, data, targets);
         }
     }
 
     @Override
     public Selections select(Selection<?>... options) {
-        return Record.withLoadCheckpoint(() -> serverTime(connections),
-                () -> $select(options));
-    }
-
-    /**
-     * Resolve every {@link Selection} in {@code options} against the database,
-     * populating each with its result.
-     *
-     * @param options the {@link Selection Selections} to resolve; must contain
-     *            at least one
-     * @return a {@link Selections} over the resolved {@code options}
-     */
-    private Selections $select(Selection<?>... options) {
         Preconditions.checkArgument(options.length > 0);
         DatabaseSelection<?>[] selections = Arrays.stream(options)
                 .peek(option -> Preconditions.checkState(
@@ -1349,8 +1335,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     <T extends Record> T load(long id) {
         long checkpoint = serverTime(connections);
-        return Record.withLoadCheckpoint(() -> checkpoint,
-                () -> instantiate(id, null, null));
+        return instantiate(checkpoint, id, null, null);
     }
 
     /**
@@ -1461,8 +1446,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                         .then($navigated -> resolveLinkTargets(
                                                 sharedReader, $data,
                                                 $navigated))
-                                        .map($targets -> instantiateAll(clazz,
-                                                any, $data, $targets)))
+                                        .then($targets -> read.time
+                                                .map($ts -> instantiateAll($ts,
+                                                        clazz, any, $data,
+                                                        $targets))))
                                 .onResolve(records::set);
                         sharedReader.drain();
                         return records.get();
@@ -1477,8 +1464,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
-                        .map($targets -> finalizeSet(clazz, any, $data,
-                                $targets, hasFilter, filter)));
+                        .then($targets -> read.time.map($ts -> finalizeSet($ts,
+                                clazz, any, $data, $targets, hasFilter,
+                                filter))));
             }
         }
         else {
@@ -1600,8 +1588,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             read.data.then($data -> read.navigated
                                     .then($navigated -> resolveLinkTargets(
                                             sharedReader, $data, $navigated))
-                                    .map($targets -> instantiateAll(clazz, any,
-                                            $data, $targets)))
+                                    .then($targets -> read.time.map(
+                                            $ts -> instantiateAll($ts, clazz,
+                                                    any, $data, $targets))))
                                     .onResolve(records::set);
                             sharedReader.drain();
                             return records.get();
@@ -1624,8 +1613,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 return read.data.then($data -> read.navigated
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
-                        .map($targets -> finalizeSet(clazz, any, $data,
-                                $targets, hasFilter, filter)));
+                        .then($targets -> read.time.map($ts -> finalizeSet($ts,
+                                clazz, any, $data, $targets, hasFilter,
+                                filter))));
             }
             else {
                 Set<T> records = any
@@ -1776,8 +1766,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 .getClassHierarchy(initialClazz).size() > 1;
         Set<String> paths = needsSectionLookup ? null
                 : getPathsForClassIfSupported(initialClazz);
-        // Resolve the checkpoint before this record read is issued.
-        Record.touchLoadCheckpoint();
+        Pending<Long> time = reader.time();
         Pending<Map<String, Set<Object>>> data = paths != null
                 ? reader.select(paths, id)
                 : reader.select(id);
@@ -1816,14 +1805,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Pending<Map<Long, Map<String, Set<Object>>>> targets = navigated
                     .then($navigated -> resolveLinkTargets(reader,
                             ImmutableMap.of(id, $data), $navigated));
-            return targets.map($targets -> {
-                T record = instantiate(resolvedClazz, id, $data, $targets);
+            return targets.then($targets -> time.map($ts -> {
+                T record = instantiate($ts, resolvedClazz, id, $data,
+                        $targets);
                 if(record != null && hasFilter) {
                     return new SelectResult<>(
                             filter.test(record) ? record : null, record);
                 }
                 return new SelectResult<>(record);
-            });
+            }));
         });
     }
 
@@ -1957,6 +1947,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private void demux(Reader reader, DatabaseSelection<?> selection,
             Map<Long, Map<String, Set<Object>>> data) {
         Object result = null;
+        long checkpoint = serverTime(connections);
         if(selection instanceof LoadRecordSelection) {
             long id = ((LoadRecordSelection<?>) selection).id;
             Map<String, Set<Object>> recordData = data.get(id);
@@ -1966,7 +1957,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     String section = (String) Iterables.getLast(sections);
                     Class actualClass = Reflection.getClassCasted(section);
                     if(selection.clazz.isAssignableFrom(actualClass)) {
-                        result = instantiate(actualClass, id, recordData, null);
+                        result = instantiate(checkpoint, actualClass, id,
+                                recordData, null);
                     }
                 }
             }
@@ -2005,8 +1997,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             navigated
                     .then($navigated -> resolveLinkTargets(reader, filtered,
                             $navigated))
-                    .map($targets -> instantiateAll((Class) selection.clazz,
-                            selection.any, filtered, $targets))
+                    .map($targets -> instantiateAll(checkpoint,
+                            (Class) selection.clazz, selection.any, filtered,
+                            $targets))
                     .onResolve(resolved::set);
             reader.drain();
             result = resolved.get();
@@ -2044,11 +2037,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Set<String> navigatePaths = any
                 ? getNavigatePathsForClassHierarchyIfSupported(clazz)
                 : getNavigatePathsForClassIfSupported(clazz);
+        Pending<Long> time = reader.time();
         Pending<Map<Long, Map<String, Set<Object>>>> data = read(reader, paths,
                 criteria, order, page);
         Pending<Map<Long, Map<String, Set<Object>>>> navigated = prefetchNavigate(
                 reader, navigatePaths, criteria, page, data);
-        return new Read(data, navigated);
+        return new Read(data, navigated, time);
     }
 
     /**
@@ -2165,6 +2159,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * and pre-fetched {@code targets}, applying {@code filter} when
      * {@code hasFilter} is {@code true}.
      *
+     * @param checkpoint the server timestamp, in microseconds, to checkpoint
+     *            the loaded {@link Record Records} at
      * @param clazz the target {@link Record} class
      * @param any whether to query across the class hierarchy
      * @param data the matching record data
@@ -2175,11 +2171,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param <T> the {@link Record} type
      * @return the {@link SelectResult}
      */
-    private <T extends Record> SelectResult<Set<T>> finalizeSet(Class<T> clazz,
-            boolean any, Map<Long, Map<String, Set<Object>>> data,
+    private <T extends Record> SelectResult<Set<T>> finalizeSet(long checkpoint,
+            Class<T> clazz, boolean any,
+            Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets, boolean hasFilter,
             Predicate<T> filter) {
-        Set<T> records = instantiateAll(clazz, any, data, targets);
+        Set<T> records = instantiateAll(checkpoint, clazz, any, data, targets);
         if(hasFilter) {
             return new SelectResult<>(
                     records.stream().filter(filter).collect(
@@ -2248,17 +2245,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * that is contained within the specified {@code clazz} and has the
      * specified {@code id}.
      *
+     * @param checkpoint
      * @param clazz
      * @param id
      * @param existing
      * @param data
      * @return the loaded {@link Record} instance
      */
-    private <T extends Record> T instantiate(Class<T> clazz, long id,
-            @Nullable Map<String, Set<Object>> data,
+    private <T extends Record> T instantiate(long checkpoint, Class<T> clazz,
+            long id, @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         return loadWithErrorHandling(clazz, id, new ConcurrentHashMap<>(),
-                connections, this, data, targets);
+                connections, this, checkpoint, data, targets);
     }
 
     /**
@@ -2272,13 +2270,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * {@link Record}.
      * </p>
      *
+     * @param checkpoint
      * @param id
      * @param loaded
      * @param existing
      * @param data
      * @return the loaded {@link Record} instance
      */
-    private <T extends Record> T instantiate(long id,
+    private <T extends Record> T instantiate(long checkpoint, long id,
             ConcurrentMap<Long, Record> loaded,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
@@ -2296,8 +2295,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         String section = (String) Iterables
                 .getLast(data.get(Record.SECTION_KEY));
         Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
-                targets);
+        return loadWithErrorHandling(clazz, id, loaded, connections, this,
+                checkpoint, data, targets);
     }
 
     /**
@@ -2311,15 +2310,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * {@link Record}.
      * </p>
      *
+     * @param checkpoint
      * @param id
      * @param existing
      * @param data
      * @return the loaded {@link Record} instance
      */
-    private <T extends Record> T instantiate(long id,
+    private <T extends Record> T instantiate(long checkpoint, long id,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
-        return instantiate(id, new ConcurrentHashMap<>(), data, targets);
+        return instantiate(checkpoint, id, new ConcurrentHashMap<>(), data,
+                targets);
     }
 
     /**
@@ -2327,6 +2328,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * across {@code clazz}'s hierarchy when {@code any} is {@code true} or as
      * exact instances of {@code clazz} otherwise.
      *
+     * @param checkpoint the server timestamp, in microseconds, to checkpoint
+     *            the loaded {@link Record Records} at
      * @param clazz the target {@link Record} class
      * @param any whether to instantiate across the class hierarchy
      * @param data the record data keyed by record id
@@ -2334,59 +2337,54 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *            record id
      * @return the instantiated {@link Record Records}
      */
-    private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
-            boolean any, Map<Long, Map<String, Set<Object>>> data,
+    private <T extends Record> Set<T> instantiateAll(long checkpoint,
+            Class<T> clazz, boolean any,
+            Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets) {
-        return any ? instantiateAll(data, targets)
-                : instantiateAll(clazz, data, targets);
+        return any ? instantiateAll(checkpoint, data, targets)
+                : instantiateAll(checkpoint, clazz, data, targets);
     }
 
     /**
      * Create a {@link Record} instance of type {@code clazz} (or one of its
      * descendants) for each entry in {@code data}.
      *
+     * @param checkpoint the server timestamp, in microseconds, to checkpoint
+     *            the loaded {@link Record Records} at
      * @param clazz the target {@link Record} class
      * @param data the record data keyed by record id
      * @param targets the pre-fetched {@link Link} targets keyed by destination
      *            record id
      * @return the instantiated {@link Record Records}
      */
-    private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
-            Map<Long, Map<String, Set<Object>>> data,
+    private <T extends Record> Set<T> instantiateAll(long checkpoint,
+            Class<T> clazz, Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        // NOTE: Use the enclosing scope's checkpoint, not a fresh reading;
-        // the data was fetched earlier, so a new timestamp would post-date
-        // the read and could miss a concurrent write.
-        long checkpoint = Record.currentLoadCheckpoint();
         return LazyTransformSet.of(data.entrySet(),
-                entry -> Record.withLoadCheckpoint(() -> checkpoint,
-                        () -> loadWithErrorHandling(clazz, entry.getKey(),
-                                loaded, connections, this, entry.getValue(),
-                                targets)));
+                entry -> loadWithErrorHandling(clazz, entry.getKey(), loaded,
+                        connections, this, checkpoint, entry.getValue(),
+                        targets));
     }
 
     /**
      * Create a {@link Record} instance for each entry in {@code data}, with
      * each record's class determined by its stored section key.
      *
+     * @param checkpoint the server timestamp, in microseconds, to checkpoint
+     *            the loaded {@link Record Records} at
      * @param data the record data keyed by record id
      * @param targets the pre-fetched {@link Link} targets keyed by destination
      *            record id
      * @return the instantiated {@link Record Records}
      */
-    private <T extends Record> Set<T> instantiateAll(
+    private <T extends Record> Set<T> instantiateAll(long checkpoint,
             Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
-        // NOTE: Use the enclosing scope's checkpoint, not a fresh reading;
-        // the data was fetched earlier, so a new timestamp would post-date
-        // the read and could miss a concurrent write.
-        long checkpoint = Record.currentLoadCheckpoint();
         return LazyTransformSet.of(data.entrySet(),
-                entry -> Record.withLoadCheckpoint(() -> checkpoint,
-                        () -> instantiate(entry.getKey(), loaded,
-                                entry.getValue(), targets)));
+                entry -> instantiate(checkpoint, entry.getKey(), loaded,
+                        entry.getValue(), targets));
     }
 
     /**
@@ -2513,8 +2511,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private Pending<Map<Long, Map<String, Set<Object>>>> read(Reader reader,
             @Nullable Set<String> paths, Criteria criteria,
             @Nullable Order order, @Nullable Page page) {
-        // Resolve the checkpoint before this record read is issued.
-        Record.touchLoadCheckpoint();
         if(order != null && page != null) {
             return paths != null ? reader.select(paths, criteria, order, page)
                     : reader.select(criteria, order, page);
@@ -3120,16 +3116,25 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         final Pending<Map<Long, Map<String, Set<Object>>>> navigated;
 
         /**
+         * A {@link Pending} of the server time, in microseconds, as of which
+         * the matching records reflect the database.
+         */
+        final Pending<Long> time;
+
+        /**
          * Construct a new {@link Read}.
          *
          * @param data a {@link Pending} of the matching records' data
          * @param navigated a {@link Pending} of the {@code navigate()}
          *            pre-fetch
+         * @param time a {@link Pending} of the server time the records reflect
          */
         Read(Pending<Map<Long, Map<String, Set<Object>>>> data,
-                Pending<Map<Long, Map<String, Set<Object>>>> navigated) {
+                Pending<Map<Long, Map<String, Set<Object>>>> navigated,
+                Pending<Long> time) {
             this.data = data;
             this.navigated = navigated;
+            this.time = time;
         }
 
     }

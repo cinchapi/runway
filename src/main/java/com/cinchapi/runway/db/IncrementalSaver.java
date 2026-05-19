@@ -50,10 +50,10 @@ public final class IncrementalSaver implements Saver {
     private final Concourse concourse;
 
     /**
-     * The server timestamp at or after the most recent {@link #commit()}, in
-     * microseconds.
+     * The {@link Consumer} to deliver the post-commit server time to, or
+     * {@code null} when no {@link #time(Consumer) time} read was recorded.
      */
-    private long commitTimestamp;
+    private Consumer<Long> timeConsumer;
 
     /**
      * Construct a new {@link IncrementalSaver} backed by {@code concourse}.
@@ -73,15 +73,10 @@ public final class IncrementalSaver implements Saver {
     @Override
     public boolean commit() {
         boolean committed = concourse.commit();
-        if(committed) {
-            commitTimestamp = concourse.time().getMicros();
+        if(committed && timeConsumer != null) {
+            timeConsumer.accept(concourse.time().getMicros());
         }
         return committed;
-    }
-
-    @Override
-    public long commitTimestamp() {
-        return commitTimestamp;
     }
 
     @Override
@@ -104,6 +99,11 @@ public final class IncrementalSaver implements Saver {
     public void select(String key, Criteria criteria,
             Consumer<Map<Long, Set<Object>>> consumer) {
         consumer.accept(concourse.select(key, criteria));
+    }
+
+    @Override
+    public void time(Consumer<Long> consumer) {
+        this.timeConsumer = consumer;
     }
 
     @Override

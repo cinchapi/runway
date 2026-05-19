@@ -99,10 +99,10 @@ public final class BatchSaver implements Saver {
     private final List<Consumer<CommandGroup>> deferredWriteOps;
 
     /**
-     * The server timestamp at or after the most recent {@link #commit()}, in
-     * microseconds.
+     * The {@link Consumer} to deliver the post-commit server time to, or
+     * {@code null} when no {@link #time(Consumer) time} read was recorded.
      */
-    private long commitTimestamp;
+    private Consumer<Long> timeConsumer;
 
     /**
      * Construct a new {@link BatchSaver} that submits against
@@ -177,6 +177,11 @@ public final class BatchSaver implements Saver {
     }
 
     @Override
+    public void time(Consumer<Long> consumer) {
+        this.timeConsumer = consumer;
+    }
+
+    @Override
     public void set(String key, Object value, long record) {
         deferredWriteOps.add(group -> group.set(key, value, record));
     }
@@ -232,18 +237,20 @@ public final class BatchSaver implements Saver {
         }
         int commitSlot = writes.commands().size();
         writes.commit();
-        // NOTE: time() must follow commit() so the checkpoint timestamp is
-        // not earlier than the revisions this transaction commits.
-        int timeSlot = writes.commands().size();
-        writes.time();
+        int timeSlot = -1;
+        if(timeConsumer != null) {
+            // NOTE: time() follows commit() so the recorded server time is
+            // not earlier than the revisions this transaction commits.
+            timeSlot = writes.commands().size();
+            writes.time();
+        }
         List<Object> results = concourse.submit(writes);
-        commitTimestamp = ((Timestamp) results.get(timeSlot)).getMicros();
-        return (Boolean) results.get(commitSlot);
-    }
-
-    @Override
-    public long commitTimestamp() {
-        return commitTimestamp;
+        boolean committed = (Boolean) results.get(commitSlot);
+        if(committed && timeConsumer != null) {
+            timeConsumer.accept(
+                    ((Timestamp) results.get(timeSlot)).getMicros());
+        }
+        return committed;
     }
 
     @Override

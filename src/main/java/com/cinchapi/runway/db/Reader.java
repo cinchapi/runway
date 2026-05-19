@@ -239,6 +239,13 @@ public interface Reader extends AutoCloseable {
     Pending<Long> count(String key, Criteria criteria);
 
     /**
+     * Record a read of the database server's current time.
+     *
+     * @return a {@link Pending} of the server time, in microseconds
+     */
+    Pending<Long> time();
+
+    /**
      * Return the underlying {@link Concourse} connection that this
      * {@link Reader} wraps, acquiring one from the
      * {@link com.cinchapi.concourse.ConnectionPool ConnectionPool} if the

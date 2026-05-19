@@ -46,7 +46,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
-import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -101,7 +100,6 @@ import com.cinchapi.runway.util.ComputedEntry;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
-import com.google.common.base.Suppliers;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -175,75 +173,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * The load checkpoint &mdash; a server timestamp, in microseconds, as of
-     * which the {@link Record Records} materialized on the current thread
-     * reflect the database &mdash; for the load in progress on this thread, or
-     * {@code null} when no load is in progress.
-     */
-    private static final ThreadLocal<Supplier<Long>> LOAD_CHECKPOINT = new ThreadLocal<>();
-
-    /**
-     * Run {@code load} with {@code checkpoint} established as the load
-     * checkpoint for every {@link Record} materialized on the current thread
-     * while it runs.
-     * <p>
-     * Re-entrant: a nested call shares the checkpoint already in scope rather
-     * than establishing a new one, so an entire load &mdash; a {@link Record}
-     * and every {@link Record} linked from it &mdash; shares one checkpoint.
-     *
-     * @param checkpoint supplies the server timestamp, in microseconds, as of
-     *            which the load reflects the database
-     * @param load the load to run
-     * @return the result of {@code load}
-     */
-    static <T> T withLoadCheckpoint(LongSupplier checkpoint, Supplier<T> load) {
-        if(LOAD_CHECKPOINT.get() != null) {
-            return load.get();
-        }
-        else {
-            LOAD_CHECKPOINT.set(Suppliers.memoize(checkpoint::getAsLong));
-            try {
-                return load.get();
-            }
-            finally {
-                LOAD_CHECKPOINT.remove();
-            }
-        }
-    }
-
-    /**
-     * Resolve the load checkpoint for the current thread now, if a load is in
-     * progress.
-     * <p>
-     * Call this immediately before issuing a read that materializes
-     * {@link Record Records} so the checkpoint reflects a server time at or
-     * before that read. A no-op when no load is in progress on this thread.
-     * </p>
-     */
-    static void touchLoadCheckpoint() {
-        Supplier<Long> checkpoint = LOAD_CHECKPOINT.get();
-        if(checkpoint != null) {
-            checkpoint.get();
-        }
-    }
-
-    /**
-     * Return the load checkpoint established for the current thread by an
-     * enclosing {@link #withLoadCheckpoint(LongSupplier, Supplier)} scope.
-     *
-     * @return the server timestamp, in microseconds, as of which the active
-     *         load reflects the database
-     * @throws IllegalStateException if no load is in progress on the current
-     *             thread
-     */
-    static long currentLoadCheckpoint() {
-        Supplier<Long> checkpoint = LOAD_CHECKPOINT.get();
-        Preconditions.checkState(checkpoint != null,
-                "No load checkpoint is established on the current thread");
-        return checkpoint.get();
-    }
-
-    /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
      *
@@ -251,16 +180,19 @@ public abstract class Record implements Comparable<Record> {
      * @param id
      * @param existing
      * @param connections
+     * @param checkpoint the server timestamp, in microseconds, to checkpoint
+     *            the loaded {@link Record} at
      * @return the loaded Record
      */
     protected static <T extends Record> T load(Class<?> clazz, long id,
             ConcurrentMap<Long, Record> existing, ConnectionPool connections,
-            Runway runway, @Nullable Map<String, Set<Object>> data,
+            Runway runway, long checkpoint,
+            @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Concourse concourse = connections.request();
         try {
             return load(clazz, id, existing, connections, concourse, runway,
-                    data, null, targets);
+                    checkpoint, data, null, targets);
         }
         finally {
             connections.release(concourse);
@@ -528,6 +460,8 @@ public abstract class Record implements Comparable<Record> {
      * @param connections the {@link ConnectionPool} to use
      * @param concourse the active {@link Concourse} connection
      * @param runway the owning {@link Runway} instance
+     * @param checkpoint the server timestamp, in microseconds, to checkpoint
+     *            the loaded {@link Record} at
      * @param data pre-loaded data for this record, or {@code null} to fetch
      *            from the database
      * @param prefix a key prefix for navigation-style nested keys, or
@@ -540,7 +474,7 @@ public abstract class Record implements Comparable<Record> {
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
             ConcurrentMap<Long, Record> existing, ConnectionPool connections,
-            Concourse concourse, Runway runway,
+            Concourse concourse, Runway runway, long checkpoint,
             @Nullable Map<String, Set<Object>> data, String prefix,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         T record = (T) newDefaultInstance(clazz, connections);
@@ -548,6 +482,7 @@ public abstract class Record implements Comparable<Record> {
         setInternalFieldValue("waitingToBeDeleted", new LinkedHashSet<>(),
                 record);
         record.assign(runway);
+        record.checkpoint(checkpoint);
         record.load(concourse, existing, data, prefix, targets);
         record.onLoad();
         return record;
@@ -1661,6 +1596,7 @@ public abstract class Record implements Comparable<Record> {
         Concourse concourse = connections.request();
         try {
             ConcurrentMap<Long, Record> existing = new ConcurrentHashMap<>();
+            checkpoint(concourse.time().getMicros());
             load(concourse, existing);
             onLoad();
         }
@@ -2223,8 +2159,8 @@ public abstract class Record implements Comparable<Record> {
                                 value = existing.get(id);
                                 value = value == null
                                         ? load(type, id, existing, connections,
-                                                concourse, runway, data,
-                                                prepend, targets)
+                                                concourse, runway, checkpointTs,
+                                                data, prepend, targets)
                                         : value;
                             }
                         }
@@ -2253,9 +2189,6 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         __checksum = checksum();
-        Supplier<Long> loadCheckpoint = LOAD_CHECKPOINT.get();
-        checkpoint(loadCheckpoint != null ? loadCheckpoint.get()
-                : concourse.time().getMicros());
     }
 
     /**
@@ -2731,8 +2664,8 @@ public abstract class Record implements Comparable<Record> {
                         Class<? extends Record> targetClass = Reflection
                                 .getClassCasted(section);
                         converted = load(targetClass, target, alreadyLoaded,
-                                connections, concourse, runway, data, null,
-                                targets);
+                                connections, concourse, runway, checkpointTs,
+                                data, null, targets);
                     }
                 }
             }

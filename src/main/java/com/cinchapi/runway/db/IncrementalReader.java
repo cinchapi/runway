@@ -164,6 +164,11 @@ public class IncrementalReader extends AbstractReader {
     }
 
     @Override
+    public Pending<Long> time() {
+        return Pending.of(concourse().time().getMicros());
+    }
+
+    @Override
     protected void prepareDrain() {/* no-op */}
 
 }

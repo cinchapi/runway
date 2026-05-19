@@ -24,6 +24,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
+import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.CommandGroup;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
@@ -258,6 +259,16 @@ public final class BatchReader extends AbstractReader {
         return Pending.deferred(this,
                 () -> ((Number) batch.flush(concourse()).get(slot))
                         .longValue());
+    }
+
+    @Override
+    public Pending<Long> time() {
+        Batch batch = batch();
+        int slot = batch.size();
+        batch.group.time();
+        return Pending.deferred(this,
+                () -> ((Timestamp) batch.flush(concourse()).get(slot))
+                        .getMicros());
     }
 
     @Override

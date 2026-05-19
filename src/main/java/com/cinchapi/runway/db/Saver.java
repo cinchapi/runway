@@ -91,20 +91,6 @@ public interface Saver {
     boolean commit();
 
     /**
-     * Return a server timestamp, in microseconds, at or after the commit of the
-     * save this {@link Saver} represents.
-     * <p>
-     * Only meaningful after {@link #commit()} has returned {@code true}. The
-     * value is suitable as a stale-write checkpoint: it is not earlier than any
-     * revision this save wrote, so those revisions are not themselves treated
-     * as stale, and any later external revision is.
-     * </p>
-     *
-     * @return the post-commit server timestamp, in microseconds
-     */
-    long commitTimestamp();
-
-    /**
      * Abort the staged transaction.
      * <p>
      * Safe to call even when nothing has been submitted yet (for bulk
@@ -170,6 +156,19 @@ public interface Saver {
      */
     void select(String key, Criteria criteria,
             Consumer<Map<Long, Set<Object>>> consumer);
+
+    /**
+     * Record a read of the database server's time as of this save's commit
+     * and arrange to deliver it to {@code consumer}.
+     * <p>
+     * The {@code consumer} runs after a successful {@link #commit()} and does
+     * not run if the commit fails.
+     * </p>
+     *
+     * @param consumer a {@link Consumer} that receives the post-commit server
+     *            time, in microseconds
+     */
+    void time(Consumer<Long> consumer);
 
     /**
      * Record a {@link Concourse#set(String, Object, long) set} of {@code value}
