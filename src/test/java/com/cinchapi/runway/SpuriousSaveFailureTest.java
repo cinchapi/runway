@@ -143,7 +143,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testRetryStrategySucceedsOnSpuriousFailure() throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {
@@ -259,7 +259,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     @Test
     public void testSaveDoesNotOverwriteExternallyModifiedLinkedRecord()
             throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {
@@ -322,7 +322,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     @Test
     public void testHasStaleDataReturnsTrueAfterExternalModification()
             throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {
@@ -376,7 +376,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testHasStaleDataReturnsFalseWhenUnmodified() throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {
@@ -490,7 +490,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testHasStaleDataReturnsFalseAfterLoad() throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {
@@ -539,7 +539,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testLinkedRecordsPersistedAfterSave() throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {

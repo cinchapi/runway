@@ -52,13 +52,12 @@ public class RunwayLifecycleTest extends AbstractRunwayTest {
     public void testLoadFailureHandlerWhenLoadingMany() throws Exception {
         runway.close();
         AtomicBoolean passed = new AtomicBoolean(false);
-        runway = Runway.builder().port(server.getClientPort())
-                .onLoadFailure((clazz, record, error) -> {
-                    passed.set(true);
-                    System.out.println(AnyStrings.format(
-                            "Error when loading {} from {}: {}", record, clazz,
-                            error.getMessage()));
-                }).build();
+        runway = runwayBuilder().onLoadFailure((clazz, record, error) -> {
+            passed.set(true);
+            System.out.println(
+                    AnyStrings.format("Error when loading {} from {}: {}",
+                            record, clazz, error.getMessage()));
+        }).build();
         Adult a = new Adult("Jeff Nelson", "jeff@email.com");
         a.save();
         Adult b = new Adult("Ashleah Nelson", "ashleah@email.com");
@@ -82,13 +81,12 @@ public class RunwayLifecycleTest extends AbstractRunwayTest {
     public void testLoadFailureHandlerWhenFinding() throws Exception {
         runway.close();
         AtomicBoolean passed = new AtomicBoolean(false);
-        runway = Runway.builder().port(server.getClientPort())
-                .onLoadFailure((clazz, record, error) -> {
-                    passed.set(true);
-                    System.out.println(AnyStrings.format(
-                            "Error when loading {} from {}: {}", record, clazz,
-                            error.getMessage()));
-                }).build();
+        runway = runwayBuilder().onLoadFailure((clazz, record, error) -> {
+            passed.set(true);
+            System.out.println(
+                    AnyStrings.format("Error when loading {} from {}: {}",
+                            record, clazz, error.getMessage()));
+        }).build();
         Adult a = new Adult("Jeff Nelson", "jeff@email.com");
         a.save();
         Adult b = new Adult("Ashleah Nelson", "ashleah@email.com");
@@ -113,13 +111,12 @@ public class RunwayLifecycleTest extends AbstractRunwayTest {
     public void testLoadFailureHandlerWhenLoadingSingle() throws Exception {
         runway.close();
         AtomicBoolean passed = new AtomicBoolean(false);
-        runway = Runway.builder().port(server.getClientPort())
-                .onLoadFailure((clazz, record, error) -> {
-                    passed.set(true);
-                    System.out.println(AnyStrings.format(
-                            "Error when loading {} from {}: {}", record, clazz,
-                            error.getMessage()));
-                }).build();
+        runway = runwayBuilder().onLoadFailure((clazz, record, error) -> {
+            passed.set(true);
+            System.out.println(
+                    AnyStrings.format("Error when loading {} from {}: {}",
+                            record, clazz, error.getMessage()));
+        }).build();
         Adult a = new Adult("Jeff Nelson", "jeff@email.com");
         a.save();
         Adult b = new Adult("Ashleah Nelson", "ashleah@email.com");
