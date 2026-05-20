@@ -22,6 +22,7 @@ import java.util.function.Predicate;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
+import com.cinchapi.concourse.thrift.Operator;
 
 /**
  * A {@link Selection} describes a single data retrieval operation against a
@@ -121,6 +122,25 @@ public interface Selection<T extends Record> {
         DatabaseSelection<T> resolved = (DatabaseSelection<T>) DatabaseSelection
                 .resolve(selection);
         if(resolved instanceof LoadRecordSelection) {
+            if(DatabaseSelection.isScopeBearing(injected)) {
+                // Local CCL evaluation cannot honor same-destination
+                // semantics for a scoped condition, so route the load
+                // through a UniqueSelection anchored at $id$ so the engine
+                // evaluates the scoped predicate.
+                LoadRecordSelection<T> load = (LoadRecordSelection<T>) resolved;
+                Criteria idMatch = Criteria.where().key(Record.IDENTIFIER_KEY)
+                        .operator(Operator.EQUALS).value(load.id).build();
+                DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                        resolved.clazz, resolved.any);
+                state.unique = true;
+                state.criteria = Criteria.where().group(idMatch).and()
+                        .group(injected).build();
+                state.filter = resolved.filter;
+                state.realms = resolved.realms;
+                UniqueSelection<T> result = new UniqueSelection<>(state);
+                result.origin = selection;
+                return result;
+            }
             return withInjectedFilter(selection,
                     record -> record.matches(injected));
         }

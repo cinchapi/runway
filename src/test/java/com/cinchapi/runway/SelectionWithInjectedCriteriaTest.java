@@ -249,6 +249,116 @@ public class SelectionWithInjectedCriteriaTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that injecting a scope-bearing visibility
+     * {@link Criteria} into a {@link LoadRecordSelection} produces a
+     * {@link UniqueSelection} (not a {@link LoadRecordSelection}) so that the
+     * scoped condition is evaluated by the engine. The local CCL compiler
+     * cannot honor same-destination semantics across a navigation prefix and
+     * throws {@link UnsupportedOperationException} when asked to, so the
+     * filter-based path that {@link LoadRecordSelection} otherwise takes is
+     * unavailable for this {@link Criteria} shape.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link LoadRecordSelection} via {@code id(...)}.</li>
+     * <li>Build a {@link Criteria} containing a {@code scope(prefix, inner)}
+     * clause.</li>
+     * <li>Call {@link Selection#withInjectedCriteria}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection} (not a
+     * {@link LoadRecordSelection}); its criteria is non-null.
+     */
+    @Test
+    public void testLoadRecordSelectionWithScopedCriteriaBecomesUniqueSelection() {
+        Criteria scoped = Criteria
+                .where().scope("parent.children", Criteria.where()
+                        .key("user.userId").operator(Operator.EQUALS).value(7L))
+                .build();
+        Selection<TestRecord> sel = Selection.of(TestRecord.class).id(42L)
+                .build();
+        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
+                scoped);
+        Assert.assertFalse(result instanceof LoadRecordSelection);
+        Assert.assertTrue(result instanceof UniqueSelection);
+        UniqueSelection<TestRecord> unique = (UniqueSelection<TestRecord>) result;
+        Assert.assertNotNull(unique.criteria);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that injecting a non-scope-bearing
+     * visibility {@link Criteria} into a {@link LoadRecordSelection} preserves
+     * the existing local-filter path. The local CCL compiler can evaluate such
+     * conditions correctly, so no conversion is needed and the single-record
+     * fetch by id is retained.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link LoadRecordSelection} via {@code id(...)}.</li>
+     * <li>Build a simple key/value {@link Criteria} with no scoped
+     * condition.</li>
+     * <li>Call {@link Selection#withInjectedCriteria}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is still a
+     * {@link LoadRecordSelection}; its filter has been composed with the
+     * visibility predicate and is no longer the {@code NO_FILTER} sentinel.
+     */
+    @Test
+    public void testLoadRecordSelectionWithSimpleCriteriaKeepsLocalFilter() {
+        Criteria visibility = Criteria.where().key("owner")
+                .operator(Operator.EQUALS).value(42L).build();
+        Selection<TestRecord> sel = Selection.of(TestRecord.class).id(42L)
+                .build();
+        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
+                visibility);
+        Assert.assertTrue(result instanceof LoadRecordSelection);
+        DatabaseSelection<TestRecord> db = (DatabaseSelection<TestRecord>) result;
+        Assert.assertFalse(DatabaseSelection.isNoFilter(db.filter));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code scope(prefix, inner)} is
+     * detected even when it is nested inside a {@code group(...)} clause that
+     * is conjoined with another condition &mdash; the engine still needs to
+     * evaluate the scoped sub-tree, so the {@link LoadRecordSelection} must be
+     * promoted to a {@link UniqueSelection}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link LoadRecordSelection} via {@code id(...)}.</li>
+     * <li>Build a {@link Criteria} of the form
+     * {@code (scope(prefix, inner)) AND key = value}.</li>
+     * <li>Call {@link Selection#withInjectedCriteria}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection},
+     * because the scoped sub-tree was discovered during the recursive
+     * inspection of the injected {@link Criteria}.
+     */
+    @Test
+    public void testLoadRecordSelectionDetectsNestedScopedCriteria() {
+        Criteria nested = Criteria.where()
+                .group(Criteria.where().scope("parent.children",
+                        Criteria.where().key("user.userId")
+                                .operator(Operator.EQUALS).value(7L)))
+                .and().key("active").operator(Operator.EQUALS).value(true)
+                .build();
+        Selection<TestRecord> sel = Selection.of(TestRecord.class).id(42L)
+                .build();
+        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
+                nested);
+        Assert.assertFalse(result instanceof LoadRecordSelection);
+        Assert.assertTrue(result instanceof UniqueSelection);
+    }
+
+    /**
      * A simple {@link Record} subclass for testing.
      */
     static class TestRecord extends Record {} // empty — used only for type
