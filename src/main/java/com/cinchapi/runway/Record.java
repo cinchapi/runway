@@ -166,7 +166,8 @@ public abstract class Record implements Comparable<Record> {
         Set<String> intrinsic = StaticAnalysis.instance().getKeys(clazz);
         Parser parser = Parsers.create(condition);
         for (String key : parser.analyze().keys()) {
-            if(!Keys.isNavigationKey(key) && !intrinsic.contains(key)) {
+            if(!Keys.isNavigationKey(key) && !intrinsic.contains(key)
+                    && !IDENTIFIER_KEY.equals(key)) {
                 return false;
             }
         }

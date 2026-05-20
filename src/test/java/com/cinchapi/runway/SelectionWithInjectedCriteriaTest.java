@@ -426,6 +426,84 @@ public class SelectionWithInjectedCriteriaTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the {@link UniqueSelection} produced
+     * by promoting a {@link LoadRecordSelection} on the scope-bearing path
+     * carries a {@link Criteria} that
+     * {@link Record#isDatabaseResolvableCondition} accepts. Without this
+     * guarantee, {@code $selectCriteria} falls back to
+     * {@code filter()}/{@code filterAny()}, which calls
+     * {@link Record#matches(Criteria)} on the scope-bearing criteria and throws
+     * {@link UnsupportedOperationException} at runtime.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link LoadRecordSelection} via {@code id(42L)}.</li>
+     * <li>Build a scope-bearing {@link Criteria}.</li>
+     * <li>Call {@link Selection#withInjectedCriteria}.</li>
+     * <li>Test the promoted {@link UniqueSelection}'s criteria against
+     * {@link Record#isDatabaseResolvableCondition}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@link Record#isDatabaseResolvableCondition}
+     * returns {@code true}.
+     */
+    @Test
+    public void testLoadRecordSelectionWithScopedCriteriaPromotedCriteriaIsDatabaseResolvable() {
+        Criteria scoped = Criteria
+                .where().scope("parent.children", Criteria.where()
+                        .key("user.userId").operator(Operator.EQUALS).value(7L))
+                .build();
+        Selection<TestRecord> sel = Selection.of(TestRecord.class).id(42L)
+                .build();
+        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
+                scoped);
+        UniqueSelection<TestRecord> unique = (UniqueSelection<TestRecord>) result;
+        Assert.assertTrue(Record.isDatabaseResolvableCondition(TestRecord.class,
+                unique.criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that promoting a
+     * {@link LoadRecordSelection} built from {@code Selection.of(...)} (i.e.,
+     * {@code any=false}) on the scope-bearing path produces a
+     * {@link UniqueSelection} with {@code any=true}. The promoted selection
+     * runs through {@code $selectCriteria}, which wraps with {@code forClass}
+     * when {@code any=false} and excludes records stored under a subclass
+     * section; setting {@code any=true} keeps subclass-by-id resolution
+     * working.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link LoadRecordSelection} via
+     * {@code Selection.of(...).id(42L)} so the input {@code any} is
+     * {@code false}.</li>
+     * <li>Apply a scope-bearing visibility {@link Criteria} via
+     * {@link Selection#withInjectedCriteria}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection} with
+     * {@code any=true}.
+     */
+    @Test
+    public void testLoadRecordSelectionWithScopedCriteriaPromotionForcesAnyTrue() {
+        Criteria scoped = Criteria
+                .where().scope("parent.children", Criteria.where()
+                        .key("user.userId").operator(Operator.EQUALS).value(7L))
+                .build();
+        Selection<TestRecord> sel = Selection.of(TestRecord.class).id(42L)
+                .build();
+        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
+                scoped);
+        Assert.assertTrue(result instanceof UniqueSelection);
+        DatabaseSelection<TestRecord> db = (DatabaseSelection<TestRecord>) result;
+        Assert.assertTrue(db.any);
+    }
+
+    /**
      * A simple {@link Record} subclass for testing.
      */
     static class TestRecord extends Record {}

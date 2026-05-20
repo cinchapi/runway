@@ -128,8 +128,11 @@ public interface Selection<T extends Record> {
                 LoadRecordSelection<T> load = (LoadRecordSelection<T>) resolved;
                 Criteria idMatch = Criteria.where().key(Record.IDENTIFIER_KEY)
                         .operator(Operator.EQUALS).value(load.id).build();
+                // any=true so a subclass record stored under load.id still
+                // resolves to its actual type; $id$ is unique across the
+                // hierarchy so this does not broaden the match.
                 DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
-                        resolved.clazz, resolved.any);
+                        resolved.clazz, true);
                 state.unique = true;
                 state.criteria = Criteria.where().group(idMatch).and()
                         .group(injected).build();
