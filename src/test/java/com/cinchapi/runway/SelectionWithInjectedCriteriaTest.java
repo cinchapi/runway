@@ -506,6 +506,13 @@ public class SelectionWithInjectedCriteriaTest {
     /**
      * A simple {@link Record} subclass for testing.
      */
-    static class TestRecord extends Record {}
+    static class TestRecord extends Record {
+
+        /**
+         * A model field.
+         */
+        @SuppressWarnings("unused")
+        String name;
+    }
 
 }
