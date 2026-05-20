@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 2.0.1 (TBD)
+#### Version 2.1.0 (TBD)
 * Fixed a bug where loading an access-controlled `Record` through an `Audience` (e.g., `Audience#load(Class, long)`) threw `UnsupportedOperationException` when the class's registered visibility `Scope` used a scoped navigation criteria (`Criteria.where().scope(prefix, inner)`). ([GH-125](https://github.com/cinchapi/runway/issues/125))
 
 #### Version 2.0.0 (May 20, 2026)
