@@ -15,21 +15,64 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
+import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 
 /**
  * Tests for {@link Runway#save(boolean, Record...)} with
- * {@code preventStaleWrites} enabled.
+ * {@code preventStaleWrites} enabled. Each test runs once against the
+ * {@link com.cinchapi.runway.db.BatchSaver BatchSaver} and once against the
+ * {@link com.cinchapi.runway.db.IncrementalSaver IncrementalSaver} so the
+ * stale-write contract is verified on both save paths regardless of the
+ * connected server's Command-API capability.
  *
  * @author Jeff Nelson
  */
+@RunWith(Parameterized.class)
 public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
+
+    /**
+     * Return the parameter matrix that drives each test once per save path.
+     *
+     * @return one row per {@link com.cinchapi.runway.db.Saver Saver}
+     *         implementation
+     */
+    @Parameters(name = "bulkCommands={0}")
+    public static Collection<Object[]> parameters() {
+        return Arrays.asList(new Object[][] { { true }, { false } });
+    }
+
+    private final boolean useBulkCommands;
+
+    /**
+     * Construct a new instance.
+     *
+     * @param useBulkCommands {@code true} to drive saves through the
+     *            {@link com.cinchapi.runway.db.BatchSaver BatchSaver};
+     *            {@code false} for the
+     *            {@link com.cinchapi.runway.db.IncrementalSaver
+     *            IncrementalSaver}
+     */
+    public PreventStaleWriteTest(boolean useBulkCommands) {
+        this.useBulkCommands = useBulkCommands;
+    }
+
+    @Override
+    protected void beforeTestRun() {
+        super.beforeTestRun();
+        Reflection.set("supportsBulkCommands", useBulkCommands, runway); // (authorized)
+    }
 
     /**
      * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)

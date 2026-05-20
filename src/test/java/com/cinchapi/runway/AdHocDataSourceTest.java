@@ -125,7 +125,7 @@ public class AdHocDataSourceTest {
 
         Criteria criteria = Criteria.where().key("age")
                 .operator(Operator.GREATER_THAN).value(0).build();
-        Page page = Page.sized(2);
+        Page page = Page.limit(2);
         Set<MockAdHocRecord> results = db.find(MockAdHocRecord.class, criteria,
                 page);
 

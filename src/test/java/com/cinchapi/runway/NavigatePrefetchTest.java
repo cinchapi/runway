@@ -15,17 +15,29 @@
  */
 package com.cinchapi.runway;
 
+import java.lang.reflect.Field;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.CountingConcourseConnectionPool.CountingConcourse;
+import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
 
 /**
  * Tests for the navigate-based prefetching optimization that eliminates N+1
@@ -95,10 +107,10 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that navigate paths handle self-referential
-     * {@link java.util.Collection Collection&lt;Record&gt;} fields without
-     * infinite recursion and still include the destination type's non-recursive
-     * fields.
+     * <strong>Goal:</strong> Verify that navigate paths for a self-referential
+     * {@link java.util.Collection Collection&lt;Record&gt;} field emit the
+     * {@code *} transitive modifier and do not re-emit the same cyclic edge in
+     * the lineage.
      * <p>
      * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
      * instance.
@@ -107,27 +119,490 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Retrieve navigate paths for {@link Node}, which has a
      * {@code List<Node>} self-referential field.</li>
-     * <li>Assert that the paths include destination metadata and non-recursive
-     * fields.</li>
+     * <li>Assert that the paths use the {@code *} modifier on the cyclic field
+     * name.</li>
+     * <li>Assert that the bare (non-{@code *}) cyclic-field prefix is
+     * absent.</li>
+     * <li>Assert that the same cyclic edge does not appear with a chained
+     * {@code *} suffix.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> Navigate paths include {@code friends._},
-     * {@code friends.$id$}, and {@code friends.label}. The self-referential
-     * {@code friends.friends} is terminated (not recursed into further).
+     * <strong>Expected:</strong> Paths include {@code friends*._},
+     * {@code friends*.$id$}, {@code friends*.label}, and the terminal
+     * {@code friends*.friends} Link value. The bare {@code friends._} is not
+     * present, and no path begins with {@code friends*.friends*.}.
      */
     @Test
     public void testNavigatePathsForSelfReferentialCollectionField() {
         Set<String> navigatePaths = Record.StaticAnalysis.instance()
                 .getNavigatePaths(Node.class);
         Assert.assertNotNull(navigatePaths);
-        Assert.assertTrue(navigatePaths.contains("friends._"));
-        Assert.assertTrue(navigatePaths.contains("friends.$id$"));
-        Assert.assertTrue(navigatePaths.contains("friends.label"));
-        // Self-referential field is terminated — no deep
-        // recursion into friends.friends.*
-        long deepPaths = navigatePaths.stream()
-                .filter(p -> p.startsWith("friends.friends.")).count();
-        Assert.assertEquals(0, deepPaths);
+        Assert.assertTrue(navigatePaths.contains("friends*._"));
+        Assert.assertTrue(navigatePaths.contains("friends*.$id$"));
+        Assert.assertTrue(navigatePaths.contains("friends*.label"));
+        Assert.assertTrue(navigatePaths.contains("friends*.friends"));
+        Assert.assertFalse(navigatePaths.contains("friends._"));
+        long deepStarPaths = navigatePaths.stream()
+                .filter(p -> p.startsWith("friends*.friends*.")).count();
+        Assert.assertEquals(0, deepStarPaths);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that navigate paths recurse through a
+     * non-cyclic {@link java.util.Collection Collection&lt;Record&gt;} field
+     * into the destination type's own {@link Collection
+     * Collection&lt;Record&gt;} fields and emit the {@code *} modifier on
+     * cyclic stops at the destination.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve navigate paths for {@link Conversation}, which has
+     * {@code root: List<Exchange>}.</li>
+     * <li>Assert that {@link Exchange Exchange's} non-cyclic
+     * single-{@link Record} fields ({@code prompt}, {@code response}) appear
+     * under the {@code root.} prefix.</li>
+     * <li>Assert that {@link Exchange Exchange's} cyclic {@code children:
+     * Set<Exchange>} field emits {@code root.children*.} paths.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Paths include {@code root._},
+     * {@code root.prompt._}, {@code root.prompt.text}, {@code root.response._},
+     * {@code root.children*._}, {@code root.children*.$id$}, and
+     * {@code root.children*.children}; no {@code root.children._} appears
+     * without the {@code *}.
+     */
+    @Test
+    public void testNavigatePathsForConversationWithCyclicChildren() {
+        Set<String> navigatePaths = Record.StaticAnalysis.instance()
+                .getNavigatePaths(Conversation.class);
+        Assert.assertNotNull(navigatePaths);
+        Assert.assertTrue(navigatePaths.contains("root._"));
+        Assert.assertTrue(navigatePaths.contains("root.$id$"));
+        Assert.assertTrue(navigatePaths.contains("root.prompt._"));
+        Assert.assertTrue(navigatePaths.contains("root.prompt.text"));
+        Assert.assertTrue(navigatePaths.contains("root.response._"));
+        Assert.assertTrue(navigatePaths.contains("root.children*._"));
+        Assert.assertTrue(navigatePaths.contains("root.children*.$id$"));
+        Assert.assertTrue(navigatePaths.contains("root.children*.children"));
+        Assert.assertFalse(navigatePaths.contains("root.children._"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that navigate paths recurse through a
+     * non-cyclic single-{@link Record} field to discover and enumerate
+     * {@link java.util.Collection Collection&lt;Record&gt;} fields nested
+     * behind it.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve navigate paths for {@link Document}, which has
+     * {@code metadata: Metadata} (single-{@link Record}) and {@link Metadata}
+     * has {@code tags: List<TagRecord>} (Collection&lt;Record&gt;).</li>
+     * <li>Assert that the nested {@code metadata.tags.*} paths are
+     * emitted.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Paths include {@code metadata.tags._},
+     * {@code metadata.tags.$id$}, {@code metadata.tags._realms}, and
+     * {@code metadata.tags.label}.
+     */
+    @Test
+    public void testNavigatePathsRecurseThroughSingleRecordEdge() {
+        Set<String> navigatePaths = Record.StaticAnalysis.instance()
+                .getNavigatePaths(Document.class);
+        Assert.assertNotNull(navigatePaths);
+        Assert.assertTrue(navigatePaths.contains("metadata.tags._"));
+        Assert.assertTrue(navigatePaths.contains("metadata.tags.$id$"));
+        Assert.assertTrue(navigatePaths.contains("metadata.tags._realms"));
+        Assert.assertTrue(navigatePaths.contains("metadata.tags.label"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a non-cyclic
+     * {@link java.util.Collection Collection&lt;Record&gt;} field reached under
+     * a transitive ({@code *}) stop is still fully enumerated.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve navigate paths for {@link Conversation}, which transitively
+     * reaches {@link Exchange Exchange's} non-cyclic {@code citations:
+     * List<Citation>} field via {@code root.children*}.</li>
+     * <li>Assert that {@code root.children*.citations.*} paths are
+     * emitted.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Paths include
+     * {@code root.children*.citations._},
+     * {@code root.children*.citations.$id$}, and
+     * {@code root.children*.citations.source}.
+     */
+    @Test
+    public void testNavigatePathsForNonCyclicCollectionUnderTransitiveStop() {
+        Set<String> navigatePaths = Record.StaticAnalysis.instance()
+                .getNavigatePaths(Conversation.class);
+        Assert.assertNotNull(navigatePaths);
+        Assert.assertTrue(navigatePaths.contains("root.children*.citations._"));
+        Assert.assertTrue(
+                navigatePaths.contains("root.children*.citations.$id$"));
+        Assert.assertTrue(
+                navigatePaths.contains("root.children*.citations.source"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a cyclic single-{@link Record} field
+     * on the navigate-root class emits {@code *}-suffixed paths from
+     * {@code computeNavigatePaths} itself.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve navigate paths for {@link Exchange}, which has both
+     * {@code parent: Exchange} (cyclic single-{@link Record}) and
+     * {@code children: List<Exchange>} (cyclic Collection&lt;Record&gt;).</li>
+     * <li>Assert that both {@code parent*.X} and {@code children*.X} paths are
+     * present in the result.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Paths include {@code parent*._},
+     * {@code parent*.$id$}, {@code parent*.text}, {@code children*._},
+     * {@code children*.$id$}, and {@code children*.text}.
+     */
+    @Test
+    public void testNavigatePathsForCyclicSingleRecordAtRoot() {
+        Set<String> navigatePaths = Record.StaticAnalysis.instance()
+                .getNavigatePaths(Exchange.class);
+        Assert.assertNotNull(navigatePaths);
+        Assert.assertTrue(navigatePaths.contains("parent*._"));
+        Assert.assertTrue(navigatePaths.contains("parent*.$id$"));
+        Assert.assertTrue(navigatePaths.contains("parent*.text"));
+        Assert.assertTrue(navigatePaths.contains("children*._"));
+        Assert.assertTrue(navigatePaths.contains("children*.$id$"));
+        Assert.assertTrue(navigatePaths.contains("children*.text"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a navigate path carries at most one
+     * transitive ({@code *}) stop, so transitive stops never chain &mdash; the
+     * bound that keeps navigate-path computation from growing combinatorially
+     * with the number of cyclic edges.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve navigate paths for {@link Exchange}, which has two cyclic
+     * self-referential edges: a single-{@link Record} {@code parent: Exchange}
+     * and a {@link java.util.Collection Collection&lt;Record&gt;}
+     * {@code children: List<Exchange>}.</li>
+     * <li>Assert that each cyclic edge is emitted as its own transitive
+     * stop.</li>
+     * <li>Assert that no path contains a second transitive stop.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Paths under {@code parent*.} and
+     * {@code children*.} are present, but no path contains two {@code *}
+     * segments &mdash; in particular none begins with
+     * {@code parent*.children*.}, {@code children*.parent*.},
+     * {@code parent*.parent*.}, or {@code children*.children*.}.
+     */
+    @Test
+    public void testNavigatePathsCarryAtMostOneTransitiveStop() {
+        Set<String> navigatePaths = Record.StaticAnalysis.instance()
+                .getNavigatePaths(Exchange.class);
+        Assert.assertNotNull(navigatePaths);
+        Assert.assertTrue(
+                navigatePaths.stream().anyMatch(p -> p.startsWith("parent*.")));
+        Assert.assertTrue(navigatePaths.stream()
+                .anyMatch(p -> p.startsWith("children*.")));
+        Assert.assertTrue(navigatePaths.stream()
+                .noneMatch(p -> p.indexOf('*') != p.lastIndexOf('*')));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a cyclic single-{@link Record} field
+     * encountered deep inside a non-cyclic chain emits {@code *}-suffixed paths
+     * through {@code computePaths}.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve navigate paths for {@link Conversation}, which reaches
+     * {@link Exchange Exchange's} cyclic {@code parent: Exchange} field via
+     * {@code root}.</li>
+     * <li>Assert that {@code root.parent*.X} paths are emitted, including the
+     * terminal bare {@code root.parent*.parent} Link value.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Paths include {@code root.parent},
+     * {@code root.parent*._}, {@code root.parent*.$id$},
+     * {@code root.parent*.text}, and the terminal {@code root.parent*.parent}.
+     */
+    @Test
+    public void testNavigatePathsForCyclicSingleRecordInChain() {
+        Set<String> navigatePaths = Record.StaticAnalysis.instance()
+                .getNavigatePaths(Conversation.class);
+        Assert.assertNotNull(navigatePaths);
+        Assert.assertTrue(navigatePaths.contains("root.parent"));
+        Assert.assertTrue(navigatePaths.contains("root.parent*._"));
+        Assert.assertTrue(navigatePaths.contains("root.parent*.$id$"));
+        Assert.assertTrue(navigatePaths.contains("root.parent*.text"));
+        Assert.assertTrue(navigatePaths.contains("root.parent*.parent"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the select-side path set is
+     * byte-identical after the transitive-modifier changes, so that the
+     * select-side consumer's lookup of {@code <field>.$id$} still resolves
+     * pre-fetched data.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve select-side paths for {@link Exchange}, which has a cyclic
+     * {@code parent: Exchange} field.</li>
+     * <li>Assert that no path contains the {@code *} modifier.</li>
+     * <li>Assert that the {@code parent} field is present as a bare leaf in the
+     * path set.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code parent} is present as a bare leaf; no
+     * path matches {@code parent*.*}.
+     */
+    @Test
+    public void testSelectSidePathsUnchangedForCyclicSingleRecord() {
+        Set<String> paths = Record.StaticAnalysis.instance()
+                .getPaths(Exchange.class);
+        Assert.assertNotNull(paths);
+        Assert.assertTrue(paths.contains("parent"));
+        long starPaths = paths.stream().filter(p -> p.contains("*")).count();
+        Assert.assertEquals(0, starPaths);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the navigate gate fires for a class
+     * whose only {@link Record}-typed field is a cyclic single-{@link Record}
+     * self-reference (no direct {@link java.util.Collection
+     * Collection&lt;Record&gt;} field).
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@link Runway#getNavigatePathsForClassIfSupported(Class)} for
+     * {@link TreeNode}, which has only a cyclic {@code parent: TreeNode}
+     * field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned path set is non-{@code null} and
+     * contains {@code parent*._}.
+     */
+    @Test
+    public void testNavigateGateFiresForCyclicSingleRecordOnlyClass() {
+        Set<String> paths = runway
+                .getNavigatePathsForClassIfSupported(TreeNode.class);
+        Assert.assertNotNull(paths);
+        Assert.assertTrue(paths.contains("parent*._"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the navigate gate fires for a class
+     * whose pre-fetchable destinations are only reachable through a non-cyclic
+     * single-{@link Record} edge (no direct {@link java.util.Collection
+     * Collection&lt;Record&gt;} field).
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@link Runway#getNavigatePathsForClassIfSupported(Class)} for
+     * {@link Document}, which has {@code metadata: Metadata} and
+     * {@link Metadata} contains {@code tags: List<TagRecord>}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned path set is non-{@code null} and
+     * contains {@code metadata.tags._}.
+     */
+    @Test
+    public void testNavigateGateFiresForClassReachingCollectionThroughSingleRecord() {
+        Set<String> paths = runway
+                .getNavigatePathsForClassIfSupported(Document.class);
+        Assert.assertNotNull(paths);
+        Assert.assertTrue(paths.contains("metadata.tags._"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the navigate gate returns {@code null}
+     * for classes whose pre-fetchable destination set is empty (no
+     * {@link Record}-typed fields at all).
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@link Runway#getNavigatePathsForClassIfSupported(Class)} for
+     * {@link Simple}, which has only a {@link String} field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned value is {@code null}.
+     */
+    @Test
+    public void testNavigateGateReturnsNullForClassWithoutDestinations() {
+        Assert.assertNull(
+                runway.getNavigatePathsForClassIfSupported(Simple.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#getNavigatePathsForClassIfSupported(Class)} drops
+     * transitive ({@code *}) paths but keeps non-transitive paths when the
+     * connected server does not support transitive navigation.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} connected to a server that
+     * supports transitive navigation.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve the navigate paths for {@link Conversation} and confirm at
+     * least one bears the {@code *} modifier.</li>
+     * <li>Reflectively clear the {@code supportsTransitiveNavigation}
+     * flag.</li>
+     * <li>Retrieve the navigate paths for {@link Conversation} again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second result contains no {@code *} path
+     * yet still includes the non-transitive {@code root.prompt.text} path.
+     */
+    @Test
+    public void testNavigateGateOmitsTransitivePathsWhenUnsupported() {
+        Set<String> supported = runway
+                .getNavigatePathsForClassIfSupported(Conversation.class);
+        Assert.assertNotNull(supported);
+        Assert.assertTrue(supported.stream().anyMatch(p -> p.contains("*")));
+        // (authorized)
+        Reflection.set("supportsTransitiveNavigation", false, runway);
+        Set<String> unsupported = runway
+                .getNavigatePathsForClassIfSupported(Conversation.class);
+        Assert.assertNotNull(unsupported);
+        Assert.assertTrue(unsupported.stream().noneMatch(p -> p.contains("*")));
+        Assert.assertTrue(unsupported.contains("root.prompt.text"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#getNavigatePathsForClassHierarchyIfSupported(Class)}
+     * returns {@code null} for a class whose every navigate path is transitive
+     * when the connected server does not support transitive navigation.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} connected to a server that
+     * supports transitive navigation.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Reflectively clear the {@code supportsTransitiveNavigation}
+     * flag.</li>
+     * <li>Retrieve the hierarchy navigate paths for {@link Node}, whose only
+     * navigate paths bear the {@code *} modifier.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned value is {@code null}, since
+     * dropping the transitive paths leaves nothing to navigate.
+     */
+    @Test
+    public void testNavigateGateHierarchyNullWhenTransitiveUnsupported() {
+        // (authorized)
+        Reflection.set("supportsTransitiveNavigation", false, runway);
+        Set<String> paths = runway
+                .getNavigatePathsForClassHierarchyIfSupported(Node.class);
+        Assert.assertNull(paths);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that loading a cyclic single-{@link Record}
+     * chain populates every level of the chain via the {@code *} transitive
+     * modifier.
+     * <p>
+     * <strong>Start state:</strong> A three-level {@link TreeNode} chain (leaf
+     * &rarr; mid &rarr; root) saved to the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save a chain of three {@link TreeNode TreeNodes}.</li>
+     * <li>Load the leaf {@link TreeNode} and verify that every ancestor is
+     * populated.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The loaded leaf's {@code parent} chain has
+     * every level populated with the correct names.
+     */
+    @Test
+    public void testNavigateStrategyPopulatesCyclicSingleRecordChain() {
+        TreeNode root = new TreeNode();
+        root.name = "root";
+        TreeNode mid = new TreeNode();
+        mid.name = "mid";
+        mid.parent = root;
+        TreeNode leaf = new TreeNode();
+        leaf.name = "leaf";
+        leaf.parent = mid;
+        leaf.save();
+        TreeNode loadedLeaf = runway.load(TreeNode.class, leaf.id());
+        Assert.assertEquals("leaf", loadedLeaf.name);
+        Assert.assertNotNull(loadedLeaf.parent);
+        Assert.assertEquals("mid", loadedLeaf.parent.name);
+        Assert.assertNotNull(loadedLeaf.parent.parent);
+        Assert.assertEquals("root", loadedLeaf.parent.parent.name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that loading a self-referential
+     * {@link java.util.Collection Collection&lt;Record&gt;} chain populates
+     * every level of the chain via the {@code *} transitive modifier in a
+     * single navigate RPC.
+     * <p>
+     * <strong>Start state:</strong> A three-level {@link Node} chain (a &rarr;
+     * b &rarr; c) saved to the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save a chain of {@link Node Nodes} where each {@link Node}
+     * has exactly one friend at the next level.</li>
+     * <li>Load the root {@link Node} and verify that the entire chain is
+     * populated through every level.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The root {@link Node Node's} {@code friends}
+     * chain has every level populated with the correct labels.
+     */
+    @Test
+    public void testNavigateStrategyPopulatesDeepSelfReferentialChain() {
+        Node a = new Node("a");
+        Node b = new Node("b");
+        Node c = new Node("c");
+        a.friends.add(b);
+        b.friends.add(c);
+        a.save();
+        Node loadedA = runway.load(Node.class, a.id());
+        Assert.assertEquals(1, loadedA.friends.size());
+        Node loadedB = loadedA.friends.get(0);
+        Assert.assertEquals("b", loadedB.label);
+        Assert.assertEquals(1, loadedB.friends.size());
+        Assert.assertEquals("c", loadedB.friends.get(0).label);
     }
 
     /**
@@ -502,130 +977,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link CollectionPreSelectStrategy#BULK_SELECT} correctly loads
-     * {@link java.util.Collection Collection&lt;Record&gt;} fields with the
-     * same values as the default strategy.
-     * <p>
-     * <strong>Start state:</strong> A {@link Lock} with three {@link Dock
-     * Docks} saved to the database.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Create and save a {@link Lock} with three {@link Dock} elements.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
-     * <li>Load the {@link Lock} and verify each {@link Dock Dock's} value.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The loaded collection has three elements whose
-     * {@code dock} values match the originals.
-     */
-    @Test
-    public void testBulkSelectLoadsCollectionFieldsCorrectly() {
-        Lock lock = new Lock(ImmutableList.of(new Dock("one"), new Dock("two"),
-                new Dock("three")));
-        lock.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.BULK_SELECT);
-        try {
-            Lock loaded = runway.load(Lock.class, lock.id());
-            Assert.assertEquals(3, loaded.docks.size());
-            Set<String> dockValues = loaded.docks.stream().map(d -> d.dock)
-                    .collect(Collectors.toSet());
-            Assert.assertTrue(dockValues.contains("one"));
-            Assert.assertTrue(dockValues.contains("two"));
-            Assert.assertTrue(dockValues.contains("three"));
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link CollectionPreSelectStrategy#BULK_SELECT} correctly handles
-     * multi-level link chains (two hops deep).
-     * <p>
-     * <strong>Start state:</strong> A {@link Vessel} with a {@link Port} and
-     * {@link Cargo} saved to the database.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Create and save a {@link Vessel} with both single and collection
-     * {@link Record} fields.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
-     * <li>Load the {@link Vessel} and verify both field types.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The loaded {@link Vessel} has a populated
-     * {@code home} {@link Port} and correct {@link Cargo} values.
-     */
-    @Test
-    public void testBulkSelectHandlesMultiLevelLinks() {
-        Port port = new Port("marina");
-        Vessel vessel = new Vessel(port,
-                ImmutableList.of(new Cargo("grain", 100)));
-        vessel.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.BULK_SELECT);
-        try {
-            Vessel loaded = runway.load(Vessel.class, vessel.id());
-            Assert.assertNotNull(loaded.home);
-            Assert.assertEquals("marina", loaded.home.name);
-            Assert.assertEquals(1, loaded.cargo.size());
-            Assert.assertEquals("grain", loaded.cargo.get(0).description);
-            Assert.assertEquals(100, loaded.cargo.get(0).weight);
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link CollectionPreSelectStrategy#BULK_SELECT} correctly handles
-     * self-referential {@link java.util.Collection Collection&lt;Record&gt;}
-     * fields.
-     * <p>
-     * <strong>Start state:</strong> A {@link Node} graph where A has friend B.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Create and save a two-node graph.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
-     * <li>Load the root and verify the friend is populated.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The loaded {@link Node} has 1 friend with the
-     * correct label.
-     */
-    @Test
-    public void testBulkSelectHandlesSelfReferentialCollections() {
-        Node a = new Node("alpha");
-        Node b = new Node("beta");
-        a.friends.add(b);
-        a.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.BULK_SELECT);
-        try {
-            Node loaded = runway.load(Node.class, a.id());
-            Assert.assertEquals(1, loaded.friends.size());
-            Assert.assertEquals("beta", loaded.friends.get(0).label);
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link CollectionPreSelectStrategy#NAVIGATE} correctly populates
+     * <strong>Goal:</strong> Verify that navigate pre-fetch correctly populates
      * {@link java.util.Collection Collection&lt;Record&gt;} fields when loading
      * a single {@link Record} via {@code runway.load(Class, id)}.
      * <p>
@@ -635,7 +987,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Create and save a {@link Lock} with three {@link Dock} elements.</li>
-     * <li>Switch to {@link CollectionPreSelectStrategy#NAVIGATE}.</li>
      * <li>Load the {@link Lock} via single-record
      * {@code runway.load(Lock.class, id)}.</li>
      * <li>Verify each {@link Dock Dock's} value.</li>
@@ -649,163 +1000,390 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         Lock lock = new Lock(ImmutableList.of(new Dock("one"), new Dock("two"),
                 new Dock("three")));
         lock.save();
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.NAVIGATE);
-        try {
-            Lock loaded = runway.load(Lock.class, lock.id());
-            Assert.assertEquals(3, loaded.docks.size());
-            Set<String> dockValues = loaded.docks.stream().map(d -> d.dock)
-                    .collect(Collectors.toSet());
-            Assert.assertTrue(dockValues.contains("one"));
-            Assert.assertTrue(dockValues.contains("two"));
-            Assert.assertTrue(dockValues.contains("three"));
-        }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
+        Lock loaded = runway.load(Lock.class, lock.id());
+        Assert.assertEquals(3, loaded.docks.size());
+        Set<String> dockValues = loaded.docks.stream().map(d -> d.dock)
+                .collect(Collectors.toSet());
+        Assert.assertTrue(dockValues.contains("one"));
+        Assert.assertTrue(dockValues.contains("two"));
+        Assert.assertTrue(dockValues.contains("three"));
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Runway.Builder#collectionPreSelectStrategy(CollectionPreSelectStrategy)}
-     * sets the strategy on the constructed {@link Runway}.
+     * <strong>Goal:</strong> Verify that the unified resolve path populates a
+     * mutual-reference graph deeper than static path enumeration can reach, so
+     * the cleanup pass that follows the {@code navigate()} call actually fills
+     * in the tail.
      * <p>
-     * <strong>Start state:</strong> No prior state needed.
+     * <strong>Start state:</strong> A mutual chain of {@link Alpha Alphas} and
+     * {@link Beta Betas} of length seven
+     * ({@code A1 -> B1 -> A2 -> B2 -> A3 -> B3 -> A4}) saved to the database.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Build a {@link Runway} with
-     * {@link CollectionPreSelectStrategy#BULK_SELECT}.</li>
-     * <li>Assert the field value.</li>
+     * <li>Save the chain through {@code A1}.</li>
+     * <li>Load {@code A1} and walk every level of the chain.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#BULK_SELECT}.
+     * <strong>Expected:</strong> Every {@link Alpha} and {@link Beta} along the
+     * chain loads with its correct label, including the deep tail that the
+     * static path enumeration alone cannot cover.
      */
     @Test
-    public void testBuilderSetsCollectionPreSelectStrategy() throws Exception {
-        Runway custom = Runway.builder().port(server.getClientPort())
-                .collectionPreSelectStrategy(
-                        CollectionPreSelectStrategy.BULK_SELECT)
-                .build();
-        try {
-            Assert.assertEquals(CollectionPreSelectStrategy.BULK_SELECT,
-                    custom.properties().collectionPreSelectStrategy());
-        }
-        finally {
-            custom.close();
-        }
+    public void testNavigateStrategyPopulatesDeepMutualReferenceChain() {
+        Alpha a1 = new Alpha();
+        a1.label = "a1";
+        Beta b1 = new Beta();
+        b1.label = "b1";
+        Alpha a2 = new Alpha();
+        a2.label = "a2";
+        Beta b2 = new Beta();
+        b2.label = "b2";
+        Alpha a3 = new Alpha();
+        a3.label = "a3";
+        Beta b3 = new Beta();
+        b3.label = "b3";
+        Alpha a4 = new Alpha();
+        a4.label = "a4";
+        a1.betas.add(b1);
+        b1.alphas.add(a2);
+        a2.betas.add(b2);
+        b2.alphas.add(a3);
+        a3.betas.add(b3);
+        b3.alphas.add(a4);
+        a1.save();
+        Alpha loadedA1 = runway.load(Alpha.class, a1.id());
+        Assert.assertEquals("a1", loadedA1.label);
+        Beta loadedB1 = loadedA1.betas.get(0);
+        Assert.assertEquals("b1", loadedB1.label);
+        Alpha loadedA2 = loadedB1.alphas.get(0);
+        Assert.assertEquals("a2", loadedA2.label);
+        Beta loadedB2 = loadedA2.betas.get(0);
+        Assert.assertEquals("b2", loadedB2.label);
+        Alpha loadedA3 = loadedB2.alphas.get(0);
+        Assert.assertEquals("a3", loadedA3.label);
+        Beta loadedB3 = loadedA3.betas.get(0);
+        Assert.assertEquals("b3", loadedB3.label);
+        Alpha loadedA4 = loadedB3.alphas.get(0);
+        Assert.assertEquals("a4", loadedA4.label);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Runway.Builder#disablePreSelectLinkedRecords()} resets
-     * {@code collectionPreSelectStrategy} to
-     * {@link CollectionPreSelectStrategy#NONE}.
+     * <strong>Goal:</strong> Verify that the unified resolve path supports
+     * untyped loads &mdash; each record's class is recovered from its section
+     * key, then a class-aware {@code navigate()} dispatches for the grouped
+     * ids, and linked destinations are populated.
      * <p>
-     * <strong>Start state:</strong> No prior state needed.
+     * <strong>Start state:</strong> A {@link Lock} with three {@link Dock
+     * Docks} saved to the database.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Build a {@link Runway} with pre-select disabled.</li>
-     * <li>Assert the strategy is {@code NONE}.</li>
+     * <li>Save the {@link Lock} with a distinguishing tag.</li>
+     * <li>Invoke {@code findAny(Lock.class, criteria)}, which takes the untyped
+     * {@code instantiateAll(Set)} path with {@code any=true}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NONE}.
+     * <strong>Expected:</strong> The matching {@link Lock} loads with every
+     * {@link Dock} populated to its original value.
      */
     @Test
-    public void testDisablePreSelectResetsStrategy() throws Exception {
-        Runway custom = Runway.builder().port(server.getClientPort())
-                .disablePreSelectLinkedRecords().build();
-        try {
-            Assert.assertEquals(CollectionPreSelectStrategy.NONE,
-                    custom.properties().collectionPreSelectStrategy());
-        }
-        finally {
-            custom.close();
-        }
+    public void testNavigateStrategySupportsUntypedLoadAnyDispatch() {
+        Lock lock = new Lock(ImmutableList.of(new Dock("alpha"),
+                new Dock("beta"), new Dock("gamma")));
+        lock.tag = "untyped-lock-tag";
+        lock.save();
+        Set<Lock> loaded = runway.findAny(Lock.class,
+                Criteria.where().key("tag").operator(Operator.EQUALS)
+                        .value("untyped-lock-tag").build());
+        Assert.assertEquals(1, loaded.size());
+        Lock loadedLock = loaded.iterator().next();
+        Assert.assertEquals(3, loadedLock.docks.size());
+        Set<String> dockValues = loadedLock.docks.stream().map(d -> d.dock)
+                .collect(Collectors.toSet());
+        Assert.assertTrue(dockValues.contains("alpha"));
+        Assert.assertTrue(dockValues.contains("beta"));
+        Assert.assertTrue(dockValues.contains("gamma"));
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Runway.Builder#disablePreSelectLinkedRecords()} overrides an
-     * explicit {@link CollectionPreSelectStrategy} set earlier in the
-     * {@link Runway.Builder} chain.
+     * <strong>Goal:</strong> Verify that navigate path computation terminates
+     * and emits the {@code *} transitive modifier for a polymorphic
+     * {@link Record} whose self-referential edges are declared with a base type
+     * that has subtypes.
      * <p>
-     * <strong>Start state:</strong> No prior state needed.
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Build a {@link Runway} setting
-     * {@link CollectionPreSelectStrategy#NAVIGATE} followed by
-     * {@link Runway.Builder#disablePreSelectLinkedRecords()}.</li>
-     * <li>Assert the strategy is {@code NONE}.</li>
+     * <li>Retrieve navigate paths for {@link Manager}, whose
+     * single-{@link Record} {@code supervisor} and {@link java.util.Collection
+     * Collection&lt;Record&gt;} {@code directReports} fields are both declared
+     * as the base type {@link Employee}, which {@link Manager} extends.</li>
+     * <li>Assert that both edges emit the {@code *} transitive modifier.</li>
+     * <li>Assert that neither edge re-emits itself under a chained {@code *}
+     * suffix.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NONE} because the disable call takes
-     * precedence.
+     * <strong>Expected:</strong> Paths include {@code supervisor*.name} and
+     * {@code directReports*.name}; no path begins with
+     * {@code supervisor*.supervisor*.} or
+     * {@code directReports*.directReports*.}. Computation terminates without a
+     * {@link StackOverflowError}.
      */
     @Test
-    public void testDisablePreSelectOverridesExplicitStrategy()
-            throws Exception {
-        Runway custom = Runway.builder().port(server.getClientPort())
-                .collectionPreSelectStrategy(
-                        CollectionPreSelectStrategy.NAVIGATE)
-                .disablePreSelectLinkedRecords().build();
-        try {
-            Assert.assertEquals(CollectionPreSelectStrategy.NONE,
-                    custom.properties().collectionPreSelectStrategy());
-        }
-        finally {
-            custom.close();
-        }
+    public void testNavigatePathsForPolymorphicSelfReferentialRecord() {
+        Set<String> navigatePaths = Record.StaticAnalysis.instance()
+                .getNavigatePaths(Manager.class);
+        Assert.assertNotNull(navigatePaths);
+        Assert.assertTrue(navigatePaths.contains("supervisor*.name"));
+        Assert.assertTrue(navigatePaths.contains("directReports*.name"));
+        Assert.assertTrue(navigatePaths.stream()
+                .noneMatch(p -> p.startsWith("supervisor*.supervisor*.")));
+        Assert.assertTrue(navigatePaths.stream().noneMatch(
+                p -> p.startsWith("directReports*.directReports*.")));
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Runway.Builder#disablePreSelectLinkedRecords()} overrides an
-     * explicit {@link CollectionPreSelectStrategy} even when the disable call
-     * comes <em>after</em> the explicit strategy in the builder chain.
+     * <strong>Goal:</strong> Verify that the number of read RPCs a load issues
+     * does not grow with the depth of a self-referential
+     * {@link java.util.Collection Collection&lt;Record&gt;} chain.
      * <p>
-     * <strong>Start state:</strong> No prior state needed.
+     * <strong>Start state:</strong> A two-{@link Node} chain and a
+     * six-{@link Node} chain saved to the database.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Build a {@link Runway} calling
-     * {@link Runway.Builder#disablePreSelectLinkedRecords()} after
-     * {@link Runway.Builder#collectionPreSelectStrategy(CollectionPreSelectStrategy)
-     * collectionPreSelectStrategy(NAVIGATE)}.</li>
-     * <li>Assert the strategy is {@code NONE}.</li>
+     * <li>Save a shallow chain and a deep chain of {@link Node Nodes} linked
+     * through the {@code friends} collection.</li>
+     * <li>Reflectively replace the {@link Runway} connection pool with a
+     * {@link CountingConcourseConnectionPool} that tallies read RPCs.</li>
+     * <li>Load the root of each chain, recording the RPC count for each.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> {@code collectionPreSelectStrategy} is
-     * {@link CollectionPreSelectStrategy#NONE} because the disable call takes
-     * precedence regardless of ordering.
+     * <strong>Expected:</strong> The deep chain loads fully, and its load
+     * issues the same number of read RPCs as the shallow chain &mdash; proving
+     * the prefetch collapses N+1 loading into a depth-independent constant.
      */
     @Test
-    public void testDisablePreSelectOverridesExplicitStrategyReverseOrder()
-            throws Exception {
-        Runway custom = Runway.builder().port(server.getClientPort())
-                .disablePreSelectLinkedRecords().collectionPreSelectStrategy(
-                        CollectionPreSelectStrategy.NAVIGATE)
-                .build();
-        try {
-            Assert.assertEquals(CollectionPreSelectStrategy.NONE,
-                    custom.properties().collectionPreSelectStrategy());
+    public void testLoadRpcCountIsIndependentOfChainDepth() {
+        Node s1 = new Node("s1");
+        Node s2 = new Node("s2");
+        s1.friends.add(s2);
+        s1.save();
+        Node d1 = new Node("d1");
+        Node d2 = new Node("d2");
+        Node d3 = new Node("d3");
+        Node d4 = new Node("d4");
+        Node d5 = new Node("d5");
+        Node d6 = new Node("d6");
+        d1.friends.add(d2);
+        d2.friends.add(d3);
+        d3.friends.add(d4);
+        d4.friends.add(d5);
+        d5.friends.add(d6);
+        d1.save();
+        ConnectionPool pool = new CountingConcourseConnectionPool(
+                Concourse.connect("localhost", server.getClientPort(), "admin",
+                        "admin", environment));
+        Reflection.set("connections", pool, runway); // (authorized)
+        Concourse connection = pool.request();
+        AtomicInteger rpcs = ((CountingConcourse) connection).rpcs();
+        pool.release(connection);
+        rpcs.set(0);
+        runway.load(Node.class, s1.id());
+        int shallow = rpcs.get();
+        rpcs.set(0);
+        Node deep = runway.load(Node.class, d1.id());
+        int deepRpcs = rpcs.get();
+        Node node = deep;
+        for (String label : new String[] { "d2", "d3", "d4", "d5", "d6" }) {
+            node = node.friends.get(0);
+            Assert.assertEquals(label, node.label);
         }
-        finally {
-            custom.close();
-        }
+        Assert.assertTrue(shallow > 0);
+        Assert.assertEquals(shallow, deepRpcs);
     }
 
-    // NOTE: Performance benchmark tests were removed because
-    // timing-based assertions are inherently flaky on localhost
-    // where server work dominates latency. The optimization
-    // benefit is proven over network round trips.
+    /**
+     * <strong>Goal:</strong> Verify that the number of read RPCs a multi-record
+     * {@code find()} issues does not grow with the depth of the
+     * self-referential {@link java.util.Collection Collection&lt;Record&gt;}
+     * chains reachable from the matched {@link Node Nodes}.
+     * <p>
+     * <strong>Start state:</strong> Three {@link Node Nodes} with a
+     * single-friend chain and three {@link Node Nodes} with a five-deep friend
+     * chain saved to the database, distinguished by label.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save three {@code "shallow"} roots, each linked to one friend, and
+     * three {@code "deep"} roots, each linked to a five-deep friend chain.</li>
+     * <li>Reflectively replace the {@link Runway} connection pool with a
+     * {@link CountingConcourseConnectionPool} that tallies read RPCs.</li>
+     * <li>Run a {@code find()} for the shallow roots and a {@code find()} for
+     * the deep roots, walking every matched chain and recording the RPC count
+     * of each.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The deep {@code find()} fully populates every
+     * matched chain and issues the same number of read RPCs as the shallow
+     * {@code find()} &mdash; proving the criteria query and its navigate
+     * pre-fetch stay depth-independent.
+     */
+    @Test
+    public void testFindRpcCountIsIndependentOfChainDepth() {
+        for (int i = 0; i < 3; ++i) {
+            Node root = new Node("shallow");
+            root.friends.add(new Node("shallowfriend"));
+            root.save();
+        }
+        for (int i = 0; i < 3; ++i) {
+            Node root = new Node("deep");
+            Node tail = root;
+            for (int depth = 0; depth < 5; ++depth) {
+                Node next = new Node("deepfriend");
+                tail.friends.add(next);
+                tail = next;
+            }
+            root.save();
+        }
+        ConnectionPool pool = new CountingConcourseConnectionPool(
+                Concourse.connect("localhost", server.getClientPort(), "admin",
+                        "admin", environment));
+        Reflection.set("connections", pool, runway); // (authorized)
+        Concourse connection = pool.request();
+        AtomicInteger rpcs = ((CountingConcourse) connection).rpcs();
+        pool.release(connection);
+        rpcs.set(0);
+        Set<Node> shallowRoots = runway.find(Node.class,
+                Criteria.where().key("label").operator(Operator.EQUALS)
+                        .value("shallow").build());
+        for (Node root : shallowRoots) {
+            Assert.assertEquals(1, root.friends.size());
+        }
+        int shallow = rpcs.get();
+        rpcs.set(0);
+        Set<Node> deepRoots = runway.find(Node.class, Criteria.where()
+                .key("label").operator(Operator.EQUALS).value("deep").build());
+        for (Node root : deepRoots) {
+            Node node = root;
+            for (int depth = 0; depth < 5; ++depth) {
+                Assert.assertEquals(1, node.friends.size());
+                node = node.friends.get(0);
+            }
+        }
+        int deep = rpcs.get();
+        Assert.assertEquals(3, shallowRoots.size());
+        Assert.assertEquals(3, deepRoots.size());
+        Assert.assertTrue(shallow > 0);
+        Assert.assertEquals(shallow, deep);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a paginated load whose page falls
+     * beyond the result set returns an empty {@link Set} rather than throwing,
+     * for a class that has navigate paths.
+     * <p>
+     * <strong>Start state:</strong> A single {@link Lock} saved to the
+     * database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save one {@link Lock}.</li>
+     * <li>Load {@link Lock} with a {@link Page} that begins past the only saved
+     * record.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Set} is empty; the empty
+     * page does not drive a {@code navigate()} from zero records.
+     */
+    @Test
+    public void testPaginatedLoadBeyondResultsReturnsEmpty() {
+        Lock lock = new Lock(ImmutableList.of(new Dock("solo")));
+        lock.save();
+        Set<Lock> page = runway.load(Lock.class, Page.limit(10).goTo(2));
+        Assert.assertTrue(page.isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code getDeferredReferencePaths}
+     * reports the paths that name a {@link DeferredReference} field &mdash;
+     * both a top-level field and one nested behind a single-{@link Record} edge
+     * &mdash; and excludes non-deferred fields.
+     * <p>
+     * <strong>Start state:</strong> Default {@link Record.StaticAnalysis}
+     * instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Retrieve the deferred reference paths for {@link Ledger}, which has a
+     * top-level {@code archive} {@link DeferredReference} field and a
+     * {@code vault} edge into {@link Vault}, which has its own {@code archive}
+     * {@link DeferredReference} field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The paths contain {@code archive} and
+     * {@code vault.archive}, and contain neither the {@code vault} edge nor
+     * {@link Vault Vault's} non-deferred {@code vault.label} field.
+     */
+    @Test
+    public void testDeferredReferencePathsDetectedFlatAndNested() {
+        Set<String> deferred = Record.StaticAnalysis.instance()
+                .getDeferredReferencePaths(Ledger.class);
+        Assert.assertTrue(deferred.contains("archive"));
+        Assert.assertTrue(deferred.contains("vault.archive"));
+        Assert.assertFalse(deferred.contains("vault"));
+        Assert.assertFalse(deferred.contains("vault.label"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that navigate-path computation completes in
+     * bounded time for a {@link Record} whose graph contains many distinct
+     * cyclic edges, instead of growing combinatorially with the number of such
+     * edges.
+     * <p>
+     * <strong>Start state:</strong> Synthetic {@code hierarchies} and
+     * {@code fieldsByClass} describing one {@link Record} class with sixteen
+     * self-referential single-{@link Record} fields &mdash; sixteen distinct
+     * cyclic edges.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build the static-analysis maps for the synthetic class from the
+     * {@link ManyCyclicEdges} field holder.</li>
+     * <li>Invoke {@code computeNavigatePaths} on the synthetic class.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns within the test timeout with
+     * a non-empty path set in which every cyclic field is emitted with the
+     * {@code *} transitive modifier.
+     */
+    @Test(timeout = 15000)
+    public void testComputeNavigatePathsTerminatesWithManyCyclicEdges() {
+        Multimap<Class<? extends Record>, Class<?>> hierarchies = HashMultimap
+                .create();
+        hierarchies.put(Simple.class, Simple.class);
+        Map<String, Field> fields = new HashMap<>();
+        for (Field field : ManyCyclicEdges.class.getDeclaredFields()) {
+            if(Record.class.isAssignableFrom(field.getType())) {
+                fields.put(field.getName(), field);
+            }
+        }
+        Map<Class<? extends Record>, Map<String, Field>> fieldsByClass = new HashMap<>();
+        fieldsByClass.put(Simple.class, fields);
+        Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArguments = new HashMap<>();
+        Set<String> navigatePaths = Record.StaticAnalysis.computeNavigatePaths(
+                Simple.class, hierarchies, fieldsByClass, fieldTypeArguments);
+        Assert.assertFalse(navigatePaths.isEmpty());
+        for (String name : fields.keySet()) {
+            Assert.assertTrue(
+                    "Expected a transitive path for cyclic edge " + name,
+                    navigatePaths.stream()
+                            .anyMatch(path -> path.startsWith(name + "*.")));
+        }
+    }
 
     /**
      * A {@link Record} with a {@link java.util.Collection
@@ -972,6 +1550,294 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
          * A simple string field.
          */
         public String name;
+    }
+
+    /**
+     * The root container in the conversation graph used to test transitive
+     * navigation across non-cyclic and cyclic edges combined.
+     */
+    class Conversation extends Record {
+
+        /**
+         * The top-level {@link Exchange Exchanges} in this
+         * {@link Conversation}.
+         */
+        public List<Exchange> root = Lists.newArrayList();
+    }
+
+    /**
+     * A self-referential {@link Record} with both a cyclic
+     * single-{@link Record} field ({@code parent}) and a cyclic
+     * {@link java.util.Collection Collection&lt;Record&gt;} field
+     * ({@code children}), used to exercise transitive navigation for both kinds
+     * of cyclic edges plus non-cyclic edges to {@link Prompt},
+     * {@link Response}, and {@link Citation}.
+     */
+    class Exchange extends Record {
+
+        /**
+         * The parent {@link Exchange} in the conversation tree, or {@code null}
+         * for a root {@link Exchange}.
+         */
+        public Exchange parent;
+
+        /**
+         * The child {@link Exchange Exchanges} in the conversation tree.
+         */
+        public List<Exchange> children = Lists.newArrayList();
+
+        /**
+         * The {@link Prompt} that initiated this {@link Exchange}.
+         */
+        public Prompt prompt;
+
+        /**
+         * The {@link Response} produced by this {@link Exchange}.
+         */
+        public Response response;
+
+        /**
+         * Supporting {@link Citation Citations} for this {@link Exchange}.
+         */
+        public List<Citation> citations = Lists.newArrayList();
+
+        /**
+         * A human-readable identifier for this {@link Exchange}.
+         */
+        public String text;
+    }
+
+    /**
+     * A non-cyclic single-{@link Record} target of {@link Exchange#prompt},
+     * used to verify that non-cyclic single-{@link Record} edges are walked by
+     * {@code computePaths}.
+     */
+    class Prompt extends Record {
+
+        /**
+         * The prompt text.
+         */
+        public String text;
+    }
+
+    /**
+     * A non-cyclic single-{@link Record} target of {@link Exchange#response},
+     * used to verify that non-cyclic single-{@link Record} edges are walked by
+     * {@code computePaths}.
+     */
+    class Response extends Record {
+
+        /**
+         * The response text.
+         */
+        public String text;
+    }
+
+    /**
+     * A non-cyclic {@link java.util.Collection Collection&lt;Record&gt;}
+     * element type used to verify that non-cyclic collections reached under a
+     * transitive ({@code *}) stop are still enumerated.
+     */
+    class Citation extends Record {
+
+        /**
+         * The citation source identifier.
+         */
+        public String source;
+    }
+
+    /**
+     * A {@link Record} with a single-{@link Record} edge into a type that has
+     * its own {@link java.util.Collection Collection&lt;Record&gt;} field, used
+     * to verify that {@code computeNavigatePaths} recurses through
+     * single-{@link Record} edges.
+     */
+    class Document extends Record {
+
+        /**
+         * The {@link Metadata} for this {@link Document}.
+         */
+        public Metadata metadata;
+    }
+
+    /**
+     * The single-{@link Record} target of {@link Document#metadata}, with its
+     * own {@link java.util.Collection Collection&lt;Record&gt;} field that must
+     * be enumerated through the navigate-path traversal.
+     */
+    class Metadata extends Record {
+
+        /**
+         * The {@link TagRecord Tags} attached to this {@link Metadata}.
+         */
+        public List<TagRecord> tags = Lists.newArrayList();
+
+        /**
+         * A summary string.
+         */
+        public String summary;
+    }
+
+    /**
+     * A leaf {@link Record} type used as the element type of
+     * {@link Metadata#tags}.
+     */
+    class TagRecord extends Record {
+
+        /**
+         * A human-readable label.
+         */
+        public String label;
+    }
+
+    /**
+     * A {@link Record} with only a cyclic single-{@link Record} field
+     * ({@code parent}) and no {@link java.util.Collection
+     * Collection&lt;Record&gt;} fields, used to verify that the navigate gate
+     * fires for classes whose only pre-fetchable destinations come from cyclic
+     * single-{@link Record} edges.
+     */
+    class TreeNode extends Record {
+
+        /**
+         * The parent {@link TreeNode}, or {@code null} for the root.
+         */
+        public TreeNode parent;
+
+        /**
+         * A human-readable name for this {@link TreeNode}.
+         */
+        public String name;
+    }
+
+    /**
+     * One half of a mutual-reference test pair. {@link Alpha} links to
+     * {@link Beta Betas} which link back to {@link Alpha Alphas}, exercising
+     * the cleanup pass that closes the gap left when Concourse's same-field
+     * transitive modifier cannot traverse alternating field names.
+     */
+    class Alpha extends Record {
+
+        /**
+         * The {@link Beta Betas} this {@link Alpha} references.
+         */
+        public List<Beta> betas = Lists.newArrayList();
+
+        /**
+         * A label for this {@link Alpha}.
+         */
+        public String label;
+    }
+
+    /**
+     * One half of a mutual-reference test pair. See {@link Alpha}.
+     */
+    class Beta extends Record {
+
+        /**
+         * The {@link Alpha Alphas} this {@link Beta} references.
+         */
+        public List<Alpha> alphas = Lists.newArrayList();
+
+        /**
+         * A label for this {@link Beta}.
+         */
+        public String label;
+    }
+
+    /**
+     * The base of a polymorphic {@link Record} hierarchy. Because
+     * {@link Manager} extends {@link Employee}, a field declared as
+     * {@link Employee} may link to either an {@link Employee} or a
+     * {@link Manager}.
+     */
+    class Employee extends Record {
+
+        /**
+         * A human-readable name for this {@link Employee}.
+         */
+        public String name;
+    }
+
+    /**
+     * A subclass of {@link Employee} whose self-referential fields are declared
+     * with the polymorphic base type {@link Employee}, exercising navigate path
+     * cycle detection across edges that close through a subtype.
+     */
+    class Manager extends Employee {
+
+        /**
+         * The {@link Employee} this {@link Manager} reports to.
+         */
+        public Employee supervisor;
+
+        /**
+         * The {@link Employee Employees} who report to this {@link Manager}.
+         */
+        public List<Employee> directReports = Lists.newArrayList();
+    }
+
+    /**
+     * A {@link Record} with a top-level {@link DeferredReference} field
+     * ({@code archive}) and a single-{@link Record} edge to {@link Vault}, used
+     * to verify that {@link DeferredReference} paths are detected both at the
+     * top level and nested behind a single-{@link Record} edge.
+     */
+    class Ledger extends Record {
+
+        /**
+         * The {@link Archive} referenced by this {@link Ledger}.
+         */
+        public DeferredReference<Archive> archive;
+
+        /**
+         * The {@link Vault} of this {@link Ledger}.
+         */
+        public Vault vault;
+    }
+
+    /**
+     * The single-{@link Record} target of {@link Ledger#vault}, with its own
+     * {@link DeferredReference} field used to verify nested detection.
+     */
+    class Vault extends Record {
+
+        /**
+         * The {@link Archive} referenced by this {@link Vault}.
+         */
+        public DeferredReference<Archive> archive;
+
+        /**
+         * A label for this {@link Vault}.
+         */
+        public String label;
+    }
+
+    /**
+     * A leaf {@link Record} used as the target of the {@link DeferredReference}
+     * fields in {@link Ledger} and {@link Vault}.
+     */
+    class Archive extends Record {
+
+        /**
+         * A label for this {@link Archive}.
+         */
+        public String label;
+    }
+
+    /**
+     * A non-{@link Record} field holder whose sixteen {@link Simple}-typed
+     * fields supply the distinct cyclic edges for
+     * {@link #testComputeNavigatePathsTerminatesWithManyCyclicEdges()}. It is
+     * intentionally not a {@link Record} so that {@link Record.StaticAnalysis}
+     * does not pick it up during its classpath scan.
+     */
+    class ManyCyclicEdges {
+
+        /**
+         * The sixteen self-referential edges of the synthetic cyclic graph.
+         */
+        Simple a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p;
     }
 
 }

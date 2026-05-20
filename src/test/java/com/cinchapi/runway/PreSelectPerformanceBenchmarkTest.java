@@ -25,7 +25,6 @@ import org.junit.Test;
 import com.cinchapi.common.profile.Benchmark;
 import com.cinchapi.concourse.test.CrossVersionTest;
 import com.cinchapi.concourse.test.runners.CrossVersionTestRunner.Versions;
-import com.cinchapi.runway.Runway.ReadStrategy;
 
 /**
  * Test pre-select performance compared to legacy behaviour.
@@ -65,8 +64,7 @@ public class PreSelectPerformanceBenchmarkTest extends CrossVersionTest {
 
     @Test
     public void testPerformance() {
-        Runway db = Runway.builder().readStrategy(ReadStrategy.BULK)
-                .port(server.getClientPort()).build();
+        Runway db = Runway.builder().port(server.getClientPort()).build();
         Benchmark benchmark = new Benchmark(TimeUnit.MILLISECONDS) {
 
             @Override

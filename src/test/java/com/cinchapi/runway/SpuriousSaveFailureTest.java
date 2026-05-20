@@ -37,34 +37,29 @@ import com.cinchapi.concourse.Concourse;
  */
 public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
 
-    @Override
-    public void beforeEachTest() {
-        runway = Runway.builder().port(server.getClientPort()).build();
-    }
-
     /**
-     * <strong>Goal:</strong> Verify that concurrent saves involving records
-     * with overlapping {@link Unique} constraint reads cause a spurious
-     * {@code TransactionException} when using the default
-     * {@link SpuriousSaveFailureStrategy#FAIL_FAST} strategy.
+     * <strong>Goal:</strong> Verify that two concurrent saves of distinct
+     * {@link Record Records} that contend on the same {@link Unique @Unique}
+     * constraint produce a spurious {@code TransactionException} under the
+     * default {@link SpuriousSaveFailureStrategy#FAIL_FAST FAIL_FAST} strategy,
+     * with at least one save returning {@code false}.
      * <p>
-     * <strong>Start state:</strong> A freshly created {@link Runway} instance
-     * with no saved records.
+     * <strong>Start state:</strong> A pre-saved {@link TUser}, {@link TTenant},
+     * and {@link TSeat} so that both racing threads share the target by id
+     * rather than by Java reference.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Create a {@link TUser}, a {@link TTenant} (which creates a
-     * {@link TSeat} in its constructor), and a {@link TWarehouse} linked to the
-     * same {@link TSeat}.</li>
-     * <li>Launch two threads: one saves the {@link TUser} and {@link TTenant}
-     * together, the other saves the {@link TWarehouse}.</li>
-     * <li>Use a {@link CountDownLatch} to synchronize the threads so both saves
-     * are in-flight concurrently.</li>
+     * <li>Construct two distinct {@link TWarehouse} {@link Record Records},
+     * each pointing at the same pre-saved {@link TSeat}.</li>
+     * <li>Launch two threads that gate on a {@link CountDownLatch} and call
+     * {@link Runway#save runway.save} on one warehouse each.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> At least one of the two concurrent saves
-     * fails, demonstrating the spurious transaction conflict caused by
-     * overlapping {@code @Unique} constraint reads.
+     * <strong>Expected:</strong> At least one save returns {@code false},
+     * because {@link TWarehouse#seat} is {@link Unique @Unique} and only one
+     * warehouse can hold a given seat &mdash; the loser's uniqueness read is
+     * invalidated by the winner's commit.
      */
     @Test
     public void testConcurrentSaveWithUniqueConstraintCausesSpuriousFailure()
@@ -72,7 +67,10 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
         TUser user = new TUser("alice");
         TTenant tenant = new TTenant(user);
         TSeat seat = tenant.seats.iterator().next();
-        TWarehouse warehouse = new TWarehouse(seat);
+        Assert.assertTrue(runway.save(user, tenant));
+
+        TWarehouse warehouse1 = new TWarehouse(seat);
+        TWarehouse warehouse2 = new TWarehouse(seat);
 
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch go = new CountDownLatch(1);
@@ -85,7 +83,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
             ready.countDown();
             try {
                 go.await();
-                save1Result.set(runway.save(user, tenant));
+                save1Result.set(runway.save(warehouse1));
             }
             catch (Throwable t) {
                 save1Error.set(t);
@@ -96,7 +94,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
             ready.countDown();
             try {
                 go.await();
-                save2Result.set(runway.save(warehouse));
+                save2Result.set(runway.save(warehouse2));
             }
             catch (Throwable t) {
                 save2Error.set(t);
@@ -145,7 +143,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testRetryStrategySucceedsOnSpuriousFailure() throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {
@@ -261,7 +259,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     @Test
     public void testSaveDoesNotOverwriteExternallyModifiedLinkedRecord()
             throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {
@@ -324,7 +322,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     @Test
     public void testHasStaleDataReturnsTrueAfterExternalModification()
             throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {
@@ -378,7 +376,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testHasStaleDataReturnsFalseWhenUnmodified() throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {
@@ -492,7 +490,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testHasStaleDataReturnsFalseAfterLoad() throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {
@@ -541,7 +539,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testLinkedRecordsPersistedAfterSave() throws Exception {
-        Runway retryRunway = Runway.builder().port(server.getClientPort())
+        Runway retryRunway = runwayBuilder()
                 .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
                 .build();
         try {

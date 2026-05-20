@@ -297,7 +297,7 @@ public class SelectionBuilderTest {
     @Test
     public void testOrderAndPagePassedToLoadClassSelection() {
         Order order = Order.by("name");
-        Page page = Page.sized(10);
+        Page page = Page.limit(10);
         Selection<TestRecord> sel = Selection.of(TestRecord.class).order(order)
                 .page(page).build();
         Assert.assertTrue(sel instanceof LoadClassSelection);

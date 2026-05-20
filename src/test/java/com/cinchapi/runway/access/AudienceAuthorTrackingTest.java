@@ -50,7 +50,7 @@ public class AudienceAuthorTrackingTest extends RunwayBaseClientServerTest {
         document.set("text", "This is anonymous text");
         document.save();
         System.out.println(client.select(document.id()));
-        System.out.println(client.review(document.id()));
+        System.out.println(client.audit(document.id()));
         System.out.println(document.audit());
         Assert.assertFalse(document.audit().isEmpty());
     }

@@ -30,16 +30,16 @@ import com.google.common.collect.Sets;
 /**
  * Repro GH-95 https://github.com/cinchapi/runway/issues/95
  * <p>
- * When a {@link Record} is loaded under a non-{@code NONE}
- * {@link CollectionPreSelectStrategy}, {@code Record#convert(...)} reads the
- * destination data for each {@link com.cinchapi.concourse.Link Link} from the
- * pre-fetched {@code targets} map. The convert branch unconditionally
- * dereferences the result of {@code targets.get(target)} on the next line, so
- * any pre-fetch miss (e.g., the target is a brand-new id, the target's record
- * was cleared, or the pre-fetch result set was scoped narrower than the actual
- * link set) triggers a {@link NullPointerException} that aborts the entire
- * load. Pre-fetching is an optimization, not a contract &mdash; a miss should
- * degrade to a single record fetch, not crash.
+ * When a {@link Record} is loaded with navigate pre-fetch,
+ * {@code Record#convert(...)} reads the destination data for each
+ * {@link com.cinchapi.concourse.Link Link} from the pre-fetched {@code targets}
+ * map. The convert branch unconditionally dereferences the result of
+ * {@code targets.get(target)} on the next line, so any pre-fetch miss (e.g.,
+ * the target is a brand-new id, the target's record was cleared, or the
+ * pre-fetch result set was scoped narrower than the actual link set) triggers a
+ * {@link NullPointerException} that aborts the entire load. Pre-fetching is an
+ * optimization, not a contract &mdash; a miss should degrade to a single record
+ * fetch, not crash.
  *
  * @author Jeff Nelson
  */
@@ -112,8 +112,7 @@ public class GH95 extends RunwayBaseClientServerTest {
      * <strong>Goal:</strong> Verify that when {@code targets} contains an entry
      * for a {@link com.cinchapi.concourse.Link Link} target, the pre-fetched
      * data is used directly and no redundant single-record fetch is issued
-     * &mdash; preserving the optimization that
-     * {@link CollectionPreSelectStrategy} exists to provide. Without this
+     * &mdash; preserving the navigate pre-fetch optimization. Without this
      * guard, the missing-entry fallback could regress into an always-fall-back
      * path that silently doubles the round trips of every pre-selected load.
      * <p>
@@ -163,10 +162,9 @@ public class GH95 extends RunwayBaseClientServerTest {
     /**
      * <strong>Goal:</strong> Verify that loading a {@link Stone} with a
      * dangling {@link com.cinchapi.concourse.Link Link} in its
-     * {@link Stone#pebbles} collection succeeds under
-     * {@link CollectionPreSelectStrategy#BULK_SELECT}. This is a regression
-     * test for the interaction between the BULK_SELECT pre-fetch path and the
-     * dangling-link cleanup logic in {@code Record#convert(...)}.
+     * {@link Stone#pebbles} collection succeeds. This is a regression test for
+     * the interaction between the navigate pre-fetch path and the dangling-link
+     * cleanup logic in {@code Record#convert(...)}.
      * <p>
      * <strong>Start state:</strong> A {@link Stone} with three {@link Pebble
      * Pebbles} saved, one of which is then cleared. The
@@ -180,9 +178,6 @@ public class GH95 extends RunwayBaseClientServerTest {
      * <li>Call {@code client.clear(...)} on the second {@link Pebble Pebble's}
      * id to leave its outgoing {@link com.cinchapi.concourse.Link Link}
      * dangling.</li>
-     * <li>Switch the {@link Runway} to
-     * {@link CollectionPreSelectStrategy#BULK_SELECT} so pre-fetching is
-     * exercised.</li>
      * <li>Reload the {@link Stone} via
      * {@code runway.load(Stone.class, id)}.</li>
      * </ul>
@@ -193,7 +188,7 @@ public class GH95 extends RunwayBaseClientServerTest {
      * been removed from {@link Stone Stone's} stored {@code pebbles} data.
      */
     @Test
-    public void testBulkSelectLoadDoesNotNpeOnDanglingCollectionLink() {
+    public void testLoadDoesNotNpeOnDanglingCollectionLink() {
         Pebble p1 = new Pebble();
         p1.label = "alpha";
         Pebble p2 = new Pebble();
@@ -209,25 +204,16 @@ public class GH95 extends RunwayBaseClientServerTest {
 
         client.clear(p2.id());
 
-        CollectionPreSelectStrategy previous = runway.properties()
-                .collectionPreSelectStrategy();
-        runway.properties().collectionPreSelectStrategy(
-                CollectionPreSelectStrategy.BULK_SELECT);
-        try {
-            Stone loaded = runway.load(Stone.class, stone.id());
-            Assert.assertNotNull(loaded);
-            Assert.assertEquals(2, loaded.pebbles.size());
-            List<String> labels = new ArrayList<>();
-            for (Pebble p : loaded.pebbles) {
-                labels.add(p.label);
-            }
-            Assert.assertTrue(labels.contains("alpha"));
-            Assert.assertTrue(labels.contains("gamma"));
-            Assert.assertEquals(2, client.select("pebbles", stone.id()).size());
+        Stone loaded = runway.load(Stone.class, stone.id());
+        Assert.assertNotNull(loaded);
+        Assert.assertEquals(2, loaded.pebbles.size());
+        List<String> labels = new ArrayList<>();
+        for (Pebble p : loaded.pebbles) {
+            labels.add(p.label);
         }
-        finally {
-            runway.properties().collectionPreSelectStrategy(previous);
-        }
+        Assert.assertTrue(labels.contains("alpha"));
+        Assert.assertTrue(labels.contains("gamma"));
+        Assert.assertEquals(2, client.select("pebbles", stone.id()).size());
     }
 
     /**

@@ -1,5 +1,66 @@
 # Changelog
 
+#### Version 2.0.0 (May 20, 2026)
+
+##### Command API
+This release adopts the Concourse Command API (`prepare()`/`submit()`), introduced in Concourse 1.0.0, to batch Runway's hottest read and write paths into the fewest possible server round trips. When the connected server is older than 1.0.0, Runway transparently falls back to the legacy per-call path.
+
+* **Batched multi-selection reads**: `Runway.select(Selection...)` now collapses an N-selection call into a single `prepare()`/`submit()` round trip, regardless of whether the selections target the same or different classes. Replaces the prior combinable/isolated dispatch that issued one round trip per isolated selection plus one for the OR-merged combinable batch. ([GH-103](https://github.com/cinchapi/runway/issues/103))
+* **Batched saves**: `Runway.save(Record...)` and `Runway.save(boolean, Record...)` now drive every save &mdash; stage, stale-data audit, uniqueness validation, field writes, cascade-delete reads, and commit &mdash; through as few `prepare()`/`submit()` round trips as the save permits: `1` round trip when no validation reads are needed (no `@Unique` fields and `preventStaleWrites=false`); `2` round trips otherwise. For a record with `f` fields, `u` `@Unique` fields, and `preventStaleWrites=true`, the save cost drops from `~3 + u + f + 2` round trips to `2`. ([GH-104](https://github.com/cinchapi/runway/issues/104), [GH-105](https://github.com/cinchapi/runway/issues/105))
+
+##### Transitive Navigation
+Every `load`, `find`, and `findAny` operation now resolves linked `Record` data through a single, unified pre-fetch path built around Concourse's `navigate()` API plus the new `*` transitive modifier. The unified path covers every reachable destination in a single `navigate()` per class group (typed or untyped) and a follow-up bulk-`select()` cleanup pass that closes any gaps the navigate paths cannot reach &mdash; mutual-reference cycles whose field names alternate, dangling links, links into records reached through single-`Record` edges, etc. ([GH-80](https://github.com/cinchapi/runway/issues/80), [GH-98](https://github.com/cinchapi/runway/issues/98))
+
+* Self-referential `Record` graphs of arbitrary depth pre-fetch in a single round trip via the `*` transitive modifier; previously, self-referential `Collection<Record>` fields (e.g., `Exchange.children: Set<Exchange>`) and self-referential single-`Record` fields (e.g., `Exchange.parent: Exchange`) bounded pre-fetching at one level.
+* `Collection<Record>` fields reached through single-`Record` edges (e.g., `Document.metadata.tags`) and non-cyclic `Collection<Record>` fields nested under self-referential ones are now fully pre-fetched.
+* Untyped loads through `loadAny` / `findAny` now also benefit from `navigate()` pre-fetch &mdash; the load pipeline groups discovered records by their section key and dispatches a class-aware `navigate()` per group. An untyped load that touches `K` classes therefore costs one batched round trip per group, so the table's `1` applies to typed loads and to untyped loads whose results all belong to a single class.
+* The single-record `load(Class, id)` codepath is unified with the bulk pre-fetch path, so every load surface shares one mechanism.
+* Select-side path computation is unchanged.
+
+Transitive navigation also cuts the number of server round trips a load costs, and the saving grows with how deeply records are linked. Consider a record type whose instances form a tree. It has a self-referential collection field, `children: Set<Exchange>`, and a `parent` reference back up the tree. Each node also links to a few other record types, some of them subtypes of a shared polymorphic hierarchy. The depth of such a tree &mdash; the number of levels of children that exist at run time &mdash; is set by the data, not by the schema.
+
+On the `1.14.x` line, running against Concourse `0.12.x`, pre-fetching could descend a self-referential link only one level per round trip. Loading the root of the tree above cost roughly one round trip for each level of depth: the first round trip fetched the root's direct children, the second fetched their children, and so on down to the leaves. Because that depth is a property of the data, the cost had no ceiling. The deeper the tree, the more round trips every load took.
+
+On `2.0.0`, running against Concourse `1.0.x`, the new `*` transitive modifier removes the per-level cost. A navigate path written `children*` tells a single `navigate()` call to follow the `children` link repeatedly, to whatever depth the data reaches. That one call pre-fetches the whole tree, every level at once, along with the other record types each node links to. A graph that used to cost one round trip per level now costs one round trip in total, however deep it runs. The table below states the upper bound on round trips for two representative graph shapes.
+
+| Linked-record prefetch | Non-cyclic graph (depth `L`) | Self-referential tree (depth `D`) |
+| --- | --- | --- |
+| `1.14.x` / `0.12.x` &mdash; `NONE`, no prefetch (the default) | `1 + N` | `1 + N` |
+| `1.14.x` / `0.12.x` &mdash; `BULK_SELECT`, batched per level | `1 + L` | `1 + D` |
+| `2.0.0` / `1.0.x` &mdash; Command API and `*` modifier | `1` | `1` |
+| `2.0.0` / `0.12.x` &mdash; legacy fallback (no Command API or `*`) | `2` | `2 + D` |
+
+Each cell is the largest number of server round trips needed to fully resolve a single `load` or `find`. The formulas use three quantities:
+
+* `N` &mdash; the number of linked records the load reaches.
+* `L` &mdash; the length of the longest chain of non-cyclic `Record`-to-`Record` links. This is fixed by the schema, so it stays small and constant.
+* `D` &mdash; the depth of a self-referential tree. This is set by the data and has no fixed upper bound.
+
+No pre-fetch mechanism in the `1.14.x` line could resolve a self-referential tree in a number of round trips that did not grow with `D`. The `2.0.0` mechanism is the first that can.
+
+A `2.0.0` load has two independent optimization opportunities, both introduced in Concourse `1.0.0`:
+
+1. **The Command API** (`prepare()`/`submit()`) lets Runway pack the per-load `select` for the record itself and the `navigate` for the records it links to into a single round trip rather than two.
+
+2. **The `*` transitive modifier** to `navigate()` lets a single `navigate()` call follow a self-referential link to any depth. Runway emits `*` paths (e.g., `children*`) for every self-referential edge in the source graph.
+
+Concourse `1.0.x` provides both features; older Concourse servers provide neither. The third row of the table is the both-on case; the fourth row is the both-off case.
+
+Whichever paths a single `navigate()` cannot reach are gathered by a follow-up bulk-`select()` cleanup pass that walks the missing graph one round trip at a time. Two classes of edge always require the cleanup, regardless of server version: a cycle that alternates between two different field names (for example, a type `A` that links to `B` through a field named `bs` while `B` links back through a field named `as` &mdash; the `*` modifier can only repeat one field name), and a link whose target has been deleted. Against an older server, every self-referential edge also needs the cleanup, because the navigate-path set has had its `*` paths stripped.
+
+The third row's `1` falls out of both optimizations being in effect: the Command API combines the select and the navigate into one round trip, and the `*` modifier makes that single navigate cover an arbitrarily deep self-referential tree, so the cleanup pass has nothing to walk for a pure tree. A graph with alternating-field cycles still costs one cleanup round trip per level of the part `*` could not express.
+
+The fourth row's `2 + D` is the same calculation with both optimizations absent: two round trips for the separate select and navigate, plus one cleanup round trip per level of every self-referential edge (`+ D` for a tree of depth `D`). Non-cyclic graphs do not depend on `*` paths, so they pay only the Command-API cost: `2` round trips.
+
+##### API Breaks and Deprecations
+* Removed the `CachingConcourse` infrastructure and the related `Runway.Builder` cache configuration. `Runway.Builder.cache(Cache<Long, Record>)` and `Runway.Builder.withCache(Cache<Long, Map<String, Set<Object>>>)` have been deleted along with the `com.cinchapi.runway.cache` package (`CachingConcourse`, `CachingConnectionPool`, `LeasingCache`, `NoOpLeasingCache`, `NoOpCache`). Connection-level data caching is removed in this release; the planned `prepare()`/`submit()` write transport made the per-method invalidation model untenable, and the implementation had latent invalidation bugs (e.g., missing overrides for `consolidate`, `link`, `unlink`, and several `clear` / `insert` variants). Callers that relied on `withCache(...)` should remove the configuration; the thread-local reservation API (`Runway#reserve()` / `Runway#unreserve()`) is unaffected. ([GH-81](https://github.com/cinchapi/runway/issues/81))
+* Removed the `ReadStrategy` enum and the `Runway.Builder.readStrategy(...)`, `Runway.Builder.streamingReadBufferSize(...)`, and `Runway.Builder.recordsPerSelectBufferSize(...)` configuration. Every read now fetches the matching records in bulk. The former streaming read strategy deferred each record's read until it was consumed, but with linked-`Record` pre-fetching now unconditional it produced the same fully-loaded `Record` graph as a bulk read, so it offered no behavior worth configuring. Callers that set a `ReadStrategy` or buffer size must remove those calls.
+* A `@Unique` constraint violation detected during `Runway.save()` now surfaces as a `Record.ConstraintViolationException` (a subtype of `RunwayException`) rather than a `java.lang.IllegalStateException`. The violation still makes `save()` return `false` with the exception recorded on the offending `Record`, but callers that catch or type-check `IllegalStateException` to detect uniqueness failures must switch to catching `RunwayException`. The change affects every connected server version &mdash; both the new bulk-command save path and the legacy per-call path. ([GH-104](https://github.com/cinchapi/runway/issues/104))
+* Removed the `CollectionPreSelectStrategy` enum and the `Runway.Builder.collectionPreSelectStrategy(...)`, `Runway.Builder.disablePreSelectLinkedRecords()`, and `Runway.Properties.collectionPreSelectStrategy()` configuration. Pre-fetching linked `Record` data is now unconditional &mdash; every load resolves linked records through the navigate-based path described above. The former `BULK_SELECT` and `NONE` strategies produced the same fully-loaded `Record` graph as `NAVIGATE`, only with more database round trips, so they offered no behavioral choice worth configuring. Callers that selected a strategy or called `disablePreSelectLinkedRecords()` must remove those calls; to make an individual linked field load only when accessed, wrap it in a `DeferredReference`.
+
+##### Dependencies
+* Upgraded the `concourse-driver-java` dependency to `1.0.1`, a major-version upgrade from the `0.12.x` line. Applications that pin a transitive Concourse version must update it to match.
+
 #### Version 1.14.6 (May 1, 2026)
 * Fixed a bug where loading a `Record` graph that contained a nested `Record` with a dangling `Link` (one whose target had been cleared) inside a `Collection<Record>` field would throw `InvalidArgumentException`, making the graph unloadable until the dangling `Link` was removed manually. ([GH-94](https://github.com/cinchapi/runway/issues/94))
 * Fixed a bug where loading a `Record` under a non-default `CollectionPreSelectStrategy` would throw `NullPointerException` and abort the entire load whenever a `Link` target was missing from the pre-fetched destination data. ([GH-95](https://github.com/cinchapi/runway/issues/95))
@@ -42,6 +103,9 @@
 * Fixed a bug where local `Criteria` evaluation via `ConcourseCompiler` did not account for non-readable fields, producing results that diverged from how Concourse would resolve the same `Criteria` server-side. Non-readable (e.g., private) fields are stored in the database and indexed like any other field, so server-side resolution always considers them. Local evaluation now includes all fields regardless of visibility, matching server-side behavior.
 * Added `Record#matches(Criteria)` to test whether a `Record` satisfies a `Criteria` locally. Navigation keys are fully supported, including traversal through private fields and collections of linked `Records`.
 * Upgraded the `concourse-driver-java` dependency to `0.12.4` to fix a bug that caused local `Criteria` evaluation via `ConcourseCompiler` to provide inconsistent and unexpected results for records that did not contain a value stored under one or more keys in the input `Criteria`.
+
+#### Version 1.13.1 (April 14, 2026)
+* Fixed a bug where an anonymous audience could not discover access-controlled records that were readable or writable by anonymous unless discoverability was also explicitly granted, unlike non-anonymous audiences who could implicitly discover any record they were permitted to read or write
 
 #### Version 1.13.0 (March 12, 2026)
 * **Configurable `CollectionPreSelectStrategy`**: Added `CollectionPreSelectStrategy`, a configurable enum that controls how `Runway` pre-selects data for `Collection<Record>` fields (e.g., `List<Dock>`, `Set<Node>`). Previously, loading a Record with a collection of N linked Records issued N individual `select()` calls — one per element — inside `convert()`. Three strategies are now available:

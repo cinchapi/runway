@@ -633,7 +633,7 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         try (AttachmentScope scope = runway.attach(source1, source2)) {
             // Sort by name, get first page of 2
             Order order = Order.by("name").ascending().build();
-            Page page = Page.sized(2).go(1);
+            Page page = Page.limit(2).goTo(1);
 
             Set<TestAdHocRecord> results = runway.load(TestAdHocRecord.class,
                     order, page);
@@ -766,7 +766,7 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
 
         try (AttachmentScope scope = runway.attach(source1, source2)) {
             // Total 5 records, get page 2 with size 2 (records 3-4)
-            Page page = Page.sized(2).go(2);
+            Page page = Page.limit(2).goTo(2);
             Set<AdHocRecord> results = runway.loadAny(AdHocRecord.class, page);
             Assert.assertEquals(2, results.size());
         }
@@ -791,7 +791,7 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
             Criteria criteria = Criteria.where().key("name")
                     .operator(Operator.REGEX).value(".*").build();
             Order order = Order.by("name").ascending().build();
-            Page page = Page.sized(2).go(1);
+            Page page = Page.limit(2).goTo(1);
 
             Set<TestAdHocRecord> results = runway.findAny(TestAdHocRecord.class,
                     criteria, order, page);

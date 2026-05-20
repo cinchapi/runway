@@ -192,7 +192,7 @@ public class AudienceVisibilityScopeIntegrationTest
         for (int i = 0; i < 10; ++i) {
             runway.save(new OwnedDocument("bob-doc-" + i, "bob"));
         }
-        Page page = Page.sized(10).go(1);
+        Page page = Page.limit(10).goTo(1);
         Selections sel = alice
                 .select(Selection.of(OwnedDocument.class).page(page));
         Set<OwnedDocument> results = sel.next();

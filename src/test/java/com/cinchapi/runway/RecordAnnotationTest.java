@@ -21,10 +21,8 @@ import java.util.Map;
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
-import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.time.Time;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
@@ -34,29 +32,7 @@ import com.google.common.collect.Lists;
  *
  * @author Jeff Nelson
  */
-public class RecordAnnotationTest extends ClientServerTest {
-
-    @Override
-    protected String getServerVersion() {
-        return Testing.CONCOURSE_VERSION;
-    }
-
-    Runway db;
-
-    @Override
-    public void beforeEachTest() {
-        db = Runway.builder().port(server.getClientPort()).build();
-    }
-
-    @Override
-    public void afterEachTest() {
-        try {
-            db.close();
-        }
-        catch (Exception e) {
-            CheckedExceptions.wrapAsRuntimeException(e);
-        }
-    }
+public class RecordAnnotationTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testMultiUniqueConstraint() {

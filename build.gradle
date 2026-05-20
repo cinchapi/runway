@@ -49,7 +49,7 @@ repositories {
 
 
 // Set the version for all Concourse dependencies
-ext.concourseVersion = '0.12.4'
+ext.concourseVersion = '1.0.1'
 ext.accent4jVersion = '1.16.0'
 
 configurations.all {
@@ -99,12 +99,24 @@ def getVersion = { ->
 
 group = 'com.cinchapi'
 version = getVersion()
-// Drop the build component from version number and use that for
-// publishing
-ext.mavenVersion = version.split('\\.')
-ext.mavenVersion[3] = ext.mavenVersion[3].replaceAll("[0-9]+-", "-")
-ext.mavenVersion[3] = ext.mavenVersion[3].replaceAll("[0-9]+", "").trim()
-ext.mavenVersion = ext.mavenVersion.join(".").replace(".-", "-").replaceAll('\\.$', "")
+
+// Derive the Maven coordinate from the internal 4-segment version.
+// For -rc, lift the build counter into the suffix so each RC push
+// produces a unique, immutable artifact (e.g. 2.0.0.42-rc ->
+// 2.0.0-rc42). For every other shape, strip the counter and
+// preserve any pre-release suffix.
+ext.mavenVersion = version
+    .replaceFirst(/^(\d+\.\d+\.\d+)\.(\d+)-rc$/, '$1-rc$2')
+    .replaceFirst(/^(\d+\.\d+\.\d+)\.\d+(.*)$/, '$1$2')
+
+// Strict predicate for GA-only destinations. Matches both the
+// 3-segment Maven form (2.0.0) and the 4-segment internal form
+// (2.0.0.42). Rejects -SNAPSHOT, -rc<N>, feature suffixes, and
+// any other pre-release qualifier, so non-GA builds can never
+// route to the Cloudsmith releases repo.
+ext.isGAVersion = { version ->
+    return (version =~/^\d+\.\d+\.\d+(\.\d+)?$/).matches()
+}
 
 jar {
     manifest {
@@ -133,7 +145,9 @@ publishing {
       name = 'cloudsmith'
       def releasesRepoUrl = "https://api-g.cloudsmith.io/maven/cinchapi/open-source/"
       def snapshotsRepoUrl = "https://api-g.cloudsmith.io/maven/cinchapi/open-source-snapshots/"
-      url = mavenVersion.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
+      // Only clean GA versions go to the releases repo; everything
+      // else (SNAPSHOT, -rc<N>, feature suffixes) goes to snapshots.
+      url = isGAVersion(mavenVersion) ? releasesRepoUrl : snapshotsRepoUrl
       credentials {
         username = System.getenv('CLOUDSMITH_API_USER')
         password = System.getenv('CLOUDSMITH_API_KEY')

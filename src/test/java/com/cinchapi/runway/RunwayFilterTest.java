@@ -20,9 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.test.ClientServerTest;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
 
@@ -31,36 +29,14 @@ import com.cinchapi.concourse.util.Random;
  *
  * @author Jeff Nelson
  */
-public class RunwayFilterTest extends ClientServerTest {
-
-    @Override
-    protected String getServerVersion() {
-        return Testing.CONCOURSE_VERSION;
-    }
-
-    Runway db;
-
-    @Override
-    public void beforeEachTest() {
-        db = Runway.builder().port(server.getClientPort()).build();
-    }
-
-    @Override
-    public void afterEachTest() {
-        try {
-            db.close();
-        }
-        catch (Exception e) {
-            CheckedExceptions.wrapAsRuntimeException(e);
-        }
-    }
+public class RunwayFilterTest extends RunwayBaseClientServerTest {
 
     @Test
     public void testCountFilter() {
         Writer a = new Writer("a");
         Writer b = new Writer("b");
         Editor c = new Editor("c");
-        db.save(a, b);
+        runway.save(a, b);
 
         int acount = Random.getScaleCount();
         for (int i = 0; i < acount; ++i) {
@@ -75,11 +51,11 @@ public class RunwayFilterTest extends ClientServerTest {
         }
 
         Assert.assertEquals(acount,
-                db.count(Article.class, article -> article.isVisibleTo(a)));
+                runway.count(Article.class, article -> article.isVisibleTo(a)));
         Assert.assertEquals(bcount,
-                db.count(Article.class, article -> article.isVisibleTo(b)));
+                runway.count(Article.class, article -> article.isVisibleTo(b)));
         Assert.assertEquals(acount + bcount,
-                db.count(Article.class, article -> article.isVisibleTo(c)));
+                runway.count(Article.class, article -> article.isVisibleTo(c)));
     }
 
     @Test
@@ -102,19 +78,20 @@ public class RunwayFilterTest extends ClientServerTest {
         Writer w = new Writer("writer");
         Editor e = new Editor("editor");
         Admin a = new Admin("a");
-        db.save(w, e, a);
-        Assert.assertEquals(1, db.countAny(User.class, u -> u.isVisibleTo(w)));
+        runway.save(w, e, a);
+        Assert.assertEquals(1,
+                runway.countAny(User.class, u -> u.isVisibleTo(w)));
         Assert.assertEquals(2 + editors + writers,
-                db.countAny(User.class, u -> u.isVisibleTo(e)));
+                runway.countAny(User.class, u -> u.isVisibleTo(e)));
         Assert.assertEquals(3 + admins + editors + writers,
-                db.countAny(User.class, u -> u.isVisibleTo(a)));
+                runway.countAny(User.class, u -> u.isVisibleTo(a)));
     }
 
     @Test
     public void testCountCriteriaFilter() {
         Writer a = new Writer("a");
         Writer b = new Writer("b");
-        db.save(a, b);
+        runway.save(a, b);
         AtomicInteger acount = new AtomicInteger(0);
         AtomicInteger bcount = new AtomicInteger(0);
         for (int i = 0; i < Random.getScaleCount(); ++i) {
@@ -142,12 +119,12 @@ public class RunwayFilterTest extends ClientServerTest {
             article.save();
         }
         Assert.assertEquals(acount.get(),
-                db.count(Article.class,
+                runway.count(Article.class,
                         Criteria.where().key("title").operator(Operator.EQUALS)
                                 .value("Expected"),
                         article -> article.isVisibleTo(a)));
         Assert.assertEquals(bcount.get(),
-                db.count(Article.class,
+                runway.count(Article.class,
                         Criteria.where().key("title").operator(Operator.EQUALS)
                                 .value("Expected"),
                         article -> article.isVisibleTo(b)));

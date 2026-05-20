@@ -46,7 +46,9 @@ fi
 
 if [ -z "$1" ] ; then
   VERSION=`cat $BASE_VERSION_FILE`
-  BRANCH=`git rev-parse --abbrev-ref HEAD`
+  # CI environments often check out in detached HEAD state, so prefer
+  # CI-provided environment variables over git commands.
+  BRANCH="${CIRCLE_BRANCH:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-${BRANCH_NAME:-${CI_COMMIT_BRANCH:-${GIT_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}}}}}}"
   COMMIT=`git rev-parse HEAD | cut -c1-10`
 
   # Get counter value
@@ -64,24 +66,28 @@ if [ -z "$1" ] ; then
   fi
   echo $COUNTER > $COUNTER_FILE
   VERSION=$VERSION.$COUNTER
+  # master is the only branch that produces a clean GA version.
+  # Every other branch gets a suffix that keeps its artifacts in the
+  # Cloudsmith snapshots repo, never the releases repo.
   case $BRANCH in
+    master )
+      EXTRA=""
+      ;;
+    release/* )
+      EXTRA="-rc"
+      ;;
     develop )
       EXTRA="-SNAPSHOT"
       ;;
-    feature* )
-      IFS='/'
-      PARTS=( $BRANCH )
-      EXTRA="-${PARTS[1]}"
-      EXTRA=`echo $EXTRA | tr '[:lower:]' '[:upper:]'`
-      ;;
-    release* )
-      EXTRA=""
-      ;;
     * )
-      # At this point we do not need to refer
-      # to any commit hash since we'll have a
-      # tag that represents the overall release
-      EXTRA=""
+      # Sanitize the full branch name into a Maven-safe suffix:
+      # uppercase, collapse non-alphanumerics to '-', trim, cap at
+      # 32, fall back to BUILD if empty.
+      SUFFIX=$(echo "$BRANCH" | tr '[:lower:]' '[:upper:]' \
+        | sed -E 's/[^A-Z0-9]+/-/g; s/^-+//; s/-+$//')
+      SUFFIX=${SUFFIX:0:32}
+      SUFFIX=${SUFFIX:-BUILD}
+      EXTRA="-${SUFFIX}"
       ;;
   esac
   echo $VERSION$EXTRA

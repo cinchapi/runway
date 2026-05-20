@@ -99,7 +99,7 @@ public class AdHocDataSourceMultiSelectTest extends RunwayBaseClientServerTest {
             Selection<MockModel> countSel = Selection.of(MockModel.class)
                     .count().build();
             Selection<MockModel> dataSel = Selection.of(MockModel.class)
-                    .page(Page.sized(1)).build();
+                    .page(Page.limit(1)).build();
 
             Selections results = runway.select(countSel, dataSel);
             int count = results.next();
@@ -140,7 +140,7 @@ public class AdHocDataSourceMultiSelectTest extends RunwayBaseClientServerTest {
             Selection<MockModel> countSel = Selection.of(MockModel.class)
                     .count().filter(record -> true).build();
             Selection<MockModel> dataSel = Selection.of(MockModel.class)
-                    .order(Order.by("name").ascending()).page(Page.sized(2))
+                    .order(Order.by("name").ascending()).page(Page.limit(2))
                     .filter(record -> true).build();
 
             Selections results = runway.select(countSel, dataSel);

@@ -20,6 +20,7 @@ import java.util.Set;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 
 /**
@@ -159,8 +160,7 @@ public class LoadRealmsFilterTest extends RunwayBaseClientServerTest {
         }
 
         Order order = Order.by("score").ascending();
-        com.cinchapi.concourse.lang.paginate.Page page = com.cinchapi.concourse.lang.paginate.Page
-                .sized(3);
+        Page page = Page.limit(3);
 
         Set<Player> evenPlayers = runway.load(Player.class, order, page,
                 Realms.only("realm-even"));
