@@ -41,6 +41,7 @@ import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
+import com.cinchapi.runway.SerializationOptions;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
@@ -109,6 +110,31 @@ public interface Audience extends DatabaseInterface {
 
     /**
      * Return a {@link Predicate} that tests whether a {@link Record} is visible
+     * to this {@link Audience}, using the registered {@link Scope} if one
+     * exists and is {@link Scope#isApplicable() applicable}, or falling back to
+     * {@link #$checkIfVisible()} otherwise.
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
+     *
+     * @return a {@link Predicate} to filter for visible records
+     */
+    public default <T extends Record> Predicate<T> $checkIfInScopeOrVisible() {
+        // TODO: make private in Java 9+
+        return record -> {
+            if(record instanceof AccessControl) {
+                Scope scope = AccessControl
+                        .resolveVisibilityScope(record.getClass(), this);
+                if(scope != null && scope.isApplicable()) {
+                    return scope.test(record);
+                }
+            }
+            return $checkIfVisible().test(record);
+        };
+    }
+
+    /**
+     * Return a {@link Predicate} that tests whether a {@link Record} is visible
      * to this {@link Audience}.
      * <p>
      * This is a framework-private method and should not be called directly.
@@ -146,31 +172,6 @@ public interface Audience extends DatabaseInterface {
             else {
                 return true;
             }
-        };
-    }
-
-    /**
-     * Return a {@link Predicate} that tests whether a {@link Record} is visible
-     * to this {@link Audience}, using the registered {@link Scope} if one
-     * exists and is {@link Scope#isApplicable() applicable}, or falling back to
-     * {@link #$checkIfVisible()} otherwise.
-     * <p>
-     * This is a framework-private method and should not be called directly.
-     * </p>
-     *
-     * @return a {@link Predicate} to filter for visible records
-     */
-    public default <T extends Record> Predicate<T> $checkIfInScopeOrVisible() {
-        // TODO: make private in Java 9+
-        return record -> {
-            if(record instanceof AccessControl) {
-                Scope scope = AccessControl
-                        .resolveVisibilityScope(record.getClass(), this);
-                if(scope != null && scope.isApplicable()) {
-                    return scope.test(record);
-                }
-            }
-            return $checkIfVisible().test(record);
         };
     }
 
@@ -253,6 +254,23 @@ public interface Audience extends DatabaseInterface {
 
     /**
      * Read a "frame" of data from the {@code record} containing only the
+     * information that is visible to this {@link Audience}, using default
+     * {@link SerializationOptions}.
+     *
+     * @param keys the fields to read from
+     * @param subject the {@link Record} to read from
+     * @param <T> the type of the {@link Record}
+     * @return a map of visible data or {@code null} if the {@code record} is
+     *         not discoverable at all by this {@link Audience}
+     * @see #frame(SerializationOptions, Collection, Record)
+     */
+    public default <T extends Record> Map<String, Object> frame(
+            Collection<String> keys, T subject) {
+        return frame(SerializationOptions.defaults(), keys, subject);
+    }
+
+    /**
+     * Read a "frame" of data from the {@code record} containing only the
      * information that is visible to this {@link Audience}.
      * <p>
      * Unlike {@link #read(Collection, Record)}, this method does not throw a
@@ -283,8 +301,11 @@ public interface Audience extends DatabaseInterface {
      * attempted</li>
      * </ul>
      *
+     * @param options the {@link SerializationOptions} to apply when
+     *            materializing data from the {@code subject} and any linked
+     *            {@link Record Records} encountered during recursive framing
      * @param keys the fields to read from
-     * @param record the {@link Record} to read from
+     * @param subject the {@link Record} to read from
      * @param <T> the type of the {@link Record}
      * @return a map of visible data or {@code null} if the {@code record} is
      *         not discoverable at all by this {@link Audience}
@@ -292,7 +313,7 @@ public interface Audience extends DatabaseInterface {
     @SuppressWarnings("unchecked")
     @Nullable
     public default <T extends Record> Map<String, Object> frame(
-            Collection<String> keys, T subject) {
+            SerializationOptions options, Collection<String> keys, T subject) {
         Preconditions.checkNotNull(keys, "keys cannot be null");
         Map<String, Object> data;
         if(!$checkIfInScopeOrVisible().test(subject)) {
@@ -344,17 +365,17 @@ public interface Audience extends DatabaseInterface {
                 data = new HashMap<>();
             }
             else if(requested.equals(ALL_KEYS) && readable.equals(ALL_KEYS)) {
-                data = subject.map();
+                data = subject.map(options);
             }
             else {
                 if(requested.equals(ALL_KEYS) && !readable.equals(ALL_KEYS)) {
                     String[] visible = readable.toArray(Array.containing());
-                    data = subject.map(visible);
+                    data = subject.map(options, visible);
                 }
                 else if(!requested.equals(ALL_KEYS)
                         && readable.equals(ALL_KEYS)) {
                     String[] visible = requested.toArray(Array.containing());
-                    data = subject.map(visible);
+                    data = subject.map(options, visible);
                 }
                 else {
                     Set<String> allowed = new HashSet<>();
@@ -381,7 +402,7 @@ public interface Audience extends DatabaseInterface {
                         data = new HashMap<>();
                     }
                     else {
-                        data = subject.map(visible);
+                        data = subject.map(options, visible);
                     }
                 }
             }
@@ -413,14 +434,14 @@ public interface Audience extends DatabaseInterface {
                     else if(value instanceof AccessControl) {
                         Record record = (Record) value;
                         seen.add(record);
-                        value = frame(ImmutableSet.copyOf(remaining),
+                        value = frame(options, ImmutableSet.copyOf(remaining),
                                 (T) record);
                         seen.remove(record);
                     }
                     else if(value instanceof Record) {
                         Record record = (Record) value;
                         seen.add(record);
-                        value = record.map(remaining);
+                        value = record.map(options, remaining);
                         seen.remove(record);
                     }
                     else if(Sequences.isSequence(value)) {
@@ -433,14 +454,15 @@ public interface Audience extends DatabaseInterface {
                                 if(item instanceof AccessControl) {
                                     Record record = (Record) item;
                                     seen.add(record);
-                                    item = frame(ImmutableSet.copyOf(remaining),
+                                    item = frame(options,
+                                            ImmutableSet.copyOf(remaining),
                                             (T) record);
                                     seen.remove(record);
                                 }
                                 else if(item instanceof Record) {
                                     Record record = (Record) item;
                                     seen.add(record);
-                                    item = record.map(remaining);
+                                    item = record.map(options, remaining);
                                     seen.remove(record);
                                 }
                             }
@@ -470,7 +492,7 @@ public interface Audience extends DatabaseInterface {
             }
         }
         else {
-            data = subject.map(keys.toArray(Array.containing()));
+            data = subject.map(options, keys.toArray(Array.containing()));
         }
         // By convention, the subject's id should always be included when
         // framing.
@@ -485,18 +507,18 @@ public interface Audience extends DatabaseInterface {
      * information that is visible to this {@link Audience}.
      * <p>
      * This is a convenience method that is equivalent to calling
-     * {@link #frame(Collection, Record)} with all of the keys in the
-     * {@code record}.
+     * {@link #frame(SerializationOptions, Collection, Record)} with all of the
+     * keys in the {@code record} and default {@link SerializationOptions}.
      * </p>
      *
      * @param record the {@link Record} to read from
      * @param <T> the type of the {@link Record}
      * @return a map of visible data or {@code null} if the {@code record} is
      *         not discoverable at all by this {@link Audience}
-     * @see #frame(Collection, Record)
+     * @see #frame(SerializationOptions, Collection, Record)
      */
     public default <T extends Record> Map<String, Object> frame(T record) {
-        return frame(ALL_KEYS, record);
+        return frame(SerializationOptions.defaults(), ALL_KEYS, record);
     }
 
     /**
@@ -550,6 +572,23 @@ public interface Audience extends DatabaseInterface {
             throws RestrictedAccessException {
         Map<String, Object> data = frame(ImmutableSet.of(key), record);
         return data.getOrDefault(key, null);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public default Selections select(Selection<?>... selections) {
+        selections = Arrays.stream(selections).map(selection -> {
+            Class<?> clazz = selection.clazz();
+            if(clazz != null && AccessControl.class.isAssignableFrom(clazz)) {
+                Scope scope = AccessControl.resolveVisibilityScope(clazz, this);
+                if(scope != null && scope.isApplicable()) {
+                    return scope.apply(selection);
+                }
+            }
+            return Selection.withInjectedFilter((Selection<Record>) selection,
+                    $checkIfVisible());
+        }).toArray(Selection[]::new);
+        return $db().select(selections);
     }
 
     /**
@@ -614,23 +653,6 @@ public interface Audience extends DatabaseInterface {
             Reflection.set("_author", (Record) this, record);
         }
         record.set(key, value);
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public default Selections select(Selection<?>... selections) {
-        selections = Arrays.stream(selections).map(selection -> {
-            Class<?> clazz = selection.clazz();
-            if(clazz != null && AccessControl.class.isAssignableFrom(clazz)) {
-                Scope scope = AccessControl.resolveVisibilityScope(clazz, this);
-                if(scope != null && scope.isApplicable()) {
-                    return scope.apply(selection);
-                }
-            }
-            return Selection.withInjectedFilter((Selection<Record>) selection,
-                    $checkIfVisible());
-        }).toArray(Selection[]::new);
-        return $db().select(selections);
     }
 
 }
