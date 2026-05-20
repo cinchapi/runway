@@ -46,7 +46,7 @@ import com.google.common.collect.ImmutableSet;
  * <li>{@link #of(Criteria)} &mdash; visibility is expressed as a
  * {@link Criteria} that is pushed into the query and evaluated locally on each
  * per-record visibility check.</li>
- * <li>{@link #hybrid(Audience, Criteria)} /
+ * <li>{@link #hybrid(Criteria, Audience)} /
  * {@link #hybrid(Criteria, Predicate)} &mdash; visibility is expressed as a
  * {@link Criteria} for database loads and a separate {@link Predicate} for
  * per-record visibility checks; intended as an escape hatch for {@link Criteria
@@ -108,14 +108,15 @@ public abstract class Scope {
      * {@link Predicate} when discoverability is not an accurate mirror of
      * {@code criteria}.
      * </p>
-     *
-     * @param audience the {@link Audience} whose discoverability check backs
-     *            the per-record predicate
+     * 
      * @param criteria the {@link Criteria} that limits which records are
      *            visible to {@code audience}
+     * @param audience the {@link Audience} whose discoverability check backs
+     *            the per-record predicate
+     *
      * @return a new hybrid {@link Scope}
      */
-    public static Scope hybrid(Audience audience, Criteria criteria) {
+    public static Scope hybrid(Criteria criteria, Audience audience) {
         Predicate<? super Record> defaultPredicate = record -> {
             if(record instanceof AccessControl) {
                 AccessControl subject = (AccessControl) record;
@@ -132,7 +133,7 @@ public abstract class Scope {
      * Return a {@link Scope} that uses {@code criteria} for database loads and
      * {@code predicate} for per-record visibility checks.
      * <p>
-     * Use this overload (or its {@link #hybrid(Audience, Criteria)} sibling) in
+     * Use this overload (or its {@link #hybrid(Criteria, Audience)} sibling) in
      * place of {@link #of(Criteria)} when {@code criteria} contains a scoped
      * navigation clause such as {@code Criteria.where().scope(prefix, inner)}.
      * {@link #of(Criteria)} uses the same {@link Criteria} for both database

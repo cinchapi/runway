@@ -307,7 +307,7 @@ public class ScopeTest {
 
     /**
      * <strong>Goal:</strong> Verify that
-     * {@link Scope#hybrid(Audience, Criteria)} (the convenience form) defaults
+     * {@link Scope#hybrid(Criteria, Audience)} (the convenience form) defaults
      * the per-record predicate to {@link AccessControl#$isDiscoverableBy} for a
      * non-anonymous {@link Audience}.
      * <p>
@@ -331,7 +331,7 @@ public class ScopeTest {
         Criteria criteria = Criteria.where().key("active")
                 .operator(Operator.EQUALS).value(true).build();
         TestAudience audience = new TestAudience();
-        Scope scope = Scope.hybrid(audience, criteria);
+        Scope scope = Scope.hybrid(criteria, audience);
         Assert.assertTrue(scope.test(new TestAccessControlRecord(true, false)));
         Assert.assertFalse(
                 scope.test(new TestAccessControlRecord(false, true)));
@@ -339,7 +339,7 @@ public class ScopeTest {
 
     /**
      * <strong>Goal:</strong> Verify that
-     * {@link Scope#hybrid(Audience, Criteria)} defaults the per-record
+     * {@link Scope#hybrid(Criteria, Audience)} defaults the per-record
      * predicate to {@link AccessControl#$isDiscoverableByAnonymous} when the
      * supplied {@link Audience} is {@link Audience#anonymous()}.
      * <p>
@@ -361,7 +361,7 @@ public class ScopeTest {
     public void testHybridDefaultPredicateUsesAnonymousDiscoverability() {
         Criteria criteria = Criteria.where().key("active")
                 .operator(Operator.EQUALS).value(true).build();
-        Scope scope = Scope.hybrid(Audience.anonymous(), criteria);
+        Scope scope = Scope.hybrid(criteria, Audience.anonymous());
         Assert.assertTrue(scope.test(new TestAccessControlRecord(false, true)));
         Assert.assertFalse(
                 scope.test(new TestAccessControlRecord(true, false)));
@@ -369,7 +369,7 @@ public class ScopeTest {
 
     /**
      * <strong>Goal:</strong> Verify that the default predicate built by
-     * {@link Scope#hybrid(Audience, Criteria)} returns {@code true} for records
+     * {@link Scope#hybrid(Criteria, Audience)} returns {@code true} for records
      * that do not implement {@link AccessControl}, matching the permissive
      * treatment such records receive elsewhere in the framework.
      * <p>
@@ -388,7 +388,7 @@ public class ScopeTest {
     public void testHybridDefaultPredicateAllowsNonAccessControlRecord() {
         Criteria criteria = Criteria.where().key("active")
                 .operator(Operator.EQUALS).value(true).build();
-        Scope scope = Scope.hybrid(new TestAudience(), criteria);
+        Scope scope = Scope.hybrid(criteria, new TestAudience());
         Assert.assertTrue(scope.test(new TestRecord()));
     }
 
@@ -436,7 +436,7 @@ public class ScopeTest {
 
     /**
      * A minimal {@link Audience} implementation used to verify the
-     * non-anonymous branch of {@link Scope#hybrid(Audience, Criteria)}'s
+     * non-anonymous branch of {@link Scope#hybrid(Criteria, Audience)}'s
      * default predicate.
      */
     static class TestAudience extends Record implements Audience {}
