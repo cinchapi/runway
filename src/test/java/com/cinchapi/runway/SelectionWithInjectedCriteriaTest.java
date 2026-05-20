@@ -428,7 +428,6 @@ public class SelectionWithInjectedCriteriaTest {
     /**
      * A simple {@link Record} subclass for testing.
      */
-    static class TestRecord extends Record {} // empty — used only for type
-                                              // checking
+    static class TestRecord extends Record {}
 
 }

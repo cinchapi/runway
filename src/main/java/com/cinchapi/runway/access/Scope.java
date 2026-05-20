@@ -27,32 +27,25 @@ import com.google.common.collect.ImmutableSet;
 
 /**
  * Describes the visibility that an {@link Audience} has for a given
- * {@link Record} class, and knows how to apply that visibility to a
- * {@link Selection}.
+ * {@link Record} class.
  * <p>
- * A {@link Scope} pairs an engine-side rule for filtering loaded results with a
- * local rule for testing whether an individual {@link Record} falls within
- * visibility. Providers are registered via
+ * Providers are registered via
  * {@link AccessControl#registerVisibilityScope(Class, java.util.function.Function)}.
  * </p>
  * <p>
  * There are five variants:
  * </p>
  * <ul>
- * <li>{@link #unrestricted()} &mdash; the audience sees all records; no filter
- * or criteria is applied.</li>
- * <li>{@link #none()} &mdash; the audience sees no records; results are always
- * empty.</li>
+ * <li>{@link #unrestricted()} &mdash; the audience sees all records.</li>
+ * <li>{@link #none()} &mdash; the audience sees no records.</li>
  * <li>{@link #of(Criteria)} &mdash; visibility is expressed as a
- * {@link Criteria} that is pushed into the query and evaluated locally on each
- * per-record visibility check.</li>
+ * {@link Criteria}.</li>
  * <li>{@link #hybrid(Criteria, Audience)} /
  * {@link #hybrid(Criteria, Predicate)} &mdash; visibility is expressed as a
- * {@link Criteria} for database loads and a separate {@link Predicate} for
- * per-record visibility checks; intended as an escape hatch for {@link Criteria
- * Criterias} that use scoped navigation.</li>
- * <li>{@link #unsupported()} &mdash; visibility cannot be expressed as a
- * database constraint for this combination.</li>
+ * {@link Criteria} together with an independent per-record
+ * {@link Predicate}.</li>
+ * <li>{@link #unsupported()} &mdash; visibility cannot be expressed for this
+ * combination.</li>
  * </ul>
  *
  * @author Jeff Nelson
@@ -83,37 +76,29 @@ public abstract class Scope {
     }
 
     /**
-     * Return a {@link Scope} that uses {@code criteria} for database loads and
-     * the {@link Audience Audience's} discoverability check
-     * ({@link AccessControl#$isDiscoverableBy(Audience)}, or
+     * Return a {@link Scope} whose visibility is expressed by {@code criteria}
+     * and whose per-record test is the {@link Audience Audience's}
+     * discoverability ({@link AccessControl#$isDiscoverableBy(Audience)}, or
      * {@link AccessControl#$isDiscoverableByAnonymous()} for an anonymous
-     * {@link Audience}) for per-record visibility checks.
+     * {@link Audience}).
      * <p>
-     * Use this overload (or its {@link #hybrid(Criteria, Predicate)} sibling)
-     * in place of {@link #of(Criteria)} when {@code criteria} contains a scoped
-     * navigation clause such as {@code Criteria.where().scope(prefix, inner)}.
-     * {@link #of(Criteria)} uses the same {@link Criteria} for both database
-     * loads and per-record checks, but the per-record path resolves the
-     * {@link Criteria} locally and the local resolver cannot honor scoped
-     * same-destination semantics. The hybrid form holds the {@link Predicate}
-     * separately so the per-record path never asks the local resolver to
-     * evaluate the scoped {@link Criteria}.
+     * Suitable when {@code criteria} is not locally evaluable on a
+     * {@link Record} &mdash; for example, when it contains a scoped navigation
+     * clause such as {@code Criteria.where().scope(prefix, inner)}.
      * </p>
      * <p>
      * <strong>Caller's responsibility:</strong> {@code criteria} and the
      * default discoverability check must produce logically equivalent results
-     * for {@code audience}. When they diverge, the engine path and the local
-     * path admit different records, which is a visibility hole. Use
+     * for {@code audience}, or visibility becomes inconsistent. Use
      * {@link #hybrid(Criteria, Predicate)} to supply an explicit
      * {@link Predicate} when discoverability is not an accurate mirror of
      * {@code criteria}.
      * </p>
-     * 
+     *
      * @param criteria the {@link Criteria} that limits which records are
      *            visible to {@code audience}
      * @param audience the {@link Audience} whose discoverability check backs
      *            the per-record predicate
-     *
      * @return a new hybrid {@link Scope}
      */
     public static Scope hybrid(Criteria criteria, Audience audience) {
@@ -130,25 +115,18 @@ public abstract class Scope {
     }
 
     /**
-     * Return a {@link Scope} that uses {@code criteria} for database loads and
-     * {@code predicate} for per-record visibility checks.
+     * Return a {@link Scope} whose visibility is expressed by {@code criteria}
+     * and whose per-record test is {@code predicate}.
      * <p>
-     * Use this overload (or its {@link #hybrid(Criteria, Audience)} sibling) in
-     * place of {@link #of(Criteria)} when {@code criteria} contains a scoped
-     * navigation clause such as {@code Criteria.where().scope(prefix, inner)}.
-     * {@link #of(Criteria)} uses the same {@link Criteria} for both database
-     * loads and per-record checks, but the per-record path resolves the
-     * {@link Criteria} locally and the local resolver cannot honor scoped
-     * same-destination semantics. The hybrid form holds the {@link Predicate}
-     * separately so the per-record path never asks the local resolver to
-     * evaluate the scoped {@link Criteria}.
+     * Suitable when {@code criteria} is not locally evaluable on a
+     * {@link Record} &mdash; for example, when it contains a scoped navigation
+     * clause such as {@code Criteria.where().scope(prefix, inner)}.
      * </p>
      * <p>
      * <strong>Caller's responsibility:</strong> {@code criteria} and
      * {@code predicate} must produce logically equivalent results for the
-     * {@link Audience} this {@link Scope} is being constructed for. When they
-     * diverge, the engine path and the local path admit different records,
-     * which is a visibility hole.
+     * {@link Audience} this {@link Scope} is being constructed for, or
+     * visibility becomes inconsistent.
      * </p>
      *
      * @param criteria the {@link Criteria} that limits which records are
@@ -253,29 +231,26 @@ public abstract class Scope {
     }
 
     /**
-     * A {@link Scope} that pairs a {@link Criteria} used for database loads
-     * with a separate {@link Predicate} used for per-record visibility checks.
-     * The two paths are independent, which is what allows scoped navigation
-     * {@link Criteria Criterias} (uncompilable by the local resolver) to be
-     * used as visibility rules.
+     * A {@link Scope} whose visibility is expressed by a {@link Criteria}
+     * together with an independent per-record {@link Predicate}.
      */
     @Immutable
     private static final class Hybrid extends Scope {
 
         /**
-         * The visibility {@link Criteria} for database loads.
+         * The visibility {@link Criteria}.
          */
         private final Criteria criteria;
 
         /**
-         * The visibility {@link Predicate} for per-record checks.
+         * The per-record visibility {@link Predicate}.
          */
         private final Predicate<? super Record> localTest;
 
         /**
          * Construct a new {@link Hybrid}.
          *
-         * @param criteria the database-side {@link Criteria}
+         * @param criteria the visibility {@link Criteria}
          * @param localTest the per-record {@link Predicate}
          */
         private Hybrid(Criteria criteria, Predicate<? super Record> localTest) {

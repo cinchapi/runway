@@ -124,9 +124,7 @@ public interface Selection<T extends Record> {
         if(resolved instanceof LoadRecordSelection) {
             if(DatabaseSelection.isScopeBearing(injected)) {
                 // Local CCL evaluation cannot honor same-destination
-                // semantics for a scoped condition, so route the load
-                // through a UniqueSelection anchored at $id$ so the engine
-                // evaluates the scoped predicate.
+                // semantics for a scoped condition.
                 LoadRecordSelection<T> load = (LoadRecordSelection<T>) resolved;
                 Criteria idMatch = Criteria.where().key(Record.IDENTIFIER_KEY)
                         .operator(Operator.EQUALS).value(load.id).build();

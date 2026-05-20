@@ -59,12 +59,6 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     /**
      * Return {@code true} if {@code criteria} contains a scoped condition
      * (i.e., a {@code prefix.(inner)} sub-tree) anywhere in its structure.
-     * <p>
-     * Scoped conditions require engine-side evaluation; the local CCL compiler
-     * throws {@link UnsupportedOperationException} when asked to evaluate one.
-     * Callers detect this up front so that {@link Criteria} carrying a scoped
-     * condition can be routed through the engine instead of through a local
-     * filter.
      *
      * @param criteria the {@link Criteria} to inspect
      * @return {@code true} if {@code criteria} contains a scoped condition
