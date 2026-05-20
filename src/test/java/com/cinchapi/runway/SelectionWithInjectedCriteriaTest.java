@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway;
 
+import java.util.function.Predicate;
+
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -251,25 +253,30 @@ public class SelectionWithInjectedCriteriaTest {
     /**
      * <strong>Goal:</strong> Verify that injecting a scope-bearing visibility
      * {@link Criteria} into a {@link LoadRecordSelection} produces a
-     * {@link UniqueSelection} (not a {@link LoadRecordSelection}) so that the
-     * scoped condition is evaluated by the engine. The local CCL compiler
-     * cannot honor same-destination semantics across a navigation prefix and
-     * throws {@link UnsupportedOperationException} when asked to, so the
-     * filter-based path that {@link LoadRecordSelection} otherwise takes is
-     * unavailable for this {@link Criteria} shape.
+     * {@link UniqueSelection} (not a {@link LoadRecordSelection}) whose
+     * criteria is a freshly constructed {@code $id$ = id AND injected} that
+     * still carries the scoped sub-tree, so the engine evaluates the scoped
+     * condition. The local CCL compiler cannot honor same-destination semantics
+     * across a navigation prefix and throws
+     * {@link UnsupportedOperationException} when asked to, so the filter-based
+     * path that {@link LoadRecordSelection} otherwise takes is unavailable for
+     * this {@link Criteria} shape.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Build a {@link LoadRecordSelection} via {@code id(...)}.</li>
+     * <li>Build a {@link LoadRecordSelection} via {@code id(42L)}.</li>
      * <li>Build a {@link Criteria} containing a {@code scope(prefix, inner)}
      * clause.</li>
      * <li>Call {@link Selection#withInjectedCriteria}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The result is a {@link UniqueSelection} (not a
-     * {@link LoadRecordSelection}); its criteria is non-null.
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection} whose
+     * criteria is a new instance distinct from the injected one, whose CCL
+     * anchors on {@link Record#IDENTIFIER_KEY} bound to {@code 42}, and which
+     * still reports as {@link DatabaseSelection#isScopeBearing} so the engine
+     * sees the scoped sub-tree.
      */
     @Test
     public void testLoadRecordSelectionWithScopedCriteriaBecomesUniqueSelection() {
@@ -284,7 +291,11 @@ public class SelectionWithInjectedCriteriaTest {
         Assert.assertFalse(result instanceof LoadRecordSelection);
         Assert.assertTrue(result instanceof UniqueSelection);
         UniqueSelection<TestRecord> unique = (UniqueSelection<TestRecord>) result;
-        Assert.assertNotNull(unique.criteria);
+        Assert.assertNotSame(scoped, unique.criteria);
+        String ccl = unique.criteria.ccl();
+        Assert.assertTrue(ccl.contains(Record.IDENTIFIER_KEY));
+        Assert.assertTrue(ccl.contains("42"));
+        Assert.assertTrue(DatabaseSelection.isScopeBearing(unique.criteria));
     }
 
     /**
@@ -326,21 +337,24 @@ public class SelectionWithInjectedCriteriaTest {
      * detected even when it is nested inside a {@code group(...)} clause that
      * is conjoined with another condition &mdash; the engine still needs to
      * evaluate the scoped sub-tree, so the {@link LoadRecordSelection} must be
-     * promoted to a {@link UniqueSelection}.
+     * promoted to a {@link UniqueSelection} whose criteria is a fresh
+     * {@code $id$ = id AND injected} that still carries the nested scope.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Build a {@link LoadRecordSelection} via {@code id(...)}.</li>
+     * <li>Build a {@link LoadRecordSelection} via {@code id(42L)}.</li>
      * <li>Build a {@link Criteria} of the form
      * {@code (scope(prefix, inner)) AND key = value}.</li>
      * <li>Call {@link Selection#withInjectedCriteria}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The result is a {@link UniqueSelection},
-     * because the scoped sub-tree was discovered during the recursive
-     * inspection of the injected {@link Criteria}.
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection}, its
+     * criteria is a new instance distinct from the injected one, the CCL
+     * anchors on {@link Record#IDENTIFIER_KEY} bound to {@code 42}, and
+     * {@link DatabaseSelection#isScopeBearing} still reports {@code true} so
+     * the recursive inspection caught the nested scope.
      */
     @Test
     public void testLoadRecordSelectionDetectsNestedScopedCriteria() {
@@ -356,6 +370,59 @@ public class SelectionWithInjectedCriteriaTest {
                 nested);
         Assert.assertFalse(result instanceof LoadRecordSelection);
         Assert.assertTrue(result instanceof UniqueSelection);
+        UniqueSelection<TestRecord> unique = (UniqueSelection<TestRecord>) result;
+        Assert.assertNotSame(nested, unique.criteria);
+        String ccl = unique.criteria.ccl();
+        Assert.assertTrue(ccl.contains(Record.IDENTIFIER_KEY));
+        Assert.assertTrue(ccl.contains("42"));
+        Assert.assertTrue(DatabaseSelection.isScopeBearing(unique.criteria));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that promoting a
+     * {@link LoadRecordSelection} to a {@link UniqueSelection} on the
+     * scope-bearing path preserves the {@code any} flag, the {@link Realms}
+     * filter, and any client-side {@link Predicate} that was already attached
+     * to the load. The new {@link UniqueSelection} carries the engine-side
+     * criteria, but the orthogonal post-selection state (realms scoping,
+     * hierarchy inclusion, local predicate) must survive intact.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link LoadRecordSelection} via
+     * {@code ofAny(...).id(42L).realms(...)}.</li>
+     * <li>Wrap with {@link Selection#withInjectedFilter} to attach a
+     * client-side predicate (the {@code id(...)} builder does not expose
+     * {@code filter(...)} directly).</li>
+     * <li>Apply a scope-bearing visibility {@link Criteria} via
+     * {@link Selection#withInjectedCriteria}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link UniqueSelection} with
+     * {@code any == true}, the same {@link Realms} instance, and a filter that
+     * is no longer the {@code NO_FILTER} sentinel (proving the original
+     * predicate survived the conversion).
+     */
+    @Test
+    public void testLoadRecordSelectionWithScopedCriteriaPreservesFilterRealmsAndAny() {
+        Criteria scoped = Criteria
+                .where().scope("parent.children", Criteria.where()
+                        .key("user.userId").operator(Operator.EQUALS).value(7L))
+                .build();
+        Realms realms = Realms.only("test-realm");
+        Predicate<TestRecord> filter = r -> true;
+        Selection<TestRecord> sel = Selection.ofAny(TestRecord.class).id(42L)
+                .realms(realms).build();
+        sel = Selection.withInjectedFilter(sel, filter);
+        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
+                scoped);
+        Assert.assertTrue(result instanceof UniqueSelection);
+        DatabaseSelection<TestRecord> db = (DatabaseSelection<TestRecord>) result;
+        Assert.assertTrue(db.any);
+        Assert.assertSame(realms, db.realms);
+        Assert.assertFalse(DatabaseSelection.isNoFilter(db.filter));
     }
 
     /**
