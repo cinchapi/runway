@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 2.0.0 (May 19, 2026)
+#### Version 2.0.0 (May 20, 2026)
 
 ##### Command API
 This release adopts the Concourse Command API (`prepare()`/`submit()`), introduced in Concourse 1.0.0, to batch Runway's hottest read and write paths into the fewest possible server round trips. When the connected server is older than 1.0.0, Runway transparently falls back to the legacy per-call path.
