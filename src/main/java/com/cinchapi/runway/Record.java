@@ -1478,6 +1478,9 @@ public abstract class Record implements Comparable<Record> {
         Stream<Entry<String, Object>> pool;
         if(include.isEmpty()) {
             pool = data().entrySet().stream();
+            if(!options.includeComputedValuesByDefault()) {
+                pool = pool.filter(e -> !(e instanceof ComputedEntry));
+            }
         }
         else {
             // NOTE: later on the #filter will attempt to remove keys that
