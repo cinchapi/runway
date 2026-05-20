@@ -85,7 +85,7 @@ public class RecordLinkTest extends AbstractRecordTest {
         Sock a = new Sock("a", new Dock("a"));
         a.save();
         Concourse concourse = Concourse.connect("localhost",
-                server.getClientPort(), "admin", "admin");
+                server.getClientPort(), "admin", "admin", environment);
         int expected = concourse.audit(a.id()).size();
         a.save();
         int actual = concourse.audit(a.id()).size();

@@ -71,8 +71,8 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
     }
 
     @Override
-    public void beforeEachTest() {
-        super.beforeEachTest();
+    protected void beforeTestRun() {
+        super.beforeTestRun();
         Reflection.set("supportsBulkCommands", useBulkCommands, runway); // (authorized)
     }
 
@@ -220,7 +220,7 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(p.save());
         Person loaded = runway.load(Person.class, p.id());
 
-        Runway other = Runway.builder().port(server.getClientPort()).build();
+        Runway other = runwayBuilder().build();
         try {
             Person externallyModified = other.load(Person.class, p.id());
             externallyModified.age = 26;
@@ -480,7 +480,7 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(p.save());
         Person loaded = runway.load(Person.class, p.id());
 
-        Runway other = Runway.builder().port(server.getClientPort()).build();
+        Runway other = runwayBuilder().build();
         try {
             Person externallyModified = other.load(Person.class, p.id());
             externallyModified.age = 26;

@@ -69,8 +69,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     @Override
-    public void beforeEachTest() {
-        super.beforeEachTest();
+    protected void beforeTestRun() {
+        super.beforeTestRun();
         Reflection.set("supportsBulkCommands", useBulkCommands, runway); // (authorized)
     }
 
