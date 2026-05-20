@@ -429,18 +429,22 @@ public class SelectionWithInjectedCriteriaTest {
      * <strong>Goal:</strong> Verify that the {@link UniqueSelection} produced
      * by promoting a {@link LoadRecordSelection} on the scope-bearing path
      * carries a {@link Criteria} that
-     * {@link Record#isDatabaseResolvableCondition} accepts. Without this
-     * guarantee, {@code $selectCriteria} falls back to
-     * {@code filter()}/{@code filterAny()}, which calls
-     * {@link Record#matches(Criteria)} on the scope-bearing criteria and throws
-     * {@link UnsupportedOperationException} at runtime.
+     * {@link Record#isDatabaseResolvableCondition} accepts, including when the
+     * scoped inner condition uses a scalar key that is not intrinsic to the
+     * outer class. CCL analysis flattens the inner key into the criteria's key
+     * set, so without scope-aware handling
+     * {@link Record#isDatabaseResolvableCondition} would reject the inner
+     * scalar key and route execution to local {@link Record#matches(Criteria)},
+     * reintroducing {@link UnsupportedOperationException}.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Build a {@link LoadRecordSelection} via {@code id(42L)}.</li>
-     * <li>Build a scope-bearing {@link Criteria}.</li>
+     * <li>Build a scope-bearing {@link Criteria} whose inner condition mixes a
+     * scalar key ({@code role}) with a navigation key
+     * ({@code user.userId}).</li>
      * <li>Call {@link Selection#withInjectedCriteria}.</li>
      * <li>Test the promoted {@link UniqueSelection}'s criteria against
      * {@link Record#isDatabaseResolvableCondition}.</li>
@@ -451,9 +455,11 @@ public class SelectionWithInjectedCriteriaTest {
      */
     @Test
     public void testLoadRecordSelectionWithScopedCriteriaPromotedCriteriaIsDatabaseResolvable() {
-        Criteria scoped = Criteria
-                .where().scope("parent.children", Criteria.where()
-                        .key("user.userId").operator(Operator.EQUALS).value(7L))
+        Criteria scoped = Criteria.where()
+                .scope("parent.children",
+                        Criteria.where().key("role").operator(Operator.EQUALS)
+                                .value("OWNER").and().key("user.userId")
+                                .operator(Operator.EQUALS).value(7L))
                 .build();
         Selection<TestRecord> sel = Selection.of(TestRecord.class).id(42L)
                 .build();

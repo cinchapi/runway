@@ -163,6 +163,9 @@ public abstract class Record implements Comparable<Record> {
      */
     public static <T extends Record> boolean isDatabaseResolvableCondition(
             Class<T> clazz, Criteria condition) {
+        if(DatabaseSelection.isScopeBearing(condition)) {
+            return true;
+        }
         Set<String> intrinsic = StaticAnalysis.instance().getKeys(clazz);
         Parser parser = Parsers.create(condition);
         for (String key : parser.analyze().keys()) {
