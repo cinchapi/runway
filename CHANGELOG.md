@@ -17,6 +17,30 @@ Every `load`, `find`, and `findAny` operation now resolves linked `Record` data 
 * The single-record `load(Class, id)` codepath is unified with the bulk pre-fetch path, so every load surface shares one mechanism.
 * Select-side path computation is unchanged.
 
+Transitive navigation also cuts the number of server round trips a load costs, and the saving grows with how deeply records are linked. Consider a record type whose instances form a tree. It has a self-referential collection field, `children: Set<Exchange>`, and a `parent` reference back up the tree. Each node also links to a few other record types, some of them subtypes of a shared polymorphic hierarchy. The depth of such a tree &mdash; the number of levels of children that exist at run time &mdash; is set by the data, not by the schema.
+
+On the `1.14.x` line, running against Concourse `0.12.x`, pre-fetching could descend a self-referential link only one level per round trip. Loading the root of the tree above cost roughly one round trip for each level of depth: the first round trip fetched the root's direct children, the second fetched their children, and so on down to the leaves. Because that depth is a property of the data, the cost had no ceiling. The deeper the tree, the more round trips every load took.
+
+On `2.0.0`, running against Concourse `1.0.x`, the new `*` transitive modifier removes the per-level cost. A navigate path written `children*` tells a single `navigate()` call to follow the `children` link repeatedly, to whatever depth the data reaches. That one call pre-fetches the whole tree, every level at once, along with the other record types each node links to. A graph that used to cost one round trip per level now costs one round trip in total, however deep it runs. The table below states the upper bound on round trips for two representative graph shapes.
+
+| Linked-record prefetch | Non-cyclic graph (depth `L`) | Self-referential tree (depth `D`) |
+| --- | --- | --- |
+| `1.14.x` / `0.12.x` &mdash; `NONE`, no prefetch (the default) | `1 + N` | `1 + N` |
+| `1.14.x` / `0.12.x` &mdash; `BULK_SELECT`, batched per level | `1 + L` | `1 + D` |
+| `2.0.0` / `1.0.x` &mdash; unified transitive `navigate()` | `1` | `1` |
+
+Each cell is the largest number of server round trips needed to fully resolve a single `load` or `find`. The formulas use three quantities:
+
+* `N` &mdash; the number of linked records the load reaches.
+* `L` &mdash; the length of the longest chain of non-cyclic `Record`-to-`Record` links. This is fixed by the schema, so it stays small and constant.
+* `D` &mdash; the depth of a self-referential tree. This is set by the data and has no fixed upper bound.
+
+No pre-fetch mechanism in the `1.14.x` line could resolve a self-referential tree in a number of round trips that did not grow with `D`. The `2.0.0` mechanism is the first that can.
+
+Two conditions sit behind the `2.0.0` column. The first is the server version. Every load makes two requests to Concourse: a `select` for the record itself, and a `navigate` that pre-fetches the records it links to. Concourse `1.0.x` provides the Command API described above, which lets Runway send both requests in one round trip; that is why the table shows `1` rather than `2`. When Runway 2.0.0 runs against an older server, it cannot combine the two requests, and every load costs one round trip more than the table shows.
+
+The second condition is the shape of the graph. The `*` modifier can repeat only one field name. `children*` follows a chain of `children` links, but it cannot follow a cycle that alternates between two different field names &mdash; for example, a type `A` that links to `B` through a field named `bs` while `B` links back through a field named `as`. A single `navigate()` therefore cannot reach an alternating-field cycle, nor a link whose target has been deleted. Whatever it misses is gathered afterward by a bulk-`select()` cleanup pass, and that pass costs one further round trip for every level of graph it still has to walk. A plain self-referential tree leaves nothing for it to do, so the tree resolves in exactly the round trips the table shows. A graph with alternating-field cycles costs one round trip for each level of the part `*` could not express.
+
 ##### API Breaks and Deprecations
 * Removed the `CachingConcourse` infrastructure and the related `Runway.Builder` cache configuration. `Runway.Builder.cache(Cache<Long, Record>)` and `Runway.Builder.withCache(Cache<Long, Map<String, Set<Object>>>)` have been deleted along with the `com.cinchapi.runway.cache` package (`CachingConcourse`, `CachingConnectionPool`, `LeasingCache`, `NoOpLeasingCache`, `NoOpCache`). Connection-level data caching is removed in this release; the planned `prepare()`/`submit()` write transport made the per-method invalidation model untenable, and the implementation had latent invalidation bugs (e.g., missing overrides for `consolidate`, `link`, `unlink`, and several `clear` / `insert` variants). Callers that relied on `withCache(...)` should remove the configuration; the thread-local reservation API (`Runway#reserve()` / `Runway#unreserve()`) is unaffected. ([GH-81](https://github.com/cinchapi/runway/issues/81))
 * Removed the `ReadStrategy` enum and the `Runway.Builder.readStrategy(...)`, `Runway.Builder.streamingReadBufferSize(...)`, and `Runway.Builder.recordsPerSelectBufferSize(...)` configuration. Every read now fetches the matching records in bulk. The former streaming read strategy deferred each record's read until it was consumed, but with linked-`Record` pre-fetching now unconditional it produced the same fully-loaded `Record` graph as a bulk read, so it offered no behavior worth configuring. Callers that set a `ReadStrategy` or buffer size must remove those calls.

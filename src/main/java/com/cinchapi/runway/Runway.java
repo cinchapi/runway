@@ -2577,6 +2577,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * targets the navigate phase did not reach, returning a {@link Pending} of
      * the complete pool of {@link Record} data &mdash; the {@code sources}
      * themselves and every {@link Link} target reachable from them.
+     * <p>
+     * <strong>NOTE:</strong> This traversal is exhaustive, not a best-effort
+     * gap-filler. {@code computeNavigatePaths} deliberately leaves every
+     * non-self-referential cyclic edge out of the navigate path set and relies
+     * on this cleanup to resolve those targets, so it must stay unconditional
+     * &mdash; gating it on what the navigate phase already reached would
+     * silently drop {@link Record} data.
+     * </p>
      *
      * @param reader the {@link Reader} that records each cleanup select
      * @param sources the source records, folded into the pool and whose
