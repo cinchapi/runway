@@ -1181,7 +1181,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         d1.save();
         ConnectionPool pool = new CountingConcourseConnectionPool(
                 Concourse.connect("localhost", server.getClientPort(), "admin",
-                        "admin"));
+                        "admin", environment));
         Reflection.set("connections", pool, runway); // (authorized)
         Concourse connection = pool.request();
         AtomicInteger rpcs = ((CountingConcourse) connection).rpcs();
@@ -1246,7 +1246,7 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
         }
         ConnectionPool pool = new CountingConcourseConnectionPool(
                 Concourse.connect("localhost", server.getClientPort(), "admin",
-                        "admin"));
+                        "admin", environment));
         Reflection.set("connections", pool, runway); // (authorized)
         Concourse connection = pool.request();
         AtomicInteger rpcs = ((CountingConcourse) connection).rpcs();

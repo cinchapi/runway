@@ -79,7 +79,7 @@ public class RecordConstraintTest extends AbstractRecordTest {
         mock.age = 32;
         mock.save();
         Concourse concourse = Concourse.at().port(server.getClientPort())
-                .connect();
+                .environment(environment).connect();
         try {
             concourse.clear("name", mock.id());
         }
@@ -102,7 +102,7 @@ public class RecordConstraintTest extends AbstractRecordTest {
         mock.age = 32;
         mock.save();
         Concourse concourse = Concourse.at().port(server.getClientPort())
-                .connect();
+                .environment(environment).connect();
         try {
             concourse.clear("name", mock.id());
         }

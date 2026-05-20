@@ -22,7 +22,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.cinchapi.concourse.test.ClientServerTest;
 import com.google.common.collect.ImmutableSet;
 
 /**
@@ -31,12 +30,7 @@ import com.google.common.collect.ImmutableSet;
  *
  * @author Jeff Nelson
  */
-public class RecordComputeOnceTest extends ClientServerTest {
-
-    @Override
-    protected String getServerVersion() {
-        return Testing.CONCOURSE_VERSION;
-    }
+public class RecordComputeOnceTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that a {@link Computed} method using

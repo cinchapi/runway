@@ -35,21 +35,49 @@ public abstract class RunwayBaseClientServerTest extends ClientServerTest {
         return Testing.CONCOURSE_VERSION;
     }
 
-    protected Runway runway;
-
     @Override
-    public void beforeEachTest() {
-        runway = Runway.builder().port(server.getClientPort()).build();
+    protected boolean reuseServerAcrossTests() {
+        return true;
     }
 
     @Override
-    public void afterStartedTest() {
+    protected SharedServerFailurePolicy onSharedServerFailure() {
+        return SharedServerFailurePolicy.REFRESH;
+    }
+
+    protected Runway runway;
+
+    @Override
+    protected void beforeTestRun() {
+        runway = runwayBuilder().build();
+    }
+
+    @Override
+    protected void afterTestRun() {
         try {
             runway.close();
         }
         catch (Exception e) {
             throw CheckedExceptions.throwAsRuntimeException(e);
         }
+    }
+
+    /**
+     * Return a {@link Runway.Builder} bound to the test {@link #server} and the
+     * current test's {@link #environment}.
+     * <p>
+     * Tests must construct every {@link Runway} from this builder. Under
+     * {@link #reuseServerAcrossTests() shared-server mode} each test is
+     * isolated on its own {@link #environment}, so a {@link Runway} built
+     * directly from {@link Runway#builder()} would target the shared default
+     * environment and leak data across sibling tests.
+     *
+     * @return a {@link Runway.Builder} for this test's {@link #server} and
+     *         {@link #environment}
+     */
+    protected Runway.Builder runwayBuilder() {
+        return Runway.builder().port(server.getClientPort())
+                .environment(environment);
     }
 
     class Player extends Record {

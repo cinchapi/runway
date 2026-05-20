@@ -34,7 +34,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     @Test
     public void testMultipleRecordSaveWithNoListener() throws Exception {
         runway.close();
-        runway = Runway.builder().port(server.getClientPort()).build();
+        runway = runwayBuilder().build();
 
         // Create and save multiple records
         Player[] players = new Player[5];
@@ -60,7 +60,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     @Test
     public void testNoSaveListenerDoesNotCreateExecutor() throws Exception {
         runway.close();
-        runway = Runway.builder().port(server.getClientPort()).build();
+        runway = runwayBuilder().build();
 
         // Verify the saveNotificationExecutor field is null
         Object executor = Reflection.get("saveNotificationExecutor", runway);
@@ -183,15 +183,13 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicBoolean preSaveCalledBeforeListener = new AtomicBoolean(false);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    if(record instanceof PreSaveOrderRecord) {
-                        PreSaveOrderRecord orderRecord = (PreSaveOrderRecord) record;
-                        preSaveCalledBeforeListener
-                                .set(orderRecord.preSaveCalled);
-                        latch.countDown();
-                    }
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            if(record instanceof PreSaveOrderRecord) {
+                PreSaveOrderRecord orderRecord = (PreSaveOrderRecord) record;
+                preSaveCalledBeforeListener.set(orderRecord.preSaveCalled);
+                latch.countDown();
+            }
+        }).build();
 
         // Create a record that tracks when preSave is called
         PreSaveOrderRecord record = new PreSaveOrderRecord();
@@ -409,7 +407,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     public void testQueueSaveNotificationWithNoListenerIsNoOp()
             throws Exception {
         runway.close();
-        runway = Runway.builder().port(server.getClientPort()).build();
+        runway = runwayBuilder().build();
 
         // Verify the saveNotificationQueue field is null
         Object queue = Reflection.get("saveNotificationQueue", runway);
@@ -433,11 +431,10 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> savedRecords = Sets.newConcurrentHashSet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    savedRecords.add(record);
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            savedRecords.add(record);
+            latch.countDown();
+        }).build();
 
         // Create multiple records with preSave implementations
         PreSaveHookRecord[] records = new PreSaveHookRecord[recordCount];
@@ -477,11 +474,10 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicInteger callCount = new AtomicInteger(0);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    callCount.incrementAndGet();
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            callCount.incrementAndGet();
+            latch.countDown();
+        }).build();
 
         // Create and save a record
         Player player = new Player("Initial Name", 25);
@@ -505,11 +501,10 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> savedRecords = Sets.newConcurrentHashSet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    savedRecords.add(record);
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            savedRecords.add(record);
+            latch.countDown();
+        }).build();
 
         Player[] players = new Player[recordCount];
         for (int i = 0; i < recordCount; i++) {
@@ -534,11 +529,10 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> savedRecords = Sets.newConcurrentHashSet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    savedRecords.add(record);
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            savedRecords.add(record);
+            latch.countDown();
+        }).build();
 
         Player player = new Player("Jeff Nelson", 42);
         player.save();
@@ -557,22 +551,21 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<String> processedNames = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    if(record instanceof Player) {
-                        Player player = (Player) record;
-                        processedNames.add(player.name);
+        runway = runwayBuilder().onSave(record -> {
+            if(record instanceof Player) {
+                Player player = (Player) record;
+                processedNames.add(player.name);
 
-                        // Throw an exception to test error handling
-                        if("ThrowError".equals(player.name)) {
-                            throw new RuntimeException("Test exception");
-                        }
+                // Throw an exception to test error handling
+                if("ThrowError".equals(player.name)) {
+                    throw new RuntimeException("Test exception");
+                }
 
-                        if("LastPlayer".equals(player.name)) {
-                            latch.countDown();
-                        }
-                    }
-                }).build();
+                if("LastPlayer".equals(player.name)) {
+                    latch.countDown();
+                }
+            }
+        }).build();
 
         // Create and save records
         Player player1 = new Player("ThrowError", 10);
@@ -595,10 +588,9 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicInteger callCount = new AtomicInteger(0);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    callCount.incrementAndGet();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            callCount.incrementAndGet();
+        }).build();
 
         // Create a record with a unique field
         UniqueFieldRecord record1 = new UniqueFieldRecord();
@@ -627,10 +619,9 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicBoolean listenerCalled = new AtomicBoolean(false);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    listenerCalled.set(true);
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            listenerCalled.set(true);
+        }).build();
 
         // Create a record with a preSave implementation that throws an
         // exception
@@ -659,11 +650,10 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicInteger callCount = new AtomicInteger(0);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    callCount.incrementAndGet();
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            callCount.incrementAndGet();
+            latch.countDown();
+        }).build();
 
         // Save a record with the listener
         Player player1 = new Player("Player with listener", 100);
@@ -676,7 +666,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
 
         // Now switch to no listener
         runway.close();
-        runway = Runway.builder().port(server.getClientPort()).build();
+        runway = runwayBuilder().build();
 
         // Save a record without a listener
         Player player2 = new Player("Player without listener", 200);
@@ -706,11 +696,10 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> playerSaves = Sets.newConcurrentHashSet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(Player.class, player -> {
-                    playerSaves.add(player);
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(Player.class, player -> {
+            playerSaves.add(player);
+            latch.countDown();
+        }).build();
 
         // Save a non-Player record first
         PreSaveHookRecord hook = new PreSaveHookRecord();
@@ -735,14 +724,13 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> hookSaves = Sets.newConcurrentHashSet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(Player.class, player -> {
-                    playerSaves.add(player);
-                    latch.countDown();
-                }).onSave(PreSaveHookRecord.class, record -> {
-                    hookSaves.add(record);
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(Player.class, player -> {
+            playerSaves.add(player);
+            latch.countDown();
+        }).onSave(PreSaveHookRecord.class, record -> {
+            hookSaves.add(record);
+            latch.countDown();
+        }).build();
 
         Player player = new Player("Typed Player", 50);
         player.save();
@@ -767,14 +755,13 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicInteger secondCount = new AtomicInteger(0);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(Record.class, record -> {
-                    firstCount.incrementAndGet();
-                    latch.countDown();
-                }).onSave(Record.class, record -> {
-                    secondCount.incrementAndGet();
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(Record.class, record -> {
+            firstCount.incrementAndGet();
+            latch.countDown();
+        }).onSave(Record.class, record -> {
+            secondCount.incrementAndGet();
+            latch.countDown();
+        }).build();
 
         Player player = new Player("Composed", 10);
         player.save();
@@ -793,14 +780,13 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> untypedSaves = Sets.newConcurrentHashSet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(Player.class, player -> {
-                    typedSaves.add(player);
-                    latch.countDown();
-                }).onSave(record -> {
-                    untypedSaves.add(record);
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(Player.class, player -> {
+            typedSaves.add(player);
+            latch.countDown();
+        }).onSave(record -> {
+            untypedSaves.add(record);
+            latch.countDown();
+        }).build();
 
         Player player = new Player("Mixed", 77);
         player.save();
@@ -821,14 +807,13 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicInteger secondCount = new AtomicInteger(0);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(Record.class, record -> {
-                    throw new RuntimeException(
-                            "Intentional exception from first listener");
-                }).onSave(Record.class, record -> {
-                    secondCount.incrementAndGet();
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(Record.class, record -> {
+            throw new RuntimeException(
+                    "Intentional exception from first listener");
+        }).onSave(Record.class, record -> {
+            secondCount.incrementAndGet();
+            latch.countDown();
+        }).build();
 
         Player player = new Player("Error Isolation", 33);
         player.save();
@@ -848,7 +833,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> savedRecords = Sets.newConcurrentHashSet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort()).build();
+        runway = runwayBuilder().build();
 
         // Register a listener after build
         runway.properties().onSave(record -> {
@@ -874,11 +859,10 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicInteger postBuildCount = new AtomicInteger(0);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    builderCount.incrementAndGet();
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            builderCount.incrementAndGet();
+            latch.countDown();
+        }).build();
 
         // Register an additional listener after build
         runway.properties().onSave(record -> {
@@ -904,7 +888,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> playerSaves = Sets.newConcurrentHashSet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort()).build();
+        runway = runwayBuilder().build();
 
         // Register a typed listener after build
         runway.properties().onSave(Player.class, player -> {
@@ -937,7 +921,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicInteger thirdCount = new AtomicInteger(0);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort()).build();
+        runway = runwayBuilder().build();
 
         runway.properties().onSave(record -> {
             firstCount.incrementAndGet();
@@ -989,11 +973,10 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    savedRecords.add(record);
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            savedRecords.add(record);
+            latch.countDown();
+        }).build();
 
         ChildRecord child = new ChildRecord();
         child.label = "Child1";
@@ -1036,11 +1019,10 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    savedRecords.add(record);
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            savedRecords.add(record);
+            latch.countDown();
+        }).build();
 
         ChildRecord child = new ChildRecord();
         child.label = "Child1";
@@ -1083,11 +1065,10 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    savedRecords.add(record);
-                    latch.countDown();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            savedRecords.add(record);
+            latch.countDown();
+        }).build();
 
         ChildRecord child1 = new ChildRecord();
         child1.label = "Child1";
@@ -1138,10 +1119,9 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicInteger callCount = new AtomicInteger(0);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    callCount.incrementAndGet();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            callCount.incrementAndGet();
+        }).build();
 
         // Save the child first so it has no unsaved changes
         ChildRecord child = new ChildRecord();
@@ -1187,10 +1167,9 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         AtomicInteger callCount = new AtomicInteger(0);
 
         runway.close();
-        runway = Runway.builder().port(server.getClientPort())
-                .onSave(record -> {
-                    callCount.incrementAndGet();
-                }).build();
+        runway = runwayBuilder().onSave(record -> {
+            callCount.incrementAndGet();
+        }).build();
 
         Player player = new Player("Test", 10);
         runway.save(player);
