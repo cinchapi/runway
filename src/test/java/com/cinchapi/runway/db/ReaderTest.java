@@ -44,8 +44,8 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
     /**
      * Tracks the {@link Concourse} connections wrapped by every {@link Reader}
      * returned from {@link #newReader()} so they can be released in
-     * {@link #afterStartedTest()} instead of leaking against a server reused
-     * across tests.
+     * {@link #afterTestRun()} instead of leaking against a server reused across
+     * tests.
      */
     private final List<Concourse> readerConnections = new ArrayList<>();
 
@@ -449,7 +449,7 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
     /**
      * Open a fresh {@link Concourse} connection on the same environment as
      * {@link #client}, hand it to the subclass to wrap into a {@link Reader},
-     * and track the connection so {@link #afterStartedTest()} can release it.
+     * and track the connection so {@link #afterTestRun()} can release it.
      *
      * @return the {@link Reader} under test
      */
@@ -470,9 +470,9 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
     protected abstract Reader instantiateReader(Concourse connection);
 
     @Override
-    public void afterStartedTest() {
+    protected void afterTestRun() {
         try {
-            super.afterStartedTest();
+            super.afterTestRun();
         }
         finally {
             for (Concourse connection : readerConnections) {
@@ -486,11 +486,6 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
             }
             readerConnections.clear();
         }
-    }
-
-    @Override
-    protected boolean reuseServerAcrossTests() {
-        return true;
     }
 
 }

@@ -45,8 +45,8 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     /**
      * Tracks the {@link Concourse} connections wrapped by every {@link Saver}
      * returned from {@link #newSaver()} so they can be released in
-     * {@link #afterStartedTest()} instead of leaking against a server reused
-     * across tests.
+     * {@link #afterTestRun()} instead of leaking against a server reused across
+     * tests.
      */
     private final List<Concourse> saverConnections = new ArrayList<>();
 
@@ -494,7 +494,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     /**
      * Open a fresh {@link Concourse} connection on the same environment as
      * {@link #client}, hand it to the subclass to wrap into a {@link Saver},
-     * and track the connection so {@link #afterStartedTest()} can release it.
+     * and track the connection so {@link #afterTestRun()} can release it.
      *
      * @return the {@link Saver} under test
      */
@@ -515,9 +515,9 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     protected abstract Saver instantiateSaver(Concourse connection);
 
     @Override
-    public void afterStartedTest() {
+    protected void afterTestRun() {
         try {
-            super.afterStartedTest();
+            super.afterTestRun();
         }
         finally {
             for (Concourse connection : saverConnections) {
@@ -531,11 +531,6 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
             }
             saverConnections.clear();
         }
-    }
-
-    @Override
-    protected boolean reuseServerAcrossTests() {
-        return true;
     }
 
 }
