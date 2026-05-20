@@ -13,7 +13,7 @@ Every `load`, `find`, and `findAny` operation now resolves linked `Record` data 
 
 * Self-referential `Record` graphs of arbitrary depth pre-fetch in a single round trip via the `*` transitive modifier; previously, self-referential `Collection<Record>` fields (e.g., `Exchange.children: Set<Exchange>`) and self-referential single-`Record` fields (e.g., `Exchange.parent: Exchange`) bounded pre-fetching at one level.
 * `Collection<Record>` fields reached through single-`Record` edges (e.g., `Document.metadata.tags`) and non-cyclic `Collection<Record>` fields nested under self-referential ones are now fully pre-fetched.
-* Untyped loads through `loadAny` / `findAny` now also benefit from `navigate()` pre-fetch &mdash; the load pipeline groups discovered records by their section key and dispatches a class-aware `navigate()` per group.
+* Untyped loads through `loadAny` / `findAny` now also benefit from `navigate()` pre-fetch &mdash; the load pipeline groups discovered records by their section key and dispatches a class-aware `navigate()` per group. An untyped load that touches `K` classes therefore costs one batched round trip per group, so the table's `1` applies to typed loads and to untyped loads whose results all belong to a single class.
 * The single-record `load(Class, id)` codepath is unified with the bulk pre-fetch path, so every load surface shares one mechanism.
 * Select-side path computation is unchanged.
 
@@ -27,7 +27,8 @@ On `2.0.0`, running against Concourse `1.0.x`, the new `*` transitive modifier r
 | --- | --- | --- |
 | `1.14.x` / `0.12.x` &mdash; `NONE`, no prefetch (the default) | `1 + N` | `1 + N` |
 | `1.14.x` / `0.12.x` &mdash; `BULK_SELECT`, batched per level | `1 + L` | `1 + D` |
-| `2.0.0` / `1.0.x` &mdash; unified transitive `navigate()` | `1` | `1` |
+| `2.0.0` / `1.0.x` &mdash; Command API and `*` modifier | `1` | `1` |
+| `2.0.0` / `0.12.x` &mdash; legacy fallback (no Command API or `*`) | `2` | `2 + D` |
 
 Each cell is the largest number of server round trips needed to fully resolve a single `load` or `find`. The formulas use three quantities:
 
@@ -37,9 +38,19 @@ Each cell is the largest number of server round trips needed to fully resolve a 
 
 No pre-fetch mechanism in the `1.14.x` line could resolve a self-referential tree in a number of round trips that did not grow with `D`. The `2.0.0` mechanism is the first that can.
 
-Two conditions sit behind the `2.0.0` column. The first is the server version. Every load makes two requests to Concourse: a `select` for the record itself, and a `navigate` that pre-fetches the records it links to. Concourse `1.0.x` provides the Command API described above, which lets Runway send both requests in one round trip; that is why the table shows `1` rather than `2`. When Runway 2.0.0 runs against an older server, it cannot combine the two requests, and every load costs one round trip more than the table shows.
+A `2.0.0` load has two independent optimization opportunities, both introduced in Concourse `1.0.0`:
 
-The second condition is the shape of the graph. The `*` modifier can repeat only one field name. `children*` follows a chain of `children` links, but it cannot follow a cycle that alternates between two different field names &mdash; for example, a type `A` that links to `B` through a field named `bs` while `B` links back through a field named `as`. A single `navigate()` therefore cannot reach an alternating-field cycle, nor a link whose target has been deleted. Whatever it misses is gathered afterward by a bulk-`select()` cleanup pass, and that pass costs one further round trip for every level of graph it still has to walk. A plain self-referential tree leaves nothing for it to do, so the tree resolves in exactly the round trips the table shows. A graph with alternating-field cycles costs one round trip for each level of the part `*` could not express.
+1. **The Command API** (`prepare()`/`submit()`) lets Runway pack the per-load `select` for the record itself and the `navigate` for the records it links to into a single round trip rather than two.
+
+2. **The `*` transitive modifier** to `navigate()` lets a single `navigate()` call follow a self-referential link to any depth. Runway emits `*` paths (e.g., `children*`) for every self-referential edge in the source graph.
+
+Concourse `1.0.x` provides both features; older Concourse servers provide neither. The third row of the table is the both-on case; the fourth row is the both-off case.
+
+Whichever paths a single `navigate()` cannot reach are gathered by a follow-up bulk-`select()` cleanup pass that walks the missing graph one round trip at a time. Two classes of edge always require the cleanup, regardless of server version: a cycle that alternates between two different field names (for example, a type `A` that links to `B` through a field named `bs` while `B` links back through a field named `as` &mdash; the `*` modifier can only repeat one field name), and a link whose target has been deleted. Against an older server, every self-referential edge also needs the cleanup, because the navigate-path set has had its `*` paths stripped.
+
+The third row's `1` falls out of both optimizations being in effect: the Command API combines the select and the navigate into one round trip, and the `*` modifier makes that single navigate cover an arbitrarily deep self-referential tree, so the cleanup pass has nothing to walk for a pure tree. A graph with alternating-field cycles still costs one cleanup round trip per level of the part `*` could not express.
+
+The fourth row's `2 + D` is the same calculation with both optimizations absent: two round trips for the separate select and navigate, plus one cleanup round trip per level of every self-referential edge (`+ D` for a tree of depth `D`). Non-cyclic graphs do not depend on `*` paths, so they pay only the Command-API cost: `2` round trips.
 
 ##### API Breaks and Deprecations
 * Removed the `CachingConcourse` infrastructure and the related `Runway.Builder` cache configuration. `Runway.Builder.cache(Cache<Long, Record>)` and `Runway.Builder.withCache(Cache<Long, Map<String, Set<Object>>>)` have been deleted along with the `com.cinchapi.runway.cache` package (`CachingConcourse`, `CachingConnectionPool`, `LeasingCache`, `NoOpLeasingCache`, `NoOpCache`). Connection-level data caching is removed in this release; the planned `prepare()`/`submit()` write transport made the per-method invalidation model untenable, and the implementation had latent invalidation bugs (e.g., missing overrides for `consolidate`, `link`, `unlink`, and several `clear` / `insert` variants). Callers that relied on `withCache(...)` should remove the configuration; the thread-local reservation API (`Runway#reserve()` / `Runway#unreserve()`) is unaffected. ([GH-81](https://github.com/cinchapi/runway/issues/81))
