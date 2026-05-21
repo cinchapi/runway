@@ -37,6 +37,7 @@ import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
 import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.runway.Computed;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
@@ -254,9 +255,17 @@ public interface Audience extends DatabaseInterface {
     }
 
     /**
-     * Read a "frame" of data from the {@code record} containing only the
+     * Read a "frame" of data from the {@code subject} containing only the
      * information that is visible to this {@link Audience}, using default
      * {@link SerializationOptions}.
+     * <p>
+     * By default, {@link Computed @Computed} properties are excluded from the
+     * framed result unless they are positively named in {@code keys}. To
+     * include {@code @Computed} properties without naming them, invoke
+     * {@link #frame(SerializationOptions, Collection, Record)} with options
+     * built via
+     * {@code SerializationOptions.builder().includeComputedValuesByDefault(true)}.
+     * </p>
      *
      * @param keys the fields to read from
      * @param subject the {@link Record} to read from
@@ -641,6 +650,13 @@ public interface Audience extends DatabaseInterface {
      * This is a convenience method that is equivalent to calling
      * {@link #frame(SerializationOptions, Collection, Record)} with all of the
      * keys in the {@code record} and default {@link SerializationOptions}.
+     * </p>
+     * <p>
+     * {@link Computed @Computed} properties are excluded from the framed
+     * result. To include them, invoke
+     * {@link #frame(SerializationOptions, Collection, Record)} with options
+     * built via
+     * {@code SerializationOptions.builder().includeComputedValuesByDefault(true)}.
      * </p>
      *
      * @param record the {@link Record} to read from
