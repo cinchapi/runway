@@ -40,9 +40,6 @@ import com.google.common.collect.ImmutableSet;
  * present; defaults are dropped and only the listed keys (bare and
  * {@code +}-prefixed alike) appear in the result, minus exclusions.</li>
  * </ul>
- * <p>
- * These tests are expected to fail prior to the implementation of GH-133 and
- * pass after.
  *
  * @author Jeff Nelson
  */

@@ -2724,15 +2724,15 @@ public abstract class Record implements Comparable<Record> {
      * <p>
      * For a bare key, the {@link Entry} is {@code (key, get(key))}. For a
      * navigation key (e.g., {@code "company.name"}), the {@link Entry} is keyed
-     * by the root and valued by the nested {@code Map} (or list of nested
-     * {@code Map Maps} for a sequence-valued destination) produced by
-     * recursively materializing the remaining path on the linked {@link Record
-     * Records}. A non-navigable destination resolves to {@code null}.
+     * by the root and valued by the nested {@link Map} (or list of nested
+     * {@link Map Maps} for a sequence-valued destination) representing the
+     * navigation path's value on the linked {@link Record Records}. A
+     * non-navigable destination resolves to {@code null}.
      * </p>
      *
      * @param key the (possibly navigation) key to resolve
-     * @param options the {@link SerializationOptions} threaded into any
-     *            recursive {@link #map} call along a navigation path
+     * @param options the {@link SerializationOptions} applied along any
+     *            navigation path
      * @return the resolved {@link Entry}; never {@code null}, though its value
      *         may be
      */

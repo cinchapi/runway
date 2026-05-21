@@ -23,16 +23,10 @@ import org.junit.Test;
 import com.google.common.collect.ImmutableSet;
 
 /**
- * Regression test demonstrating that {@link Audience#frame} silently drops
- * {@code -}-prefixed keys when the audience's readable set is restricted (not
- * {@link AccessControl#ALL_KEYS}).
- * <p>
- * The intersection check at the heart of {@code frame} compares each requested
- * root against the audience's bare-key allowlist. A requested key like
- * {@code "-name"} has the literal {@code -} as part of its root and never
- * matches the bare {@code name} in the allowlist, so the exclusion is dropped
- * and the call resolves to an empty result.
- * </p>
+ * Regression test verifying that {@link Audience#frame} honors a
+ * {@code -}-prefixed key against an audience whose readable set is restricted
+ * (not {@link AccessControl#ALL_KEYS}). The result is the intersection of the
+ * audience's allowlist with the caller's exclusions &mdash; never an empty map.
  *
  * @author Jeff Nelson
  */
@@ -66,12 +60,6 @@ public class AudienceFrameNegativeKeyAccessControlTest
      * <strong>not</strong> contain {@code name} (excluded by {@code -name}) and
      * does <strong>not</strong> contain {@code resume} (not in the readable
      * set).
-     * <p>
-     * <strong>Current behavior:</strong> {@code -name}'s root is the literal
-     * string {@code "-name"}, which fails the intersection check against the
-     * bare-key allowlist. The visible array is empty and the method returns an
-     * empty map &mdash; the assertions on {@code email}, {@code skills},
-     * {@code yearsExperience}, and {@code location} all fail.
      */
     @Test
     public void testFrameHonorsNegativeKeyAgainstRestrictedReadable() {

@@ -416,10 +416,9 @@ public interface Audience extends DatabaseInterface {
                     // audience's allowlist) appear in the result. When
                     // the user only uses + or -, #readable plays the
                     // role of "defaults" for the audience: the result
-                    // is (allowed − userNegative) ∪ allowed-additives.
-                    // Without this expansion, passing - or + through to
-                    // subject.map would let Record#map's defaults branch
-                    // include fields the audience cannot see.
+                    // is (allowed − userNegative) ∪ allowed-additives,
+                    // so the audience's allowlist still bounds the
+                    // result.
                     Set<String> userBare = new HashSet<>();
                     Set<String> userAdditive = new HashSet<>();
                     Set<String> userNegative = new HashSet<>();
