@@ -9,6 +9,8 @@
         * Positively naming the `@Computed` key in the keys list (e.g., `record.map("propertyName")`) always fires its supplier regardless of the flag.
     * `Audience#frame` has a new overload, `frame(SerializationOptions, Collection<String>, Record)`, that threads options through every level of the framing pipeline, including recursive frames of linked `AccessControl` records. The existing `frame(Collection<String>, Record)` and `frame(Record)` overloads delegate with `SerializationOptions.defaults()` &mdash; which under the new default now exclude `@Computed` properties.
 * Fixed a bug where `Record#refresh()` left memoized `@Computed` values cached from before the refresh, so subsequent reads returned stale results instead of recomputing against the refreshed state. ([GH-93](https://github.com/cinchapi/runway/issues/93))
+* **Added an additive `+` key prefix to `Record#map`, `Record#json`, and `Audience#frame`** for layering a single key onto the default payload &mdash; the escape hatch for naming one `@Computed` property without enumerating every other key (e.g., `record.map("+computedProperty")` returns the defaults plus the computed value). The moment any bare positive key appears in the call, defaults are dropped and only the listed keys (bare or `+`-prefixed) appear in the result; `-` continues to exclude. Legacy call shapes are unchanged. ([GH-133](https://github.com/cinchapi/runway/issues/133))
+* Fixed a bug where `Audience#frame` silently dropped a `-`-prefixed key against any restricted (non-`ALL_KEYS`) readable set, collapsing the call to an empty map instead of returning the readable defaults minus the excluded key. ([GH-133](https://github.com/cinchapi/runway/issues/133))
 
 #### Version 2.0.0 (May 20, 2026)
 
