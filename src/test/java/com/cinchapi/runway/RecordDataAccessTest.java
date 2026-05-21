@@ -236,11 +236,21 @@ public class RecordDataAccessTest extends AbstractRecordTest {
     }
 
     @Test
-    public void testAnnotatedComputedValueIncludedInGetAll() {
+    public void testAnnotatedComputedValueIncludedInGetAllWhenOptedIn() {
         Rock rock = new Rock();
-        Map<String, Object> data = rock.map();
+        SerializationOptions opts = SerializationOptions.builder()
+                .includeComputedValuesByDefault(true).build();
+        Map<String, Object> data = rock.map(opts);
         Assert.assertTrue(data.containsKey("state"));
         Assert.assertTrue(data.containsKey("county"));
+    }
+
+    @Test
+    public void testAnnotatedComputedValueExcludedFromGetAllByDefault() {
+        Rock rock = new Rock();
+        Map<String, Object> data = rock.map();
+        Assert.assertFalse(data.containsKey("state"));
+        Assert.assertFalse(data.containsKey("county"));
     }
 
     @Test

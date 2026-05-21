@@ -53,7 +53,8 @@ public final class SerializationOptions {
     private final boolean serializeNullValues;
 
     /**
-     * A boolean that indicates if computed values should be included by default
+     * A boolean that indicates if {@link Computed @Computed} properties should
+     * be materialized when a serialization call does not positively name them.
      */
     private final boolean includeComputedValuesByDefault;
 
@@ -92,9 +93,16 @@ public final class SerializationOptions {
     }
 
     /**
-     * Returns if computed values should be included by default
+     * Return whether {@link Computed @Computed} properties are included in
+     * serialized output when the caller does not positively name them.
+     * <p>
+     * The default is {@code false}, meaning {@code @Computed} properties are
+     * excluded unless the caller positively names them or explicitly opts in by
+     * setting this option to {@code true}.
+     * </p>
      *
-     * @return boolean
+     * @return {@code true} if {@code @Computed} properties are included by
+     *         default; {@code false} otherwise
      */
     public boolean includeComputedValuesByDefault() {
         return includeComputedValuesByDefault;
@@ -109,7 +117,7 @@ public final class SerializationOptions {
 
         private boolean flattenSingleElementCollections = false;
         private boolean serializeNullValues = false;
-        private boolean includeComputedValuesByDefault = true;
+        private boolean includeComputedValuesByDefault = false;
 
         /**
          * Construct a new instance.
@@ -153,8 +161,12 @@ public final class SerializationOptions {
         }
 
         /**
-         * Configure the option to include computed values by default when
-         * serializing data.
+         * Configure whether {@link Computed @Computed} properties are included
+         * in serialized output when the caller does not positively name them.
+         * <p>
+         * The default is {@code false}. Set this to {@code true} to include
+         * {@code @Computed} properties without naming them explicitly.
+         * </p>
          *
          * @param includeComputedValuesByDefault
          * @return this

@@ -58,7 +58,10 @@ public class RecordAnnotationInterfaceTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(timestampedName.contains("_"));
 
         // Test that the computed property is included in the map output
-        Map<String, Object> recordMap = record.map();
+        // when the caller opts in via SerializationOptions
+        SerializationOptions opts = SerializationOptions.builder()
+                .includeComputedValuesByDefault(true).build();
+        Map<String, Object> recordMap = record.map(opts);
         Assert.assertTrue(recordMap.containsKey("timestampedName"));
         String mapTimestampedName = (String) recordMap.get("timestampedName");
         Assert.assertTrue(mapTimestampedName.startsWith("Jeff_"));
