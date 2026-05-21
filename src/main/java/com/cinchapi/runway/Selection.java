@@ -142,8 +142,10 @@ public interface Selection<T extends Record> {
                 result.origin = selection;
                 return result;
             }
-            return withInjectedFilter(selection,
-                    record -> record.matches(injected));
+            else {
+                return withInjectedFilter(selection,
+                        record -> record.matches(injected));
+            }
         }
         else {
             resolved = resolved.duplicate();

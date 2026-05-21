@@ -225,31 +225,41 @@ public class ScopeTest {
     /**
      * <strong>Goal:</strong> Verify that
      * {@link Scope#hybrid(Criteria, Predicate)} returns a {@link Selection}
-     * that differs from the input, routing the criteria through the
-     * database-injection path just like {@link Scope#of(Criteria)}.
+     * that differs from the input and carries the injected {@link Criteria}
+     * &mdash; i.e., that the criteria is routed through the database-injection
+     * path just like {@link Scope#of(Criteria)}.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Create a non-scoped {@link Criteria} and a {@link Selection}.</li>
+     * <li>Create a non-scoped {@link Criteria} with a uniquely identifiable
+     * value and a {@link Selection}.</li>
      * <li>Call
      * {@link Scope#hybrid(Criteria, Predicate)}.{@code apply(selection)} with
      * an always-true predicate.</li>
+     * <li>Inspect the returned {@link Selection Selection's}
+     * {@link Object#toString() toString()}, which reflects the resolved
+     * criteria.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A non-null {@link Selection} is returned that
-     * is not the same reference as the input.
+     * <strong>Expected:</strong> The returned {@link Selection} is non-null, is
+     * not the same reference as the input, and its rendered form contains both
+     * the injected criteria's key and its sentinel value, proving the criteria
+     * was injected into the resulting query.
      */
     @Test
     public void testHybridApplyReturnsModifiedSelection() {
         Criteria criteria = Criteria.where().key("active")
-                .operator(Operator.EQUALS).value(true).build();
+                .operator(Operator.EQUALS).value(424242L).build();
         Selection<?> selection = Selection.of(TestRecord.class);
         Selection<?> result = Scope.hybrid(criteria, r -> true)
                 .apply(selection);
         Assert.assertNotNull(result);
         Assert.assertNotSame(selection, result);
+        String description = result.toString();
+        Assert.assertTrue(description.contains("active"));
+        Assert.assertTrue(description.contains("424242"));
     }
 
     /**
