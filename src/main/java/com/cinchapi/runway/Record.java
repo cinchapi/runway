@@ -1266,12 +1266,13 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the "readable" intrinsic (e.g. not {@link #derived() or
-     * {@link #computed()}) data from this {@link Record} as a {@link Map}.
+     * Return the "readable" intrinsic (i.e. neither {@link #derived() derived}
+     * nor {@link #computed() computed}) data from this {@link Record} as a
+     * {@link Map}.
      * <p>
-     * This method should be used over {@link #map()} when it is necessary to
-     * ensure that {@link #computed() computed} values aren't processed and it
-     * isn't feasible to explicitly filter them all out.
+     * Use this method over {@link #map()} when {@link #derived() derived}
+     * properties must also be excluded; {@link #map()} alone already excludes
+     * {@link #computed() computed} properties by default.
      * </p>
      * <p>
      * This method also supports <strong>negative filtering</strong>. You can
@@ -1286,12 +1287,13 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the "readable" intrinsic (e.g. not {@link #derived() or
-     * {@link #computed()}) data from this {@link Record} as a {@link Map}.
+     * Return the "readable" intrinsic (i.e. neither {@link #derived() derived}
+     * nor {@link #computed() computed}) data from this {@link Record} as a
+     * {@link Map}.
      * <p>
-     * This method should be used over {@link #map()} when it is necessary to
-     * ensure that {@link #computed() computed} values aren't processed and it
-     * isn't feasible to explicitly filter them all out.
+     * Use this method over {@link #map()} when {@link #derived() derived}
+     * properties must also be excluded; {@link #map()} alone already excludes
+     * {@link #computed() computed} properties by default.
      * </p>
      * <p>
      * This method also supports <strong>negative filtering</strong>. You can
@@ -1317,6 +1319,14 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data.
+     * <p>
+     * {@link Computed @Computed} properties are excluded from the result. To
+     * include {@code @Computed} properties, use
+     * {@link #json(SerializationOptions)} with options built via
+     * {@code SerializationOptions.builder().includeComputedValuesByDefault(true)},
+     * or use {@link #json(String...)} and positively name the {@code @Computed}
+     * keys.
+     * </p>
      *
      * @return json string
      */
@@ -1421,6 +1431,13 @@ public abstract class Record implements Comparable<Record> {
      * <p>
      * This method also supports <strong>negative filtering</strong>. Prefix any
      * key with {@code -} to exclude it from the result.
+     * </p>
+     * <p>
+     * {@link Computed @Computed} properties are excluded from the result unless
+     * they are positively named in {@code keys}. To include {@code @Computed}
+     * properties without naming them, use
+     * {@link #map(SerializationOptions, String...)} with options built via
+     * {@code SerializationOptions.builder().includeComputedValuesByDefault(true)}.
      * </p>
      *
      * @return the data in this {@link Record}

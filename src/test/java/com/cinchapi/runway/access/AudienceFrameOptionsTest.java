@@ -88,8 +88,8 @@ public class AudienceFrameOptionsTest extends AudienceAccessControlBaseTest {
      * <strong>Goal:</strong> Verify that the two-arg convenience overload
      * {@link Audience#frame(java.util.Collection, Record) frame(keys, subject)}
      * delegates to the canonical method with default
-     * {@link SerializationOptions}, preserving prior framing behavior in which
-     * {@link Computed} properties are included.
+     * {@link SerializationOptions}, which exclude {@link Computed} properties
+     * from the framed result.
      * <p>
      * <strong>Start state:</strong> Same as
      * {@link #testFrameWithFlagFalseSuppressesComputed()}.
@@ -100,11 +100,11 @@ public class AudienceFrameOptionsTest extends AudienceAccessControlBaseTest {
      * {@link SerializationOptions options}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The result contains {@code "computedLabel"}
-     * and the supplier invocation counter reflects exactly one invocation.
+     * <strong>Expected:</strong> The result omits {@code "computedLabel"} and
+     * the supplier invocation counter remains at {@code 0}.
      */
     @Test
-    public void testTwoArgFrameDelegatesWithDefaults() {
+    public void testTwoArgFrameSuppressesComputedByDefault() {
         Admin admin = new Admin();
         admin.email = "admin@example.com";
         admin.name = "Admin";
@@ -116,14 +116,15 @@ public class AudienceFrameOptionsTest extends AudienceAccessControlBaseTest {
                 widget);
 
         Assert.assertNotNull(result);
-        Assert.assertEquals("computed-alpha", result.get("computedLabel"));
-        Assert.assertEquals(1, widget.computedInvocations.get());
+        Assert.assertFalse(result.containsKey("computedLabel"));
+        Assert.assertEquals(0, widget.computedInvocations.get());
     }
 
     /**
      * <strong>Goal:</strong> Verify that the one-arg convenience overload
      * {@link Audience#frame(Record) frame(record)} delegates to the canonical
-     * method with default {@link SerializationOptions} and all keys.
+     * method with default {@link SerializationOptions} and all keys, which
+     * exclude {@link Computed} properties from the framed result.
      * <p>
      * <strong>Start state:</strong> Same as
      * {@link #testFrameWithFlagFalseSuppressesComputed()}.
@@ -134,11 +135,11 @@ public class AudienceFrameOptionsTest extends AudienceAccessControlBaseTest {
      * {@link SerializationOptions options}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The result contains {@code "computedLabel"}
-     * and the supplier invocation counter reflects exactly one invocation.
+     * <strong>Expected:</strong> The result omits {@code "computedLabel"} and
+     * the supplier invocation counter remains at {@code 0}.
      */
     @Test
-    public void testOneArgFrameDelegatesWithDefaults() {
+    public void testOneArgFrameSuppressesComputedByDefault() {
         Admin admin = new Admin();
         admin.email = "admin@example.com";
         admin.name = "Admin";
@@ -147,6 +148,48 @@ public class AudienceFrameOptionsTest extends AudienceAccessControlBaseTest {
         widget.label = "alpha";
 
         Map<String, Object> result = admin.frame(widget);
+
+        Assert.assertNotNull(result);
+        Assert.assertFalse(result.containsKey("computedLabel"));
+        Assert.assertEquals(0, widget.computedInvocations.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@code includeComputedValuesByDefault = true} on the
+     * {@link SerializationOptions} passed to {@code frame} restores the legacy
+     * behavior of materializing {@link Computed} properties even when the
+     * caller does not positively name them.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link Admin} and a
+     * freshly constructed {@link WidgetWithComputed} whose computed supplier
+     * has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build {@link SerializationOptions} with
+     * {@code includeComputedValuesByDefault(true)}.</li>
+     * <li>Invoke
+     * {@code admin.frame(opts, AccessControl.ALL_KEYS, widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains {@code "computedLabel"}
+     * and the supplier invocation counter reflects exactly one invocation.
+     */
+    @Test
+    public void testFrameWithFlagTrueIncludesComputed() {
+        Admin admin = new Admin();
+        admin.email = "admin@example.com";
+        admin.name = "Admin";
+
+        WidgetWithComputed widget = new WidgetWithComputed();
+        widget.label = "alpha";
+
+        SerializationOptions opts = SerializationOptions.builder()
+                .includeComputedValuesByDefault(true).build();
+
+        Map<String, Object> result = admin.frame(opts, AccessControl.ALL_KEYS,
+                widget);
 
         Assert.assertNotNull(result);
         Assert.assertEquals("computed-alpha", result.get("computedLabel"));

@@ -25,15 +25,135 @@ import org.junit.Test;
  * Tests covering how
  * {@link SerializationOptions#includeComputedValuesByDefault()} controls
  * whether a {@link Computed} property's supplier fires during {@code map()} and
- * {@code json()}. When the flag is {@code false}, the supplier is suppressed
- * for no-keys and negative-only key sets; when the flag is {@code false} but
- * the caller positively names the computed key, the supplier still fires and
- * the value appears in the result.
+ * {@code json()}.
+ * <p>
+ * The default is {@code false}, meaning bare {@code map()} and {@code json()}
+ * exclude {@code @Computed} properties and never fire their suppliers.
+ * Explicitly setting the flag to {@code false} matches the default. Setting the
+ * flag to {@code true} opts in to materializing all {@code @Computed}
+ * properties without naming them; positively naming a {@code @Computed} key in
+ * the {@code keys} list always fires its supplier regardless of the flag.
  *
  * @author Jeff Nelson
  */
 public class RecordIncludeComputedValuesTest
         extends RunwayBaseClientServerTest {
+
+    /**
+     * <strong>Goal:</strong> Verify that the bare no-args {@code map()} call
+     * excludes a {@link Computed} property and never fires its supplier,
+     * exercising the default {@link SerializationOptions}.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link LabeledWidget}
+     * whose computed supplier has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code widget.map()} with no arguments.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result omits {@code "label"} and the
+     * supplier invocation counter remains at {@code 0}.
+     */
+    @Test
+    public void testComputedSupplierDoesNotFireWithNoKeysByDefault() {
+        LabeledWidget widget = new LabeledWidget();
+        widget.name = "alpha";
+
+        Map<String, Object> result = widget.map();
+
+        Assert.assertFalse(result.containsKey("label"));
+        Assert.assertEquals(0, widget.labelInvocations.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the bare no-args {@code json()} call
+     * excludes a {@link Computed} property and never fires its supplier,
+     * exercising the default {@link SerializationOptions}.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link LabeledWidget}
+     * whose computed supplier has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code widget.json()} with no arguments.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The supplier invocation counter remains at
+     * {@code 0}.
+     */
+    @Test
+    public void testComputedSupplierDoesNotFireDuringJsonByDefault() {
+        LabeledWidget widget = new LabeledWidget();
+        widget.name = "alpha";
+
+        widget.json();
+
+        Assert.assertEquals(0, widget.labelInvocations.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code map(opts)} with
+     * {@code includeComputedValuesByDefault(true)} restores the legacy behavior
+     * of materializing all {@link Computed} properties even when the caller
+     * does not positively name them.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link LabeledWidget}
+     * whose computed supplier has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build {@link SerializationOptions} with
+     * {@code includeComputedValuesByDefault(true)}.</li>
+     * <li>Invoke {@code widget.map(opts)} with no keys.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains {@code "label"} mapped to
+     * the computed value and the supplier invocation counter reflects exactly
+     * one invocation.
+     */
+    @Test
+    public void testComputedSupplierFiresWithNoKeysWhenFlagIsTrue() {
+        LabeledWidget widget = new LabeledWidget();
+        widget.name = "alpha";
+
+        SerializationOptions opts = SerializationOptions.builder()
+                .includeComputedValuesByDefault(true).build();
+
+        Map<String, Object> result = widget.map(opts);
+
+        Assert.assertEquals("label-alpha", result.get("label"));
+        Assert.assertEquals(1, widget.labelInvocations.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that positively naming a {@link Computed}
+     * key in the {@code keys} list fires the supplier and includes the value
+     * even under the default {@link SerializationOptions}.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link LabeledWidget}
+     * whose computed supplier has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code widget.map("label")} with no
+     * {@link SerializationOptions options}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains {@code "label"} mapped to
+     * the computed value and the supplier invocation counter reflects exactly
+     * one invocation.
+     */
+    @Test
+    public void testPositiveIncludeFiresSupplierUnderDefaults() {
+        LabeledWidget widget = new LabeledWidget();
+        widget.name = "alpha";
+
+        Map<String, Object> result = widget.map("label");
+
+        Assert.assertEquals("label-alpha", result.get("label"));
+        Assert.assertEquals(1, widget.labelInvocations.get());
+    }
 
     /**
      * <strong>Goal:</strong> Verify that the {@link Computed} supplier never

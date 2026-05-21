@@ -45,7 +45,8 @@ public class RecordComputeOnceTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Call {@code widget.tags()} directly (simulating a {@link Derived}
      * method calling a {@link Computed} method).</li>
-     * <li>Call {@code widget.map()} which triggers serialization and fires the
+     * <li>Call {@code widget.map(opts)} with
+     * {@code includeComputedValuesByDefault(true)} so serialization fires the
      * computed supplier for {@code "tags"}.</li>
      * <li>Check the invocation counter.</li>
      * </ul>
@@ -63,7 +64,9 @@ public class RecordComputeOnceTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(1, widget.tagsInvocations.get());
 
         // Path 3: serialization fires the computed supplier
-        Map<String, Object> data = widget.map();
+        SerializationOptions opts = SerializationOptions.builder()
+                .includeComputedValuesByDefault(true).build();
+        Map<String, Object> data = widget.map(opts);
         Assert.assertEquals(tags, data.get("tags"));
 
         // The supplier should NOT have run a second time
@@ -81,7 +84,8 @@ public class RecordComputeOnceTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code map()} twice.</li>
+     * <li>Call {@code map(opts)} twice with
+     * {@code includeComputedValuesByDefault(true)}.</li>
      * <li>Check the counter value each time.</li>
      * </ul>
      * <p>
@@ -91,11 +95,13 @@ public class RecordComputeOnceTest extends RunwayBaseClientServerTest {
     @Test
     public void testNonMemoizedComputedStillRecomputes() {
         PlainCounter counter = new PlainCounter();
+        SerializationOptions opts = SerializationOptions.builder()
+                .includeComputedValuesByDefault(true).build();
 
-        Map<String, Object> data = counter.map();
+        Map<String, Object> data = counter.map(opts);
         Assert.assertEquals(1, data.get("count"));
 
-        data = counter.map();
+        data = counter.map(opts);
         Assert.assertEquals(2, data.get("count"));
     }
 
@@ -142,9 +148,10 @@ public class RecordComputeOnceTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code map()} which triggers both {@code $derived()} (eagerly
-     * evaluating {@code summary()}) and the computed supplier for
-     * {@code "items"}.</li>
+     * <li>Call {@code map(opts)} with
+     * {@code includeComputedValuesByDefault(true)} which triggers both
+     * {@code $derived()} (eagerly evaluating {@code summary()}) and the
+     * computed supplier for {@code "items"}.</li>
      * <li>Check the invocation counter for the {@code items()} method.</li>
      * </ul>
      * <p>
@@ -155,8 +162,10 @@ public class RecordComputeOnceTest extends RunwayBaseClientServerTest {
     @Test
     public void testDerivedCallingComputedDeduplicatesViaSerialization() {
         DerivedComposer composer = new DerivedComposer();
+        SerializationOptions opts = SerializationOptions.builder()
+                .includeComputedValuesByDefault(true).build();
 
-        Map<String, Object> data = composer.map();
+        Map<String, Object> data = composer.map(opts);
 
         // The derived "summary" should be present
         Assert.assertNotNull(data.get("summary"));
