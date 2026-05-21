@@ -237,6 +237,38 @@ public class RecordAdditiveKeysTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the whitelist branch does not fire
+     * {@code resolveEntry} for a bare key the caller has also excluded. For a
+     * {@link Computed} property named bare and then negated, this guarantees
+     * the supplier never runs &mdash; the downstream {@code filter} would
+     * discard the resolved entry anyway, so resolving it is wasted work.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link Gadget} with
+     * {@code name} populated; the computed supplier has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code gadget.map("label", "-label")}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result does not contain {@code label} and
+     * the supplier counter remains at {@code 0}.
+     */
+    @Test
+    public void testWhitelistBranchSkipsResolverForExcludedBareKey() {
+        Gadget gadget = new Gadget();
+        gadget.name = "alpha";
+
+        Map<String, Object> result = gadget.map("label", "-label");
+
+        Assert.assertFalse("label excluded", result.containsKey("label"));
+        Assert.assertEquals(
+                "supplier must not fire for a bare key the caller also"
+                        + " excluded",
+                0, gadget.labelInvocations.get());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a single bare positive key triggers
      * whitelist mode &mdash; defaults are dropped &mdash; even when
      * {@code +}-prefixed keys are also present. {@code +} in whitelist mode

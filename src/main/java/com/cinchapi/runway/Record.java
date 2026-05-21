@@ -1502,11 +1502,15 @@ public abstract class Record implements Comparable<Record> {
         Stream<Entry<String, Object>> pool;
         if(!bare.isEmpty()) {
             // Whitelist mode. A bare positive in the call &mdash; even
-            // one the caller also excluded with `-` &mdash; forces this
-            // branch so the call retains whitelist intent; the
-            // downstream #filter applies any same-named exclude.
+            // one the caller also excluded with `-` &mdash; forces
+            // this branch so the call retains whitelist intent. Strip
+            // excluded keys before resolution so #resolveEntry never
+            // fires a @Computed supplier (or navigates a link) for an
+            // entry the downstream #filter would discard. Same end
+            // result, no wasted work.
             List<String> whitelist = Lists.newArrayList(bare);
             whitelist.addAll(additive);
+            whitelist.removeAll(exclude);
             pool = whitelist.stream().map(key -> resolveEntry(key, options));
         }
         else if(!additive.isEmpty()) {

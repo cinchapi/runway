@@ -26,7 +26,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -407,17 +406,6 @@ public interface Audience extends DatabaseInterface {
             // whitelist intent.
             userAdditive.removeAll(userNegative);
             userAdditive.removeAll(userBare);
-            Function<String, String> withPrefix = k -> {
-                if(userAdditive.contains(k)) {
-                    return "+" + k;
-                }
-                else if(userNegative.contains(k)) {
-                    return "-" + k;
-                }
-                else {
-                    return k;
-                }
-            };
             /*
              * Determine the keys to map based on what is requested and what is
              * readable for the #audience.
@@ -454,8 +442,19 @@ public interface Audience extends DatabaseInterface {
                 }
                 else if(!requested.equals(ALL_KEYS)
                         && readable.equals(ALL_KEYS)) {
-                    String[] visible = requested.stream().map(withPrefix)
-                            .toArray(String[]::new);
+                    // No access restrictions; forward the caller's keys
+                    // to subject.map verbatim, stripped only of any
+                    // navigation suffix (the recursive descent below
+                    // handles those). Walking the caller's input
+                    // instead of #requested preserves every prefix
+                    // combination the caller wrote on a given root, so
+                    // multi-prefix calls like frame({"x", "-x"}) round-
+                    // trip through subject.map's own precedence rules
+                    // and produce the same result as Record#map.
+                    String[] visible = keys.stream().map(k -> {
+                        int dot = k.indexOf('.');
+                        return dot < 0 ? k : k.substring(0, dot);
+                    }).distinct().toArray(String[]::new);
                     data = subject.map(options, visible);
                 }
                 else {
@@ -506,8 +505,17 @@ public interface Audience extends DatabaseInterface {
                     // mode &mdash; re-attaching `+` would reopen
                     // additive mode on the subject and re-introduce the
                     // subject's full defaults, bypassing the audience
-                    // allowlist.
-                    String[] visible = selected.toArray(Array.containing());
+                    // allowlist. Re-attach `-` for any selected key the
+                    // caller also wrote as a negative so subject.map's
+                    // exclude filter applies it inside whitelist mode;
+                    // omitting these would silently drop the caller's
+                    // negative when the same key is also in #userBare.
+                    String[] visible = Stream
+                            .concat(selected.stream(),
+                                    selected.stream()
+                                            .filter(userNegative::contains)
+                                            .map(k -> "-" + k))
+                            .toArray(String[]::new);
                     if(visible.length == 0) {
                         // No keys are visible, but don't call Record#map
                         // with an empty array because doing so will return

@@ -219,6 +219,85 @@ public class AudienceFrameAdditiveKeyAccessControlTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a bare positive together with a
+     * negative on the same root, under {@link AccessControl#ALL_KEYS} readable,
+     * returns an empty data set &mdash; not the subject's other defaults. The
+     * bare positive forces whitelist mode and the negative removes the only
+     * whitelisted key, so no field of the subject should appear in the result.
+     * <p>
+     * Without the fix, the audience would forward only the negative to
+     * {@code subject.map} (dropping the bare half of the request) and return
+     * {@code defaults - {name}}, leaking the subject's other intrinsic defaults
+     * past the user's whitelist intent.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed
+     * {@link MultiFieldOpenBox} with both {@code name} and {@code description}
+     * populated; readable-by-anonymous is {@link AccessControl#ALL_KEYS}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code Audience.anonymous().frame(ImmutableSet.of(
+     * "name", "-name"), widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains neither {@code name}
+     * (excluded by {@code -name}) nor {@code description} (a default that the
+     * bare {@code name} dropped from the whitelist).
+     */
+    @Test
+    public void testFrameBareAndNegativeOnSameRootUnderAllKeysReadable() {
+        MultiFieldOpenBox widget = new MultiFieldOpenBox();
+        widget.name = "alpha";
+        widget.description = "desc";
+
+        Map<String, Object> result = Audience.anonymous()
+                .frame(ImmutableSet.of("name", "-name"), widget);
+
+        Assert.assertNotNull(result);
+        Assert.assertFalse("- wins over bare in whitelist",
+                result.containsKey("name"));
+        Assert.assertFalse(
+                "bare key forced whitelist; non-listed default must drop",
+                result.containsKey("description"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify the same bare-plus-same-key-negative
+     * semantics hold under a <em>restricted</em> readable set (exercising the
+     * inner whitelist sub-branch that intersects the audience's allowlist with
+     * the user's positive request). The caller's {@code -name} must reach
+     * {@code subject.map} alongside the bare {@code name} so the exclude filter
+     * applies inside whitelist mode &mdash; otherwise the negative is silently
+     * dropped and the call diverges from {@link Record#map}.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed
+     * {@link LabelReadableBox} whose readable-by-anonymous set is {@code {name,
+     * label}}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code Audience.anonymous().frame(ImmutableSet.of(
+     * "name", "-name"), widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result does not contain {@code name}; the
+     * negative is honored inside whitelist mode just as it is on the
+     * {@link Record#map} side.
+     */
+    @Test
+    public void testFrameBareAndNegativeOnSameRootUnderRestrictedReadable() {
+        LabelReadableBox widget = new LabelReadableBox();
+        widget.name = "alpha";
+
+        Map<String, Object> result = Audience.anonymous()
+                .frame(ImmutableSet.of("name", "-name"), widget);
+
+        Assert.assertNotNull(result);
+        Assert.assertFalse("- wins over bare in whitelist",
+                result.containsKey("name"));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code +key} cannot bypass access
      * control. When the audience's readable set <em>excludes</em> the
      * additive's bare root, the {@code +key} must be dropped during the
@@ -364,6 +443,22 @@ public class AudienceFrameAdditiveKeyAccessControlTest
      * {@code frame}.
      */
     static class OpenBox extends WidgetBase {
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return ALL_KEYS;
+        }
+    }
+
+    /**
+     * Fixture with {@link AccessControl#ALL_KEYS} readable and a second
+     * intrinsic field beyond {@code name}. Used to detect leaks of the
+     * subject's other defaults through prefix-handling bugs in the
+     * {@link Audience#frame frame} delegation to {@link Record#map map}.
+     */
+    static class MultiFieldOpenBox extends WidgetBase {
+
+        public String description;
 
         @Override
         public Set<String> $readableByAnonymous() {
