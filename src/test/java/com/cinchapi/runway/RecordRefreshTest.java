@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -177,6 +179,51 @@ public class RecordRefreshTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@link Record#refresh()} clears the
+     * {@link Record#computeOnce(String, java.util.function.Supplier)
+     * computeOnce} cache so that previously memoized computed values are
+     * recomputed against the refreshed state.
+     * <p>
+     * <strong>Start state:</strong> A {@link CountingUser} that has been saved
+     * and had its computed {@code greeting} memoized once.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link CountingUser} with name "alice".</li>
+     * <li>Invoke {@code greeting()} to populate the {@code computeOnce}
+     * cache.</li>
+     * <li>Externally modify the name to "bob" directly in the database.</li>
+     * <li>Call {@link Record#refresh()} on the {@link CountingUser}.</li>
+     * <li>Invoke {@code greeting()} again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second {@code greeting()} call returns
+     * "Hello, bob" instead of the cached "Hello, alice", and the supplier is
+     * invoked twice in total, proving the cache was cleared by the refresh.
+     */
+    @Test
+    public void testRefreshClearsComputeOnceCache() {
+        CountingUser user = new CountingUser("alice");
+        Assert.assertTrue(runway.save(user));
+
+        Assert.assertEquals("Hello, alice", user.greeting());
+        Assert.assertEquals(1, user.greetingInvocations.get());
+
+        Concourse concourse = runway.connections.request();
+        try {
+            concourse.set("name", "bob", user.id());
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
+
+        user.refresh();
+
+        Assert.assertEquals("Hello, bob", user.greeting());
+        Assert.assertEquals(2, user.greetingInvocations.get());
+    }
+
+    /**
      * A test user record.
      *
      * @author Jeff Nelson
@@ -195,6 +242,49 @@ public class RecordRefreshTest extends RunwayBaseClientServerTest {
          */
         public TUser(String name) {
             this.name = name;
+        }
+    }
+
+    /**
+     * A test record with a {@link Computed} method that memoizes its result via
+     * {@link Record#computeOnce(String, java.util.function.Supplier)}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class CountingUser extends Record {
+
+        /**
+         * The user's name.
+         */
+        String name;
+
+        /**
+         * Tracks how many times the greeting supplier has been invoked.
+         */
+        final transient AtomicInteger greetingInvocations = new AtomicInteger(
+                0);
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the user's name
+         */
+        public CountingUser(String name) {
+            this.name = name;
+        }
+
+        /**
+         * Return a greeting derived from {@link #name}, memoized via
+         * {@link Record#computeOnce(String, java.util.function.Supplier)}.
+         *
+         * @return the greeting
+         */
+        @Computed
+        public String greeting() {
+            return computeOnce("greeting", () -> {
+                greetingInvocations.incrementAndGet();
+                return "Hello, " + name;
+            });
         }
     }
 
