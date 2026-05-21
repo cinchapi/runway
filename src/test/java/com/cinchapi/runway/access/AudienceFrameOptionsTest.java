@@ -37,6 +37,7 @@ import com.cinchapi.runway.SerializationOptions;
  *
  * @author Jeff Nelson
  */
+@SuppressWarnings("unchecked")
 public class AudienceFrameOptionsTest extends AudienceAccessControlBaseTest {
 
     /**
@@ -153,16 +154,75 @@ public class AudienceFrameOptionsTest extends AudienceAccessControlBaseTest {
     }
 
     /**
-     * An {@link AccessControl} {@link Record} with one regular field and one
-     * {@link Computed} property whose supplier increments a counter. The access
-     * control rules are intentionally permissive so the framing pipeline always
-     * reaches the underlying {@link Record#map map} call, letting tests focus
-     * on {@link SerializationOptions} threading.
+     * <strong>Goal:</strong> Verify that
+     * {@code includeComputedValuesByDefault = false} propagates from the outer
+     * {@code frame} call into the recursive frame of a linked
+     * {@link AccessControl} {@link Record}, proving that
+     * {@link SerializationOptions} thread through every level of the framing
+     * pipeline &mdash; not just the top-level {@link Record#map map} call.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link Admin} and two
+     * freshly constructed {@link WidgetWithComputed} records, one linked as the
+     * {@code child} of the other; neither computed supplier has yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build {@link SerializationOptions} with
+     * {@code includeComputedValuesByDefault(false)}.</li>
+     * <li>Invoke {@code admin.frame(opts, AccessControl.ALL_KEYS, parent)},
+     * which causes the framing pipeline to recurse into the linked
+     * {@code child} via
+     * {@link Audience#frame(SerializationOptions, java.util.Collection, Record)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The outer framed result omits
+     * {@code "computedLabel"} and the nested framed result for the linked
+     * {@code child} also omits {@code "computedLabel"}; both supplier
+     * invocation counters remain at {@code 0}.
+     */
+    @Test
+    public void testFrameWithFlagFalseSuppressesComputedOnLinkedRecord() {
+        Admin admin = new Admin();
+        admin.email = "admin@example.com";
+        admin.name = "Admin";
+
+        WidgetWithComputed child = new WidgetWithComputed();
+        child.label = "child";
+
+        WidgetWithComputed parent = new WidgetWithComputed();
+        parent.label = "parent";
+        parent.child = child;
+
+        SerializationOptions opts = SerializationOptions.builder()
+                .includeComputedValuesByDefault(false).build();
+
+        Map<String, Object> result = admin.frame(opts, AccessControl.ALL_KEYS,
+                parent);
+
+        Assert.assertNotNull(result);
+        Assert.assertFalse(result.containsKey("computedLabel"));
+        Assert.assertEquals(0, parent.computedInvocations.get());
+
+        Map<String, Object> nested = (Map<String, Object>) result.get("child");
+        Assert.assertNotNull(nested);
+        Assert.assertFalse(nested.containsKey("computedLabel"));
+        Assert.assertEquals(0, child.computedInvocations.get());
+    }
+
+    /**
+     * An {@link AccessControl} {@link Record} with one regular field, one
+     * self-referential {@code child} link, and one {@link Computed} property
+     * whose supplier increments a counter. The access control rules are
+     * intentionally permissive so the framing pipeline always reaches the
+     * underlying {@link Record#map map} call, letting tests focus on
+     * {@link SerializationOptions} threading.
      */
     protected static class WidgetWithComputed extends Record implements
             AccessControl {
 
         public String label;
+
+        public WidgetWithComputed child;
 
         /**
          * Tracks how many times {@link #computedLabel()} has been invoked.

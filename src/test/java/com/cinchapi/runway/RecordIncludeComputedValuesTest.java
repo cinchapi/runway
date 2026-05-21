@@ -15,17 +15,20 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Regression tests proving that a {@link Computed} property's supplier is not
- * invoked during framing when
- * {@link SerializationOptions#includeComputedValuesByDefault()} is
- * {@code false} and the caller supplies either no keys or only negative
- * (exclusion) keys.
+ * Tests covering how
+ * {@link SerializationOptions#includeComputedValuesByDefault()} controls
+ * whether a {@link Computed} property's supplier fires during {@code map()} and
+ * {@code json()}. When the flag is {@code false}, the supplier is suppressed
+ * for no-keys and negative-only key sets; when the flag is {@code false} but
+ * the caller positively names the computed key, the supplier still fires and
+ * the value appears in the result.
  *
  * @author Jeff Nelson
  */
@@ -131,6 +134,42 @@ public class RecordIncludeComputedValuesTest
         widget.json(opts);
 
         Assert.assertEquals(0, widget.labelInvocations.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a positive include list overrides
+     * {@code includeComputedValuesByDefault = false} &mdash; explicitly naming
+     * a {@link Computed} key still fires the supplier and produces the value,
+     * which is the documented escape hatch for selective materialization.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link LabeledWidget}
+     * whose computed supplier has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build {@link SerializationOptions} with
+     * {@code includeComputedValuesByDefault(false)}.</li>
+     * <li>Invoke {@code widget.map(opts, "label")}, routing through the
+     * positive-include branch of {@code map()} that resolves each key via
+     * {@code get()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains the computed value under
+     * {@code "label"} and the supplier invocation counter reflects exactly one
+     * invocation.
+     */
+    @Test
+    public void testPositiveIncludeOverridesFlagFalse() {
+        LabeledWidget widget = new LabeledWidget();
+        widget.name = "alpha";
+
+        SerializationOptions opts = SerializationOptions.builder()
+                .includeComputedValuesByDefault(false).build();
+
+        Map<String, Object> result = widget.map(opts, "label");
+
+        Assert.assertEquals("label-alpha", result.get("label"));
+        Assert.assertEquals(1, widget.labelInvocations.get());
     }
 
     /**

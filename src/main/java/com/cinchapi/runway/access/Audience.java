@@ -260,7 +260,7 @@ public interface Audience extends DatabaseInterface {
      * @param keys the fields to read from
      * @param subject the {@link Record} to read from
      * @param <T> the type of the {@link Record}
-     * @return a map of visible data or {@code null} if the {@code record} is
+     * @return a map of visible data or {@code null} if the {@code subject} is
      *         not discoverable at all by this {@link Audience}
      * @see #frame(SerializationOptions, Collection, Record)
      */
@@ -307,7 +307,7 @@ public interface Audience extends DatabaseInterface {
      * @param keys the fields to read from
      * @param subject the {@link Record} to read from
      * @param <T> the type of the {@link Record}
-     * @return a map of visible data or {@code null} if the {@code record} is
+     * @return a map of visible data or {@code null} if the {@code subject} is
      *         not discoverable at all by this {@link Audience}
      */
     @SuppressWarnings("unchecked")
