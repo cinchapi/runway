@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 2.1.0 (TBD)
+* Fixed a bug where `Record#refresh()` left memoized `@Computed` values cached from before the refresh, so subsequent reads returned stale results instead of recomputing against the refreshed state. ([GH-93](https://github.com/cinchapi/runway/issues/93))
+
 #### Version 2.0.0 (May 20, 2026)
 
 ##### Command API
