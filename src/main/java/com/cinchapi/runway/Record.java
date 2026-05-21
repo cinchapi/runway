@@ -1580,7 +1580,9 @@ public abstract class Record implements Comparable<Record> {
      * After refreshing, this {@link Record} is considered in sync with the
      * database &mdash; {@link #hasStaleDataWithinTransaction(Concourse)
      * hasStaleDataWithinTransaction} will return {@code false} until the next
-     * external modification occurs.
+     * external modification occurs. The {@link #computeOnce(String, Supplier)
+     * computeOnce} cache is also invalidated so that memoized computed values
+     * recompute against the refreshed state on next access.
      * </p>
      *
      * @throws IllegalStateException if this {@link Record} is not pinned to a
@@ -1593,6 +1595,7 @@ public abstract class Record implements Comparable<Record> {
         try {
             ConcurrentMap<Long, Record> existing = new ConcurrentHashMap<>();
             load(concourse, existing);
+            clearComputeOnceCache();
             onLoad();
         }
         finally {
