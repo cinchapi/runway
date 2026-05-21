@@ -359,53 +359,18 @@ public interface Audience extends DatabaseInterface {
         }
         else if(subject instanceof AccessControl) {
             AccessControl gated = (AccessControl) subject;
-            // Break up navigation keys into root components that must be
-            // resolved in this Record to their subsequent stops that must
-            // be resolved in linked Records. Strip any leading + or - from
-            // each root so the access-control intersection below matches
-            // against bare field names in the audience's readable set;
-            // categorize the bare root into one of three prefix buckets
-            // so the visible array can re-attach the prefix on just the
-            // root (not the navigation suffix) when delegating to
-            // subject.map. Populating the buckets during the iteration
-            // (instead of via a single map keyed by root) keeps the
-            // categorization order-independent when the caller supplies
-            // the same root under multiple prefixes.
-            Map<String, Set<String>> roots = new HashMap<>();
-            Set<String> userBare = new HashSet<>();
-            Set<String> userAdditive = new HashSet<>();
-            Set<String> userNegative = new HashSet<>();
-            for (String key : keys) {
-                String[] toks = key.split("\\.");
-                String root = toks[0];
-                String bareRoot = KeySelection.stripPrefix(root);
-                switch (KeySelection.kindOf(root)) {
-                case BARE:
-                    userBare.add(bareRoot);
-                    break;
-                case ADDITIVE:
-                    userAdditive.add(bareRoot);
-                    break;
-                case EXCLUDE:
-                    userNegative.add(bareRoot);
-                    break;
-                }
-                String next = Stream.of(toks).skip(1)
-                        .collect(Collectors.joining("."));
-                Set<String> nexts = roots.computeIfAbsent(bareRoot,
-                        $ -> new HashSet<>());
-                if(!next.isEmpty()) {
-                    nexts.add(next);
-                }
-            }
-            // Apply prefix precedence to deduplicate keys the caller
-            // supplied under more than one prefix. Exclusion wins over
-            // addition so a downstream resolver never fires for a key
-            // the caller also excluded; a bare positive subsumes a `+`
-            // on the same root since the bare presence already forces
-            // whitelist intent.
-            userAdditive.removeAll(userNegative);
-            userAdditive.removeAll(userBare);
+            // Bucket each requested key by the prefix on its root and
+            // track navigation suffixes per bare root for the
+            // recursive descent below. KeySelection.partitionByRoot
+            // applies the "exclusion wins over addition" precedence
+            // so a downstream resolver never fires for a key the
+            // caller has also excluded.
+            KeySelection.RootedPartition parsed = KeySelection
+                    .partitionByRoot(keys);
+            Set<String> userBare = parsed.bare();
+            Set<String> userAdditive = parsed.additive();
+            Set<String> userNegative = parsed.exclude();
+            Map<String, Set<String>> roots = parsed.navigation();
             /*
              * Determine the keys to map based on what is requested and what is
              * readable for the #audience.

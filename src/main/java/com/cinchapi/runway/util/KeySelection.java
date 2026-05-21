@@ -18,10 +18,16 @@ package com.cinchapi.runway.util;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.annotation.concurrent.Immutable;
 
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 /**
  * Shared parsing for the {@code +}, {@code -}, and bare key conventions used by
@@ -144,6 +150,74 @@ public final class KeySelection {
         return partition(Arrays.asList(keys));
     }
 
+    /**
+     * Partition {@code keys} into bare, additive, and exclude buckets <em>by
+     * their bare root</em>, with any navigation suffix surfaced separately as a
+     * {@link RootedPartition#navigation() navigation map}.
+     * <p>
+     * This is the root-keyed counterpart to {@link #partition(Iterable)}: each
+     * key is split on {@code .}, the leading {@code +} or {@code -} is stripped
+     * from the root, and the resulting bare root is placed in exactly one
+     * bucket determined by that prefix. Any navigation suffix (e.g.,
+     * {@code "b.c"} from {@code "+a.b.c"}) is collected under the bare root in
+     * {@link RootedPartition#navigation() navigation}.
+     * </p>
+     * <p>
+     * The partitioning is <strong>order-independent</strong>: regardless of the
+     * iteration order over {@code keys}, the resulting buckets are identical.
+     * The same exclusion-wins rule as {@link #partition(Iterable)} applies
+     * &mdash; if a bare root appears under both {@code +} and {@code -}, the
+     * additive entry is dropped. Bare roots are never filtered against
+     * exclusions; a bare positive must retain its power to force whitelist
+     * intent at the call site even when the same root is also excluded.
+     * </p>
+     *
+     * @param keys the keys to partition
+     * @return the {@link RootedPartition}
+     */
+    public static RootedPartition partitionByRoot(Iterable<String> keys) {
+        Set<String> bare = Sets.newHashSet();
+        Set<String> additive = Sets.newHashSet();
+        Set<String> exclude = Sets.newHashSet();
+        Map<String, Set<String>> navigation = Maps.newHashMap();
+        for (String key : keys) {
+            String[] toks = key.split("\\.");
+            String root = toks[0];
+            String bareRoot = stripPrefix(root);
+            switch (kindOf(root)) {
+            case BARE:
+                bare.add(bareRoot);
+                break;
+            case ADDITIVE:
+                additive.add(bareRoot);
+                break;
+            case EXCLUDE:
+                exclude.add(bareRoot);
+                break;
+            }
+            Set<String> suffixes = navigation.computeIfAbsent(bareRoot,
+                    $ -> Sets.newHashSet());
+            if(toks.length > 1) {
+                suffixes.add(Stream.of(toks).skip(1)
+                        .collect(Collectors.joining(".")));
+            }
+        }
+        additive.removeAll(exclude);
+        return new RootedPartition(bare, additive, exclude, navigation);
+    }
+
+    /**
+     * Partition {@code keys} into root-keyed bare, additive, and exclude
+     * buckets.
+     *
+     * @param keys the keys to partition
+     * @return the {@link RootedPartition}
+     * @see #partitionByRoot(Iterable)
+     */
+    public static RootedPartition partitionByRoot(String... keys) {
+        return partitionByRoot(Arrays.asList(keys));
+    }
+
     private KeySelection() {/* no-init */}
 
     /**
@@ -223,6 +297,84 @@ public final class KeySelection {
          */
         public List<String> exclude() {
             return Collections.unmodifiableList(exclude);
+        }
+    }
+
+    /**
+     * The result of {@link #partitionByRoot(Iterable) partitioning} a
+     * collection of keys by their bare root.
+     * <p>
+     * Each {@link #bare()}, {@link #additive()}, and {@link #exclude()} bucket
+     * contains bare root field names (no prefix, no navigation suffix). The
+     * {@link #navigation()} accessor surfaces, for every bare root that the
+     * caller mentioned, the set of navigation suffixes that appeared on that
+     * root &mdash; e.g., {@code partitionByRoot("+a.b", "-a.c")} produces
+     * {@code navigation = {"a" -> {"b", "c"}}}. Roots mentioned without a
+     * suffix map to an empty set, distinguishing them from roots the caller
+     * never mentioned at all (which are absent from the map).
+     * </p>
+     *
+     * @author Jeff Nelson
+     */
+    @Immutable
+    public static final class RootedPartition {
+
+        private final Set<String> bare;
+
+        private final Set<String> additive;
+
+        private final Set<String> exclude;
+
+        private final Map<String, Set<String>> navigation;
+
+        private RootedPartition(Set<String> bare, Set<String> additive,
+                Set<String> exclude, Map<String, Set<String>> navigation) {
+            this.bare = bare;
+            this.additive = additive;
+            this.exclude = exclude;
+            this.navigation = navigation;
+        }
+
+        /**
+         * Return the bare positive roots &mdash; roots whose original key had
+         * no leading {@code +} or {@code -}.
+         *
+         * @return the bare roots
+         */
+        public Set<String> bare() {
+            return Collections.unmodifiableSet(bare);
+        }
+
+        /**
+         * Return the additive roots &mdash; roots whose original key carried a
+         * leading {@code +}. Any root that also appears as {@link #exclude() an
+         * exclusion} has been removed.
+         *
+         * @return the additive roots
+         */
+        public Set<String> additive() {
+            return Collections.unmodifiableSet(additive);
+        }
+
+        /**
+         * Return the excluded roots &mdash; roots whose original key carried a
+         * leading {@code -}.
+         *
+         * @return the excluded roots
+         */
+        public Set<String> exclude() {
+            return Collections.unmodifiableSet(exclude);
+        }
+
+        /**
+         * Return a {@link Map} from each bare root the caller mentioned to the
+         * set of navigation suffixes that appeared on that root. A root with no
+         * navigation suffix maps to an empty {@link Set}.
+         *
+         * @return the navigation map
+         */
+        public Map<String, Set<String>> navigation() {
+            return Collections.unmodifiableMap(navigation);
         }
     }
 
