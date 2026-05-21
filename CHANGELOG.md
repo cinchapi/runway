@@ -2,6 +2,9 @@
 
 #### Version 2.1.0 (TBD)
 * Fixed a bug where loading an access-controlled `Record` through an `Audience` (e.g., `Audience#load(Class, long)`) threw `UnsupportedOperationException` when the class's registered visibility `Scope` used a scoped navigation criteria (`Criteria.where().scope(prefix, inner)`). ([GH-125](https://github.com/cinchapi/runway/issues/125))
+* **Added `SerializationOptions.includeComputedValuesByDefault`** (default `true`). When set to `false`, `@Computed` properties are omitted from `Record#map()` and `Record#json()` output unless explicitly named in a positive include list, and their suppliers are never invoked. This is useful for serialization paths driven by negative-key access rules (e.g., a `$readableBy` rule like `{"-field1", "-field2"}` that means "everything except these"), where the implicit "all readable" expansion would otherwise materialize every computed property regardless of cost. ([GH-128](https://github.com/cinchapi/runway/issues/128))
+    * `Audience#frame` has a new overload that accepts `SerializationOptions`, allowing access-controlled framing to opt out of computed-property evaluation (or otherwise customize materialization). The existing `frame(Collection<String>, Record)` and `frame(Record)` overloads delegate with `SerializationOptions.defaults()`, preserving prior behavior.
+* Fixed a bug where `Record#refresh()` left memoized `@Computed` values cached from before the refresh, so subsequent reads returned stale results instead of recomputing against the refreshed state. ([GH-93](https://github.com/cinchapi/runway/issues/93))
 
 #### Version 2.0.0 (May 20, 2026)
 

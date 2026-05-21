@@ -53,15 +53,23 @@ public final class SerializationOptions {
     private final boolean serializeNullValues;
 
     /**
+     * A boolean that indicates if computed values should be included by default
+     */
+    private final boolean includeComputedValuesByDefault;
+
+    /**
      * Constructor
      *
      * @param flattenSingleElementCollections
      * @param serializeNullValues
+     * @param includeComputedValuesByDefault
      */
     private SerializationOptions(boolean flattenSingleElementCollections,
-            boolean serializeNullValues) {
+            boolean serializeNullValues,
+            boolean includeComputedValuesByDefault) {
         this.flattenSingleElementCollections = flattenSingleElementCollections;
         this.serializeNullValues = serializeNullValues;
+        this.includeComputedValuesByDefault = includeComputedValuesByDefault;
     }
 
     /**
@@ -84,6 +92,15 @@ public final class SerializationOptions {
     }
 
     /**
+     * Returns if computed values should be included by default
+     *
+     * @return boolean
+     */
+    public boolean includeComputedValuesByDefault() {
+        return includeComputedValuesByDefault;
+    }
+
+    /**
      * Returned from {@link #builder()}.
      *
      * @author Jeff Nelson
@@ -92,6 +109,7 @@ public final class SerializationOptions {
 
         private boolean flattenSingleElementCollections = false;
         private boolean serializeNullValues = false;
+        private boolean includeComputedValuesByDefault = true;
 
         /**
          * Construct a new instance.
@@ -101,12 +119,12 @@ public final class SerializationOptions {
         /**
          * Build the {@link SerializationOptions} with the parameters that were
          * provided to this builder.
-         * 
+         *
          * @return the {@link SerializationOptions}.
          */
         public SerializationOptions build() {
             return new SerializationOptions(flattenSingleElementCollections,
-                    serializeNullValues);
+                    serializeNullValues, includeComputedValuesByDefault);
         }
 
         /**
@@ -125,12 +143,25 @@ public final class SerializationOptions {
         /**
          * Configure the option to include null values within the data that is
          * returned (instead of dropping the key/value pair).
-         * 
+         *
          * @param serializeNullValues
          * @return this
          */
         public Builder serializeNullValues(boolean serializeNullValues) {
             this.serializeNullValues = serializeNullValues;
+            return this;
+        }
+
+        /**
+         * Configure the option to include computed values by default when
+         * serializing data.
+         *
+         * @param includeComputedValuesByDefault
+         * @return this
+         */
+        public Builder includeComputedValuesByDefault(
+                boolean includeComputedValuesByDefault) {
+            this.includeComputedValuesByDefault = includeComputedValuesByDefault;
             return this;
         }
     }
