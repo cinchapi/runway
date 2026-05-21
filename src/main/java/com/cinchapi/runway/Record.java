@@ -97,6 +97,7 @@ import com.cinchapi.runway.db.Saver;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.util.ComputedEntry;
+import com.cinchapi.runway.util.KeySelection;
 import com.cinchapi.runway.validation.Validator;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
@@ -1473,20 +1474,10 @@ public abstract class Record implements Comparable<Record> {
      */
     public Map<String, Object> map(SerializationOptions options,
             String... keys) {
-        List<String> bare = Lists.newArrayList();
-        List<String> additive = Lists.newArrayList();
-        List<String> exclude = Lists.newArrayList();
-        for (String key : keys) {
-            if(key.startsWith("-")) {
-                exclude.add(key.substring(1));
-            }
-            else if(key.startsWith("+")) {
-                additive.add(key.substring(1));
-            }
-            else {
-                bare.add(key);
-            }
-        }
+        KeySelection.Partition selection = KeySelection.partition(keys);
+        List<String> bare = selection.bare();
+        List<String> additive = selection.additive();
+        List<String> exclude = selection.exclude();
         Predicate<Entry<String, Object>> filter = entry -> !exclude
                 .contains(entry.getKey());
         if(!options.serializeNullValues()) {
@@ -1508,22 +1499,27 @@ public abstract class Record implements Comparable<Record> {
                 map.put(entry.getKey(), value);
             }
         };
-        // Pre-filter the positive lists against #exclude so the resolver
-        // never fires a @Computed supplier (or navigates a link) for a
-        // key the caller has also excluded.
-        bare.removeAll(exclude);
-        additive.removeAll(exclude);
         Stream<Entry<String, Object>> pool;
         if(!bare.isEmpty()) {
+            // Whitelist mode. A bare positive in the call &mdash; even
+            // one the caller also excluded with `-` &mdash; forces this
+            // branch so the call retains whitelist intent; the
+            // downstream #filter applies any same-named exclude.
             List<String> whitelist = Lists.newArrayList(bare);
             whitelist.addAll(additive);
             pool = whitelist.stream().map(key -> resolveEntry(key, options));
         }
         else if(!additive.isEmpty()) {
-            // Skip a baseline entry only when an additive names its bare
-            // root; navigation additives like "+a.b" must let the baseline
-            // remain so the slice upserts into the nested map rather than
-            // replacing the rest of the root's contents.
+            // Additive mode. Skip a baseline entry only when an additive
+            // names its bare root (no navigation suffix). For "+tags",
+            // the additive contributes the same key the baseline already
+            // has, so skipping here keeps the additive authoritative
+            // without running the same value through the accumulator
+            // twice. Navigation additives like "+a.b" leave the baseline
+            // alone; the slice (a Map keyed by the navigation suffix)
+            // replaces the baseline's raw value via
+            // MergeStrategies::upsert, so the result is the same either
+            // way.
             Set<String> bareAdditiveRoots = additive.stream()
                     .filter(k -> !k.contains(".")).collect(Collectors.toSet());
             Stream<Entry<String, Object>> baseline = data().entrySet().stream();
@@ -2734,7 +2730,8 @@ public abstract class Record implements Comparable<Record> {
      * @param options the {@link SerializationOptions} applied along any
      *            navigation path
      * @return the resolved {@link Entry}; never {@code null}, though its value
-     *         may be
+     *         may be {@code null} when the navigation destination is
+     *         non-navigable
      */
     private Entry<String, Object> resolveEntry(String key,
             SerializationOptions options) {

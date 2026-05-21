@@ -113,6 +113,112 @@ public class AudienceFrameAdditiveKeyAccessControlTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that when the same key root is supplied
+     * under both {@code +} and {@code -}, exclusion wins &mdash; regardless of
+     * the order in which the input {@link Collection} happens to iterate. The
+     * fix relies on categorizing each input key directly into a prefix bucket
+     * during the iteration (rather than via a single per-root map, which would
+     * collapse to last-write-wins).
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link OpenBox} whose
+     * computed supplier has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code Audience.anonymous().frame(ImmutableSet.of("+label",
+     * "-label"), widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result does not contain {@code label} (the
+     * {@code -} won) and the supplier counter remains at {@code 0} (no resolver
+     * ever fired).
+     */
+    @Test
+    public void testFrameWithSameKeyAdditiveAndNegativeExclusionWins() {
+        OpenBox widget = new OpenBox();
+        widget.name = "alpha";
+
+        Map<String, Object> result = Audience.anonymous()
+                .frame(ImmutableSet.of("+label", "-label"), widget);
+
+        Assert.assertNotNull(result);
+        Assert.assertFalse("- wins over +", result.containsKey("label"));
+        Assert.assertEquals(0, widget.labelInvocations.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that when the same key root is supplied
+     * under both bare and {@code +}, the bare presence subsumes the {@code +}
+     * so the call is treated as whitelist (not additive). The result contains
+     * only the named key, not the audience's defaults.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link OpenBox} with
+     * {@code name} populated.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code Audience.anonymous().frame(ImmutableSet.of("+label",
+     * "label"), widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains {@code label} but
+     * <strong>not</strong> {@code name} &mdash; the bare positive forced
+     * whitelist mode, and {@code name} (a non-listed default) is therefore
+     * omitted.
+     */
+    @Test
+    public void testFrameWithSameKeyBareAndAdditiveBareSubsumes() {
+        OpenBox widget = new OpenBox();
+        widget.name = "alpha";
+
+        Map<String, Object> result = Audience.anonymous()
+                .frame(ImmutableSet.of("+label", "label"), widget);
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals("label-alpha", result.get("label"));
+        Assert.assertFalse(
+                "bare key forces whitelist; non-listed defaults must drop",
+                result.containsKey("name"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify the same exclusion-wins precedence holds
+     * under a <em>restricted</em> readable set (exercising the branch that
+     * intersects the audience's allowlist with the user's request). The user's
+     * {@code -} on a key the audience would otherwise expose must still drop
+     * the key from the result.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed
+     * {@link LabelReadableBox} whose {@code $readableByAnonymous} set is
+     * {@code {name, label}}; the computed supplier has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code Audience.anonymous().frame(ImmutableSet.of("+label",
+     * "-label"), widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains {@code name} (an audience
+     * default the user did not exclude) but not {@code label} (excluded by
+     * {@code -}); the supplier counter remains at {@code 0}.
+     */
+    @Test
+    public void testFrameWithSameKeyAdditiveAndNegativeUnderRestrictedReadable() {
+        LabelReadableBox widget = new LabelReadableBox();
+        widget.name = "alpha";
+
+        Map<String, Object> result = Audience.anonymous()
+                .frame(ImmutableSet.of("+label", "-label"), widget);
+
+        Assert.assertNotNull(result);
+        Assert.assertTrue("audience default name retained",
+                result.containsKey("name"));
+        Assert.assertFalse("- wins over + even under restricted readable",
+                result.containsKey("label"));
+        Assert.assertEquals(0, widget.labelInvocations.get());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code +key} cannot bypass access
      * control. When the audience's readable set <em>excludes</em> the
      * additive's bare root, the {@code +key} must be dropped during the
@@ -144,6 +250,46 @@ public class AudienceFrameAdditiveKeyAccessControlTest
         Assert.assertFalse("label must not bypass access control",
                 result.containsKey("label"));
         Assert.assertEquals(0, widget.labelInvocations.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code +}-prefixed key never
+     * re-introduces fields outside the audience's readable set. When the
+     * audience can see <em>only</em> the additive's target key and the subject
+     * has other intrinsic fields, the result must contain just the additive's
+     * target (plus {@code id}) &mdash; not the subject's full defaults.
+     * <p>
+     * Without the fix, {@code frame} re-attaches {@code +} to the key before
+     * delegating to {@code subject.map}; that switches {@code subject.map} into
+     * additive mode and pulls in the subject's intrinsic defaults, bypassing
+     * the audience allowlist.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed
+     * {@link LabelOnlyReadableBox} whose intrinsic {@code name} field is
+     * populated but whose readable-by-anonymous set is {@code {label}} only.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code Audience.anonymous().frame(ImmutableSet.of("+label"),
+     * widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains {@code label} mapped to
+     * the computed value and does <strong>not</strong> contain {@code name}
+     * (the intrinsic field excluded from the audience's readable set).
+     */
+    @Test
+    public void testFrameAdditiveDoesNotBypassRestrictedReadableDefaults() {
+        LabelOnlyReadableBox widget = new LabelOnlyReadableBox();
+        widget.name = "alpha";
+
+        Map<String, Object> result = Audience.anonymous()
+                .frame(ImmutableSet.of("+label"), widget);
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals("label-alpha", result.get("label"));
+        Assert.assertFalse("intrinsic name must not leak through `+` bypass",
+                result.containsKey("name"));
     }
 
     /**
@@ -250,6 +396,21 @@ public class AudienceFrameAdditiveKeyAccessControlTest
         @Override
         public Set<String> $readableByAnonymous() {
             return ImmutableSet.of("name");
+        }
+    }
+
+    /**
+     * Fixture with a restricted readable set that exposes <em>only</em> the
+     * computed {@code label} property, even though the subject also carries an
+     * intrinsic {@code name} field. Used to verify that a {@code +label}
+     * additive never silently re-engages additive mode on the subject and leaks
+     * {@code name} into the framed result.
+     */
+    static class LabelOnlyReadableBox extends WidgetBase {
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return ImmutableSet.of("label");
         }
     }
 }

@@ -202,6 +202,41 @@ public class RecordAdditiveKeysTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a bare positive key still triggers
+     * whitelist mode when the same key is also excluded with {@code -}. The
+     * bare presence locks the call into whitelist mode; the {@code -}-prefixed
+     * twin filters the key out of the resulting whitelist, producing an empty
+     * result rather than the defaults.
+     * <p>
+     * <strong>Start state:</strong> A {@link Gadget} with {@code name} and
+     * {@code tags} populated.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code gadget.map("name", "-name")}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is empty &mdash; bare {@code name}
+     * forced whitelist mode and {@code -name} filtered it out of the whitelist.
+     * Critically, the result must <strong>not</strong> contain {@code tags}
+     * (which a defaults-mode demotion would have included).
+     */
+    @Test
+    public void testBareKeyForcesWhitelistEvenWhenSameKeyIsExcluded() {
+        Gadget gadget = new Gadget();
+        gadget.name = "alpha";
+        gadget.tags = new HashSet<>(ImmutableSet.of("x", "y"));
+
+        Map<String, Object> result = gadget.map("name", "-name");
+
+        Assert.assertFalse("name excluded by -", result.containsKey("name"));
+        Assert.assertFalse(
+                "defaults must not appear; bare key forced whitelist mode",
+                result.containsKey("tags"));
+        Assert.assertTrue("result should be empty", result.isEmpty());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a single bare positive key triggers
      * whitelist mode &mdash; defaults are dropped &mdash; even when
      * {@code +}-prefixed keys are also present. {@code +} in whitelist mode
@@ -274,12 +309,12 @@ public class RecordAdditiveKeysTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code +}-prefixed navigation keys do
-     * <strong>not</strong> erase the rest of the baseline root. This locks in
-     * the narrower-skip-predicate fix: for a navigation additive like
-     * {@code "+linkedGadget.name"}, the baseline {@code linkedGadget} entry
-     * must remain in the pool so the navigation slice merges into it rather
-     * than replacing it.
+     * <strong>Goal:</strong> Verify that a {@code +}-prefixed navigation key
+     * returns the outer record's defaults <em>and</em> a {@code linkedGadget}
+     * entry whose Map slice carries the navigation target. Both the outer
+     * defaults and the resolved slice must survive together: a regression that
+     * drops either side &mdash; outer defaults missing, the slice missing, or
+     * the slice resolved to the wrong value &mdash; should fail this test.
      * <p>
      * <strong>Start state:</strong> A {@link Gadget} with a non-null
      * {@code linkedGadget} that has both {@code name} and {@code tags}
@@ -291,15 +326,12 @@ public class RecordAdditiveKeysTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The result contains the outer record's
-     * defaults ({@code name}, {@code tags}) and contains a non-null
-     * {@code linkedGadget} entry. The result also has a way to surface the
-     * linked record's {@code name} &mdash; whether via the link being expanded
-     * inline or via the merged navigation slice. The test asserts the
-     * conservative invariant that the outer defaults survive and the
-     * {@code linkedGadget} key is present.
+     * {@code name} and {@code tags}, and a {@code linkedGadget} entry that is a
+     * {@link Map} containing {@code name} mapped to {@code "linked-alpha"}.
      */
+    @SuppressWarnings("unchecked")
     @Test
-    public void testAdditiveNavigationKeyPreservesBaselineRoot() {
+    public void testAdditiveNavigationKeyMergesIntoBaseline() {
         Gadget linked = new Gadget();
         linked.name = "linked-alpha";
         linked.tags = new HashSet<>(ImmutableSet.of("z"));
@@ -313,9 +345,60 @@ public class RecordAdditiveKeysTest extends RunwayBaseClientServerTest {
 
         Assert.assertTrue("outer name preserved", result.containsKey("name"));
         Assert.assertTrue("outer tags preserved", result.containsKey("tags"));
-        Assert.assertTrue("linkedGadget key present",
+        Object slice = result.get("linkedGadget");
+        Assert.assertTrue(
+                "linkedGadget slice should be a Map carrying the navigation"
+                        + " target, was: " + slice,
+                slice instanceof Map);
+        Assert.assertEquals("linked-alpha",
+                ((Map<String, Object>) slice).get("name"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code +}-prefixed navigation
+     * additive whose root is also negated is dropped <em>before</em> any
+     * resolver runs &mdash; the linked record is never traversed, its computed
+     * supplier never fires, and the excluded root is absent from the result.
+     * <p>
+     * Without the fix, {@code additive.removeAll(exclude)} only catches exact
+     * matches, so {@code "+linkedGadget.label"} survives past parsing alongside
+     * {@code "-linkedGadget"} and triggers {@code get("linkedGadget")} plus
+     * {@code linked.map("label")} before the downstream filter removes the
+     * resolved entry &mdash; a wasted load on a root the caller already
+     * excluded.
+     * <p>
+     * <strong>Start state:</strong> A {@link Gadget} whose {@code linkedGadget}
+     * is populated; the linked {@code labelInvocations} counter is {@code 0}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke
+     * {@code gadget.map("+linkedGadget.label", "-linkedGadget")}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result does not contain
+     * {@code linkedGadget} and the linked {@code labelInvocations} counter
+     * remains at {@code 0}.
+     */
+    @Test
+    public void testNavigationAdditiveDroppedWhenRootIsExcluded() {
+        Gadget linked = new Gadget();
+        linked.name = "linked-alpha";
+
+        Gadget gadget = new Gadget();
+        gadget.name = "alpha";
+        gadget.tags = new HashSet<>(ImmutableSet.of("x", "y"));
+        gadget.linkedGadget = linked;
+
+        Map<String, Object> result = gadget.map("+linkedGadget.label",
+                "-linkedGadget");
+
+        Assert.assertFalse("excluded root must not appear",
                 result.containsKey("linkedGadget"));
-        Assert.assertNotNull(result.get("linkedGadget"));
+        Assert.assertEquals(
+                "linked record's @Computed supplier must not fire for a"
+                        + " navigation additive whose root is excluded",
+                0, linked.labelInvocations.get());
     }
 
     /**

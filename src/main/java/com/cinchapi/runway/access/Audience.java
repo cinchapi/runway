@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -43,6 +44,7 @@ import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
 import com.cinchapi.runway.SerializationOptions;
+import com.cinchapi.runway.util.KeySelection;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
@@ -309,11 +311,39 @@ public interface Audience extends DatabaseInterface {
      * <li>Non-navigable values return {@code null} when nested access is
      * attempted</li>
      * </ul>
+     * <h3>Key Prefix Conventions</h3>
+     * <p>
+     * Each entry in {@code keys} accepts the same prefix conventions as
+     * {@link Record#map(SerializationOptions, String...) Record#map}:
+     * </p>
+     * <ul>
+     * <li><strong>Bare</strong> &mdash; a key with no prefix is a positive
+     * request that triggers whitelist mode; the result contains only the named
+     * keys (intersected with what this {@link Audience} is permitted to
+     * read).</li>
+     * <li><strong>Additive ({@code +})</strong> &mdash; a key prefixed with
+     * {@code +} is layered on top of the defaults the {@link Audience} is
+     * allowed to see, without dropping them. When the call mixes a bare
+     * positive with {@code +}-prefixed keys, the bare positive forces whitelist
+     * mode and the {@code +} prefix degrades to a redundant whitelist
+     * annotation.</li>
+     * <li><strong>Exclude ({@code -})</strong> &mdash; a key prefixed with
+     * {@code -} is filtered out of the result. Exclusion always wins over
+     * addition for the same key.</li>
+     * </ul>
+     * <p>
+     * <strong>NOTE:</strong> A {@code +}-prefixed key cannot bypass access
+     * control. If the audience is not permitted to read the underlying field,
+     * the key is dropped at the intersection check and
+     * {@link RestrictedAccessException} signalling (via
+     * {@link #read(Collection, Record) read}) still fires.
+     * </p>
      *
      * @param options the {@link SerializationOptions} to apply when
      *            materializing data from the {@code subject} and any linked
      *            {@link Record Records} encountered during recursive framing
-     * @param keys the fields to read from
+     * @param keys the fields to read from; entries may use {@code +} to layer
+     *            on top of the audience's defaults or {@code -} to exclude
      * @param subject the {@link Record} to read from
      * @param <T> the type of the {@link Record}
      * @return a map of visible data or {@code null} if the {@code subject} is
@@ -333,21 +363,33 @@ public interface Audience extends DatabaseInterface {
             // Break up navigation keys into root components that must be
             // resolved in this Record to their subsequent stops that must
             // be resolved in linked Records. Strip any leading + or - from
-            // the root so the access-control intersection below matches
+            // each root so the access-control intersection below matches
             // against bare field names in the audience's readable set;
-            // remember the prefix character in #prefixByRoot so the
-            // visible array re-attaches it on just the bare root (not the
-            // navigation path) when delegating to subject.map.
+            // categorize the bare root into one of three prefix buckets
+            // so the visible array can re-attach the prefix on just the
+            // root (not the navigation suffix) when delegating to
+            // subject.map. Populating the buckets during the iteration
+            // (instead of via a single map keyed by root) keeps the
+            // categorization order-independent when the caller supplies
+            // the same root under multiple prefixes.
             Map<String, Set<String>> roots = new HashMap<>();
-            Map<String, String> prefixByRoot = new HashMap<>();
+            Set<String> userBare = new HashSet<>();
+            Set<String> userAdditive = new HashSet<>();
+            Set<String> userNegative = new HashSet<>();
             for (String key : keys) {
                 String[] toks = key.split("\\.");
                 String root = toks[0];
-                String prefix = "";
-                String bareRoot = root;
-                if(root.startsWith("+") || root.startsWith("-")) {
-                    prefix = root.substring(0, 1);
-                    bareRoot = root.substring(1);
+                String bareRoot = KeySelection.stripPrefix(root);
+                switch (KeySelection.kindOf(root)) {
+                case BARE:
+                    userBare.add(bareRoot);
+                    break;
+                case ADDITIVE:
+                    userAdditive.add(bareRoot);
+                    break;
+                case EXCLUDE:
+                    userNegative.add(bareRoot);
+                    break;
                 }
                 String next = Stream.of(toks).skip(1)
                         .collect(Collectors.joining("."));
@@ -356,8 +398,26 @@ public interface Audience extends DatabaseInterface {
                 if(!next.isEmpty()) {
                     nexts.add(next);
                 }
-                prefixByRoot.put(bareRoot, prefix);
             }
+            // Apply prefix precedence to deduplicate keys the caller
+            // supplied under more than one prefix. Exclusion wins over
+            // addition so a downstream resolver never fires for a key
+            // the caller also excluded; a bare positive subsumes a `+`
+            // on the same root since the bare presence already forces
+            // whitelist intent.
+            userAdditive.removeAll(userNegative);
+            userAdditive.removeAll(userBare);
+            Function<String, String> withPrefix = k -> {
+                if(userAdditive.contains(k)) {
+                    return "+" + k;
+                }
+                else if(userNegative.contains(k)) {
+                    return "-" + k;
+                }
+                else {
+                    return k;
+                }
+            };
             /*
              * Determine the keys to map based on what is requested and what is
              * readable for the #audience.
@@ -394,8 +454,7 @@ public interface Audience extends DatabaseInterface {
                 }
                 else if(!requested.equals(ALL_KEYS)
                         && readable.equals(ALL_KEYS)) {
-                    String[] visible = requested.stream()
-                            .map(k -> prefixByRoot.getOrDefault(k, "") + k)
+                    String[] visible = requested.stream().map(withPrefix)
                             .toArray(String[]::new);
                     data = subject.map(options, visible);
                 }
@@ -410,32 +469,14 @@ public interface Audience extends DatabaseInterface {
                             allowed.add(key);
                         }
                     }
-                    // Categorize the user's request by prefix. When any
-                    // bare positive is named the call has whitelist
-                    // intent and only the named keys (filtered by the
-                    // audience's allowlist) appear in the result. When
-                    // the user only uses + or -, #readable plays the
-                    // role of "defaults" for the audience: the result
-                    // is (allowed − userNegative) ∪ allowed-additives,
-                    // so the audience's allowlist still bounds the
-                    // result.
-                    Set<String> userBare = new HashSet<>();
-                    Set<String> userAdditive = new HashSet<>();
-                    Set<String> userNegative = new HashSet<>();
-                    for (Map.Entry<String, String> entry : prefixByRoot
-                            .entrySet()) {
-                        String bareRoot = entry.getKey();
-                        String prefix = entry.getValue();
-                        if("-".equals(prefix)) {
-                            userNegative.add(bareRoot);
-                        }
-                        else if("+".equals(prefix)) {
-                            userAdditive.add(bareRoot);
-                        }
-                        else {
-                            userBare.add(bareRoot);
-                        }
-                    }
+                    // When any bare positive is named the call has
+                    // whitelist intent and only the named keys
+                    // (filtered by the audience's allowlist) appear in
+                    // the result. When the user only uses + or -,
+                    // #readable plays the role of "defaults" for the
+                    // audience: the result is (allowed − userNegative)
+                    // ∪ allowed-additives, so the audience's allowlist
+                    // still bounds the result.
                     Set<String> selected;
                     if(!userBare.isEmpty()) {
                         selected = new HashSet<>(userBare);
@@ -459,9 +500,14 @@ public interface Audience extends DatabaseInterface {
                     if(honored < requestedPositives) {
                         RESTRICTED_ACCESS_DETECTED.set(true);
                     }
-                    String[] visible = selected.stream()
-                            .map(k -> prefixByRoot.getOrDefault(k, "") + k)
-                            .toArray(String[]::new);
+                    // After access filtering, #selected is already the
+                    // exact set of keys the audience permits. Pass them
+                    // as bare positives so subject.map runs whitelist
+                    // mode &mdash; re-attaching `+` would reopen
+                    // additive mode on the subject and re-introduce the
+                    // subject's full defaults, bypassing the audience
+                    // allowlist.
+                    String[] visible = selected.toArray(Array.containing());
                     if(visible.length == 0) {
                         // No keys are visible, but don't call Record#map
                         // with an empty array because doing so will return
