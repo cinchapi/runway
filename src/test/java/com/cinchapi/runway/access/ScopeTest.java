@@ -329,7 +329,7 @@ public class ScopeTest {
      * <li>Construct two {@link TestAccessControlRecord
      * TestAccessControlRecords}: one that is discoverable by the audience, one
      * that is not.</li>
-     * <li>Call {@code Scope.hybrid(audience, criteria).test(record)} on
+     * <li>Call {@code Scope.hybrid(criteria, audience).test(record)} on
      * each.</li>
      * </ul>
      * <p>
@@ -360,7 +360,7 @@ public class ScopeTest {
      * <li>Construct two {@link TestAccessControlRecord
      * TestAccessControlRecords}: one anonymous-discoverable, one not.</li>
      * <li>Call
-     * {@code Scope.hybrid(Audience.anonymous(), criteria).test(record)} on
+     * {@code Scope.hybrid(criteria, Audience.anonymous()).test(record)} on
      * each.</li>
      * </ul>
      * <p>
