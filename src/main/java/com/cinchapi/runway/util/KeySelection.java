@@ -25,6 +25,7 @@ import java.util.stream.Stream;
 
 import javax.annotation.concurrent.Immutable;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -332,7 +333,15 @@ public final class KeySelection {
             this.bare = bare;
             this.additive = additive;
             this.exclude = exclude;
-            this.navigation = navigation;
+            // Snapshot the per-root suffix sets as immutable copies so
+            // the @Immutable contract holds end-to-end. Without this,
+            // navigation()'s outer-map wrapper would still hand out the
+            // live HashSets and a caller could mutate them in place.
+            Map<String, Set<String>> snapshot = Maps
+                    .newHashMapWithExpectedSize(navigation.size());
+            navigation.forEach((root, suffixes) -> snapshot.put(root,
+                    ImmutableSet.copyOf(suffixes)));
+            this.navigation = snapshot;
         }
 
         /**

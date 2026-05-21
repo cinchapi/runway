@@ -91,4 +91,57 @@ public class AudienceFrameNegativeKeyAccessControlTest
                 result.containsKey("resume"));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a {@code -}-prefixed key passed to
+     * {@link Audience#frame} against an {@link AccessControl#ALL_KEYS} readable
+     * returns the subject's defaults minus the excluded key. This exercises the
+     * {@code readable == ALL_KEYS} forwarding path with a pure negative call
+     * shape, complementing the restricted-readable case in
+     * {@link #testFrameHonorsNegativeKeyAgainstRestrictedReadable}.
+     * <p>
+     * <strong>Start state:</strong> A {@link Candidate} populated with
+     * {@code name}, {@code email}, {@code skills}, {@code yearsExperience},
+     * {@code location}, and {@code resume}. An {@link Admin} audience whose
+     * {@code $readableBy} rule for {@link Candidate} returns
+     * {@link AccessControl#ALL_KEYS}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code admin.frame(ImmutableSet.of("-name"), candidate)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result does not contain {@code name} but
+     * contains every other intrinsic key, including {@code resume} (which an
+     * unrestricted audience may see).
+     */
+    @Test
+    public void testFrameHonorsNegativeKeyAgainstAllKeysReadable() {
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@email.com";
+        candidate.skills = "Java, Python";
+        candidate.yearsExperience = 5;
+        candidate.location = "San Francisco";
+        candidate.resume = "Sensitive resume content";
+
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@company.com";
+
+        Map<String, Object> result = admin.frame(ImmutableSet.of("-name"),
+                candidate);
+
+        Assert.assertNotNull("subject must be discoverable", result);
+        Assert.assertFalse("-name should exclude name",
+                result.containsKey("name"));
+        Assert.assertTrue("email is readable", result.containsKey("email"));
+        Assert.assertTrue("skills is readable", result.containsKey("skills"));
+        Assert.assertTrue("yearsExperience is readable",
+                result.containsKey("yearsExperience"));
+        Assert.assertTrue("location is readable",
+                result.containsKey("location"));
+        Assert.assertTrue("resume is readable under ALL_KEYS",
+                result.containsKey("resume"));
+    }
+
 }

@@ -304,6 +304,38 @@ public class RecordAdditiveKeysTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that naming the same key both bare and
+     * {@code +}-prefixed resolves it exactly once. In whitelist mode the
+     * {@code +} prefix is a redundant annotation &mdash; the resolver must
+     * collapse the overlap so a {@link Computed @Computed} supplier never fires
+     * twice (and, by extension, a navigation additive never loads its linked
+     * record twice).
+     * <p>
+     * <strong>Start state:</strong> A {@link Gadget} with {@code name}
+     * populated; the computed supplier has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code gadget.map("+label", "label")}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains {@code label} mapped to
+     * the computed value and the supplier counter is exactly {@code 1}.
+     */
+    @Test
+    public void testBareAndAdditiveSameKeyResolvesOnce() {
+        Gadget gadget = new Gadget();
+        gadget.name = "alpha";
+
+        Map<String, Object> result = gadget.map("+label", "label");
+
+        Assert.assertEquals("label-alpha", result.get("label"));
+        Assert.assertEquals(
+                "redundant + alongside bare must not double-fire the supplier",
+                1, gadget.labelInvocations.get());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that the existing legacy oddity &mdash; a
      * mix of bare and {@code -}-prefixed keys returns only the bare keys
      * &mdash; is preserved by the three-mode dispatch. The presence of a bare

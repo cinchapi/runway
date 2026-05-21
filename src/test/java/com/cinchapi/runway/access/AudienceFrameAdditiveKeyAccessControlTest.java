@@ -150,10 +150,11 @@ public class AudienceFrameAdditiveKeyAccessControlTest
      * <strong>Goal:</strong> Verify that when the same key root is supplied
      * under both bare and {@code +}, the bare presence subsumes the {@code +}
      * so the call is treated as whitelist (not additive). The result contains
-     * only the named key, not the audience's defaults.
+     * only the named key, not the audience's defaults, and the redundant
+     * {@code +} must not double-fire the supplier.
      * <p>
      * <strong>Start state:</strong> A freshly constructed {@link OpenBox} with
-     * {@code name} populated.
+     * {@code name} populated; the computed supplier has not yet run.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -164,7 +165,7 @@ public class AudienceFrameAdditiveKeyAccessControlTest
      * <strong>Expected:</strong> The result contains {@code label} but
      * <strong>not</strong> {@code name} &mdash; the bare positive forced
      * whitelist mode, and {@code name} (a non-listed default) is therefore
-     * omitted.
+     * omitted. The supplier counter is exactly {@code 1}.
      */
     @Test
     public void testFrameWithSameKeyBareAndAdditiveBareSubsumes() {
@@ -179,6 +180,9 @@ public class AudienceFrameAdditiveKeyAccessControlTest
         Assert.assertFalse(
                 "bare key forces whitelist; non-listed defaults must drop",
                 result.containsKey("name"));
+        Assert.assertEquals(
+                "redundant + alongside bare must not double-fire the supplier",
+                1, widget.labelInvocations.get());
     }
 
     /**
@@ -372,6 +376,90 @@ public class AudienceFrameAdditiveKeyAccessControlTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that mixing {@code +} and {@code -} on
+     * <em>different</em> keys under {@link AccessControl#ALL_KEYS} readable
+     * resolves as additive mode &mdash; defaults augmented with the additive
+     * and minus the user's exclusion. This exercises the
+     * {@code readable == ALL_KEYS} forwarding path in {@link Audience#frame}
+     * for a multi-prefix call.
+     * <p>
+     * <strong>Start state:</strong> A freshly constructed {@link OpenBox} with
+     * {@code name} populated; the computed supplier has not yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code Audience.anonymous().frame(ImmutableSet.of("+label",
+     * "-name"), widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result does not contain {@code name}
+     * (excluded), contains {@code label} mapped to the computed value, and the
+     * supplier fires exactly once.
+     */
+    @Test
+    public void testFrameAdditivePlusNegativeOnDifferentKeysUnderAllKeysReadable() {
+        OpenBox widget = new OpenBox();
+        widget.name = "alpha";
+
+        Map<String, Object> result = Audience.anonymous()
+                .frame(ImmutableSet.of("+label", "-name"), widget);
+
+        Assert.assertNotNull(result);
+        Assert.assertFalse("user excluded name", result.containsKey("name"));
+        Assert.assertEquals("label-alpha", result.get("label"));
+        Assert.assertEquals(1, widget.labelInvocations.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a navigation additive
+     * ({@code "+linkedWidget.name"}) under {@link AccessControl#ALL_KEYS}
+     * readable returns the outer record's defaults <em>and</em> a
+     * {@code linkedWidget} entry whose value is a {@link Map} carrying the
+     * navigation slice. The recursive descent in {@link Audience#frame frame}
+     * must propagate the navigation suffix into the linked record without
+     * dropping the outer defaults.
+     * <p>
+     * <strong>Start state:</strong> An {@link OpenBox} with {@code name} set
+     * and {@code linkedWidget} populated by a second {@link OpenBox} whose
+     * {@code name} is {@code "linked-alpha"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke
+     * {@code Audience.anonymous().frame(ImmutableSet.of("+linkedWidget.name"),
+     * widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains the outer {@code name} and
+     * a {@code linkedWidget} {@link Map} containing {@code name} mapped to
+     * {@code "linked-alpha"}.
+     */
+    @SuppressWarnings("unchecked")
+    @Test
+    public void testFrameNavigationAdditiveUnderAllKeysReadable() {
+        OpenBox linked = new OpenBox();
+        linked.name = "linked-alpha";
+
+        OpenBox widget = new OpenBox();
+        widget.name = "alpha";
+        widget.linkedWidget = linked;
+
+        Map<String, Object> result = Audience.anonymous()
+                .frame(ImmutableSet.of("+linkedWidget.name"), widget);
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals("outer defaults preserved", "alpha",
+                result.get("name"));
+        Object slice = result.get("linkedWidget");
+        Assert.assertTrue(
+                "linkedWidget slice should be a Map carrying the navigation"
+                        + " target, was: " + slice,
+                slice instanceof Map);
+        Assert.assertEquals("linked-alpha",
+                ((Map<String, Object>) slice).get("name"));
+    }
+
+    /**
      * Base fixture providing permissive defaults for every
      * {@link AccessControl} hook except readability, which subclasses override
      * to control what an anonymous audience can see.
@@ -379,6 +467,13 @@ public class AudienceFrameAdditiveKeyAccessControlTest
     abstract static class WidgetBase extends Record implements AccessControl {
 
         public String name;
+
+        /**
+         * Optional linked widget &mdash; populated only by tests that exercise
+         * navigation. Left {@code null} by default so existing fixtures
+         * continue to serialize without an extra entry.
+         */
+        public WidgetBase linkedWidget;
 
         /**
          * Tracks how many times {@link #label()} has been invoked.

@@ -1506,9 +1506,12 @@ public abstract class Record implements Comparable<Record> {
             // this branch so the call retains whitelist intent. Strip
             // excluded keys before resolution so #resolveEntry never
             // fires a @Computed supplier (or navigates a link) for an
-            // entry the downstream #filter would discard. Same end
-            // result, no wasted work.
-            List<String> whitelist = Lists.newArrayList(bare);
+            // entry the downstream #filter would discard. The
+            // LinkedHashSet collapses any bare/additive overlap so a
+            // key the caller named both ways resolves once &mdash; the
+            // "+" annotation is redundant in whitelist mode and must
+            // not double-fire a supplier or re-load a linked record.
+            Set<String> whitelist = new LinkedHashSet<>(bare);
             whitelist.addAll(additive);
             whitelist.removeAll(exclude);
             pool = whitelist.stream().map(key -> resolveEntry(key, options));

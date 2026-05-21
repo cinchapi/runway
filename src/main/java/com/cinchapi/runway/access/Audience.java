@@ -433,62 +433,117 @@ public interface Audience extends DatabaseInterface {
                             allowed.add(key);
                         }
                     }
-                    // When any bare positive is named the call has
-                    // whitelist intent and only the named keys
-                    // (filtered by the audience's allowlist) appear in
-                    // the result. When the user only uses + or -,
-                    // #readable plays the role of "defaults" for the
-                    // audience: the result is (allowed − userNegative)
-                    // ∪ allowed-additives, so the audience's allowlist
-                    // still bounds the result.
-                    Set<String> selected;
+                    // A denylist-only readable rule (empty #allowed,
+                    // non-empty #denied) permits every subject key
+                    // minus the denied entries &mdash; the
+                    // empty-allowlist-as-wildcard semantic enforced by
+                    // AccessControlSupport#isPermittedAccess. Skip the
+                    // allowlist gate in that mode; #denied still
+                    // bounds the result.
+                    boolean denylistOnly = allowed.isEmpty();
+                    int requestedPositives = userBare.size()
+                            + userAdditive.size();
                     if(!userBare.isEmpty()) {
-                        selected = new HashSet<>(userBare);
+                        // Whitelist intent: only the named keys (bare
+                        // and `+`-prefixed) appear, gated by the
+                        // allowlist (skipped under denylist-only) and
+                        // by #denied. Reattach `-` for any selected
+                        // key the caller also wrote as a negative so
+                        // subject.map's exclude filter applies inside
+                        // whitelist mode.
+                        Set<String> selected = new HashSet<>(userBare);
                         selected.addAll(userAdditive);
-                        selected.removeIf(k -> !allowed.contains(k)
-                                || denied.contains(k));
+                        selected.removeIf(
+                                k -> (!denylistOnly && !allowed.contains(k))
+                                        || denied.contains(k));
+                        long honored = Stream
+                                .concat(userBare.stream(),
+                                        userAdditive.stream())
+                                .filter(selected::contains).count();
+                        if(honored < requestedPositives) {
+                            RESTRICTED_ACCESS_DETECTED.set(true);
+                        }
+                        String[] visible = Stream.concat(selected.stream(),
+                                selected.stream().filter(userNegative::contains)
+                                        .map(k -> "-" + k))
+                                .toArray(String[]::new);
+                        if(visible.length == 0) {
+                            // No keys are visible, but don't call
+                            // Record#map with an empty array because
+                            // doing so will return all data
+                            data = new HashMap<>();
+                        }
+                        else {
+                            data = subject.map(options, visible);
+                        }
+                    }
+                    else if(denylistOnly) {
+                        // No bare positives and no allowlist. The
+                        // audience permits every subject key except
+                        // #denied, so delegate to subject.map in
+                        // defaults/additive mode with the caller's
+                        // additives plus the union of user-negatives
+                        // and audience-denials reattached as `-`
+                        // excludes. An additive on a denied key is
+                        // dropped and the call is flagged as
+                        // restricted.
+                        long honored = Stream
+                                .concat(userBare.stream(),
+                                        userAdditive.stream())
+                                .filter(k -> !denied.contains(k)).count();
+                        if(honored < requestedPositives) {
+                            RESTRICTED_ACCESS_DETECTED.set(true);
+                        }
+                        Set<String> excludes = new HashSet<>(userNegative);
+                        excludes.addAll(denied);
+                        String[] visible = Stream
+                                .concat(userAdditive.stream()
+                                        .filter(k -> !denied.contains(k))
+                                        .map(k -> "+" + k),
+                                        excludes.stream().map(k -> "-" + k))
+                                .toArray(String[]::new);
+                        if(visible.length == 0) {
+                            data = subject.map(options);
+                        }
+                        else {
+                            data = subject.map(options, visible);
+                        }
                     }
                     else {
-                        selected = new HashSet<>(allowed);
+                        // Allowlist with optional denials. The
+                        // audience's "defaults" are (allowed −
+                        // denied); apply the caller's negatives and
+                        // layer in their additives that the audience
+                        // permits.
+                        Set<String> selected = new HashSet<>(allowed);
                         selected.removeAll(denied);
                         selected.removeAll(userNegative);
                         userAdditive.stream().filter(allowed::contains)
                                 .filter(k -> !denied.contains(k))
                                 .forEach(selected::add);
-                    }
-                    int requestedPositives = userBare.size()
-                            + userAdditive.size();
-                    long honored = Stream
-                            .concat(userBare.stream(), userAdditive.stream())
-                            .filter(selected::contains).count();
-                    if(honored < requestedPositives) {
-                        RESTRICTED_ACCESS_DETECTED.set(true);
-                    }
-                    // After access filtering, #selected is already the
-                    // exact set of keys the audience permits. Pass them
-                    // as bare positives so subject.map runs whitelist
-                    // mode &mdash; re-attaching `+` would reopen
-                    // additive mode on the subject and re-introduce the
-                    // subject's full defaults, bypassing the audience
-                    // allowlist. Re-attach `-` for any selected key the
-                    // caller also wrote as a negative so subject.map's
-                    // exclude filter applies it inside whitelist mode;
-                    // omitting these would silently drop the caller's
-                    // negative when the same key is also in #userBare.
-                    String[] visible = Stream
-                            .concat(selected.stream(),
-                                    selected.stream()
-                                            .filter(userNegative::contains)
-                                            .map(k -> "-" + k))
-                            .toArray(String[]::new);
-                    if(visible.length == 0) {
-                        // No keys are visible, but don't call Record#map
-                        // with an empty array because doing so will return
-                        // all data
-                        data = new HashMap<>();
-                    }
-                    else {
-                        data = subject.map(options, visible);
+                        long honored = Stream
+                                .concat(userBare.stream(),
+                                        userAdditive.stream())
+                                .filter(selected::contains).count();
+                        if(honored < requestedPositives) {
+                            RESTRICTED_ACCESS_DETECTED.set(true);
+                        }
+                        // Pass the audience-permitted set as bare
+                        // positives so subject.map runs whitelist mode
+                        // &mdash; reattaching `+` would reopen
+                        // additive mode on the subject and bypass the
+                        // allowlist. Reattach `-` for any selected
+                        // key the caller also wrote as a negative.
+                        String[] visible = Stream.concat(selected.stream(),
+                                selected.stream().filter(userNegative::contains)
+                                        .map(k -> "-" + k))
+                                .toArray(String[]::new);
+                        if(visible.length == 0) {
+                            data = new HashMap<>();
+                        }
+                        else {
+                            data = subject.map(options, visible);
+                        }
                     }
                 }
             }

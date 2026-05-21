@@ -326,4 +326,35 @@ public class KeySelectionTest {
         catch (UnsupportedOperationException expected) {/* pass */}
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that the inner suffix {@link Set Sets}
+     * stored in {@link RootedPartition#navigation() navigation} are themselves
+     * unmodifiable &mdash; the outer-map wrapper must not leak live
+     * {@link java.util.HashSet HashSets} that would break the
+     * {@link javax.annotation.concurrent.Immutable @Immutable} contract.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Partition a list containing a navigation key.</li>
+     * <li>Attempt to add a suffix to the inner {@link Set} returned by
+     * {@code navigation().get(...)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The mutation throws an
+     * {@link UnsupportedOperationException}.
+     */
+    @Test
+    public void testRootedPartitionNavigationInnerSetsAreUnmodifiable() {
+        RootedPartition p = KeySelection
+                .partitionByRoot(ImmutableList.of("a.b"));
+
+        try {
+            p.navigation().get("a").add("c");
+            Assert.fail("navigation() inner Set must be unmodifiable");
+        }
+        catch (UnsupportedOperationException expected) {/* pass */}
+    }
+
 }
