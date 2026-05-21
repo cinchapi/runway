@@ -67,17 +67,11 @@ public abstract class Scope {
      * Return a {@link Scope} whose visibility is expressed by the given
      * {@link Criteria}.
      * <p>
-     * <strong>NOTE:</strong> {@code criteria} must be locally evaluable on a
-     * {@link Record}, since {@link #test(Record)} delegates to
-     * {@link Record#matches(Criteria)}. Criteria that the local CCL compiler
-     * cannot evaluate &mdash; most notably scoped navigation clauses such as
-     * {@code Criteria.where().scope(prefix, inner)} &mdash; will succeed on the
-     * query path but throw {@link UnsupportedOperationException} when
-     * {@link #test(Record)} is invoked (e.g., during
-     * {@link Audience#frame(java.util.Collection, Record)}). Use
+     * {@code criteria} must be locally evaluable on a {@link Record}; use
      * {@link #hybrid(Criteria, Audience)} or
-     * {@link #hybrid(Criteria, java.util.function.Predicate)} for those shapes
-     * so the per-record check is held separately from the query criteria.
+     * {@link #hybrid(Criteria, Predicate)} when {@code criteria} contains a
+     * scoped navigation clause such as
+     * {@code Criteria.where().scope(prefix, inner)}.
      * </p>
      *
      * @param criteria the {@link Criteria} that limits which records are
