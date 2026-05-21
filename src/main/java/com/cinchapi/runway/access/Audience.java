@@ -511,7 +511,7 @@ public interface Audience extends DatabaseInterface {
                     }
                     else {
                         // Allowlist with optional denials. The
-                        // audience's "defaults" are (allowed −
+                        // audience's "defaults" are (allowed -
                         // denied); apply the caller's negatives and
                         // layer in their additives that the audience
                         // permits.

@@ -171,6 +171,76 @@ public class AudienceFrameDenylistReadableTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code +}-prefixing a denied key
+     * cannot bypass the denylist. The additive is dropped at the access-control
+     * intersection, the call is flagged as restricted, and the resulting map
+     * carries the audience's defaults minus the denied key.
+     * <p>
+     * <strong>Start state:</strong> A {@link SecretDenialBox} whose
+     * {@code $readableByAnonymous} set is {@code {"-secret"}} with both
+     * {@code name} and {@code secret} populated; the computed supplier has not
+     * yet run.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code Audience.anonymous().frame(ImmutableSet.of("+secret"),
+     * widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result contains {@code name} (an audience
+     * default the caller did not exclude) but does <strong>not</strong> contain
+     * {@code secret} (denied by the audience even with the {@code +} prefix).
+     * The computed supplier remains untouched.
+     */
+    @Test
+    public void testFrameDropsAdditiveOnDeniedKeyAgainstDenylistOnlyReadable() {
+        SecretDenialBox widget = new SecretDenialBox();
+        widget.name = "alpha";
+        widget.secret = "hidden";
+
+        Map<String, Object> result = Audience.anonymous()
+                .frame(ImmutableSet.of("+secret"), widget);
+
+        Assert.assertNotNull(result);
+        Assert.assertFalse("+ prefix must not bypass denylist",
+                result.containsKey("secret"));
+        Assert.assertEquals("audience default name retained", "alpha",
+                result.get("name"));
+        Assert.assertEquals(
+                "supplier must not fire for an unrequested computed key", 0,
+                widget.labelInvocations.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code read({"+secret"}, widget)}
+     * against a denylist-only readable throws
+     * {@link RestrictedAccessException}. A {@code +} prefix names a positive
+     * request; the audience must surface a restriction signal when that request
+     * collides with a denial, just as it does for the bare-key equivalent.
+     * <p>
+     * <strong>Start state:</strong> A {@link SecretDenialBox} whose
+     * {@code $readableByAnonymous} set is {@code {"-secret"}} with
+     * {@code secret} populated.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Invoke {@code Audience.anonymous().read(ImmutableSet.of("+secret"),
+     * widget)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws
+     * {@link RestrictedAccessException}.
+     */
+    @Test(expected = RestrictedAccessException.class)
+    public void testReadAdditiveOnDeniedKeyAgainstDenylistOnlyReadable() {
+        SecretDenialBox widget = new SecretDenialBox();
+        widget.name = "alpha";
+        widget.secret = "hidden";
+
+        Audience.anonymous().read(ImmutableSet.of("+secret"), widget);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code frame(widget)} (an
      * {@link AccessControl#ALL_KEYS}-requested call) against a denylist-only
      * readable returns the subject's defaults minus the audience's denied keys.

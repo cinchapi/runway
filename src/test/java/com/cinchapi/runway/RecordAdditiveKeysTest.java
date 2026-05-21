@@ -79,7 +79,7 @@ public class RecordAdditiveKeysTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that mixing {@code +} and {@code -} keys
-     * produces {@code (defaults − exclude) ∪ additive} and fires the computed
+     * produces {@code (defaults - exclude) + additive} and fires the computed
      * supplier exactly once.
      * <p>
      * <strong>Start state:</strong> A {@link Gadget} with {@code name} and
