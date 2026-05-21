@@ -332,20 +332,31 @@ public interface Audience extends DatabaseInterface {
             AccessControl gated = (AccessControl) subject;
             // Break up navigation keys into root components that must be
             // resolved in this Record to their subsequent stops that must
-            // be resolved in linked Records
+            // be resolved in linked Records. Strip any leading + or - from
+            // the root so the access-control intersection below matches
+            // against bare field names in the audience's readable set;
+            // remember the prefix character in #prefixByRoot so the
+            // visible array re-attaches it on just the bare root (not the
+            // navigation path) when delegating to subject.map.
             Map<String, Set<String>> roots = new HashMap<>();
+            Map<String, String> prefixByRoot = new HashMap<>();
             for (String key : keys) {
                 String[] toks = key.split("\\.");
-                // Handle negative rules: negative keys apply only to the
-                // root level and are not distributed to nested paths
                 String root = toks[0];
+                String prefix = "";
+                String bareRoot = root;
+                if(root.startsWith("+") || root.startsWith("-")) {
+                    prefix = root.substring(0, 1);
+                    bareRoot = root.substring(1);
+                }
                 String next = Stream.of(toks).skip(1)
                         .collect(Collectors.joining("."));
-                Set<String> nexts = roots.computeIfAbsent(root,
+                Set<String> nexts = roots.computeIfAbsent(bareRoot,
                         $ -> new HashSet<>());
                 if(!next.isEmpty()) {
                     nexts.add(next);
                 }
+                prefixByRoot.put(bareRoot, prefix);
             }
             /*
              * Determine the keys to map based on what is requested and what is
@@ -383,7 +394,9 @@ public interface Audience extends DatabaseInterface {
                 }
                 else if(!requested.equals(ALL_KEYS)
                         && readable.equals(ALL_KEYS)) {
-                    String[] visible = requested.toArray(Array.containing());
+                    String[] visible = requested.stream()
+                            .map(k -> prefixByRoot.getOrDefault(k, "") + k)
+                            .toArray(String[]::new);
                     data = subject.map(options, visible);
                 }
                 else {
@@ -397,13 +410,59 @@ public interface Audience extends DatabaseInterface {
                             allowed.add(key);
                         }
                     }
-                    String[] visible = requested.stream().filter(
-                            key -> allowed.isEmpty() || allowed.contains(key))
-                            .filter(key -> !denied.contains(key))
-                            .toArray(String[]::new);
-                    if(visible.length < requested.size()) {
+                    // Categorize the user's request by prefix. When any
+                    // bare positive is named the call has whitelist
+                    // intent and only the named keys (filtered by the
+                    // audience's allowlist) appear in the result. When
+                    // the user only uses + or -, #readable plays the
+                    // role of "defaults" for the audience: the result
+                    // is (allowed − userNegative) ∪ allowed-additives.
+                    // Without this expansion, passing - or + through to
+                    // subject.map would let Record#map's defaults branch
+                    // include fields the audience cannot see.
+                    Set<String> userBare = new HashSet<>();
+                    Set<String> userAdditive = new HashSet<>();
+                    Set<String> userNegative = new HashSet<>();
+                    for (Map.Entry<String, String> entry : prefixByRoot
+                            .entrySet()) {
+                        String bareRoot = entry.getKey();
+                        String prefix = entry.getValue();
+                        if("-".equals(prefix)) {
+                            userNegative.add(bareRoot);
+                        }
+                        else if("+".equals(prefix)) {
+                            userAdditive.add(bareRoot);
+                        }
+                        else {
+                            userBare.add(bareRoot);
+                        }
+                    }
+                    Set<String> selected;
+                    if(!userBare.isEmpty()) {
+                        selected = new HashSet<>(userBare);
+                        selected.addAll(userAdditive);
+                        selected.removeIf(k -> !allowed.contains(k)
+                                || denied.contains(k));
+                    }
+                    else {
+                        selected = new HashSet<>(allowed);
+                        selected.removeAll(denied);
+                        selected.removeAll(userNegative);
+                        userAdditive.stream().filter(allowed::contains)
+                                .filter(k -> !denied.contains(k))
+                                .forEach(selected::add);
+                    }
+                    int requestedPositives = userBare.size()
+                            + userAdditive.size();
+                    long honored = Stream
+                            .concat(userBare.stream(), userAdditive.stream())
+                            .filter(selected::contains).count();
+                    if(honored < requestedPositives) {
                         RESTRICTED_ACCESS_DETECTED.set(true);
                     }
+                    String[] visible = selected.stream()
+                            .map(k -> prefixByRoot.getOrDefault(k, "") + k)
+                            .toArray(String[]::new);
                     if(visible.length == 0) {
                         // No keys are visible, but don't call Record#map
                         // with an empty array because doing so will return

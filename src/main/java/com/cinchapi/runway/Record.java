@@ -1382,13 +1382,19 @@ public abstract class Record implements Comparable<Record> {
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data from the specified {@code keys}.
      * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
+     * This method also supports <strong>negative filtering</strong>. Prefix any
+     * key with {@code -} to exclude it from the result.
+     * </p>
+     * <p>
+     * It also supports <strong>additive selection</strong>. Prefix any key with
+     * {@code +} to include it on top of the defaults. The moment any bare
+     * positive key appears in {@code keys}, the defaults are dropped and only
+     * the listed keys (bare or {@code +}-prefixed) appear in the result.
      * </p>
      *
-     * @param options
-     * @param keys
+     * @param options the {@link SerializationOptions} to apply
+     * @param keys the keys to include (use {@code +} to add to defaults or
+     *            {@code -} to exclude)
      * @return json string
      */
     public String json(SerializationOptions options, String... keys) {
@@ -1399,12 +1405,18 @@ public abstract class Record implements Comparable<Record> {
      * Return a JSON string containing this {@link Record}'s readable and
      * temporary data from the specified {@code keys}.
      * <p>
-     * This method also supports <strong>negative filtering</strong>. You can
-     * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
-     * indicate that the key should be excluded from the data that is returned.
+     * This method also supports <strong>negative filtering</strong>. Prefix any
+     * key with {@code -} to exclude it from the result.
+     * </p>
+     * <p>
+     * It also supports <strong>additive selection</strong>. Prefix any key with
+     * {@code +} to include it on top of the defaults. The moment any bare
+     * positive key appears in {@code keys}, the defaults are dropped and only
+     * the listed keys (bare or {@code +}-prefixed) appear in the result.
      * </p>
      *
-     * @param keys
+     * @param keys the keys to include (use {@code +} to add to defaults or
+     *            {@code -} to exclude)
      * @return json string
      */
     public String json(String... keys) {
@@ -1447,22 +1459,32 @@ public abstract class Record implements Comparable<Record> {
      * This method also supports <strong>negative filtering</strong>. Prefix any
      * key with {@code -} to exclude it from the result.
      * </p>
+     * <p>
+     * It also supports <strong>additive selection</strong>. Prefix any key with
+     * {@code +} to include it on top of the defaults. The moment any bare
+     * positive key appears in {@code keys}, the defaults are dropped and only
+     * the listed keys (bare or {@code +}-prefixed) appear in the result.
+     * </p>
      *
      * @param options the {@link SerializationOptions} to apply
-     * @param keys the keys to include (or exclude with {@code -} prefix)
+     * @param keys the keys to include (use {@code +} to add to defaults or
+     *            {@code -} to exclude)
      * @return the data in this {@link Record}
      */
     public Map<String, Object> map(SerializationOptions options,
             String... keys) {
-        List<String> include = Lists.newArrayList();
+        List<String> bare = Lists.newArrayList();
+        List<String> additive = Lists.newArrayList();
         List<String> exclude = Lists.newArrayList();
         for (String key : keys) {
             if(key.startsWith("-")) {
-                key = key.substring(1);
-                exclude.add(key);
+                exclude.add(key.substring(1));
+            }
+            else if(key.startsWith("+")) {
+                additive.add(key.substring(1));
             }
             else {
-                include.add(key);
+                bare.add(key);
             }
         }
         Predicate<Entry<String, Object>> filter = entry -> !exclude
@@ -1486,50 +1508,39 @@ public abstract class Record implements Comparable<Record> {
                 map.put(entry.getKey(), value);
             }
         };
+        // Pre-filter the positive lists against #exclude so the resolver
+        // never fires a @Computed supplier (or navigates a link) for a
+        // key the caller has also excluded.
+        bare.removeAll(exclude);
+        additive.removeAll(exclude);
         Stream<Entry<String, Object>> pool;
-        if(include.isEmpty()) {
+        if(!bare.isEmpty()) {
+            List<String> whitelist = Lists.newArrayList(bare);
+            whitelist.addAll(additive);
+            pool = whitelist.stream().map(key -> resolveEntry(key, options));
+        }
+        else if(!additive.isEmpty()) {
+            // Skip a baseline entry only when an additive names its bare
+            // root; navigation additives like "+a.b" must let the baseline
+            // remain so the slice upserts into the nested map rather than
+            // replacing the rest of the root's contents.
+            Set<String> bareAdditiveRoots = additive.stream()
+                    .filter(k -> !k.contains(".")).collect(Collectors.toSet());
+            Stream<Entry<String, Object>> baseline = data().entrySet().stream();
+            if(!options.includeComputedValuesByDefault()) {
+                baseline = baseline.filter(e -> !(e instanceof ComputedEntry));
+            }
+            baseline = baseline
+                    .filter(e -> !bareAdditiveRoots.contains(e.getKey()));
+            Stream<Entry<String, Object>> added = additive.stream()
+                    .map(key -> resolveEntry(key, options));
+            pool = Stream.concat(baseline, added);
+        }
+        else {
             pool = data().entrySet().stream();
             if(!options.includeComputedValuesByDefault()) {
                 pool = pool.filter(e -> !(e instanceof ComputedEntry));
             }
-        }
-        else {
-            // NOTE: later on the #filter will attempt to remove keys that
-            // are explicitly excluded, which will have no affect here since
-            // #include and #exclude will never both have values at the same
-            // time.
-            pool = include.stream().map(key -> {
-                Object value;
-                String[] stops = key.split("\\.");
-                if(stops.length > 1) {
-                    // For mapping navigation keys, we must manually perform
-                    // the navigation and collect a series of nested
-                    // maps/sequences so that merging multiple navigation keys
-                    // can be done sensibly.
-                    key = stops[0];
-                    String path = StringUtils.join(stops, '.', 1, stops.length);
-                    Object destination = get(key);
-                    if(destination instanceof Record) {
-                        value = ((Record) destination).map(options, path);
-                    }
-                    else if(Sequences.isSequence(destination)) {
-                        List<Object> $value = Lists.newArrayList();
-                        Sequences.forEach(destination, item -> {
-                            if(item instanceof Record) {
-                                $value.add(((Record) item).map(options, path));
-                            }
-                        });
-                        value = $value;
-                    }
-                    else {
-                        value = null;
-                    }
-                }
-                else {
-                    value = get(key);
-                }
-                return new SimpleEntry<>(key, value);
-            });
         }
         Map<String, Object> data = pool.filter(filter).collect(Association::of,
                 accumulator, MergeStrategies::upsert);
@@ -1547,8 +1558,15 @@ public abstract class Record implements Comparable<Record> {
      * This method also supports <strong>negative filtering</strong>. Prefix any
      * key with {@code -} to exclude it from the result.
      * </p>
+     * <p>
+     * It also supports <strong>additive selection</strong>. Prefix any key with
+     * {@code +} to include it on top of the defaults. The moment any bare
+     * positive key appears in {@code keys}, the defaults are dropped and only
+     * the listed keys (bare or {@code +}-prefixed) appear in the result.
+     * </p>
      *
-     * @param keys the keys to include (or exclude with {@code -} prefix)
+     * @param keys the keys to include (use {@code +} to add to defaults or
+     *            {@code -} to exclude)
      * @return the data in this {@link Record}
      */
     public Map<String, Object> map(String... keys) {
@@ -2701,12 +2719,60 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Resolve a single positively named {@code key} into the {@link Entry} that
+     * will be contributed to a {@link #map} result.
+     * <p>
+     * For a bare key, the {@link Entry} is {@code (key, get(key))}. For a
+     * navigation key (e.g., {@code "company.name"}), the {@link Entry} is keyed
+     * by the root and valued by the nested {@code Map} (or list of nested
+     * {@code Map Maps} for a sequence-valued destination) produced by
+     * recursively materializing the remaining path on the linked {@link Record
+     * Records}. A non-navigable destination resolves to {@code null}.
+     * </p>
+     *
+     * @param key the (possibly navigation) key to resolve
+     * @param options the {@link SerializationOptions} threaded into any
+     *            recursive {@link #map} call along a navigation path
+     * @return the resolved {@link Entry}; never {@code null}, though its value
+     *         may be
+     */
+    private Entry<String, Object> resolveEntry(String key,
+            SerializationOptions options) {
+        Object value;
+        String[] stops = key.split("\\.");
+        if(stops.length > 1) {
+            key = stops[0];
+            String path = StringUtils.join(stops, '.', 1, stops.length);
+            Object destination = get(key);
+            if(destination instanceof Record) {
+                value = ((Record) destination).map(options, path);
+            }
+            else if(Sequences.isSequence(destination)) {
+                List<Object> $value = Lists.newArrayList();
+                Sequences.forEach(destination, item -> {
+                    if(item instanceof Record) {
+                        $value.add(((Record) item).map(options, path));
+                    }
+                });
+                value = $value;
+            }
+            else {
+                value = null;
+            }
+        }
+        else {
+            value = get(key);
+        }
+        return new SimpleEntry<>(key, value);
+    }
+
+    /**
      * Return a map that contains all "readable" data in this {@link Record}.
      * <p>
      * To get access to non-readable fields, use the
      * {@link #navigate(String...)} method.
      * </p>
-     * 
+     *
      * @return the data in this {@link Record}
      */
     private Map<String, Object> data() {
