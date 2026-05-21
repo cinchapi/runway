@@ -520,10 +520,8 @@ public interface Audience extends DatabaseInterface {
      * keys in the {@code record} and default {@link SerializationOptions}.
      * </p>
      * <p>
-     * Because no keys are positively named and default
-     * {@link SerializationOptions} are applied, {@link Computed @Computed}
-     * properties are excluded from the framed result. To include
-     * {@code @Computed} properties, invoke
+     * {@link Computed @Computed} properties are excluded from the framed
+     * result. To include them, invoke
      * {@link #frame(SerializationOptions, Collection, Record)} with options
      * built via
      * {@code SerializationOptions.builder().includeComputedValuesByDefault(true)}.

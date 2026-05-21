@@ -94,9 +94,9 @@ public class RecordIncludeComputedValuesTest
 
     /**
      * <strong>Goal:</strong> Verify that {@code map(opts)} with
-     * {@code includeComputedValuesByDefault(true)} restores the legacy behavior
-     * of materializing all {@link Computed} properties even when the caller
-     * does not positively name them.
+     * {@code includeComputedValuesByDefault(true)} causes all {@link Computed}
+     * properties to materialize even when the caller does not positively name
+     * them.
      * <p>
      * <strong>Start state:</strong> A freshly constructed {@link LabeledWidget}
      * whose computed supplier has not yet run.

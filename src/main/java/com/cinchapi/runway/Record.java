@@ -1270,11 +1270,6 @@ public abstract class Record implements Comparable<Record> {
      * nor {@link #computed() computed}) data from this {@link Record} as a
      * {@link Map}.
      * <p>
-     * Use this method over {@link #map()} when {@link #derived() derived}
-     * properties must also be excluded; {@link #map()} alone already excludes
-     * {@link #computed() computed} properties by default.
-     * </p>
-     * <p>
      * This method also supports <strong>negative filtering</strong>. You can
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to
      * indicate that the key should be excluded from the data that is returned.
@@ -1290,11 +1285,6 @@ public abstract class Record implements Comparable<Record> {
      * Return the "readable" intrinsic (i.e. neither {@link #derived() derived}
      * nor {@link #computed() computed}) data from this {@link Record} as a
      * {@link Map}.
-     * <p>
-     * Use this method over {@link #map()} when {@link #derived() derived}
-     * properties must also be excluded; {@link #map()} alone already excludes
-     * {@link #computed() computed} properties by default.
-     * </p>
      * <p>
      * This method also supports <strong>negative filtering</strong>. You can
      * prefix any of the {@code keys} with a minus sign (e.g. {@code -}) to

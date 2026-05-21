@@ -157,9 +157,9 @@ public class AudienceFrameOptionsTest extends AudienceAccessControlBaseTest {
     /**
      * <strong>Goal:</strong> Verify that
      * {@code includeComputedValuesByDefault = true} on the
-     * {@link SerializationOptions} passed to {@code frame} restores the legacy
-     * behavior of materializing {@link Computed} properties even when the
-     * caller does not positively name them.
+     * {@link SerializationOptions} passed to {@code frame} causes
+     * {@link Computed} properties to materialize even when the caller does not
+     * positively name them.
      * <p>
      * <strong>Start state:</strong> A freshly constructed {@link Admin} and a
      * freshly constructed {@link WidgetWithComputed} whose computed supplier
