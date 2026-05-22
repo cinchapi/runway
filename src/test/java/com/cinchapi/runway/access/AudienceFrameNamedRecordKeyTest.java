@@ -37,14 +37,14 @@ import com.google.common.collect.ImmutableSet;
  * <em>naming</em> it (bare or {@code +}-prefixed) is framed into a nested
  * {@link Map}, exactly as the same key is when it rides in on the defaults.
  * <p>
- * The recursive descent in {@link Audience#frame frame} treats a key the
- * caller named without a navigation suffix as a terminal leaf and returns its
- * value verbatim. That is correct for scalar leaves but wrong for a
- * {@link Record} (or a collection of {@link Record Records}): a named
- * {@code Record}-valued key is returned raw instead of being recursively
- * framed, so it escapes the framing pipeline and reaches the JSON layer as an
- * un-mapped {@code Record}. The same value, when included via the defaults
- * (the descent sees no navigation entry for the key), is framed normally.
+ * The recursive descent in {@link Audience#frame frame} treats a key the caller
+ * named without a navigation suffix as a terminal leaf and returns its value
+ * verbatim. That is correct for scalar leaves but wrong for a {@link Record}
+ * (or a collection of {@link Record Records}): a named {@code Record}-valued
+ * key is returned raw instead of being recursively framed, so it escapes the
+ * framing pipeline and reaches the JSON layer as an un-mapped {@code Record}.
+ * The same value, when included via the defaults (the descent sees no
+ * navigation entry for the key), is framed normally.
  * </p>
  * <p>
  * These tests assert the post-fix contract: a named {@code Record}-valued key
@@ -68,8 +68,8 @@ public class AudienceFrameNamedRecordKeyTest
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Invoke {@code Audience.anonymous().frame(container)} with no
-     * explicit keys, so {@code link} is included as a default.</li>
+     * <li>Invoke {@code Audience.anonymous().frame(container)} with no explicit
+     * keys, so {@code link} is included as a default.</li>
      * <li>Read the {@code link} entry from the result.</li>
      * </ul>
      * <p>
@@ -194,8 +194,7 @@ public class AudienceFrameNamedRecordKeyTest
      * <p>
      * <strong>Expected:</strong> The {@code children} value is a
      * {@link Collection} whose first element is a {@link Map}, confirming the
-     * default path frames the elements of a computed {@link Record}
-     * collection.
+     * default path frames the elements of a computed {@link Record} collection.
      */
     @SuppressWarnings("unchecked")
     @Test
@@ -243,9 +242,8 @@ public class AudienceFrameNamedRecordKeyTest
      * <li>Read the first element of the {@code children} collection.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The {@code children} elements are
-     * {@link Map Maps}. (Currently they are returned as raw
-     * {@link Record Records}.)
+     * <strong>Expected:</strong> The {@code children} elements are {@link Map
+     * Maps}. (Currently they are returned as raw {@link Record Records}.)
      */
     @SuppressWarnings("unchecked")
     @Test
