@@ -21,6 +21,8 @@ import java.util.function.Predicate;
 
 import javax.annotation.Nullable;
 
+import com.cinchapi.ccl.grammar.ScopeSymbol;
+import com.cinchapi.ccl.grammar.Symbol;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -52,6 +54,26 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
      */
     static boolean isNoFilter(Predicate<?> filter) {
         return filter == NO_FILTER;
+    }
+
+    /**
+     * Return {@code true} if {@code criteria} contains a scoped condition
+     * (i.e., a {@code prefix.(inner)} sub-tree) anywhere in its structure.
+     *
+     * @param criteria the {@link Criteria} to inspect
+     * @return {@code true} if {@code criteria} contains a scoped condition
+     */
+    static boolean isScopeBearing(Criteria criteria) {
+        for (Symbol symbol : criteria.symbols()) {
+            if(symbol instanceof ScopeSymbol) {
+                return true;
+            }
+            if(symbol instanceof Criteria
+                    && isScopeBearing((Criteria) symbol)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

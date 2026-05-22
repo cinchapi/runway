@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway.access;
 
+import java.util.function.Predicate;
+
 import javax.annotation.concurrent.Immutable;
 
 import com.cinchapi.common.reflect.Reflection;
@@ -25,25 +27,25 @@ import com.google.common.collect.ImmutableSet;
 
 /**
  * Describes the visibility that an {@link Audience} has for a given
- * {@link Record} class, and knows how to apply that visibility to a
- * {@link Selection}.
+ * {@link Record} class.
  * <p>
- * A {@link Scope} is obtained by registering a provider with
- * {@link AccessControl#registerVisibilityScope(Class, java.util.function.Function)}
- * and is resolved at query time by {@link Audience#select(Selection[])}.
+ * Providers are registered via
+ * {@link AccessControl#registerVisibilityScope(Class, java.util.function.Function)}.
  * </p>
  * <p>
- * There are four variants:
+ * There are five variants:
  * </p>
  * <ul>
- * <li>{@link #unrestricted()} &mdash; the audience sees all records; no filter
- * or criteria is applied.</li>
- * <li>{@link #none()} &mdash; the audience sees no records; results are always
- * empty.</li>
+ * <li>{@link #unrestricted()} &mdash; the audience sees all records.</li>
+ * <li>{@link #none()} &mdash; the audience sees no records.</li>
  * <li>{@link #of(Criteria)} &mdash; visibility is expressed as a
- * {@link Criteria} that is pushed into the query.</li>
- * <li>{@link #unsupported()} &mdash; visibility cannot be expressed as a
- * database constraint for this combination.</li>
+ * {@link Criteria}.</li>
+ * <li>{@link #hybrid(Criteria, Audience)} /
+ * {@link #hybrid(Criteria, Predicate)} &mdash; visibility is expressed as a
+ * {@link Criteria} together with an independent per-record
+ * {@link Predicate}.</li>
+ * <li>{@link #unsupported()} &mdash; visibility cannot be expressed for this
+ * combination.</li>
  * </ul>
  *
  * @author Jeff Nelson
@@ -64,6 +66,13 @@ public abstract class Scope {
     /**
      * Return a {@link Scope} whose visibility is expressed by the given
      * {@link Criteria}.
+     * <p>
+     * {@code criteria} must be locally evaluable on a {@link Record}; use
+     * {@link #hybrid(Criteria, Audience)} or
+     * {@link #hybrid(Criteria, Predicate)} when {@code criteria} contains a
+     * scoped navigation clause such as
+     * {@code Criteria.where().scope(prefix, inner)}.
+     * </p>
      *
      * @param criteria the {@link Criteria} that limits which records are
      *            visible to the {@link Audience}
@@ -71,6 +80,70 @@ public abstract class Scope {
      */
     public static Scope of(Criteria criteria) {
         return new CriteriaBased(criteria);
+    }
+
+    /**
+     * Return a {@link Scope} whose visibility is expressed by {@code criteria}
+     * and whose per-record test is the {@link Audience Audience's}
+     * discoverability ({@link AccessControl#$isDiscoverableBy(Audience)}, or
+     * {@link AccessControl#$isDiscoverableByAnonymous()} for an anonymous
+     * {@link Audience}).
+     * <p>
+     * Suitable when {@code criteria} is not locally evaluable on a
+     * {@link Record} &mdash; for example, when it contains a scoped navigation
+     * clause such as {@code Criteria.where().scope(prefix, inner)}.
+     * </p>
+     * <p>
+     * <strong>Caller's responsibility:</strong> {@code criteria} and the
+     * default discoverability check must produce logically equivalent results
+     * for {@code audience}, or visibility becomes inconsistent. Use
+     * {@link #hybrid(Criteria, Predicate)} to supply an explicit
+     * {@link Predicate} when discoverability is not an accurate mirror of
+     * {@code criteria}.
+     * </p>
+     *
+     * @param criteria the {@link Criteria} that limits which records are
+     *            visible to {@code audience}
+     * @param audience the {@link Audience} whose discoverability check backs
+     *            the per-record predicate
+     * @return a new hybrid {@link Scope}
+     */
+    public static Scope hybrid(Criteria criteria, Audience audience) {
+        Predicate<? super Record> defaultPredicate = record -> {
+            if(record instanceof AccessControl) {
+                AccessControl subject = (AccessControl) record;
+                return audience instanceof Anonymous
+                        ? subject.$isDiscoverableByAnonymous()
+                        : subject.$isDiscoverableBy(audience);
+            }
+            return true;
+        };
+        return new Hybrid(criteria, defaultPredicate);
+    }
+
+    /**
+     * Return a {@link Scope} whose visibility is expressed by {@code criteria}
+     * and whose per-record test is {@code predicate}.
+     * <p>
+     * Suitable when {@code criteria} is not locally evaluable on a
+     * {@link Record} &mdash; for example, when it contains a scoped navigation
+     * clause such as {@code Criteria.where().scope(prefix, inner)}.
+     * </p>
+     * <p>
+     * <strong>Caller's responsibility:</strong> {@code criteria} and
+     * {@code predicate} must produce logically equivalent results for the
+     * {@link Audience} this {@link Scope} is being constructed for, or
+     * visibility becomes inconsistent.
+     * </p>
+     *
+     * @param criteria the {@link Criteria} that limits which records are
+     *            visible to the {@link Audience}
+     * @param predicate the per-record visibility {@link Predicate}
+     * @return a new hybrid {@link Scope}
+     */
+    public static Scope hybrid(Criteria criteria,
+            Predicate<? super Record> predicate) {
+        return new Hybrid(criteria, predicate);
     }
 
     /**
@@ -161,6 +234,52 @@ public abstract class Scope {
         @Override
         public boolean test(Record record) {
             return record.matches(criteria);
+        }
+    }
+
+    /**
+     * A {@link Scope} whose visibility is expressed by a {@link Criteria}
+     * together with an independent per-record {@link Predicate}.
+     */
+    @Immutable
+    private static final class Hybrid extends Scope {
+
+        /**
+         * The visibility {@link Criteria}.
+         */
+        private final Criteria criteria;
+
+        /**
+         * The per-record visibility {@link Predicate}.
+         */
+        private final Predicate<? super Record> localTest;
+
+        /**
+         * Construct a new {@link Hybrid}.
+         *
+         * @param criteria the visibility {@link Criteria}
+         * @param localTest the per-record {@link Predicate}
+         */
+        private Hybrid(Criteria criteria, Predicate<? super Record> localTest) {
+            this.criteria = criteria;
+            this.localTest = localTest;
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public Selection<?> apply(Selection<?> selection) {
+            return Selection.withInjectedCriteria((Selection<Record>) selection,
+                    criteria);
+        }
+
+        @Override
+        public boolean isApplicable() {
+            return true;
+        }
+
+        @Override
+        public boolean test(Record record) {
+            return localTest.test(record);
         }
     }
 

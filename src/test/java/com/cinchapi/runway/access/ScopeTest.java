@@ -15,6 +15,11 @@
  */
 package com.cinchapi.runway.access;
 
+import java.util.Set;
+import java.util.function.Predicate;
+
+import javax.annotation.Nonnull;
+
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -218,9 +223,305 @@ public class ScopeTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Scope#hybrid(Criteria, Predicate)} routes through the same
+     * database-injection path as {@link Scope#of(Criteria)} &mdash; i.e., that
+     * {@code apply} returns a {@link Selection} distinct from the input rather
+     * than the input itself. The downstream behavior of
+     * {@link Selection#withInjectedCriteria} is covered by
+     * {@code SelectionWithInjectedCriteriaTest}, so this test only verifies the
+     * delegation.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create a non-scoped {@link Criteria} and a {@link Selection}.</li>
+     * <li>Call
+     * {@link Scope#hybrid(Criteria, Predicate)}.{@code apply(selection)} with
+     * an always-true predicate.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Selection} is non-null and
+     * is not the same reference as the input.
+     */
+    @Test
+    public void testHybridApplyReturnsModifiedSelection() {
+        Criteria criteria = Criteria.where().key("active")
+                .operator(Operator.EQUALS).value(424242L).build();
+        Selection<?> selection = Selection.of(TestRecord.class);
+        Selection<?> result = Scope.hybrid(criteria, r -> true)
+                .apply(selection);
+        Assert.assertNotNull(result);
+        Assert.assertNotSame(selection, result);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Scope#hybrid(Criteria, Predicate)} reports {@code true} from
+     * {@link Scope#isApplicable()}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a hybrid {@link Scope} with any criteria and
+     * predicate.</li>
+     * <li>Call {@link Scope#isApplicable()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code true} is returned.
+     */
+    @Test
+    public void testHybridIsApplicable() {
+        Criteria criteria = Criteria.where().key("active")
+                .operator(Operator.EQUALS).value(true).build();
+        Assert.assertTrue(Scope.hybrid(criteria, r -> true).isApplicable());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Scope#hybrid(Criteria, Predicate)}.{@code test(record)} dispatches
+     * to the supplied {@link Predicate} rather than evaluating the
+     * {@link Criteria} locally. This is the whole point of the hybrid form: the
+     * criteria is reserved for the database path and the predicate owns
+     * per-record visibility.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a hybrid {@link Scope} with an always-true predicate and
+     * call {@code test} on a record.</li>
+     * <li>Construct a hybrid {@link Scope} with an always-false predicate and
+     * call {@code test} on the same record.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first call returns {@code true}; the
+     * second returns {@code false}.
+     */
+    @Test
+    public void testHybridTestUsesExplicitPredicate() {
+        Criteria criteria = Criteria.where().key("active")
+                .operator(Operator.EQUALS).value(true).build();
+        TestRecord record = new TestRecord();
+        Assert.assertTrue(Scope.hybrid(criteria, r -> true).test(record));
+        Assert.assertFalse(Scope.hybrid(criteria, r -> false).test(record));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Scope#hybrid(Criteria, Audience)} (the convenience form) defaults
+     * the per-record predicate to {@link AccessControl#$isDiscoverableBy} for a
+     * non-anonymous {@link Audience}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link TestAudience}.</li>
+     * <li>Construct two {@link TestAccessControlRecord
+     * TestAccessControlRecords}: one that is discoverable by the audience, one
+     * that is not.</li>
+     * <li>Call {@code Scope.hybrid(criteria, audience).test(record)} on
+     * each.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The discoverable record passes; the
+     * undiscoverable record does not.
+     */
+    @Test
+    public void testHybridDefaultPredicateUsesIsDiscoverableBy() {
+        Criteria criteria = Criteria.where().key("active")
+                .operator(Operator.EQUALS).value(true).build();
+        TestAudience audience = new TestAudience();
+        Scope scope = Scope.hybrid(criteria, audience);
+        Assert.assertTrue(scope.test(new TestAccessControlRecord(true, false)));
+        Assert.assertFalse(
+                scope.test(new TestAccessControlRecord(false, true)));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Scope#hybrid(Criteria, Audience)} defaults the per-record
+     * predicate to {@link AccessControl#$isDiscoverableByAnonymous} when the
+     * supplied {@link Audience} is {@link Audience#anonymous()}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct two {@link TestAccessControlRecord
+     * TestAccessControlRecords}: one anonymous-discoverable, one not.</li>
+     * <li>Call
+     * {@code Scope.hybrid(criteria, Audience.anonymous()).test(record)} on
+     * each.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The anonymous-discoverable record passes; the
+     * other does not.
+     */
+    @Test
+    public void testHybridDefaultPredicateUsesAnonymousDiscoverability() {
+        Criteria criteria = Criteria.where().key("active")
+                .operator(Operator.EQUALS).value(true).build();
+        Scope scope = Scope.hybrid(criteria, Audience.anonymous());
+        Assert.assertTrue(scope.test(new TestAccessControlRecord(false, true)));
+        Assert.assertFalse(
+                scope.test(new TestAccessControlRecord(true, false)));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the default predicate built by
+     * {@link Scope#hybrid(Criteria, Audience)} returns {@code true} for records
+     * that do not implement {@link AccessControl}, matching the permissive
+     * treatment such records receive elsewhere in the framework.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a hybrid {@link Scope} with a {@link TestAudience}.</li>
+     * <li>Call {@code test} on a {@link TestRecord} (not
+     * {@link AccessControl}).</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code true} is returned.
+     */
+    @Test
+    public void testHybridDefaultPredicateAllowsNonAccessControlRecord() {
+        Criteria criteria = Criteria.where().key("active")
+                .operator(Operator.EQUALS).value(true).build();
+        Scope scope = Scope.hybrid(criteria, new TestAudience());
+        Assert.assertTrue(scope.test(new TestRecord()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Scope#hybrid(Criteria, Predicate)}.{@code apply(selection)}
+     * succeeds when the {@link Criteria} contains a scoped navigation clause.
+     * This is the escape-hatch behavior that motivates the hybrid form:
+     * {@link Scope#of(Criteria)} would also route through
+     * {@link Selection#withInjectedCriteria}, but its per-record {@code test()}
+     * would later throw because the local CCL compiler cannot evaluate scoped
+     * conditions. The hybrid form sidesteps that by holding the predicate
+     * separately.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Criteria} containing
+     * {@code scope(prefix, inner)}.</li>
+     * <li>Call {@link Scope#hybrid(Criteria, Predicate)}.{@code apply} with an
+     * always-true predicate and a {@link Selection}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A non-null {@link Selection} distinct from the
+     * input is returned.
+     */
+    @Test
+    public void testHybridAcceptsScopeBearingCriteria() {
+        Criteria scoped = Criteria
+                .where().scope("parent.children", Criteria.where()
+                        .key("user.userId").operator(Operator.EQUALS).value(7L))
+                .build();
+        Selection<?> selection = Selection.of(TestRecord.class);
+        Selection<?> result = Scope.hybrid(scoped, r -> true).apply(selection);
+        Assert.assertNotNull(result);
+        Assert.assertNotSame(selection, result);
+    }
+
+    /**
      * A minimal {@link Record} used as the type parameter for {@link Selection}
      * instances in these tests.
      */
     static class TestRecord extends Record {}
+
+    /**
+     * A minimal {@link Audience} implementation used to verify the
+     * non-anonymous branch of {@link Scope#hybrid(Criteria, Audience)}'s
+     * default predicate.
+     */
+    static class TestAudience extends Record implements Audience {}
+
+    /**
+     * A minimal {@link AccessControl} {@link Record} whose discoverability for
+     * both authenticated and anonymous {@link Audience audiences} is set at
+     * construction time. All other access methods deny.
+     */
+    static class TestAccessControlRecord extends Record implements
+            AccessControl {
+
+        /**
+         * Whether this record is discoverable by a non-anonymous
+         * {@link Audience}.
+         */
+        private final boolean discoverable;
+
+        /**
+         * Whether this record is discoverable by an anonymous {@link Audience}.
+         */
+        private final boolean discoverableAnonymous;
+
+        /**
+         * Construct a new {@link TestAccessControlRecord}.
+         *
+         * @param discoverable value returned by
+         *            {@link #$isDiscoverableBy(Audience)}
+         * @param discoverableAnonymous value returned by
+         *            {@link #$isDiscoverableByAnonymous()}
+         */
+        TestAccessControlRecord(boolean discoverable,
+                boolean discoverableAnonymous) {
+            this.discoverable = discoverable;
+            this.discoverableAnonymous = discoverableAnonymous;
+        }
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            return false;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return false;
+        }
+
+        @Override
+        public boolean $isDeletableBy(@Nonnull Audience audience) {
+            return false;
+        }
+
+        @Override
+        public boolean $isDiscoverableBy(@Nonnull Audience audience) {
+            return discoverable;
+        }
+
+        @Override
+        public boolean $isDiscoverableByAnonymous() {
+            return discoverableAnonymous;
+        }
+
+        @Override
+        public Set<String> $readableBy(@Nonnull Audience audience) {
+            return NO_KEYS;
+        }
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return NO_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableBy(@Nonnull Audience audience) {
+            return NO_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableByAnonymous() {
+            return NO_KEYS;
+        }
+    }
 
 }

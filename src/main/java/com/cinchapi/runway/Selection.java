@@ -22,6 +22,7 @@ import java.util.function.Predicate;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
+import com.cinchapi.concourse.thrift.Operator;
 
 /**
  * A {@link Selection} describes a single data retrieval operation against a
@@ -121,8 +122,30 @@ public interface Selection<T extends Record> {
         DatabaseSelection<T> resolved = (DatabaseSelection<T>) DatabaseSelection
                 .resolve(selection);
         if(resolved instanceof LoadRecordSelection) {
-            return withInjectedFilter(selection,
-                    record -> record.matches(injected));
+            if(DatabaseSelection.isScopeBearing(injected)) {
+                // Local CCL evaluation cannot honor same-destination
+                // semantics for a scoped condition.
+                LoadRecordSelection<T> load = (LoadRecordSelection<T>) resolved;
+                Criteria idMatch = Criteria.where().key(Record.IDENTIFIER_KEY)
+                        .operator(Operator.EQUALS).value(load.id).build();
+                // any=true so a subclass record stored under load.id still
+                // resolves to its actual type; $id$ is unique across the
+                // hierarchy so this does not broaden the match.
+                DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                        resolved.clazz, true);
+                state.unique = true;
+                state.criteria = Criteria.where().group(idMatch).and()
+                        .group(injected).build();
+                state.filter = resolved.filter;
+                state.realms = resolved.realms;
+                UniqueSelection<T> result = new UniqueSelection<>(state);
+                result.origin = selection;
+                return result;
+            }
+            else {
+                return withInjectedFilter(selection,
+                        record -> record.matches(injected));
+            }
         }
         else {
             resolved = resolved.duplicate();

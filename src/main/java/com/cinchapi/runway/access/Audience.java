@@ -37,10 +37,13 @@ import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
 import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.runway.Computed;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
+import com.cinchapi.runway.SerializationOptions;
+import com.cinchapi.runway.util.KeySelection;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
@@ -109,6 +112,31 @@ public interface Audience extends DatabaseInterface {
 
     /**
      * Return a {@link Predicate} that tests whether a {@link Record} is visible
+     * to this {@link Audience}, using the registered {@link Scope} if one
+     * exists and is {@link Scope#isApplicable() applicable}, or falling back to
+     * {@link #$checkIfVisible()} otherwise.
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
+     *
+     * @return a {@link Predicate} to filter for visible records
+     */
+    public default <T extends Record> Predicate<T> $checkIfInScopeOrVisible() {
+        // TODO: make private in Java 9+
+        return record -> {
+            if(record instanceof AccessControl) {
+                Scope scope = AccessControl
+                        .resolveVisibilityScope(record.getClass(), this);
+                if(scope != null && scope.isApplicable()) {
+                    return scope.test(record);
+                }
+            }
+            return $checkIfVisible().test(record);
+        };
+    }
+
+    /**
+     * Return a {@link Predicate} that tests whether a {@link Record} is visible
      * to this {@link Audience}.
      * <p>
      * This is a framework-private method and should not be called directly.
@@ -146,31 +174,6 @@ public interface Audience extends DatabaseInterface {
             else {
                 return true;
             }
-        };
-    }
-
-    /**
-     * Return a {@link Predicate} that tests whether a {@link Record} is visible
-     * to this {@link Audience}, using the registered {@link Scope} if one
-     * exists and is {@link Scope#isApplicable() applicable}, or falling back to
-     * {@link #$checkIfVisible()} otherwise.
-     * <p>
-     * This is a framework-private method and should not be called directly.
-     * </p>
-     *
-     * @return a {@link Predicate} to filter for visible records
-     */
-    public default <T extends Record> Predicate<T> $checkIfInScopeOrVisible() {
-        // TODO: make private in Java 9+
-        return record -> {
-            if(record instanceof AccessControl) {
-                Scope scope = AccessControl
-                        .resolveVisibilityScope(record.getClass(), this);
-                if(scope != null && scope.isApplicable()) {
-                    return scope.test(record);
-                }
-            }
-            return $checkIfVisible().test(record);
         };
     }
 
@@ -252,6 +255,31 @@ public interface Audience extends DatabaseInterface {
     }
 
     /**
+     * Read a "frame" of data from the {@code subject} containing only the
+     * information that is visible to this {@link Audience}, using default
+     * {@link SerializationOptions}.
+     * <p>
+     * By default, {@link Computed @Computed} properties are excluded from the
+     * framed result unless they are positively named in {@code keys}. To
+     * include {@code @Computed} properties without naming them, invoke
+     * {@link #frame(SerializationOptions, Collection, Record)} with options
+     * built via
+     * {@code SerializationOptions.builder().includeComputedValuesByDefault(true)}.
+     * </p>
+     *
+     * @param keys the fields to read from
+     * @param subject the {@link Record} to read from
+     * @param <T> the type of the {@link Record}
+     * @return a map of visible data or {@code null} if the {@code subject} is
+     *         not discoverable at all by this {@link Audience}
+     * @see #frame(SerializationOptions, Collection, Record)
+     */
+    public default <T extends Record> Map<String, Object> frame(
+            Collection<String> keys, T subject) {
+        return frame(SerializationOptions.defaults(), keys, subject);
+    }
+
+    /**
      * Read a "frame" of data from the {@code record} containing only the
      * information that is visible to this {@link Audience}.
      * <p>
@@ -282,17 +310,48 @@ public interface Audience extends DatabaseInterface {
      * <li>Non-navigable values return {@code null} when nested access is
      * attempted</li>
      * </ul>
+     * <h3>Key Prefix Conventions</h3>
+     * <p>
+     * Each entry in {@code keys} accepts the same prefix conventions as
+     * {@link Record#map(SerializationOptions, String...) Record#map}:
+     * </p>
+     * <ul>
+     * <li><strong>Bare</strong> &mdash; a key with no prefix is a positive
+     * request that triggers whitelist mode; the result contains only the named
+     * keys (intersected with what this {@link Audience} is permitted to
+     * read).</li>
+     * <li><strong>Additive ({@code +})</strong> &mdash; a key prefixed with
+     * {@code +} is layered on top of the defaults the {@link Audience} is
+     * allowed to see, without dropping them. When the call mixes a bare
+     * positive with {@code +}-prefixed keys, the bare positive forces whitelist
+     * mode and the {@code +} prefix degrades to a redundant whitelist
+     * annotation.</li>
+     * <li><strong>Exclude ({@code -})</strong> &mdash; a key prefixed with
+     * {@code -} is filtered out of the result. Exclusion always wins over
+     * addition for the same key.</li>
+     * </ul>
+     * <p>
+     * <strong>NOTE:</strong> A {@code +}-prefixed key cannot bypass access
+     * control. If the audience is not permitted to read the underlying field,
+     * the key is dropped at the intersection check and
+     * {@link RestrictedAccessException} signalling (via
+     * {@link #read(Collection, Record) read}) still fires.
+     * </p>
      *
-     * @param keys the fields to read from
-     * @param record the {@link Record} to read from
+     * @param options the {@link SerializationOptions} to apply when
+     *            materializing data from the {@code subject} and any linked
+     *            {@link Record Records} encountered during recursive framing
+     * @param keys the fields to read from; entries may use {@code +} to layer
+     *            on top of the audience's defaults or {@code -} to exclude
+     * @param subject the {@link Record} to read from
      * @param <T> the type of the {@link Record}
-     * @return a map of visible data or {@code null} if the {@code record} is
+     * @return a map of visible data or {@code null} if the {@code subject} is
      *         not discoverable at all by this {@link Audience}
      */
     @SuppressWarnings("unchecked")
     @Nullable
     public default <T extends Record> Map<String, Object> frame(
-            Collection<String> keys, T subject) {
+            SerializationOptions options, Collection<String> keys, T subject) {
         Preconditions.checkNotNull(keys, "keys cannot be null");
         Map<String, Object> data;
         if(!$checkIfInScopeOrVisible().test(subject)) {
@@ -300,23 +359,18 @@ public interface Audience extends DatabaseInterface {
         }
         else if(subject instanceof AccessControl) {
             AccessControl gated = (AccessControl) subject;
-            // Break up navigation keys into root components that must be
-            // resolved in this Record to their subsequent stops that must
-            // be resolved in linked Records
-            Map<String, Set<String>> roots = new HashMap<>();
-            for (String key : keys) {
-                String[] toks = key.split("\\.");
-                // Handle negative rules: negative keys apply only to the
-                // root level and are not distributed to nested paths
-                String root = toks[0];
-                String next = Stream.of(toks).skip(1)
-                        .collect(Collectors.joining("."));
-                Set<String> nexts = roots.computeIfAbsent(root,
-                        $ -> new HashSet<>());
-                if(!next.isEmpty()) {
-                    nexts.add(next);
-                }
-            }
+            // Bucket each requested key by the prefix on its root and
+            // track navigation suffixes per bare root for the
+            // recursive descent below. KeySelection.partitionByRoot
+            // applies the "exclusion wins over addition" precedence
+            // so a downstream resolver never fires for a key the
+            // caller has also excluded.
+            KeySelection.RootedPartition parsed = KeySelection
+                    .partitionByRoot(keys);
+            Set<String> userBare = parsed.bare();
+            Set<String> userAdditive = parsed.additive();
+            Set<String> userNegative = parsed.exclude();
+            Map<String, Set<String>> roots = parsed.navigation();
             /*
              * Determine the keys to map based on what is requested and what is
              * readable for the #audience.
@@ -344,17 +398,29 @@ public interface Audience extends DatabaseInterface {
                 data = new HashMap<>();
             }
             else if(requested.equals(ALL_KEYS) && readable.equals(ALL_KEYS)) {
-                data = subject.map();
+                data = subject.map(options);
             }
             else {
                 if(requested.equals(ALL_KEYS) && !readable.equals(ALL_KEYS)) {
                     String[] visible = readable.toArray(Array.containing());
-                    data = subject.map(visible);
+                    data = subject.map(options, visible);
                 }
                 else if(!requested.equals(ALL_KEYS)
                         && readable.equals(ALL_KEYS)) {
-                    String[] visible = requested.toArray(Array.containing());
-                    data = subject.map(visible);
+                    // No access restrictions; forward the caller's keys
+                    // to subject.map verbatim, stripped only of any
+                    // navigation suffix (the recursive descent below
+                    // handles those). Walking the caller's input
+                    // instead of #requested preserves every prefix
+                    // combination the caller wrote on a given root, so
+                    // multi-prefix calls like frame({"x", "-x"}) round-
+                    // trip through subject.map's own precedence rules
+                    // and produce the same result as Record#map.
+                    String[] visible = keys.stream().map(k -> {
+                        int dot = k.indexOf('.');
+                        return dot < 0 ? k : k.substring(0, dot);
+                    }).distinct().toArray(String[]::new);
+                    data = subject.map(options, visible);
                 }
                 else {
                     Set<String> allowed = new HashSet<>();
@@ -367,21 +433,117 @@ public interface Audience extends DatabaseInterface {
                             allowed.add(key);
                         }
                     }
-                    String[] visible = requested.stream().filter(
-                            key -> allowed.isEmpty() || allowed.contains(key))
-                            .filter(key -> !denied.contains(key))
-                            .toArray(String[]::new);
-                    if(visible.length < requested.size()) {
-                        RESTRICTED_ACCESS_DETECTED.set(true);
+                    // A denylist-only readable rule (empty #allowed,
+                    // non-empty #denied) permits every subject key
+                    // minus the denied entries &mdash; the
+                    // empty-allowlist-as-wildcard semantic enforced by
+                    // AccessControlSupport#isPermittedAccess. Skip the
+                    // allowlist gate in that mode; #denied still
+                    // bounds the result.
+                    boolean denylistOnly = allowed.isEmpty();
+                    int requestedPositives = userBare.size()
+                            + userAdditive.size();
+                    if(!userBare.isEmpty()) {
+                        // Whitelist intent: only the named keys (bare
+                        // and `+`-prefixed) appear, gated by the
+                        // allowlist (skipped under denylist-only) and
+                        // by #denied. Reattach `-` for any selected
+                        // key the caller also wrote as a negative so
+                        // subject.map's exclude filter applies inside
+                        // whitelist mode.
+                        Set<String> selected = new HashSet<>(userBare);
+                        selected.addAll(userAdditive);
+                        selected.removeIf(
+                                k -> (!denylistOnly && !allowed.contains(k))
+                                        || denied.contains(k));
+                        long honored = Stream
+                                .concat(userBare.stream(),
+                                        userAdditive.stream())
+                                .filter(selected::contains).count();
+                        if(honored < requestedPositives) {
+                            RESTRICTED_ACCESS_DETECTED.set(true);
+                        }
+                        String[] visible = Stream.concat(selected.stream(),
+                                selected.stream().filter(userNegative::contains)
+                                        .map(k -> "-" + k))
+                                .toArray(String[]::new);
+                        if(visible.length == 0) {
+                            // No keys are visible, but don't call
+                            // Record#map with an empty array because
+                            // doing so will return all data
+                            data = new HashMap<>();
+                        }
+                        else {
+                            data = subject.map(options, visible);
+                        }
                     }
-                    if(visible.length == 0) {
-                        // No keys are visible, but don't call Record#map
-                        // with an empty array because doing so will return
-                        // all data
-                        data = new HashMap<>();
+                    else if(denylistOnly) {
+                        // No bare positives and no allowlist. The
+                        // audience permits every subject key except
+                        // #denied, so delegate to subject.map in
+                        // defaults/additive mode with the caller's
+                        // additives plus the union of user-negatives
+                        // and audience-denials reattached as `-`
+                        // excludes. An additive on a denied key is
+                        // dropped and the call is flagged as
+                        // restricted.
+                        long honored = Stream
+                                .concat(userBare.stream(),
+                                        userAdditive.stream())
+                                .filter(k -> !denied.contains(k)).count();
+                        if(honored < requestedPositives) {
+                            RESTRICTED_ACCESS_DETECTED.set(true);
+                        }
+                        Set<String> excludes = new HashSet<>(userNegative);
+                        excludes.addAll(denied);
+                        String[] visible = Stream
+                                .concat(userAdditive.stream()
+                                        .filter(k -> !denied.contains(k))
+                                        .map(k -> "+" + k),
+                                        excludes.stream().map(k -> "-" + k))
+                                .toArray(String[]::new);
+                        if(visible.length == 0) {
+                            data = subject.map(options);
+                        }
+                        else {
+                            data = subject.map(options, visible);
+                        }
                     }
                     else {
-                        data = subject.map(visible);
+                        // Allowlist with optional denials. The
+                        // audience's "defaults" are (allowed -
+                        // denied); apply the caller's negatives and
+                        // layer in their additives that the audience
+                        // permits.
+                        Set<String> selected = new HashSet<>(allowed);
+                        selected.removeAll(denied);
+                        selected.removeAll(userNegative);
+                        userAdditive.stream().filter(allowed::contains)
+                                .filter(k -> !denied.contains(k))
+                                .forEach(selected::add);
+                        long honored = Stream
+                                .concat(userBare.stream(),
+                                        userAdditive.stream())
+                                .filter(selected::contains).count();
+                        if(honored < requestedPositives) {
+                            RESTRICTED_ACCESS_DETECTED.set(true);
+                        }
+                        // Pass the audience-permitted set as bare
+                        // positives so subject.map runs whitelist mode
+                        // &mdash; reattaching `+` would reopen
+                        // additive mode on the subject and bypass the
+                        // allowlist. Reattach `-` for any selected
+                        // key the caller also wrote as a negative.
+                        String[] visible = Stream.concat(selected.stream(),
+                                selected.stream().filter(userNegative::contains)
+                                        .map(k -> "-" + k))
+                                .toArray(String[]::new);
+                        if(visible.length == 0) {
+                            data = new HashMap<>();
+                        }
+                        else {
+                            data = subject.map(options, visible);
+                        }
                     }
                 }
             }
@@ -398,8 +560,12 @@ public interface Audience extends DatabaseInterface {
                 String key = e.getKey();
                 Object value = e.getValue();
                 Set<String> nexts = roots.get(key);
-                if(nexts != null && nexts.isEmpty()) {
-                    // This is a terminal value
+                // A named Record or sequence value must fall through to
+                // be framed with the target's defaults, like the
+                // default-included path; only scalars are terminal here.
+                boolean framable = value instanceof Record
+                        || (value != null && Sequences.isSequence(value));
+                if(nexts != null && nexts.isEmpty() && !framable) {
                     return e;
                 }
                 else {
@@ -413,14 +579,14 @@ public interface Audience extends DatabaseInterface {
                     else if(value instanceof AccessControl) {
                         Record record = (Record) value;
                         seen.add(record);
-                        value = frame(ImmutableSet.copyOf(remaining),
+                        value = frame(options, ImmutableSet.copyOf(remaining),
                                 (T) record);
                         seen.remove(record);
                     }
                     else if(value instanceof Record) {
                         Record record = (Record) value;
                         seen.add(record);
-                        value = record.map(remaining);
+                        value = record.map(options, remaining);
                         seen.remove(record);
                     }
                     else if(Sequences.isSequence(value)) {
@@ -433,14 +599,15 @@ public interface Audience extends DatabaseInterface {
                                 if(item instanceof AccessControl) {
                                     Record record = (Record) item;
                                     seen.add(record);
-                                    item = frame(ImmutableSet.copyOf(remaining),
+                                    item = frame(options,
+                                            ImmutableSet.copyOf(remaining),
                                             (T) record);
                                     seen.remove(record);
                                 }
                                 else if(item instanceof Record) {
                                     Record record = (Record) item;
                                     seen.add(record);
-                                    item = record.map(remaining);
+                                    item = record.map(options, remaining);
                                     seen.remove(record);
                                 }
                             }
@@ -470,7 +637,7 @@ public interface Audience extends DatabaseInterface {
             }
         }
         else {
-            data = subject.map(keys.toArray(Array.containing()));
+            data = subject.map(options, keys.toArray(Array.containing()));
         }
         // By convention, the subject's id should always be included when
         // framing.
@@ -485,18 +652,25 @@ public interface Audience extends DatabaseInterface {
      * information that is visible to this {@link Audience}.
      * <p>
      * This is a convenience method that is equivalent to calling
-     * {@link #frame(Collection, Record)} with all of the keys in the
-     * {@code record}.
+     * {@link #frame(SerializationOptions, Collection, Record)} with all of the
+     * keys in the {@code record} and default {@link SerializationOptions}.
+     * </p>
+     * <p>
+     * {@link Computed @Computed} properties are excluded from the framed
+     * result. To include them, invoke
+     * {@link #frame(SerializationOptions, Collection, Record)} with options
+     * built via
+     * {@code SerializationOptions.builder().includeComputedValuesByDefault(true)}.
      * </p>
      *
      * @param record the {@link Record} to read from
      * @param <T> the type of the {@link Record}
      * @return a map of visible data or {@code null} if the {@code record} is
      *         not discoverable at all by this {@link Audience}
-     * @see #frame(Collection, Record)
+     * @see #frame(SerializationOptions, Collection, Record)
      */
     public default <T extends Record> Map<String, Object> frame(T record) {
-        return frame(ALL_KEYS, record);
+        return frame(SerializationOptions.defaults(), ALL_KEYS, record);
     }
 
     /**
@@ -550,6 +724,23 @@ public interface Audience extends DatabaseInterface {
             throws RestrictedAccessException {
         Map<String, Object> data = frame(ImmutableSet.of(key), record);
         return data.getOrDefault(key, null);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public default Selections select(Selection<?>... selections) {
+        selections = Arrays.stream(selections).map(selection -> {
+            Class<?> clazz = selection.clazz();
+            if(clazz != null && AccessControl.class.isAssignableFrom(clazz)) {
+                Scope scope = AccessControl.resolveVisibilityScope(clazz, this);
+                if(scope != null && scope.isApplicable()) {
+                    return scope.apply(selection);
+                }
+            }
+            return Selection.withInjectedFilter((Selection<Record>) selection,
+                    $checkIfVisible());
+        }).toArray(Selection[]::new);
+        return $db().select(selections);
     }
 
     /**
@@ -614,23 +805,6 @@ public interface Audience extends DatabaseInterface {
             Reflection.set("_author", (Record) this, record);
         }
         record.set(key, value);
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public default Selections select(Selection<?>... selections) {
-        selections = Arrays.stream(selections).map(selection -> {
-            Class<?> clazz = selection.clazz();
-            if(clazz != null && AccessControl.class.isAssignableFrom(clazz)) {
-                Scope scope = AccessControl.resolveVisibilityScope(clazz, this);
-                if(scope != null && scope.isApplicable()) {
-                    return scope.apply(selection);
-                }
-            }
-            return Selection.withInjectedFilter((Selection<Record>) selection,
-                    $checkIfVisible());
-        }).toArray(Selection[]::new);
-        return $db().select(selections);
     }
 
 }
