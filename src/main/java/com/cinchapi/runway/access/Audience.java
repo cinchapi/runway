@@ -560,8 +560,12 @@ public interface Audience extends DatabaseInterface {
                 String key = e.getKey();
                 Object value = e.getValue();
                 Set<String> nexts = roots.get(key);
-                if(nexts != null && nexts.isEmpty()) {
-                    // This is a terminal value
+                // A named Record or sequence value must fall through to
+                // be framed with the target's defaults, like the
+                // default-included path; only scalars are terminal here.
+                boolean framable = value instanceof Record
+                        || (value != null && Sequences.isSequence(value));
+                if(nexts != null && nexts.isEmpty() && !framable) {
                     return e;
                 }
                 else {
