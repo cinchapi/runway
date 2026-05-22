@@ -33,23 +33,12 @@ import com.cinchapi.runway.SerializationOptions;
 import com.google.common.collect.ImmutableSet;
 
 /**
- * Regression tests proving that a {@link Record}-valued key reached by
- * <em>naming</em> it (bare or {@code +}-prefixed) is framed into a nested
- * {@link Map}, exactly as the same key is when it rides in on the defaults.
+ * Regression tests for framing a {@link Record}-valued key on
+ * {@link Audience#frame frame}.
  * <p>
- * The recursive descent in {@link Audience#frame frame} treats a key the caller
- * named without a navigation suffix as a terminal leaf and returns its value
- * verbatim. That is correct for scalar leaves but wrong for a {@link Record}
- * (or a collection of {@link Record Records}): a named {@code Record}-valued
- * key is returned raw instead of being recursively framed, so it escapes the
- * framing pipeline and reaches the JSON layer as an un-mapped {@code Record}.
- * The same value, when included via the defaults (the descent sees no
- * navigation entry for the key), is framed normally.
- * </p>
- * <p>
- * These tests assert the post-fix contract: a named {@code Record}-valued key
- * frames identically to a defaulted one. They fail against the current code,
- * which short-circuits the named key to its raw value.
+ * A {@link Record}-valued key, or a collection of {@link Record Records}, is
+ * framed into the fully nested object whether it is named explicitly or
+ * included implicitly by default.
  * </p>
  *
  * @author Jeff Nelson
@@ -112,8 +101,7 @@ public class AudienceFrameNamedRecordKeyTest
      * </ul>
      * <p>
      * <strong>Expected:</strong> The {@code link} value is a {@link Map}, the
-     * same shape produced by the default path. (Currently it is returned as a
-     * raw {@link Record}.)
+     * same shape produced by the default path.
      */
     @Test
     public void testBareNamedLinkedRecordIsFramed() {
@@ -152,7 +140,6 @@ public class AudienceFrameNamedRecordKeyTest
      * </ul>
      * <p>
      * <strong>Expected:</strong> The {@code link} value is a {@link Map}.
-     * (Currently it is returned as a raw {@link Record}.)
      */
     @Test
     public void testAdditiveNamedLinkedRecordIsFramed() {
@@ -243,7 +230,7 @@ public class AudienceFrameNamedRecordKeyTest
      * </ul>
      * <p>
      * <strong>Expected:</strong> The {@code children} elements are {@link Map
-     * Maps}. (Currently they are returned as raw {@link Record Records}.)
+     * Maps}.
      */
     @SuppressWarnings("unchecked")
     @Test
