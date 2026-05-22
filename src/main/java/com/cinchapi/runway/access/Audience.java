@@ -560,15 +560,12 @@ public interface Audience extends DatabaseInterface {
                 String key = e.getKey();
                 Object value = e.getValue();
                 Set<String> nexts = roots.get(key);
-                // A key the caller named without a navigation suffix
-                // (empty navigation set) is terminal only when its value
-                // is not framable. A scalar is returned as-is; a Record or
-                // sequence still descends and frames with the target's
-                // defaults (empty remaining), matching the default path.
+                // A named Record or sequence value must fall through to
+                // be framed with the target's defaults, like the
+                // default-included path; only scalars are terminal here.
                 boolean framable = value instanceof Record
                         || (value != null && Sequences.isSequence(value));
                 if(nexts != null && nexts.isEmpty() && !framable) {
-                    // Terminal scalar value
                     return e;
                 }
                 else {
