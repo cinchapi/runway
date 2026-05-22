@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 2.1.0 (TBD)
+#### Version 2.1.0 (May 22, 2026)
 * Fixed a bug where loading an access-controlled `Record` through an `Audience` (e.g., `Audience#load(Class, long)`) threw `UnsupportedOperationException` when the class's registered visibility `Scope` used a scoped navigation criteria (`Criteria.where().scope(prefix, inner)`). ([GH-125](https://github.com/cinchapi/runway/issues/125))
 * **Breaking change:** `@Computed` properties are no longer materialized by `Record#map()`, `Record#json()`, or `Audience#frame()` unless the caller positively names them. The `@Computed` annotation has always promised that "computed data is generally expensive to generate and should only be calculated when explicitly requested" &mdash; but the historical default materialized every `@Computed` property on any bare serialization call, eagerly invoking suppliers the caller never asked for. That behavior contradicted the annotation's contract and made `@Computed` operationally indistinguishable from `@Derived`. This release corrects the longstanding bug by aligning the default with the documented contract. ([GH-128](https://github.com/cinchapi/runway/issues/128))
     * **Mitigations for callers depending on the legacy behavior:**
