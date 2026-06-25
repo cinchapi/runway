@@ -35,7 +35,8 @@ import com.cinchapi.concourse.time.Time;
  * Tests for {@link DatabaseInterface#findFirst(Class, Criteria, Order)
  * findFirst} and {@link DatabaseInterface#findFirstAny(Class, Criteria, Order)
  * findFirstAny}. Each test runs once with bulk Command-API support enabled and
- * once with it disabled so the behavior is verified on both read paths.
+ * once with it disabled so the behavior is verified on both the bulk and
+ * incremental command-read paths.
  *
  * @author Javier Lores
  */
@@ -300,6 +301,38 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the order-first record passing the
+     * {@link Predicate} is returned even when it lies well past the one-row
+     * page, i.e. the filter rejects several order-leading rows and the match is
+     * found by widening the page rather than by inspecting only the first
+     * fetched row.
+     * <p>
+     * <strong>Start state:</strong> Ten {@link Job Jobs} with ranks 1 through
+     * 10 saved in non-sorted insertion order.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Job Jobs} with ranks 1 through 10.</li>
+     * <li>Call {@code findFirst} ordered by {@code rank} ascending with a
+     * filter that rejects every rank below 8.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Job} has rank 8 &mdash;
+     * the order-first row that passes the filter, even though ranks 1 through 7
+     * sort ahead of it and are rejected.
+     */
+    @Test
+    public void testFindFirstWithFilterSkipsRejectedRowsBeyondFirstPage() {
+        runway.save(new Job(5), new Job(9), new Job(1), new Job(7), new Job(3),
+                new Job(10), new Job(2), new Job(8), new Job(6), new Job(4));
+        Predicate<Job> atLeastEight = job -> job.rank >= 8;
+        Job first = runway.findFirst(Job.class, rankPositive(),
+                Order.by("rank").ascending(), atLeastEight);
+        Assert.assertNotNull(first);
+        Assert.assertEquals(8, first.rank);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify the connector-claim use case: under a
      * staleness criteria, {@code findFirst} selects the eligible connector
      * (lock unset or lock timestamp older than the cutoff), preferring the one
@@ -343,9 +376,8 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Return a {@link Criteria} matching every {@link Job} (and
-     * {@link Connector} not relevant here) whose {@code rank} is positive,
-     * which is every {@link Job} these tests create.
+     * Return a {@link Criteria} matching every {@link Job} whose {@code rank}
+     * is positive, which is every {@link Job} these tests create.
      *
      * @return the {@code rank > 0} {@link Criteria}
      */
