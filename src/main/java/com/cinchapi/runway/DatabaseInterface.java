@@ -26,6 +26,7 @@ import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
+import com.google.common.collect.Iterables;
 
 /**
  * A {@link DatabaseInterface} provides methods for interacting with a database
@@ -1091,6 +1092,165 @@ public interface DatabaseInterface {
             Criteria criteria, Realms realms) {
         return fetch(
                 Selection.ofAnyUnique(clazz).where(criteria).realms(realms));
+    }
+
+    /**
+     * Find and return the first record of type {@code clazz} that matches the
+     * {@code criteria} under the supplied {@code order}, or {@code null} if no
+     * record matches.
+     * <p>
+     * "First" is defined entirely by {@code order}; the {@code order} and a
+     * one-row page are pushed to the server so a single sorted row is returned
+     * rather than the full match set. Unlike
+     * {@link #findUnique(Class, Criteria) findUnique}, this performs no
+     * duplicate detection and never throws when more than one record matches.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @return the first matching record, or {@code null} if none matches
+     */
+    public default <T extends Record> T findFirst(Class<T> clazz,
+            Criteria criteria, Order order) {
+        return Iterables.getFirst(fetch(Selection.of(clazz).where(criteria)
+                .order(order).page(Page.limit(1))), null);
+    }
+
+    /**
+     * Find and return the first record of type {@code clazz} that matches the
+     * {@code criteria} under the supplied {@code order} among the provided
+     * {@code realms}, or {@code null} if no record matches.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param realms
+     * @return the first matching record, or {@code null} if none matches
+     */
+    public default <T extends Record> T findFirst(Class<T> clazz,
+            Criteria criteria, Order order, Realms realms) {
+        return Iterables.getFirst(fetch(Selection.of(clazz).where(criteria)
+                .order(order).page(Page.limit(1)).realms(realms)), null);
+    }
+
+    /**
+     * Find and return the first record of type {@code clazz} that matches the
+     * {@code criteria} and passes the {@code filter} under the supplied
+     * {@code order}, or {@code null} if no record matches.
+     * <p>
+     * The {@code filter} is evaluated server-adjacent before the one-row limit
+     * is applied, so a record that the {@code filter} rejects does not mask a
+     * later record that both matches the {@code criteria} and passes the
+     * {@code filter}. Prefer expressing conditions in the {@code criteria} so
+     * they push to the server; the {@code filter} is a convenience for
+     * conditions that cannot be expressed in a {@link Criteria}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param filter
+     * @return the first matching record, or {@code null} if none matches
+     */
+    public default <T extends Record> T findFirst(Class<T> clazz,
+            Criteria criteria, Order order, Predicate<T> filter) {
+        return Iterables.getFirst(fetch(Selection.of(clazz).where(criteria)
+                .filter(filter).order(order).page(Page.limit(1))), null);
+    }
+
+    /**
+     * Find and return the first record of type {@code clazz} that matches the
+     * {@code criteria} and passes the {@code filter} under the supplied
+     * {@code order} among the provided {@code realms}, or {@code null} if no
+     * record matches.
+     * <p>
+     * The {@code filter} is evaluated server-adjacent before the one-row limit
+     * is applied, so a record that the {@code filter} rejects does not mask a
+     * later record that both matches the {@code criteria} and passes the
+     * {@code filter}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param filter
+     * @param realms
+     * @return the first matching record, or {@code null} if none matches
+     */
+    public default <T extends Record> T findFirst(Class<T> clazz,
+            Criteria criteria, Order order, Predicate<T> filter,
+            Realms realms) {
+        return Iterables.getFirst(
+                fetch(Selection.of(clazz).where(criteria).filter(filter)
+                        .order(order).page(Page.limit(1)).realms(realms)),
+                null);
+    }
+
+    /**
+     * Execute the {@link #findFirst(Class, Criteria, Order)} query for
+     * {@code clazz} and all of its descendants.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @return the first matching record, or {@code null} if none matches
+     */
+    public default <T extends Record> T findFirstAny(Class<T> clazz,
+            Criteria criteria, Order order) {
+        return Iterables.getFirst(fetch(Selection.ofAny(clazz).where(criteria)
+                .order(order).page(Page.limit(1))), null);
+    }
+
+    /**
+     * Execute the {@link #findFirst(Class, Criteria, Order, Realms)} query for
+     * {@code clazz} and all of its descendants among the provided
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param realms
+     * @return the first matching record, or {@code null} if none matches
+     */
+    public default <T extends Record> T findFirstAny(Class<T> clazz,
+            Criteria criteria, Order order, Realms realms) {
+        return Iterables.getFirst(fetch(Selection.ofAny(clazz).where(criteria)
+                .order(order).page(Page.limit(1)).realms(realms)), null);
+    }
+
+    /**
+     * Execute the {@link #findFirst(Class, Criteria, Order, Predicate)} query
+     * for {@code clazz} and all of its descendants.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param filter
+     * @return the first matching record, or {@code null} if none matches
+     */
+    public default <T extends Record> T findFirstAny(Class<T> clazz,
+            Criteria criteria, Order order, Predicate<T> filter) {
+        return Iterables.getFirst(fetch(Selection.ofAny(clazz).where(criteria)
+                .filter(filter).order(order).page(Page.limit(1))), null);
+    }
+
+    /**
+     * Execute the {@link #findFirst(Class, Criteria, Order, Predicate, Realms)}
+     * query for {@code clazz} and all of its descendants among the provided
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param filter
+     * @param realms
+     * @return the first matching record, or {@code null} if none matches
+     */
+    public default <T extends Record> T findFirstAny(Class<T> clazz,
+            Criteria criteria, Order order, Predicate<T> filter,
+            Realms realms) {
+        return Iterables.getFirst(
+                fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                        .order(order).page(Page.limit(1)).realms(realms)),
+                null);
     }
 
     /**
