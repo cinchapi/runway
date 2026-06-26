@@ -37,6 +37,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -369,6 +370,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * giving up.
      */
     private static final int MAX_SPURIOUS_SAVE_RETRIES = 5;
+
+    /**
+     * The base interval, in milliseconds, for the jittered exponential backoff
+     * between atomic read-modify-write retries.
+     */
+    private static final long RETRY_BACKOFF_BASE_MILLIS = 10;
 
     /**
      * The development {@link Version} sentinel; a server reporting this version
@@ -962,6 +969,242 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public boolean save(Record... records) {
         return save(false, records);
+    }
+
+    /**
+     * Atomically find every {@link Record} of type {@code clazz} that matches
+     * the {@code criteria}, apply the {@code consumer} to each, and persist all
+     * of the edits as a single transaction.
+     * <p>
+     * The find, the {@code consumer} application, and the save run as one
+     * transaction: either every edit commits or none do. When no record
+     * matches, the {@code consumer} is never invoked, nothing is committed, and
+     * an empty {@link Set} is returned. The returned {@link Set} preserves the
+     * iteration order of the underlying find.
+     * <p>
+     * On a write conflict the whole cycle (re-find, re-apply, re-save) is
+     * retried with jittered backoff up to a bounded number of attempts, so the
+     * {@code consumer} may run more than once and must be safe to do so; it
+     * must mutate the {@link Record} it is handed rather than one captured
+     * earlier. The {@code consumer} runs before the save's validation, so an
+     * edit that violates a {@code Required}/{@code Unique} constraint surfaces
+     * from the save path.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the records must match
+     * @param consumer the mutation to apply to each matching {@link Record}
+     * @return the {@link Set} of edited {@link Record Records}, empty when none
+     *         matched
+     * @throws RetryExhaustedException if the edit cannot commit within the
+     *             bounded number of attempts due to persistent contention
+     */
+    public <T extends Record> Set<T> findAndEdit(Class<T> clazz,
+            Criteria criteria, Consumer<T> consumer) {
+        return editWithinTransaction(clazz, false, criteria, null, null,
+                consumer, found -> {});
+    }
+
+    /**
+     * Atomically find the one {@link Record} of type {@code clazz} that matches
+     * the {@code criteria}, apply the {@code consumer} to it, and persist the
+     * edit as a single transaction.
+     * <p>
+     * Returns the edited {@link Record}, or {@code null} when nothing matches
+     * (in which case the {@code consumer} is never invoked and nothing is
+     * committed). Throws {@link DuplicateEntryException} when more than one
+     * record matches, consistent with
+     * {@link DatabaseInterface#findUnique(Class, Criteria) findUnique}; the
+     * duplicate check happens inside the transaction before the
+     * {@code consumer} runs, so a violation neither mutates nor commits.
+     * <p>
+     * On a write conflict the whole cycle is retried with jittered backoff up
+     * to a bounded number of attempts, so the {@code consumer} may run more
+     * than once and must be safe to do so; it must mutate the {@link Record} it
+     * is handed rather than one captured earlier.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param consumer the mutation to apply to the matching {@link Record}
+     * @return the edited {@link Record}, or {@code null} if none matches
+     * @throws DuplicateEntryException if more than one record matches
+     * @throws RetryExhaustedException if the edit cannot commit within the
+     *             bounded number of attempts due to persistent contention
+     */
+    public <T extends Record> T findUniqueAndEdit(Class<T> clazz,
+            Criteria criteria, Consumer<T> consumer) {
+        Set<T> edited = editWithinTransaction(clazz, false, criteria, null,
+                DatabaseInterface.UNIQUE_PAGINATION, consumer, found -> {
+                    if(found.size() > 1) {
+                        throw duplicateEntryException(
+                                "Multiple records match {} in {}", criteria,
+                                clazz);
+                    }
+                });
+        return Iterables.getFirst(edited, null);
+    }
+
+    /**
+     * Atomically find the first {@link Record} of type {@code clazz} that
+     * matches the {@code criteria} under the supplied {@code order}, apply the
+     * {@code consumer} to it, and persist the edit as a single transaction.
+     * <p>
+     * "First" is defined entirely by {@code order}, which is required. Returns
+     * the edited {@link Record}, or {@code null} when nothing matches (in which
+     * case the {@code consumer} is never invoked and nothing is committed).
+     * <p>
+     * This is the claim-and-update primitive: concurrent callers contending for
+     * the same record are serialized by the database, so at most one commits
+     * and the rest are preempted and retried. On a write conflict the whole
+     * cycle (re-find under {@code order}, re-apply, re-save) is retried with
+     * jittered backoff up to a bounded number of attempts, so the
+     * {@code consumer} may run more than once and must be safe to do so; it
+     * must mutate the {@link Record} it is handed rather than one captured
+     * earlier.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param consumer the mutation to apply to the matching {@link Record}
+     * @return the edited {@link Record}, or {@code null} if none matches
+     * @throws RetryExhaustedException if the edit cannot commit within the
+     *             bounded number of attempts due to persistent contention
+     */
+    public <T extends Record> T findFirstAndEdit(Class<T> clazz,
+            Criteria criteria, Order order, Consumer<T> consumer) {
+        Preconditions.checkNotNull(order, "findFirstAndEdit requires an Order");
+        Set<T> edited = editWithinTransaction(clazz, false, criteria, order,
+                Page.limit(1), consumer, found -> {});
+        return Iterables.getFirst(edited, null);
+    }
+
+    /**
+     * Perform an atomic find-modify-save: within a single staged transaction,
+     * find the records of type {@code clazz} matching {@code criteria} (under
+     * the optional {@code order} and {@code page}), let {@code validator}
+     * inspect the freshly read {@link Set} before any edit, apply
+     * {@code consumer} to each record, save, and commit. The find's read and
+     * the save's write share one transaction (and therefore one set of locks),
+     * which is what gives concurrent callers true mutual exclusion.
+     * <p>
+     * On a {@link TransactionException} the cycle is aborted and retried with
+     * jittered backoff up to {@link #MAX_SPURIOUS_SAVE_RETRIES} attempts, each
+     * re-finding fresh records so the {@code consumer} always observes current
+     * state. When the attempt budget is exhausted a
+     * {@link RetryExhaustedException} is thrown rather than returning a
+     * non-committed result.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param any whether to include the {@code clazz} hierarchy
+     * @param criteria the {@link Criteria} the records must match
+     * @param order the sort {@link Order}, or {@code null}
+     * @param page the {@link Page} limit, or {@code null} for all matches
+     * @param consumer the mutation applied to each matching {@link Record}
+     * @param validator a hook that inspects the freshly read {@link Set} inside
+     *            the transaction before any edit (e.g. to enforce uniqueness)
+     * @return the {@link Set} of edited and committed {@link Record Records}
+     * @throws RetryExhaustedException if no attempt commits within the bound
+     */
+    private <T extends Record> Set<T> editWithinTransaction(Class<T> clazz,
+            boolean any, Criteria criteria, @Nullable Order order,
+            @Nullable Page page, Consumer<T> consumer,
+            Consumer<Set<T>> validator) {
+        Concourse concourse = connections.request();
+        try {
+            int attempts = 0;
+            while (true) {
+                // NOTE: The incremental path is used unconditionally (even when
+                // #supportsBulkCommands) because BatchSaver defers the
+                // server-side STAGE until commit time, which would place the
+                // find's read outside the transaction. IncrementalSaver stages
+                // synchronously, so the find's read and the save's write share
+                // one transaction (and one set of locks) &mdash; the property
+                // that gives concurrent callers mutual exclusion.
+                Saver saver = new IncrementalSaver(concourse);
+                try {
+                    saver.stage();
+                    Set<T> found;
+                    // NOTE: The Reader is bound to the same staged connection
+                    // as the Saver so the find reads inside the transaction;
+                    // this deliberately bypasses the result cache used by the
+                    // pooled #select path.
+                    try (Reader reader = new IncrementalReader(concourse)) {
+                        Read read = enqueueRead(reader, any, clazz, criteria,
+                                order, page);
+                        AtomicReference<Set<T>> ref = new AtomicReference<>();
+                        read.data
+                                .then($data -> read.navigated
+                                        .then($navigated -> resolveLinkTargets(
+                                                reader, $data, $navigated))
+                                        .map($targets -> instantiateAll(clazz,
+                                                any, $data, $targets)))
+                                .onResolve(ref::set);
+                        reader.drain();
+                        found = ref.get();
+                    }
+                    validator.accept(found);
+                    if(found.isEmpty()) {
+                        saver.abort();
+                        return found;
+                    }
+                    Map<Record, Boolean> seen = new HashMap<>();
+                    Map<Record, Snapshot> snapshots = new HashMap<>();
+                    for (T record : found) {
+                        consumer.accept(record);
+                        record.assign(this);
+                        record.saveWithinTransaction(saver, seen, snapshots,
+                                false);
+                    }
+                    if(saver.commit()) {
+                        seen.entrySet().stream().filter(Entry::getValue)
+                                .map(Entry::getKey).forEach(record -> {
+                                    enqueueSaveNotification(record);
+                                    record.checkpoint();
+                                });
+                        return found;
+                    }
+                    else {
+                        // Trigger the retry path below.
+                        throw new TransactionException();
+                    }
+                }
+                catch (TransactionException e) {
+                    saver.abort();
+                    if(++attempts > MAX_SPURIOUS_SAVE_RETRIES) {
+                        throw new RetryExhaustedException(attempts);
+                    }
+                    backoffWithJitter(attempts);
+                    continue;
+                }
+                catch (Throwable t) {
+                    // A non-transaction failure (e.g. a duplicate-entry or
+                    // constraint violation) is terminal: abort and propagate
+                    // without retrying so nothing is committed or mutated.
+                    saver.abort();
+                    throw t;
+                }
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * Sleep for a jittered, exponentially growing interval before the next
+     * atomic read-modify-write {@code attempt}, dispersing contending callers
+     * so they do not collide again in lockstep.
+     *
+     * @param attempt the attempt number that just failed (1-based)
+     */
+    private void backoffWithJitter(int attempt) {
+        long ceiling = RETRY_BACKOFF_BASE_MILLIS * (1L << (attempt - 1));
+        long delay = ThreadLocalRandom.current().nextLong(ceiling + 1);
+        try {
+            Thread.sleep(delay);
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
