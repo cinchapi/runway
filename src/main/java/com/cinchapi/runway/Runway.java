@@ -1000,8 +1000,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> Set<T> findAndEdit(Class<T> clazz,
             Criteria criteria, Consumer<T> consumer) {
-        return editWithinTransaction(clazz, false, criteria, null, null,
-                consumer, found -> {});
+        return editWithinTransaction(clazz, criteria, null, null, consumer,
+                found -> {});
     }
 
     /**
@@ -1032,7 +1032,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> T findUniqueAndEdit(Class<T> clazz,
             Criteria criteria, Consumer<T> consumer) {
-        Set<T> edited = editWithinTransaction(clazz, false, criteria, null,
+        Set<T> edited = editWithinTransaction(clazz, criteria, null,
                 DatabaseInterface.UNIQUE_PAGINATION, consumer, found -> {
                     if(found.size() > 1) {
                         throw duplicateEntryException(
@@ -1072,7 +1072,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> T findFirstAndEdit(Class<T> clazz,
             Criteria criteria, Order order, Consumer<T> consumer) {
         Preconditions.checkNotNull(order, "findFirstAndEdit requires an Order");
-        Set<T> edited = editWithinTransaction(clazz, false, criteria, order,
+        Set<T> edited = editWithinTransaction(clazz, criteria, order,
                 Page.limit(1), consumer, found -> {});
         return Iterables.getFirst(edited, null);
     }
@@ -1094,7 +1094,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * non-committed result.
      *
      * @param clazz the {@link Record} type to find
-     * @param any whether to include the {@code clazz} hierarchy
      * @param criteria the {@link Criteria} the records must match
      * @param order the sort {@link Order}, or {@code null}
      * @param page the {@link Page} limit, or {@code null} for all matches
@@ -1105,11 +1104,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @throws RetryExhaustedException if no attempt commits within the bound
      */
     private <T extends Record> Set<T> editWithinTransaction(Class<T> clazz,
-            boolean any, Criteria criteria, @Nullable Order order,
-            @Nullable Page page, Consumer<T> consumer,
-            Consumer<Set<T>> validator) {
+            Criteria criteria, @Nullable Order order, @Nullable Page page,
+            Consumer<T> consumer, Consumer<Set<T>> validator) {
+        // NOTE: Unlike #save, every TransactionException is retried here
+        // regardless of #spuriousSaveFailureStrategy and without a stale-data
+        // check. These primitives are built for write-conflict contention (the
+        // claim use case), where a lost commit race is exactly the condition a
+        // caller wants retried; staleness checks are off because the read is
+        // re-issued fresh inside each attempt's transaction.
         Concourse concourse = connections.request();
         try {
+            // NOTE: The connection is held across the bounded backoff sleeps
+            // rather than released between attempts. The staged transaction
+            // lives on this connection, and re-requesting per attempt would
+            // churn the pool; the backoff is capped at a few hundred millis so
+            // the idle occupancy is brief.
             int attempts = 0;
             while (true) {
                 // NOTE: The incremental path is used unconditionally (even when
@@ -1122,24 +1131,36 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 Saver saver = new IncrementalSaver(concourse);
                 try {
                     saver.stage();
+                    // NOTE: A legacy server cannot sort or paginate
+                    // server-side, so the order/page are withheld from the
+                    // find and applied client-side below. The find still reads
+                    // (and therefore locks) every match inside the
+                    // transaction, so the atomicity and mutual-exclusion
+                    // guarantees are preserved.
+                    boolean nativeOrderAndPage = hasNativeSortingAndPagination
+                            || doesNotRequireSortingOrPagination(order, page);
                     Set<T> found;
                     // NOTE: The Reader is bound to the same staged connection
                     // as the Saver so the find reads inside the transaction;
                     // this deliberately bypasses the result cache used by the
                     // pooled #select path.
                     try (Reader reader = new IncrementalReader(concourse)) {
-                        Read read = enqueueRead(reader, any, clazz, criteria,
-                                order, page);
+                        Read read = enqueueRead(reader, false, clazz, criteria,
+                                nativeOrderAndPage ? order : null,
+                                nativeOrderAndPage ? page : null);
                         AtomicReference<Set<T>> ref = new AtomicReference<>();
                         read.data
                                 .then($data -> read.navigated
                                         .then($navigated -> resolveLinkTargets(
                                                 reader, $data, $navigated))
                                         .map($targets -> instantiateAll(clazz,
-                                                any, $data, $targets)))
+                                                false, $data, $targets)))
                                 .onResolve(ref::set);
                         reader.drain();
                         found = ref.get();
+                    }
+                    if(!nativeOrderAndPage) {
+                        found = sortAndPage(found, order, page);
                     }
                     validator.accept(found);
                     if(found.isEmpty()) {
@@ -1203,8 +1224,34 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             Thread.sleep(delay);
         }
         catch (InterruptedException e) {
+            // Honor the interrupt by restoring the flag and abandoning the
+            // retry loop rather than silently continuing to contend.
             Thread.currentThread().interrupt();
+            throw CheckedExceptions.throwAsRuntimeException(e);
         }
+    }
+
+    /**
+     * Apply {@code order} and {@code page} to {@code records} client-side, for
+     * the legacy-server path where the find could not sort or paginate
+     * server-side.
+     *
+     * @param records the records read for the match, in find order
+     * @param order the sort {@link Order} to apply, or {@code null}
+     * @param page the {@link Page} to apply, or {@code null} for all records
+     * @return the sorted and paginated {@link Set}, preserving iteration order
+     */
+    private <T extends Record> Set<T> sortAndPage(Set<T> records,
+            @Nullable Order order, @Nullable Page page) {
+        if(order != null) {
+            records = DatabaseInterface.sort(records,
+                    backwardsCompatible(order));
+        }
+        if(page != null) {
+            records = records.stream().skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+        return records;
     }
 
     /**

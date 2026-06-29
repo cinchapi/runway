@@ -169,6 +169,47 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndEdit} still
+     * detects a duplicate match when the server cannot paginate natively, so
+     * the unique guard does not depend on server-side pagination.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} forced onto the legacy
+     * path (no native sorting/pagination) with two {@link Item Items} that
+     * share the same code.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Force {@code hasNativeSortingAndPagination} to {@code false}.</li>
+     * <li>Save two {@link Item Items} both with code 7.</li>
+     * <li>Call {@code findUniqueAndEdit} with {@code code == 7} and a consumer
+     * that sets {@code owner}.</li>
+     * <li>Catch the expected exception, then re-load both {@link Item
+     * Items}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown
+     * and neither re-loaded {@link Item} has an {@code owner} set.
+     */
+    @Test
+    public void testFindUniqueAndEditThrowsOnDuplicateOnLegacyServer() {
+        Reflection.set("hasNativeSortingAndPagination", false, runway); // (authorized)
+        Item one = new Item(7);
+        Item two = new Item(7);
+        runway.save(one, two);
+        boolean threw = false;
+        try {
+            runway.findUniqueAndEdit(Item.class, code(7),
+                    i -> i.owner = "worker");
+        }
+        catch (DuplicateEntryException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertNull(runway.load(Item.class, one.id()).owner);
+        Assert.assertNull(runway.load(Item.class, two.id()).owner);
+    }
+
+    /**
      * Return a {@link Criteria} matching every {@link Item} whose {@code code}
      * equals the given {@code value}.
      *

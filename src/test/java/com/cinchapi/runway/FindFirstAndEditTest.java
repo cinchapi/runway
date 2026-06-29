@@ -110,6 +110,41 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findFirstAndEdit} applies the
+     * {@link Order} client-side and still edits exactly the record that sorts
+     * first when the server cannot sort or paginate natively.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} forced onto the legacy
+     * path (no native sorting/pagination) with three unclaimed {@link Task
+     * Tasks} of ranks 3, 2, and 1 saved in non-sorted insertion order.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Force {@code hasNativeSortingAndPagination} to {@code false}.</li>
+     * <li>Save {@link Task Tasks} with ranks 3, 2, and 1.</li>
+     * <li>Call {@code findFirstAndEdit} ordered by {@code rank} ascending with
+     * a consumer that sets {@code owner} to {@code "worker"}.</li>
+     * <li>Re-load the returned {@link Task} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Task} has rank 1 and
+     * {@code owner == "worker"}, and the re-loaded {@link Task} shows the same
+     * persisted {@code owner}.
+     */
+    @Test
+    public void testFindFirstAndEditAppliesOrderClientSideOnLegacyServer() {
+        Reflection.set("hasNativeSortingAndPagination", false, runway); // (authorized)
+        runway.save(new Task(3), new Task(2), new Task(1));
+        Task first = runway.findFirstAndEdit(Task.class, unclaimed(),
+                Order.by("rank").ascending(), task -> task.owner = "worker");
+        Assert.assertNotNull(first);
+        Assert.assertEquals(1, first.rank);
+        Assert.assertEquals("worker", first.owner);
+        Task reloaded = runway.load(Task.class, first.id());
+        Assert.assertEquals("worker", reloaded.owner);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findFirstAndEdit} returns
      * {@code null} and never invokes the consumer when no record matches.
      * <p>
@@ -322,7 +357,10 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
         runway.findFirstAndEdit(Task.class, unclaimed(),
                 Order.by("rank").ascending(), t -> {
                     // Force a conflicting external write on every attempt so
-                    // the staged transaction can never commit.
+                    // the staged transaction can never commit. The nested
+                    // request borrows a second connection while the edit holds
+                    // its own; this is safe because Runway uses an expandable
+                    // cached pool that grows on demand rather than blocking.
                     Concourse other = runway.connections.request();
                     try {
                         other.set("rank", t.rank + 1, id);
