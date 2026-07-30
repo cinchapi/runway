@@ -1,5 +1,9 @@
 # Changelog
 
+#### Version 2.1.1 (TBD)
+* Fixed a bug where loading a record by id through an abstract class with no scanned descendants (most importantly, the `Record` base class itself via `load(Record.class, id)`) threw `InstantiationException` instead of resolving the record's concrete class from its stored section. ([GH-145](https://github.com/cinchapi/runway/issues/145))
+* Loading a record by id through an abstract class now returns `null` when the id does not name a Runway record (its data has no class section), consistent with how invalid records are indistinguishable from invisible ones. ([GH-145](https://github.com/cinchapi/runway/issues/145))
+
 #### Version 2.1.0 (May 22, 2026)
 * Fixed a bug where loading an access-controlled `Record` through an `Audience` (e.g., `Audience#load(Class, long)`) threw `UnsupportedOperationException` when the class's registered visibility `Scope` used a scoped navigation criteria (`Criteria.where().scope(prefix, inner)`). ([GH-125](https://github.com/cinchapi/runway/issues/125))
 * **Breaking change:** `@Computed` properties are no longer materialized by `Record#map()`, `Record#json()`, or `Audience#frame()` unless the caller positively names them. The `@Computed` annotation has always promised that "computed data is generally expensive to generate and should only be calculated when explicitly requested" &mdash; but the historical default materialized every `@Computed` property on any bare serialization call, eagerly invoking suppliers the caller never asked for. That behavior contradicted the annotation's contract and made `@Computed` operationally indistinguishable from `@Derived`. This release corrects the longstanding bug by aligning the default with the documented contract. ([GH-128](https://github.com/cinchapi/runway/issues/128))
