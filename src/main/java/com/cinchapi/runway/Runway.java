@@ -17,6 +17,7 @@ package com.cinchapi.runway;
 
 import static com.cinchapi.runway.DatabaseInterface.duplicateEntryException;
 
+import java.lang.reflect.Modifier;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1729,10 +1730,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Realms realms = selection.realms;
         Predicate<T> filter = selection.filter;
         boolean hasFilter = !DatabaseSelection.isNoFilter(filter);
-        // The provided clazz has descendants, so it is possible that the
-        // Record with the #id is actually a member of a subclass.
-        boolean needsSectionLookup = StaticAnalysis.instance()
-                .getClassHierarchy(initialClazz).size() > 1;
+        // The provided clazz has descendants (or is abstract, so the stored
+        // record can only be an instance of a descendant), which means the
+        // Record with the #id may actually be a member of a subclass.
+        boolean needsSectionLookup = Modifier
+                .isAbstract(initialClazz.getModifiers())
+                || StaticAnalysis.instance().getClassHierarchy(initialClazz)
+                        .size() > 1;
         Set<String> paths = needsSectionLookup ? null
                 : getPathsForClassIfSupported(initialClazz);
         Pending<Map<String, Set<Object>>> data = paths != null
@@ -1759,6 +1763,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 if(sections != null && !sections.isEmpty()) {
                     String section = (String) Iterables.getLast(sections);
                     clazz = Reflection.getClassCasted(section);
+                }
+                else if(Modifier.isAbstract(clazz.getModifiers())) {
+                    // Without a section, an abstract clazz can never be
+                    // instantiated, so treat the record as invalid and make it
+                    // indistinguishable from one that is not visible.
+                    return Pending.of(new SelectResult<>(null));
                 }
             }
             if(!realms.names().isEmpty()) {
