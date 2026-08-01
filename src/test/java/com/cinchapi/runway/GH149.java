@@ -15,8 +15,10 @@
  */
 package com.cinchapi.runway;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import org.junit.Assert;
@@ -27,6 +29,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.concourse.util.Random;
 import com.google.common.collect.ImmutableList;
 
 /**
@@ -59,6 +62,20 @@ public class GH149 extends RunwayBaseClientServerTest {
         for (int i = 0; i < scores.length; ++i) {
             Player player = new Player(String.valueOf((char) ('a' + i)),
                     scores[i]);
+            runway.save(player);
+        }
+    }
+
+    /**
+     * Save {@code count} {@link Player Players} with random names and random
+     * scores between {@code 0} and {@code 99}.
+     *
+     * @param count the number of {@link Player Players} to save
+     */
+    private void saveRandomPlayers(int count) {
+        for (int i = 0; i < count; ++i) {
+            Player player = new Player(Random.getSimpleString(),
+                    Random.getPositiveNumber().intValue() % 100);
             runway.save(player);
         }
     }
@@ -216,6 +233,140 @@ public class GH149 extends RunwayBaseClientServerTest {
         Set<Player> actual = runway.load(Player.class, Order.by("score"),
                 Page.skipLimit(2, 2), player -> player.score % 20 == 0);
         Assert.assertEquals(ImmutableList.of("f", "h"), names(actual));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a sorted {@code find} applies the
+     * client-side filter on the legacy read path across randomized data.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Player Players} with random
+     * names and scores and a {@link Runway} forced onto the legacy read path.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Compute the expected records from an unfiltered sorted {@code find}
+     * by applying the filter client-side.</li>
+     * <li>Find {@link Player Players} with {@code score > 0}, ordered by
+     * {@code name}, with the same filter.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The found records equal the expected filtered
+     * records.
+     */
+    @Test
+    public void testFindWithOrderAppliesFilterRandomizedData() {
+        saveRandomPlayers(100);
+        forceLegacyReadPath();
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(0);
+        Predicate<Player> filter = player -> player.score < 45;
+        Set<Player> expected = runway
+                .find(Player.class, criteria, Order.by("name")).stream()
+                .filter(filter)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<Player> actual = runway.find(Player.class, criteria,
+                Order.by("name"), filter);
+        Assert.assertEquals(expected, actual);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a sorted and paginated {@code find}
+     * applies the client-side filter before pagination on the legacy read path
+     * across randomized data.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Player Players} with random
+     * names and scores and a {@link Runway} forced onto the legacy read path.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Compute the expected records from an unfiltered sorted {@code find}
+     * by filtering, then applying the page's skip and limit client-side.</li>
+     * <li>Find {@link Player Players} with {@code score > 0}, ordered by
+     * {@code name}, with the same filter and page.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The found records equal the expected records,
+     * which proves the page is drawn only from records that pass the filter.
+     */
+    @Test
+    public void testFindWithOrderAndPageAppliesFilterRandomizedData() {
+        saveRandomPlayers(100);
+        forceLegacyReadPath();
+        Page page = Page.skipLimit(2, 5);
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(0);
+        Predicate<Player> filter = player -> player.score % 20 == 0;
+        Set<Player> expected = runway
+                .find(Player.class, criteria, Order.by("name")).stream()
+                .filter(filter).skip(page.skip()).limit(page.limit())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<Player> actual = runway.find(Player.class, criteria,
+                Order.by("name"), page, filter);
+        Assert.assertEquals(expected, actual);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a sorted {@code load} applies the
+     * client-side filter on the legacy read path across randomized data.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Player Players} with random
+     * names and scores and a {@link Runway} forced onto the legacy read path.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Compute the expected records from an unfiltered sorted {@code load}
+     * by applying the filter client-side.</li>
+     * <li>Load {@link Player Players} ordered by {@code name} with the same
+     * filter.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The loaded records equal the expected filtered
+     * records.
+     */
+    @Test
+    public void testLoadWithOrderAppliesFilterRandomizedData() {
+        saveRandomPlayers(100);
+        forceLegacyReadPath();
+        Predicate<Player> filter = player -> player.score < 45;
+        Set<Player> expected = runway.load(Player.class, Order.by("name"))
+                .stream().filter(filter)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<Player> actual = runway.load(Player.class, Order.by("name"),
+                filter);
+        Assert.assertEquals(expected, actual);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a sorted and paginated {@code load}
+     * applies the client-side filter before pagination on the legacy read path
+     * across randomized data.
+     * <p>
+     * <strong>Start state:</strong> Saved {@link Player Players} with random
+     * names and scores and a {@link Runway} forced onto the legacy read path.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Compute the expected records from an unfiltered sorted {@code load}
+     * by filtering, then applying the page's skip and limit client-side.</li>
+     * <li>Load {@link Player Players} ordered by {@code name} with the same
+     * filter and page.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The loaded records equal the expected records,
+     * which proves the page is drawn only from records that pass the filter.
+     */
+    @Test
+    public void testLoadWithOrderAndPageAppliesFilterRandomizedData() {
+        saveRandomPlayers(100);
+        forceLegacyReadPath();
+        Page page = Page.skipLimit(2, 5);
+        Predicate<Player> filter = player -> player.score % 20 == 0;
+        Set<Player> expected = runway.load(Player.class, Order.by("name"))
+                .stream().filter(filter).skip(page.skip()).limit(page.limit())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<Player> actual = runway.load(Player.class, Order.by("name"), page,
+                filter);
+        Assert.assertEquals(expected, actual);
     }
 
 }
