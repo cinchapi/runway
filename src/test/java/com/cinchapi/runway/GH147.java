@@ -18,7 +18,9 @@ package com.cinchapi.runway;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.runway.access.Audience;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 
 /**
  * Regression tests for
@@ -453,6 +455,206 @@ public class GH147 extends RunwayBaseClientServerTest {
             Assert.assertEquals("changed", vault.name);
         }
     }
+
+    /**
+     * <strong>Goal:</strong> Verify that, by default, {@link Record#set} can
+     * still write internal framework state, such as the {@link Record Record's}
+     * id, which preserves the historical behavior.
+     * <p>
+     * <strong>Start state:</strong> A single default {@link Runway} instance,
+     * so new {@link Record Records} auto-assign to it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Vault}.</li>
+     * <li>Call {@code set("id", 12345L)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code id()} returns the new value.
+     */
+    @Test
+    public void testSetInternalFieldSucceedsByDefault() {
+        Vault vault = new Vault("vault", "code");
+        vault.set("id", 12345L);
+        Assert.assertEquals(12345L, vault.id());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the
+     * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy causes
+     * {@link Record#set} to refuse a write to the {@link Record Record's}
+     * internal id, so a dynamic write cannot rebind the record's identity.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} that enforces the
+     * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Vault} and assign it to the strict
+     * {@link Runway}.</li>
+     * <li>Call {@code set("id", 12345L)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws
+     * {@link NonWritableFieldException} and {@code id()} returns the original
+     * value.
+     */
+    @Test
+    public void testJavaDefaultsRefusesSetOfInternalIdField() throws Exception {
+        try (Runway strict = strictRunway()) {
+            Vault vault = new Vault("vault", "code");
+            vault.assign(strict);
+            long id = vault.id();
+            assertNonWritable(vault, "id", 12345L);
+            Assert.assertEquals(id, vault.id());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the
+     * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy causes
+     * {@link Record#set} to refuse a write to internal framework metadata, such
+     * as the {@link Record Record's} realm membership.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} that enforces the
+     * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Vault} and assign it to the strict
+     * {@link Runway}.</li>
+     * <li>Call {@code set("_realms", ...)} with a set of realm names.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws
+     * {@link NonWritableFieldException} and the {@link Vault} belongs to no
+     * realms.
+     */
+    @Test
+    public void testJavaDefaultsRefusesSetOfInternalMetadataField()
+            throws Exception {
+        try (Runway strict = strictRunway()) {
+            Vault vault = new Vault("vault", "code");
+            vault.assign(strict);
+            assertNonWritable(vault, "_realms", ImmutableSet.of("internal"));
+            Assert.assertTrue(vault.realms().isEmpty());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#set(java.util.Map)}
+     * checks every key against the governing policy before it applies any
+     * entry, so a refusal leaves the {@link Record} unchanged.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} that enforces the
+     * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Vault} and assign it to the strict
+     * {@link Runway}.</li>
+     * <li>Call {@code set} with a map that lists the writable
+     * {@code description} key before the non-writable final {@code name}
+     * key.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws
+     * {@link NonWritableFieldException} and neither field changes, even though
+     * the writable entry appears first in the map's iteration order.
+     */
+    @Test
+    public void testSetMapIsAtomicWhenPolicyRefusesAnEntry() throws Exception {
+        try (Runway strict = strictRunway()) {
+            Vault vault = new Vault("vault", "code");
+            vault.assign(strict);
+            try {
+                vault.set(ImmutableMap.of("description", "changed", "name",
+                        "changed"));
+                Assert.fail("Expected a NonWritableFieldException");
+            }
+            catch (NonWritableFieldException e) {
+                Assert.assertNull(vault.description);
+                Assert.assertEquals("vault", vault.name);
+            }
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the pre-application policy check in
+     * {@link Record#set(java.util.Map)} does not refuse writable fields or
+     * dynamic attributes, so a fully permitted map still applies in full.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} that enforces the
+     * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Vault} and assign it to the strict
+     * {@link Runway}.</li>
+     * <li>Call {@code set} with a map that contains the public
+     * {@code description} field and a {@code nickname} key that does not name a
+     * field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The field holds the new value and the dynamic
+     * attribute is stored.
+     */
+    @Test
+    public void testSetMapAppliesAllEntriesWhenPolicyPermits()
+            throws Exception {
+        try (Runway strict = strictRunway()) {
+            Vault vault = new Vault("vault", "code");
+            vault.assign(strict);
+            vault.set(ImmutableMap.of("description", "changed", "nickname",
+                    "the-vault"));
+            Assert.assertEquals("changed", vault.description);
+            Assert.assertEquals("the-vault", vault.get("nickname"));
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a write made through
+     * {@link Audience#write(String, Object, Record)} is governed by the
+     * {@link DynamicWritePolicy} of the {@link Record Record's} assigned
+     * {@link Runway} instance.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} that enforces the
+     * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Custodian} to act as the {@link Audience}.</li>
+     * <li>Construct a {@link Vault} and assign it to the strict
+     * {@link Runway}.</li>
+     * <li>Call {@code write("name", "changed", vault)} on the
+     * {@link Custodian}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws
+     * {@link NonWritableFieldException} and the final field keeps its original
+     * value.
+     */
+    @Test
+    public void testAudienceWriteRefusesNonWritableField() throws Exception {
+        try (Runway strict = strictRunway()) {
+            Custodian custodian = new Custodian();
+            Vault vault = new Vault("vault", "code");
+            vault.assign(strict);
+            try {
+                custodian.write("name", "changed", vault);
+                Assert.fail("Expected a NonWritableFieldException");
+            }
+            catch (NonWritableFieldException e) {
+                Assert.assertEquals("vault", vault.name);
+            }
+        }
+    }
+
+    /**
+     * A minimal {@link Audience} used to drive writes through the access
+     * control framework.
+     */
+    static class Custodian extends Record implements Audience {}
 
     /**
      * A {@link Record} that declares one field for each modifier shape that a

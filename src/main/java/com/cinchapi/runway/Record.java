@@ -1733,14 +1733,19 @@ public abstract class Record implements Comparable<Record> {
     /**
      * {@link #set(String, Object) Set} each key/value pair from {@code data} in
      * this {@link Record}.
+     * <p>
+     * Every key in {@code data} is checked against the governing
+     * {@link DynamicWritePolicy} before any entry is applied, so a policy
+     * refusal leaves this {@link Record} unchanged.
+     * </p>
      *
      * @param data a mapping from each key name to the value to set
      * @throws NonWritableFieldException if a key in {@code data} names a field
      *             that the governing {@link DynamicWritePolicy} does not permit
-     *             writing; entries processed before the offending one remain
-     *             applied
+     *             writing; in that case, no entry from {@code data} is applied
      */
     public void set(Map<String, Object> data) {
+        data.keySet().forEach(this::verifyDynamicallyWritable);
         data.forEach((key, value) -> {
             set(key, value);
         });
@@ -1748,13 +1753,14 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Set the value for {@code key} in this {@link Record}. If {@code key}
-     * names a field in the schema, the field is written. Otherwise, the
-     * key/value pair is stored as a dynamic attribute.
+     * names a field, the field is written. Otherwise, the key/value pair is
+     * stored as a dynamic attribute.
      * <p>
-     * A write to a schema field is governed by the {@link DynamicWritePolicy}
-     * of the assigned {@link Runway} instance. If the policy does not permit
-     * writing the field, then this method throws a
-     * {@link NonWritableFieldException} and no data is changed.
+     * A write to a field &mdash; whether the field is part of the schema or the
+     * {@link Record Record's} internal framework state &mdash; is governed by
+     * the {@link DynamicWritePolicy} of the assigned {@link Runway} instance.
+     * If the policy does not permit writing the field, then this method throws
+     * a {@link NonWritableFieldException} and no data is changed.
      * </p>
      *
      * @param key the key name
@@ -1763,35 +1769,22 @@ public abstract class Record implements Comparable<Record> {
      *             governing {@link DynamicWritePolicy} does not permit writing
      */
     public void set(String key, Object value) {
+        verifyDynamicallyWritable(key);
         if(dynamicData.containsKey(key)) {
             dynamicData.put(key, value);
         }
         else {
-            Field field;
             try {
-                field = StaticAnalysis.instance().getField(this, key);
+                Reflection.set(key, value, this);
             }
-            catch (IllegalArgumentException e) {
-                field = null;
-            }
-            if(field != null && !dynamicWritePolicy().isWritable(field)) {
-                throw new NonWritableFieldException(AnyStrings.format(
-                        "Cannot set '{}' because it is not a writable field in {}",
-                        key, getClass().getSimpleName()));
-            }
-            else {
-                try {
-                    Reflection.set(key, value, this);
+            catch (Exception e) {
+                Set<String> intrinsic = StaticAnalysis.instance()
+                        .getKeys(this.getClass());
+                if(intrinsic.contains(key)) {
+                    throw e;
                 }
-                catch (Exception e) {
-                    Set<String> intrinsic = StaticAnalysis.instance()
-                            .getKeys(this.getClass());
-                    if(intrinsic.contains(key)) {
-                        throw e;
-                    }
-                    else {
-                        dynamicData.put(key, value);
-                    }
+                else {
+                    dynamicData.put(key, value);
                 }
             }
         }
@@ -3428,6 +3421,39 @@ public abstract class Record implements Comparable<Record> {
             }
 
             return primitive;
+        }
+    }
+
+    /**
+     * Verify that the governing {@link DynamicWritePolicy} permits a
+     * {@link #set(String, Object) dynamic write} to {@code key} and throw a
+     * {@link NonWritableFieldException} if it does not.
+     * <p>
+     * A key that does not name a field is always writable because it stores a
+     * dynamic attribute instead of writing a field.
+     * </p>
+     *
+     * @param key the key name
+     * @throws NonWritableFieldException if {@code key} names a field that the
+     *             governing {@link DynamicWritePolicy} does not permit writing
+     */
+    private void verifyDynamicallyWritable(String key) {
+        if(!dynamicData.containsKey(key)) {
+            Field field;
+            try {
+                field = StaticAnalysis.instance().getField(this, key);
+            }
+            catch (IllegalArgumentException e) {
+                field = null;
+            }
+            if(field == null) {
+                field = INTERNAL_FIELDS.get(key);
+            }
+            if(field != null && !dynamicWritePolicy().isWritable(field)) {
+                throw new NonWritableFieldException(AnyStrings.format(
+                        "Cannot set '{}' because it is not a writable field in {}",
+                        key, getClass().getSimpleName()));
+            }
         }
     }
 
