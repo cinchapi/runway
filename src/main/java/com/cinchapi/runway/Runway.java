@@ -1634,6 +1634,36 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Record on {@code reader} the read required to resolve {@code selection}
+     * and return a {@link Pending} of the {@link SelectResult} holding the
+     * first matching {@link Record} under the {@link FirstSelection
+     * FirstSelection's} {@link Order} (or {@code null} when no record matches).
+     *
+     * @param reader the {@link Reader} that records the underlying read
+     * @param selection the {@link FirstSelection} to resolve
+     * @param <T> the {@link Record} type
+     * @return a {@link Pending} of the {@link SelectResult}
+     */
+    private <T extends Record> Pending<SelectResult<T>> $selectFirst(
+            Reader reader, FirstSelection<T> selection) {
+        DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                selection.clazz, selection.any);
+        state.criteria = selection.criteria;
+        state.order = selection.order;
+        state.page = DatabaseInterface.FIRST_PAGINATION;
+        state.filter = selection.filter;
+        state.realms = selection.realms;
+        Pending<SelectResult<Set<T>>> inner = selection.criteria != null
+                ? $selectCriteria(reader, new FindSelection<>(state))
+                : $selectClass(reader, new LoadClassSelection<>(state));
+        // NOTE: The inner cacheValue is a pre-filter Set that cannot stand in
+        // for a first-typed result in the reservation cache, so it is not
+        // propagated.
+        return inner.map(selected -> new SelectResult<>(
+                Iterables.getFirst(selected.result, null)));
+    }
+
+    /**
      * Resolve {@code selection} against the supplied {@code sources} by
      * dispatching {@link AdHocDataSource#fetch(DatabaseSelection)} to each
      * source and combining the results.
@@ -1641,8 +1671,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * For multi-source selections, results are combined per
      * {@link DatabaseSelection} subtype: counts are summed,
      * {@link LoadRecordSelection} returns the first non-{@code null} record,
-     * {@link UniqueSelection} enforces at-most-one across sources, and
-     * {@link SetBasedSelection} flattens, sorts, and pages the union.
+     * {@link UniqueSelection} enforces at-most-one across sources,
+     * {@link FirstSelection} returns the record that sorts first among the
+     * per-source firsts, and {@link SetBasedSelection} flattens, sorts, and
+     * pages the union.
      *
      * @param selection the {@link DatabaseSelection} to resolve
      * @param sources the non-empty {@link AdHocDataSource AdHocDataSources}
@@ -1690,6 +1722,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
             }
             return (R) found;
+        }
+        else if(selection instanceof FirstSelection) {
+            Order order = ((FirstSelection<T>) selection).order;
+            Set<T> candidates = new LinkedHashSet<>();
+            for (AdHocDataSource<?> source : sources) {
+                T candidate = source.fetch(selection.duplicate());
+                if(candidate != null) {
+                    candidates.add(candidate);
+                }
+            }
+            Set<T> ordered = DatabaseInterface.sort(candidates,
+                    backwardsCompatible(order));
+            return (R) Iterables.getFirst(ordered, null);
         }
         else if(selection instanceof SetBasedSelection) {
             Order order = ((SetBasedSelection<?>) selection).order;
@@ -1904,6 +1949,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 else if(selection instanceof UniqueSelection) {
                     pending = $selectUnique(reader,
                             (UniqueSelection<T>) selection);
+                }
+                else if(selection instanceof FirstSelection) {
+                    pending = $selectFirst(reader,
+                            (FirstSelection<T>) selection);
                 }
                 else {
                     throw new IllegalStateException(

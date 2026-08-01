@@ -309,7 +309,8 @@ public abstract class Scope {
             if(className.equals("CountSelection")) {
                 result = 0;
             }
-            else if(className.equals("LoadRecordSelection")) {
+            else if(className.equals("LoadRecordSelection")
+                    || className.equals("FirstSelection")) {
                 result = null;
             }
             else {

@@ -27,7 +27,6 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.Iterables;
 
 /**
  * A {@link DatabaseInterface} provides methods for interacting with a database
@@ -62,6 +61,12 @@ public interface DatabaseInterface {
      * queries to detect duplicates without fetching the entire result set.
      */
     static final Page UNIQUE_PAGINATION = Page.limit(2);
+
+    /**
+     * A {@link Page} that retrieves at most one result, used by first-result
+     * queries to fetch a single sorted row without the rest of the match set.
+     */
+    static final Page FIRST_PAGINATION = Page.limit(1);
 
     /**
      * Return the {@code records} in sorted {@code order}.
@@ -1081,8 +1086,8 @@ public interface DatabaseInterface {
             Criteria criteria, Order order) {
         Preconditions.checkNotNull(order,
                 "An Order is required to determine the first record");
-        return Iterables.getFirst(fetch(Selection.ofAny(clazz).where(criteria)
-                .order(order).page(Page.limit(1))), null);
+        return fetch(
+                Selection.ofAny(clazz).where(criteria).order(order).first());
     }
 
     /**
@@ -1101,8 +1106,8 @@ public interface DatabaseInterface {
             Criteria criteria, Order order, Realms realms) {
         Preconditions.checkNotNull(order,
                 "An Order is required to determine the first record");
-        return Iterables.getFirst(fetch(Selection.ofAny(clazz).where(criteria)
-                .order(order).page(Page.limit(1)).realms(realms)), null);
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order).first()
+                .realms(realms));
     }
 
     /**
@@ -1120,8 +1125,8 @@ public interface DatabaseInterface {
             Criteria criteria, Order order, Predicate<T> filter) {
         Preconditions.checkNotNull(order,
                 "An Order is required to determine the first record");
-        return Iterables.getFirst(fetch(Selection.ofAny(clazz).where(criteria)
-                .filter(filter).order(order).page(Page.limit(1))), null);
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .order(order).first());
     }
 
     /**
@@ -1142,10 +1147,8 @@ public interface DatabaseInterface {
             Realms realms) {
         Preconditions.checkNotNull(order,
                 "An Order is required to determine the first record");
-        return Iterables.getFirst(
-                fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
-                        .order(order).page(Page.limit(1)).realms(realms)),
-                null);
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .order(order).first().realms(realms));
     }
 
     /**
@@ -1201,8 +1204,7 @@ public interface DatabaseInterface {
             Criteria criteria, Order order) {
         Preconditions.checkNotNull(order,
                 "An Order is required to determine the first record");
-        return Iterables.getFirst(fetch(Selection.of(clazz).where(criteria)
-                .order(order).page(Page.limit(1))), null);
+        return fetch(Selection.of(clazz).where(criteria).order(order).first());
     }
 
     /**
@@ -1221,8 +1223,8 @@ public interface DatabaseInterface {
             Criteria criteria, Order order, Realms realms) {
         Preconditions.checkNotNull(order,
                 "An Order is required to determine the first record");
-        return Iterables.getFirst(fetch(Selection.of(clazz).where(criteria)
-                .order(order).page(Page.limit(1)).realms(realms)), null);
+        return fetch(Selection.of(clazz).where(criteria).order(order).first()
+                .realms(realms));
     }
 
     /**
@@ -1248,8 +1250,8 @@ public interface DatabaseInterface {
             Criteria criteria, Order order, Predicate<T> filter) {
         Preconditions.checkNotNull(order,
                 "An Order is required to determine the first record");
-        return Iterables.getFirst(fetch(Selection.of(clazz).where(criteria)
-                .filter(filter).order(order).page(Page.limit(1))), null);
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .order(order).first());
     }
 
     /**
@@ -1276,10 +1278,8 @@ public interface DatabaseInterface {
             Realms realms) {
         Preconditions.checkNotNull(order,
                 "An Order is required to determine the first record");
-        return Iterables.getFirst(
-                fetch(Selection.of(clazz).where(criteria).filter(filter)
-                        .order(order).page(Page.limit(1)).realms(realms)),
-                null);
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .order(order).first().realms(realms));
     }
 
     /**

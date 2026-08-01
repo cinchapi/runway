@@ -36,6 +36,7 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.lang.sort.OrderComponent;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 
 /**
@@ -417,6 +418,30 @@ public class AdHocDataSource<T extends AdHocRecord> implements
                             : load(s.clazz, filter, s.realms);
                 }
                 s.setResult(unique(results, s.clazz, s.criteria, s.any));
+            }
+            else if(selection instanceof FirstSelection) {
+                FirstSelection<?> s = (FirstSelection<?>) selection;
+                Predicate filter = s.filter;
+                Set results;
+                if(s.criteria != null) {
+                    results = s.any
+                            ? findAny(s.clazz, s.criteria, s.order,
+                                    DatabaseInterface.FIRST_PAGINATION, filter,
+                                    s.realms)
+                            : find(s.clazz, s.criteria, s.order,
+                                    DatabaseInterface.FIRST_PAGINATION, filter,
+                                    s.realms);
+                }
+                else {
+                    results = s.any
+                            ? loadAny(s.clazz, s.order,
+                                    DatabaseInterface.FIRST_PAGINATION, filter,
+                                    s.realms)
+                            : load(s.clazz, s.order,
+                                    DatabaseInterface.FIRST_PAGINATION, filter,
+                                    s.realms);
+                }
+                s.setResult(Iterables.getFirst(results, null));
             }
             else {
                 throw new UnsupportedOperationException(

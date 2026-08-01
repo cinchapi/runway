@@ -276,6 +276,41 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that first {@link Selection Selections} can
+     * be batched through {@code select} and that each one resolves to its own
+     * single record.
+     * <p>
+     * <strong>Start state:</strong> Three {@link Job Jobs} with ranks 1, 2, and
+     * 3.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Job Jobs} with ranks 1, 2, and 3.</li>
+     * <li>Execute one {@code select} call with two first {@link Selection
+     * Selections}: one ordered by {@code rank} ascending and one ordered by
+     * {@code rank} descending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first result is the rank-1 {@link Job} and
+     * the second result is the rank-3 {@link Job}.
+     */
+    @Test
+    public void testBatchedFirstSelectionsResolveIndependently() {
+        runway.save(new Job(1), new Job(2), new Job(3));
+        Selections results = runway.select(
+                Selection.of(Job.class).where(rankPositive())
+                        .order(Order.by("rank").ascending()).first(),
+                Selection.of(Job.class).where(rankPositive())
+                        .order(Order.by("rank").descending()).first());
+        Job lowest = results.next();
+        Job highest = results.next();
+        Assert.assertNotNull(lowest);
+        Assert.assertEquals(1, lowest.rank);
+        Assert.assertNotNull(highest);
+        Assert.assertEquals(3, highest.rank);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findFirst} honors the requested
      * {@link Realms}, skipping a record that would sort first overall but lies
      * outside the realm.
