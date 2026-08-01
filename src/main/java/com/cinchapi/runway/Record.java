@@ -144,6 +144,12 @@ import com.google.gson.stream.JsonWriter;
  * dump or {@link #toString()} output unless they are annotated as
  * {@link Readable}.
  * </p>
+ * <p>
+ * The {@link DynamicWritePolicy} of the assigned {@link Runway} instance
+ * determines whether {@link #set(String, Object)} can write final, private,
+ * package-private or protected fields, unless a field is annotated as
+ * {@link Writable}.
+ * </p>
  *
  * @author Jeff Nelson
  */
@@ -1729,6 +1735,10 @@ public abstract class Record implements Comparable<Record> {
      * as a dynamic attribute in this {@link Record}.
      *
      * @param data
+     * @throws NonWritableFieldException if a key in {@code data} names a field
+     *             that the governing {@link DynamicWritePolicy} does not permit
+     *             writing; entries processed before the offending one remain
+     *             applied
      */
     public void set(Map<String, Object> data) {
         data.forEach((key, value) -> {
@@ -1738,26 +1748,49 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Set a dynamic attribute in this Record.
+     * <p>
+     * If {@code key} names a field in this {@link Record Record's} schema, the
+     * write is governed by the {@link DynamicWritePolicy} of the assigned
+     * {@link Runway} instance. If the policy does not permit writing the field,
+     * then this method throws a {@link NonWritableFieldException} and no data
+     * is changed.
+     * </p>
      *
      * @param key the key name
      * @param value the value to set
+     * @throws NonWritableFieldException if {@code key} names a field that the
+     *             governing {@link DynamicWritePolicy} does not permit writing
      */
     public void set(String key, Object value) {
         if(dynamicData.containsKey(key)) {
             dynamicData.put(key, value);
         }
         else {
+            Field field;
             try {
-                Reflection.set(key, value, this);
+                field = StaticAnalysis.instance().getField(this, key);
             }
-            catch (Exception e) {
-                Set<String> intrinsic = StaticAnalysis.instance()
-                        .getKeys(this.getClass());
-                if(intrinsic.contains(key)) {
-                    throw e;
+            catch (IllegalArgumentException e) {
+                field = null;
+            }
+            if(field != null && !dynamicWritePolicy().isWritable(field)) {
+                throw new NonWritableFieldException(AnyStrings.format(
+                        "Cannot set '{}' because it is not a writable field in {}",
+                        key, getClass().getSimpleName()));
+            }
+            else {
+                try {
+                    Reflection.set(key, value, this);
                 }
-                else {
-                    dynamicData.put(key, value);
+                catch (Exception e) {
+                    Set<String> intrinsic = StaticAnalysis.instance()
+                            .getKeys(this.getClass());
+                    if(intrinsic.contains(key)) {
+                        throw e;
+                    }
+                    else {
+                        dynamicData.put(key, value);
+                    }
                 }
             }
         }
@@ -2968,6 +3001,20 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return value;
+    }
+
+    /**
+     * Return the {@link DynamicWritePolicy} that governs
+     * {@link #set(String, Object) dynamic writes} to this {@link Record}. If
+     * this {@link Record} is not {@link #assign(Runway) assigned} to a
+     * {@link Runway} instance, the {@link DynamicWritePolicy#permissive()
+     * permissive} default applies.
+     *
+     * @return the governing {@link DynamicWritePolicy}
+     */
+    private DynamicWritePolicy dynamicWritePolicy() {
+        return runway != null ? runway.dynamicWritePolicy
+                : DynamicWritePolicy.permissive();
     }
 
     /**
