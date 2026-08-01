@@ -350,33 +350,99 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
      * <li>Call {@code findFirstAndUpdate} with a consumer that, on every
      * invocation, writes to the same record through a separate connection so
      * the staged transaction always conflicts at commit time.</li>
+     * <li>Catch the expected exception, then re-load the {@link Task} by id
+     * from the database.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> A {@link RetryExhaustedException} is thrown
-     * and the persisted {@code owner} was never set by this caller.
+     * and the re-loaded {@link Task Task's} {@code owner} is still unset.
      */
-    @Test(expected = RetryExhaustedException.class)
+    @Test
     public void testFindFirstAndUpdateThrowsRetryExhaustedUnderContention() {
         Task task = new Task(1);
         runway.save(task);
         long id = task.id();
-        runway.findFirstAndUpdate(Task.class, unclaimed(),
+        boolean threw = false;
+        try {
+            runway.findFirstAndUpdate(Task.class, unclaimed(),
+                    Order.by("rank").ascending(), t -> {
+                        // Force a conflicting external write on every attempt
+                        // so the staged transaction can never commit. The
+                        // nested request borrows a second connection while the
+                        // update holds its own; this is safe because Runway
+                        // uses an expandable cached pool that grows on demand
+                        // rather than blocking.
+                        Concourse other = runway.connections.request();
+                        try {
+                            other.set("rank", t.rank + 1, id);
+                        }
+                        finally {
+                            runway.connections.release(other);
+                        }
+                        t.owner = "worker";
+                    });
+        }
+        catch (RetryExhaustedException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertNull(runway.load(Task.class, id).owner);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that unsaved changes on a {@link Record}
+     * the consumer attaches survive a retried attempt, so the eventual commit
+     * persists them in full.
+     * <p>
+     * <strong>Start state:</strong> One unclaimed {@link Task} and one
+     * persisted {@link Report} whose {@code content} was then modified in
+     * memory but not saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Task} and a {@link Report} with content
+     * {@code "original"}.</li>
+     * <li>Set the {@link Report Report's} in-memory {@code content} to
+     * {@code "modified"} without a save.</li>
+     * <li>Call {@code findFirstAndUpdate} with a consumer that attaches the
+     * {@link Report} to the {@link Task} and, on the first invocation only,
+     * forces a conflicting external write so the first attempt fails and the
+     * cycle retries.</li>
+     * <li>Re-load the {@link Report} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The claim succeeds and the re-loaded
+     * {@link Report Report's} {@code content} is {@code "modified"}, proving
+     * the failed first attempt did not leave the {@link Report} looking saved.
+     */
+    @Test
+    public void testFindFirstAndUpdatePersistsAttachedRecordAcrossRetry() {
+        Task task = new Task(1);
+        Report report = new Report("original");
+        runway.save(task, report);
+        long id = task.id();
+        report.content = "modified";
+        AtomicBoolean conflicted = new AtomicBoolean(false);
+        Task claimed = runway.findFirstAndUpdate(Task.class, unclaimed(),
                 Order.by("rank").ascending(), t -> {
-                    // Force a conflicting external write on every attempt so
-                    // the staged transaction can never commit. The nested
-                    // request borrows a second connection while the update
-                    // holds its own; this is safe because Runway uses an
-                    // expandable cached pool that grows on demand rather than
-                    // blocking.
-                    Concourse other = runway.connections.request();
-                    try {
-                        other.set("rank", t.rank + 1, id);
+                    t.claimed = true;
+                    t.report = report;
+                    if(conflicted.compareAndSet(false, true)) {
+                        // Force a conflicting external write on the first
+                        // attempt only, so the cycle fails once and then
+                        // commits on the retry.
+                        Concourse other = runway.connections.request();
+                        try {
+                            other.set("rank", t.rank + 1, id);
+                        }
+                        finally {
+                            runway.connections.release(other);
+                        }
                     }
-                    finally {
-                        runway.connections.release(other);
-                    }
-                    t.owner = "worker";
                 });
+        Assert.assertNotNull(claimed);
+        Assert.assertEquals("modified",
+                runway.load(Report.class, report.id()).content);
     }
 
     /**
@@ -465,6 +531,11 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
         String owner;
 
         /**
+         * An attached {@link Report}, or {@code null} when none is attached.
+         */
+        Report report;
+
+        /**
          * Construct a new, unclaimed instance.
          *
          * @param rank the orderable rank
@@ -479,6 +550,29 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
             Map<String, Object> derived = new HashMap<>();
             derived.put("parity", rank % 2 == 0 ? "even" : "odd");
             return derived;
+        }
+    }
+
+    /**
+     * A {@link Record} that a consumer can attach to a {@link Task} to verify
+     * that its own unsaved changes are persisted by the cascaded save.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Report extends Record {
+
+        /**
+         * The report content.
+         */
+        String content;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param content the report content
+         */
+        public Report(String content) {
+            this.content = content;
         }
     }
 
