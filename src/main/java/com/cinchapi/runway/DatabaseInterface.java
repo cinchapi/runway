@@ -1175,15 +1175,12 @@ public interface DatabaseInterface {
      * {@code criteria} under the supplied {@code order}, or {@code null} if no
      * record matches.
      * <p>
-     * "First" is defined entirely by {@code order}; the {@code order} and a
-     * one-row page are pushed to the server so a single sorted row is returned
-     * rather than the full match set. Unlike
+     * "First" is defined entirely by {@code order}. Unlike
      * {@link #findUnique(Class, Criteria) findUnique}, this performs no
      * duplicate detection and never throws when more than one record matches.
-     * Ties between records that are equal under {@code order} are broken by the
-     * underlying engine and are not otherwise specified, so callers that need a
-     * fully deterministic pick should include a unique tiebreaker key (e.g.,
-     * the record id) in the {@code order}.
+     * The pick among records that tie under {@code order} is unspecified, so
+     * callers that need a fully deterministic result should include a unique
+     * tiebreaker key (for example, the record id) in the {@code order}.
      *
      * @param clazz
      * @param criteria
@@ -1219,12 +1216,12 @@ public interface DatabaseInterface {
      * {@code criteria} and passes the {@code filter} under the supplied
      * {@code order}, or {@code null} if no record matches.
      * <p>
-     * The {@code filter} is evaluated client-side before the one-row limit is
-     * applied, so a record that the {@code filter} rejects does not mask a
-     * later record that both matches the {@code criteria} and passes the
-     * {@code filter}. Prefer expressing conditions in the {@code criteria} so
-     * they push to the server; the {@code filter} is a convenience for
-     * conditions that cannot be expressed in a {@link Criteria}.
+     * The result is the first record under {@code order} that both matches the
+     * {@code criteria} and passes the {@code filter}; a record that the
+     * {@code filter} rejects does not mask a later match. Prefer expressing
+     * conditions in the {@code criteria}, which the database evaluates
+     * directly; the {@code filter} is a convenience for conditions that a
+     * {@link Criteria} cannot express.
      *
      * @param clazz
      * @param criteria
@@ -1245,10 +1242,9 @@ public interface DatabaseInterface {
      * {@code order} among the provided {@code realms}, or {@code null} if no
      * record matches.
      * <p>
-     * The {@code filter} is evaluated client-side before the one-row limit is
-     * applied, so a record that the {@code filter} rejects does not mask a
-     * later record that both matches the {@code criteria} and passes the
-     * {@code filter}.
+     * The result is the first record under {@code order} that both matches the
+     * {@code criteria} and passes the {@code filter}; a record that the
+     * {@code filter} rejects does not mask a later match.
      *
      * @param clazz
      * @param criteria

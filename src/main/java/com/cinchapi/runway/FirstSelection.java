@@ -27,10 +27,9 @@ import com.google.common.base.MoreObjects.ToStringHelper;
  * {@link Criteria} under a required {@link Order}.
  * <p>
  * The result is a single {@link Record} of type {@code T}, or {@code null} if
- * no match exists. "First" is defined entirely by the {@link Order}; a one-row
- * page is combined with the {@link Order} during execution so at most one
- * sorted row is retrieved. Unlike {@link UniqueSelection}, no duplicate
- * detection is performed when more than one {@link Record} matches.
+ * no match exists. "First" is defined entirely by the {@link Order}. Unlike
+ * {@link UniqueSelection}, no duplicate detection is performed when more than
+ * one {@link Record} matches.
  *
  * @param <T> the {@link Record} type
  * @author Jeff Nelson
