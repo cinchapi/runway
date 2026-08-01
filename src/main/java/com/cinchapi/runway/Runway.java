@@ -443,8 +443,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = DEFAULT_ON_LOAD_FAILURE_HANDLER;
 
     /**
-     * The {@link Properties} view of this {@link Runway} instance, returned
-     * from every {@link #properties()} call.
+     * The {@link Properties} view of this {@link Runway} instance.
      */
     private final Properties properties = new Properties();
 
