@@ -310,7 +310,8 @@ public abstract class Scope {
                 result = 0;
             }
             else if(className.equals("LoadRecordSelection")
-                    || className.equals("FirstSelection")) {
+                    || className.equals("FirstSelection")
+                    || className.equals("UniqueSelection")) {
                 result = null;
             }
             else {
