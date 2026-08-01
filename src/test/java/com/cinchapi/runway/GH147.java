@@ -18,6 +18,7 @@ package com.cinchapi.runway;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.runway.access.Audience;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -667,8 +668,8 @@ public class GH147 extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The call throws
-     * {@link NonWritableFieldException} and the final field keeps its original
-     * value.
+     * {@link NonWritableFieldException}, the final field keeps its original
+     * value and the {@link Vault} has no author attribution.
      */
     @Test
     public void testAudienceWriteRefusesNonWritableField() throws Exception {
@@ -682,7 +683,40 @@ public class GH147 extends RunwayBaseClientServerTest {
             }
             catch (NonWritableFieldException e) {
                 Assert.assertEquals("vault", vault.name);
+                Assert.assertNull(Reflection.get("_author", vault));
             }
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a successful write through
+     * {@link Audience#write(String, Object, Record)} still attributes the
+     * change to the {@link Audience}.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} that enforces the
+     * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Custodian} to act as the {@link Audience}.</li>
+     * <li>Construct a {@link Vault} and assign it to the strict
+     * {@link Runway}.</li>
+     * <li>Call {@code write("description", "changed", vault)} on the
+     * {@link Custodian}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The public field holds the new value and the
+     * {@link Vault Vault's} author is the {@link Custodian}.
+     */
+    @Test
+    public void testAudienceWriteAttributesAuthorOnSuccess() throws Exception {
+        try (Runway strict = strictRunway()) {
+            Custodian custodian = new Custodian();
+            Vault vault = new Vault("vault", "code");
+            vault.assign(strict);
+            custodian.write("description", "changed", vault);
+            Assert.assertEquals("changed", vault.description);
+            Assert.assertSame(custodian, Reflection.get("_author", vault));
         }
     }
 
