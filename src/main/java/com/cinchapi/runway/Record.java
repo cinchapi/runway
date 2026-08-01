@@ -1731,10 +1731,10 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * {@link #set(String, Object) Set} each key/value pair within {@code data}
-     * as a dynamic attribute in this {@link Record}.
+     * {@link #set(String, Object) Set} each key/value pair from {@code data} in
+     * this {@link Record}.
      *
-     * @param data
+     * @param data a mapping from each key name to the value to set
      * @throws NonWritableFieldException if a key in {@code data} names a field
      *             that the governing {@link DynamicWritePolicy} does not permit
      *             writing; entries processed before the offending one remain
@@ -1747,13 +1747,14 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Set a dynamic attribute in this Record.
+     * Set the value for {@code key} in this {@link Record}. If {@code key}
+     * names a field in the schema, the field is written. Otherwise, the
+     * key/value pair is stored as a dynamic attribute.
      * <p>
-     * If {@code key} names a field in this {@link Record Record's} schema, the
-     * write is governed by the {@link DynamicWritePolicy} of the assigned
-     * {@link Runway} instance. If the policy does not permit writing the field,
-     * then this method throws a {@link NonWritableFieldException} and no data
-     * is changed.
+     * A write to a schema field is governed by the {@link DynamicWritePolicy}
+     * of the assigned {@link Runway} instance. If the policy does not permit
+     * writing the field, then this method throws a
+     * {@link NonWritableFieldException} and no data is changed.
      * </p>
      *
      * @param key the key name

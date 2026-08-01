@@ -2630,6 +2630,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public static class Builder {
 
+        /**
+         * The {@link DynamicWritePolicy} for the built {@link Runway} instance.
+         */
         private DynamicWritePolicy dynamicWritePolicy = DynamicWritePolicy
                 .permissive();
         private String environment = "";
