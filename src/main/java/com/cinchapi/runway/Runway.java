@@ -990,6 +990,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * earlier. The {@code consumer} runs before the save's validation, so an
      * update that violates a {@code Required}/{@code Unique} constraint
      * surfaces from the save path.
+     * <p>
+     * <strong>NOTE:</strong> This method operates solely on {@link Record
+     * Records} persisted in the database and writes through the standard save
+     * path; records supplied by an attached {@link AdHocDataSource} are never
+     * matched, and a {@link Record#overrideSave() save override} has no effect.
      *
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the records must match
@@ -1022,6 +1027,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * to a bounded number of attempts, so the {@code consumer} may run more
      * than once and must be safe to do so; it must mutate the {@link Record} it
      * is handed rather than one captured earlier.
+     * <p>
+     * <strong>NOTE:</strong> This method operates solely on {@link Record
+     * Records} persisted in the database and writes through the standard save
+     * path; records supplied by an attached {@link AdHocDataSource} are never
+     * matched, and a {@link Record#overrideSave() save override} has no effect.
      *
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the record must match
@@ -1062,6 +1072,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * {@code consumer} may run more than once and must be safe to do so; it
      * must mutate the {@link Record} it is handed rather than one captured
      * earlier.
+     * <p>
+     * <strong>NOTE:</strong> This method operates solely on {@link Record
+     * Records} persisted in the database and writes through the standard save
+     * path; records supplied by an attached {@link AdHocDataSource} are never
+     * matched, and a {@link Record#overrideSave() save override} has no effect.
      *
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the record must match
