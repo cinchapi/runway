@@ -26,6 +26,7 @@ import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterables;
 
 /**
@@ -1074,9 +1075,12 @@ public interface DatabaseInterface {
      * @param criteria
      * @param order
      * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
      */
     public default <T extends Record> T findAnyFirst(Class<T> clazz,
             Criteria criteria, Order order) {
+        Preconditions.checkNotNull(order,
+                "An Order is required to determine the first record");
         return Iterables.getFirst(fetch(Selection.ofAny(clazz).where(criteria)
                 .order(order).page(Page.limit(1))), null);
     }
@@ -1091,9 +1095,12 @@ public interface DatabaseInterface {
      * @param order
      * @param realms
      * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
      */
     public default <T extends Record> T findAnyFirst(Class<T> clazz,
             Criteria criteria, Order order, Realms realms) {
+        Preconditions.checkNotNull(order,
+                "An Order is required to determine the first record");
         return Iterables.getFirst(fetch(Selection.ofAny(clazz).where(criteria)
                 .order(order).page(Page.limit(1)).realms(realms)), null);
     }
@@ -1107,9 +1114,12 @@ public interface DatabaseInterface {
      * @param order
      * @param filter
      * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
      */
     public default <T extends Record> T findAnyFirst(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter) {
+        Preconditions.checkNotNull(order,
+                "An Order is required to determine the first record");
         return Iterables.getFirst(fetch(Selection.ofAny(clazz).where(criteria)
                 .filter(filter).order(order).page(Page.limit(1))), null);
     }
@@ -1125,10 +1135,13 @@ public interface DatabaseInterface {
      * @param filter
      * @param realms
      * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
      */
     public default <T extends Record> T findAnyFirst(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter,
             Realms realms) {
+        Preconditions.checkNotNull(order,
+                "An Order is required to determine the first record");
         return Iterables.getFirst(
                 fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
                         .order(order).page(Page.limit(1)).realms(realms)),
@@ -1182,9 +1195,12 @@ public interface DatabaseInterface {
      * @param criteria
      * @param order
      * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
      */
     public default <T extends Record> T findFirst(Class<T> clazz,
             Criteria criteria, Order order) {
+        Preconditions.checkNotNull(order,
+                "An Order is required to determine the first record");
         return Iterables.getFirst(fetch(Selection.of(clazz).where(criteria)
                 .order(order).page(Page.limit(1))), null);
     }
@@ -1199,9 +1215,12 @@ public interface DatabaseInterface {
      * @param order
      * @param realms
      * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
      */
     public default <T extends Record> T findFirst(Class<T> clazz,
             Criteria criteria, Order order, Realms realms) {
+        Preconditions.checkNotNull(order,
+                "An Order is required to determine the first record");
         return Iterables.getFirst(fetch(Selection.of(clazz).where(criteria)
                 .order(order).page(Page.limit(1)).realms(realms)), null);
     }
@@ -1223,9 +1242,12 @@ public interface DatabaseInterface {
      * @param order
      * @param filter
      * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
      */
     public default <T extends Record> T findFirst(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter) {
+        Preconditions.checkNotNull(order,
+                "An Order is required to determine the first record");
         return Iterables.getFirst(fetch(Selection.of(clazz).where(criteria)
                 .filter(filter).order(order).page(Page.limit(1))), null);
     }
@@ -1247,10 +1269,13 @@ public interface DatabaseInterface {
      * @param filter
      * @param realms
      * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
      */
     public default <T extends Record> T findFirst(Class<T> clazz,
             Criteria criteria, Order order, Predicate<T> filter,
             Realms realms) {
+        Preconditions.checkNotNull(order,
+                "An Order is required to determine the first record");
         return Iterables.getFirst(
                 fetch(Selection.of(clazz).where(criteria).filter(filter)
                         .order(order).page(Page.limit(1)).realms(realms)),

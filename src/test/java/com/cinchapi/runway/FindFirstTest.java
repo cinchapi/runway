@@ -202,6 +202,25 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findFirst} rejects a
+     * {@code null} {@link Order} instead of silently returning an arbitrary
+     * matching record.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findFirst} with a {@code null} {@link Order}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link NullPointerException} is thrown.
+     */
+    @Test(expected = NullPointerException.class)
+    public void testFindFirstRejectsNullOrder() {
+        runway.findFirst(Job.class, rankPositive(), (Order) null);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findAnyFirst} includes
      * descendant types while {@code findFirst} excludes them, over the same
      * match set.
@@ -235,6 +254,25 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
         Assert.assertNotNull(exact);
         Assert.assertFalse(exact instanceof PriorityJob);
         Assert.assertEquals(2, exact.rank);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findAnyFirst} rejects a
+     * {@code null} {@link Order} instead of silently returning an arbitrary
+     * matching record.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findAnyFirst} with a {@code null} {@link Order}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link NullPointerException} is thrown.
+     */
+    @Test(expected = NullPointerException.class)
+    public void testFindAnyFirstRejectsNullOrder() {
+        runway.findAnyFirst(Job.class, rankPositive(), (Order) null);
     }
 
     /**
