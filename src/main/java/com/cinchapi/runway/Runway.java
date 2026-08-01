@@ -679,6 +679,102 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Atomically find every {@link Record} of type {@code clazz} that matches
+     * the {@code criteria}, apply the {@code consumer} to each, and persist all
+     * of the updates as a single transaction.
+     * <p>
+     * The find, the {@code consumer} application, and the save run as one
+     * transaction: either every update commits or none do. When no record
+     * matches, the {@code consumer} is never invoked, nothing is committed, and
+     * an empty {@link Set} is returned. The returned {@link Set} preserves the
+     * iteration order of the underlying find.
+     * <p>
+     * On a write conflict the whole cycle (re-find, re-apply, re-save) is
+     * retried with jittered backoff up to a bounded number of attempts, so the
+     * {@code consumer} may run more than once and must be safe to do so; it
+     * must mutate the {@link Record} it is handed rather than one captured
+     * earlier. The {@code consumer} runs before the save's validation, so an
+     * update that violates a {@code Required}/{@code Unique} constraint
+     * surfaces from the save path.
+     * <p>
+     * <strong>NOTE:</strong> This method operates solely on {@link Record
+     * Records} persisted in the database and writes through the standard save
+     * path; records supplied by an attached {@link AdHocDataSource} are never
+     * matched, and a {@link Record#overrideSave() save override} has no effect.
+     * <p>
+     * <strong>NOTE:</strong> Any {@link Criteria} is supported, including one
+     * that references {@link Derived} or {@link Computed} data. A
+     * {@link Criteria} that references only stored keys keeps the operation's
+     * conflict footprint narrow, so it contends least and performs best under
+     * concurrency; one that touches {@link Derived} or {@link Computed} data
+     * broadens the footprint to every {@link Record} in {@code clazz}, so it is
+     * more likely to retry, and ultimately throw
+     * {@link RetryExhaustedException}, when concurrent writes touch the class.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the records must match
+     * @param consumer the mutation to apply to each matching {@link Record}
+     * @return the {@link Set} of updated {@link Record Records}, empty when
+     *         none matched
+     * @throws RetryExhaustedException if the update cannot commit within the
+     *             bounded number of attempts due to persistent contention
+     */
+    public <T extends Record> Set<T> findAndUpdate(Class<T> clazz,
+            Criteria criteria, Consumer<T> consumer) {
+        return updateWithinTransaction(clazz, criteria, null, null, consumer);
+    }
+
+    /**
+     * Atomically find the first {@link Record} of type {@code clazz} that
+     * matches the {@code criteria} under the supplied {@code order}, apply the
+     * {@code consumer} to it, and persist the update as a single transaction.
+     * <p>
+     * "First" is defined entirely by {@code order}, which is required. Returns
+     * the updated {@link Record}, or {@code null} when nothing matches (in
+     * which case the {@code consumer} is never invoked and nothing is
+     * committed).
+     * <p>
+     * This is the claim-and-update primitive: concurrent callers contending for
+     * the same record are serialized by the database, so at most one commits
+     * and the rest are preempted and retried. On a write conflict the whole
+     * cycle (re-find under {@code order}, re-apply, re-save) is retried with
+     * jittered backoff up to a bounded number of attempts, so the
+     * {@code consumer} may run more than once and must be safe to do so; it
+     * must mutate the {@link Record} it is handed rather than one captured
+     * earlier.
+     * <p>
+     * <strong>NOTE:</strong> This method operates solely on {@link Record
+     * Records} persisted in the database and writes through the standard save
+     * path; records supplied by an attached {@link AdHocDataSource} are never
+     * matched, and a {@link Record#overrideSave() save override} has no effect.
+     * <p>
+     * <strong>NOTE:</strong> Any {@link Criteria} is supported, including one
+     * that references {@link Derived} or {@link Computed} data. A
+     * {@link Criteria} that references only stored keys keeps the operation's
+     * conflict footprint narrow, so it contends least and performs best under
+     * concurrency; one that touches {@link Derived} or {@link Computed} data
+     * broadens the footprint to every {@link Record} in {@code clazz}, so it is
+     * more likely to retry, and ultimately throw
+     * {@link RetryExhaustedException}, when concurrent writes touch the class.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param consumer the mutation to apply to the matching {@link Record}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws RetryExhaustedException if the update cannot commit within the
+     *             bounded number of attempts due to persistent contention
+     */
+    public <T extends Record> T findFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, Consumer<T> consumer) {
+        Preconditions.checkNotNull(order,
+                "findFirstAndUpdate requires an Order");
+        Set<T> updated = updateWithinTransaction(clazz, criteria, order,
+                Page.limit(1), consumer);
+        return Iterables.getFirst(updated, null);
+    }
+
+    /**
      * Find the one record of type {@code clazz} that matches the
      * {@code criteria}. If more than one record matches, throw a
      * {@link DuplicateEntryException}.
@@ -707,6 +803,59 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> T findOne(Class<T> clazz, Criteria criteria) {
         return findUnique(clazz, criteria);
+    }
+
+    /**
+     * Atomically find the one {@link Record} of type {@code clazz} that matches
+     * the {@code criteria}, apply the {@code consumer} to it, and persist the
+     * update as a single transaction.
+     * <p>
+     * Returns the updated {@link Record}, or {@code null} when nothing matches
+     * (in which case the {@code consumer} is never invoked and nothing is
+     * committed). Throws {@link DuplicateEntryException} when more than one
+     * record matches, consistent with
+     * {@link DatabaseInterface#findUnique(Class, Criteria) findUnique}; the
+     * duplicate check happens inside the transaction before the
+     * {@code consumer} runs, so a violation neither mutates nor commits.
+     * <p>
+     * On a write conflict the whole cycle is retried with jittered backoff up
+     * to a bounded number of attempts, so the {@code consumer} may run more
+     * than once and must be safe to do so; it must mutate the {@link Record} it
+     * is handed rather than one captured earlier.
+     * <p>
+     * <strong>NOTE:</strong> This method operates solely on {@link Record
+     * Records} persisted in the database and writes through the standard save
+     * path; records supplied by an attached {@link AdHocDataSource} are never
+     * matched, and a {@link Record#overrideSave() save override} has no effect.
+     * <p>
+     * <strong>NOTE:</strong> Any {@link Criteria} is supported, including one
+     * that references {@link Derived} or {@link Computed} data. A
+     * {@link Criteria} that references only stored keys keeps the operation's
+     * conflict footprint narrow, so it contends least and performs best under
+     * concurrency; one that touches {@link Derived} or {@link Computed} data
+     * broadens the footprint to every {@link Record} in {@code clazz}, so it is
+     * more likely to retry, and ultimately throw
+     * {@link RetryExhaustedException}, when concurrent writes touch the class.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param consumer the mutation to apply to the matching {@link Record}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws DuplicateEntryException if more than one record matches
+     * @throws RetryExhaustedException if the update cannot commit within the
+     *             bounded number of attempts due to persistent contention
+     */
+    public <T extends Record> T findUniqueAndUpdate(Class<T> clazz,
+            Criteria criteria, Consumer<T> consumer) {
+        Set<T> updated = updateWithinTransaction(clazz, criteria, null,
+                DatabaseInterface.UNIQUE_PAGINATION, consumer, found -> {
+                    if(found.size() > 1) {
+                        throw duplicateEntryException(
+                                "Multiple records match {} in {}", criteria,
+                                clazz);
+                    }
+                });
+        return Iterables.getFirst(updated, null);
     }
 
     @SuppressWarnings("deprecation")
@@ -978,379 +1127,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public boolean save(Record... records) {
         return save(false, records);
-    }
-
-    /**
-     * Atomically find every {@link Record} of type {@code clazz} that matches
-     * the {@code criteria}, apply the {@code consumer} to each, and persist all
-     * of the updates as a single transaction.
-     * <p>
-     * The find, the {@code consumer} application, and the save run as one
-     * transaction: either every update commits or none do. When no record
-     * matches, the {@code consumer} is never invoked, nothing is committed, and
-     * an empty {@link Set} is returned. The returned {@link Set} preserves the
-     * iteration order of the underlying find.
-     * <p>
-     * On a write conflict the whole cycle (re-find, re-apply, re-save) is
-     * retried with jittered backoff up to a bounded number of attempts, so the
-     * {@code consumer} may run more than once and must be safe to do so; it
-     * must mutate the {@link Record} it is handed rather than one captured
-     * earlier. The {@code consumer} runs before the save's validation, so an
-     * update that violates a {@code Required}/{@code Unique} constraint
-     * surfaces from the save path.
-     * <p>
-     * <strong>NOTE:</strong> This method operates solely on {@link Record
-     * Records} persisted in the database and writes through the standard save
-     * path; records supplied by an attached {@link AdHocDataSource} are never
-     * matched, and a {@link Record#overrideSave() save override} has no effect.
-     * <p>
-     * <strong>NOTE:</strong> Any {@link Criteria} is supported, including one
-     * that references {@link Derived} or {@link Computed} data. A
-     * {@link Criteria} that references only stored keys keeps the operation's
-     * conflict footprint narrow, so it contends least and performs best under
-     * concurrency; one that touches {@link Derived} or {@link Computed} data
-     * broadens the footprint to every {@link Record} in {@code clazz}, so it is
-     * more likely to retry, and ultimately throw
-     * {@link RetryExhaustedException}, when concurrent writes touch the class.
-     *
-     * @param clazz the {@link Record} type to find
-     * @param criteria the {@link Criteria} the records must match
-     * @param consumer the mutation to apply to each matching {@link Record}
-     * @return the {@link Set} of updated {@link Record Records}, empty when
-     *         none matched
-     * @throws RetryExhaustedException if the update cannot commit within the
-     *             bounded number of attempts due to persistent contention
-     */
-    public <T extends Record> Set<T> findAndUpdate(Class<T> clazz,
-            Criteria criteria, Consumer<T> consumer) {
-        return updateWithinTransaction(clazz, criteria, null, null, consumer);
-    }
-
-    /**
-     * Atomically find the one {@link Record} of type {@code clazz} that matches
-     * the {@code criteria}, apply the {@code consumer} to it, and persist the
-     * update as a single transaction.
-     * <p>
-     * Returns the updated {@link Record}, or {@code null} when nothing matches
-     * (in which case the {@code consumer} is never invoked and nothing is
-     * committed). Throws {@link DuplicateEntryException} when more than one
-     * record matches, consistent with
-     * {@link DatabaseInterface#findUnique(Class, Criteria) findUnique}; the
-     * duplicate check happens inside the transaction before the
-     * {@code consumer} runs, so a violation neither mutates nor commits.
-     * <p>
-     * On a write conflict the whole cycle is retried with jittered backoff up
-     * to a bounded number of attempts, so the {@code consumer} may run more
-     * than once and must be safe to do so; it must mutate the {@link Record} it
-     * is handed rather than one captured earlier.
-     * <p>
-     * <strong>NOTE:</strong> This method operates solely on {@link Record
-     * Records} persisted in the database and writes through the standard save
-     * path; records supplied by an attached {@link AdHocDataSource} are never
-     * matched, and a {@link Record#overrideSave() save override} has no effect.
-     * <p>
-     * <strong>NOTE:</strong> Any {@link Criteria} is supported, including one
-     * that references {@link Derived} or {@link Computed} data. A
-     * {@link Criteria} that references only stored keys keeps the operation's
-     * conflict footprint narrow, so it contends least and performs best under
-     * concurrency; one that touches {@link Derived} or {@link Computed} data
-     * broadens the footprint to every {@link Record} in {@code clazz}, so it is
-     * more likely to retry, and ultimately throw
-     * {@link RetryExhaustedException}, when concurrent writes touch the class.
-     *
-     * @param clazz the {@link Record} type to find
-     * @param criteria the {@link Criteria} the record must match
-     * @param consumer the mutation to apply to the matching {@link Record}
-     * @return the updated {@link Record}, or {@code null} if none matches
-     * @throws DuplicateEntryException if more than one record matches
-     * @throws RetryExhaustedException if the update cannot commit within the
-     *             bounded number of attempts due to persistent contention
-     */
-    public <T extends Record> T findUniqueAndUpdate(Class<T> clazz,
-            Criteria criteria, Consumer<T> consumer) {
-        Set<T> updated = updateWithinTransaction(clazz, criteria, null,
-                DatabaseInterface.UNIQUE_PAGINATION, consumer, found -> {
-                    if(found.size() > 1) {
-                        throw duplicateEntryException(
-                                "Multiple records match {} in {}", criteria,
-                                clazz);
-                    }
-                });
-        return Iterables.getFirst(updated, null);
-    }
-
-    /**
-     * Atomically find the first {@link Record} of type {@code clazz} that
-     * matches the {@code criteria} under the supplied {@code order}, apply the
-     * {@code consumer} to it, and persist the update as a single transaction.
-     * <p>
-     * "First" is defined entirely by {@code order}, which is required. Returns
-     * the updated {@link Record}, or {@code null} when nothing matches (in
-     * which case the {@code consumer} is never invoked and nothing is
-     * committed).
-     * <p>
-     * This is the claim-and-update primitive: concurrent callers contending for
-     * the same record are serialized by the database, so at most one commits
-     * and the rest are preempted and retried. On a write conflict the whole
-     * cycle (re-find under {@code order}, re-apply, re-save) is retried with
-     * jittered backoff up to a bounded number of attempts, so the
-     * {@code consumer} may run more than once and must be safe to do so; it
-     * must mutate the {@link Record} it is handed rather than one captured
-     * earlier.
-     * <p>
-     * <strong>NOTE:</strong> This method operates solely on {@link Record
-     * Records} persisted in the database and writes through the standard save
-     * path; records supplied by an attached {@link AdHocDataSource} are never
-     * matched, and a {@link Record#overrideSave() save override} has no effect.
-     * <p>
-     * <strong>NOTE:</strong> Any {@link Criteria} is supported, including one
-     * that references {@link Derived} or {@link Computed} data. A
-     * {@link Criteria} that references only stored keys keeps the operation's
-     * conflict footprint narrow, so it contends least and performs best under
-     * concurrency; one that touches {@link Derived} or {@link Computed} data
-     * broadens the footprint to every {@link Record} in {@code clazz}, so it is
-     * more likely to retry, and ultimately throw
-     * {@link RetryExhaustedException}, when concurrent writes touch the class.
-     *
-     * @param clazz the {@link Record} type to find
-     * @param criteria the {@link Criteria} the record must match
-     * @param order the {@link Order} that defines "first"
-     * @param consumer the mutation to apply to the matching {@link Record}
-     * @return the updated {@link Record}, or {@code null} if none matches
-     * @throws RetryExhaustedException if the update cannot commit within the
-     *             bounded number of attempts due to persistent contention
-     */
-    public <T extends Record> T findFirstAndUpdate(Class<T> clazz,
-            Criteria criteria, Order order, Consumer<T> consumer) {
-        Preconditions.checkNotNull(order,
-                "findFirstAndUpdate requires an Order");
-        Set<T> updated = updateWithinTransaction(clazz, criteria, order,
-                Page.limit(1), consumer);
-        return Iterables.getFirst(updated, null);
-    }
-
-    /**
-     * Perform an atomic find-modify-save for the {@code clazz} records matching
-     * {@code criteria} under the optional {@code order} and {@code page}.
-     *
-     * @param clazz the {@link Record} type to find
-     * @param criteria the {@link Criteria} the records must match
-     * @param order the sort {@link Order}, or {@code null}
-     * @param page the {@link Page} limit, or {@code null} for all matches
-     * @param consumer the mutation applied to each matching {@link Record}
-     * @return the {@link Set} of updated and committed {@link Record Records}
-     * @throws RetryExhaustedException if no attempt commits within the bound
-     */
-    private <T extends Record> Set<T> updateWithinTransaction(Class<T> clazz,
-            Criteria criteria, @Nullable Order order, @Nullable Page page,
-            Consumer<T> consumer) {
-        return updateWithinTransaction(clazz, criteria, order, page, consumer,
-                found -> {});
-    }
-
-    /**
-     * Perform an atomic find-modify-save: within a single staged transaction,
-     * find the records of type {@code clazz} matching {@code criteria} (under
-     * the optional {@code order} and {@code page}), apply {@code consumer} to
-     * each record, save, and commit. The find's read and the save's write share
-     * one transaction (and therefore one conflict footprint), which is what
-     * gives concurrent callers true mutual exclusion: a concurrent commit that
-     * overlaps the read preempts the attempt. Any {@code criteria} is
-     * supported; one that touches {@link Derived} or {@link Computed} data is
-     * matched against the full class inside the same transaction, at the cost
-     * of a class-wide conflict footprint.
-     * <p>
-     * Before any record is mutated, the {@code guard} may veto the attempt: if
-     * it throws, the transaction aborts, nothing is mutated or committed, and
-     * the exception propagates without retrying.
-     * <p>
-     * On a {@link TransactionException} the cycle is aborted and retried with
-     * jittered backoff up to a bounded number of attempts, each re-finding
-     * fresh records so the {@code consumer} always observes current state. When
-     * the attempt budget is exhausted a {@link RetryExhaustedException} is
-     * thrown rather than returning a non-committed result.
-     *
-     * @param clazz the {@link Record} type to find
-     * @param criteria the {@link Criteria} the records must match
-     * @param order the sort {@link Order}, or {@code null}
-     * @param page the {@link Page} limit, or {@code null} for all matches
-     * @param consumer the mutation applied to each matching {@link Record}
-     * @param guard a precondition applied to the freshly read {@link Set}
-     *            inside the transaction, before the {@code consumer} runs; a
-     *            throw vetoes the attempt
-     * @return the {@link Set} of updated and committed {@link Record Records}
-     * @throws RetryExhaustedException if no attempt commits within the bound
-     */
-    private <T extends Record> Set<T> updateWithinTransaction(Class<T> clazz,
-            Criteria criteria, @Nullable Order order, @Nullable Page page,
-            Consumer<T> consumer, Consumer<Set<T>> guard) {
-        // NOTE: Unlike #save, every TransactionException is retried here
-        // regardless of #spuriousSaveFailureStrategy and without a stale-data
-        // check. These primitives are built for write-conflict contention (the
-        // claim use case), where a lost commit race is exactly the condition a
-        // caller wants retried; staleness checks are off because the read is
-        // re-issued fresh inside each attempt's transaction.
-        // NOTE: A criteria that touches derived/computed data cannot be
-        // resolved by the database, so the find reads the entire class within
-        // the transaction and resolves the criteria against each instantiated
-        // Record, mirroring the non-transactional find path. That fallback
-        // widens the attempt's conflict footprint from the matched ranges to
-        // the whole class, which is why database-resolvable criteria contend
-        // less and perform best.
-        boolean dbResolvable = Record.isDatabaseResolvableCondition(clazz,
-                criteria);
-        Criteria scoped = dbResolvable ? $Criteria.withinClass(clazz, criteria)
-                : $Criteria.forClass(clazz);
-        Concourse concourse = connections.request();
-        try {
-            // NOTE: The connection is held across the bounded backoff sleeps
-            // rather than released between attempts. The staged transaction
-            // lives on this connection, and re-requesting per attempt would
-            // churn the pool; the backoff is capped at a few hundred millis so
-            // the idle occupancy is brief.
-            int attempts = 0;
-            while (true) {
-                // NOTE: The incremental path is used unconditionally (even when
-                // #supportsBulkCommands) because BatchSaver defers the
-                // server-side STAGE until commit time, which would place the
-                // find's read outside the transaction. IncrementalSaver stages
-                // synchronously, so the find's read and the save's write share
-                // one transaction (and one set of locks) &mdash; the property
-                // that gives concurrent callers mutual exclusion.
-                Saver saver = new IncrementalSaver(concourse);
-                try {
-                    saver.stage();
-                    // NOTE: A legacy server cannot sort or paginate
-                    // server-side, and a non-database-resolvable criteria
-                    // additionally rules out server-side ordering/pagination
-                    // because paging before local resolution would drop
-                    // matches. In either case the order/page are withheld from
-                    // the find and applied client-side below. The find's reads
-                    // still join the transaction's conflict footprint, so a
-                    // concurrent overlapping commit preempts this attempt and
-                    // the atomicity and mutual-exclusion guarantees are
-                    // preserved.
-                    boolean nativeOrderAndPage = dbResolvable
-                            && (hasNativeSortingAndPagination
-                                    || doesNotRequireSortingOrPagination(order,
-                                            page));
-                    Set<T> found;
-                    // NOTE: The Reader is bound to the same staged connection
-                    // as the Saver so the find reads inside the transaction;
-                    // this deliberately bypasses the result cache used by the
-                    // pooled #select path.
-                    try (Reader reader = new IncrementalReader(concourse)) {
-                        Read read = enqueueRead(reader, false, clazz, scoped,
-                                nativeOrderAndPage ? order : null,
-                                nativeOrderAndPage ? page : null);
-                        AtomicReference<Set<T>> ref = new AtomicReference<>();
-                        read.data
-                                .then($data -> read.navigated
-                                        .then($navigated -> resolveLinkTargets(
-                                                reader, $data, $navigated))
-                                        .map($targets -> instantiateAll(clazz,
-                                                false, $data, $targets)))
-                                .onResolve(ref::set);
-                        reader.drain();
-                        found = ref.get();
-                    }
-                    if(!dbResolvable) {
-                        found = found.stream()
-                                .filter(record -> record.matches(criteria))
-                                .collect(Collectors
-                                        .toCollection(LinkedHashSet::new));
-                    }
-                    if(!nativeOrderAndPage) {
-                        found = sortAndPage(found, order, page);
-                    }
-                    guard.accept(found);
-                    if(found.isEmpty()) {
-                        saver.abort();
-                        return found;
-                    }
-                    Map<Record, Boolean> seen = new HashMap<>();
-                    Map<Record, Snapshot> snapshots = new HashMap<>();
-                    for (T record : found) {
-                        consumer.accept(record);
-                        record.assign(this);
-                        record.saveWithinTransaction(saver, seen, snapshots,
-                                false);
-                    }
-                    if(saver.commit()) {
-                        seen.entrySet().stream().filter(Entry::getValue)
-                                .map(Entry::getKey).forEach(record -> {
-                                    enqueueSaveNotification(record);
-                                    record.checkpoint();
-                                });
-                        return found;
-                    }
-                    else {
-                        // Trigger the retry path below.
-                        throw new TransactionException();
-                    }
-                }
-                catch (TransactionException e) {
-                    saver.abort();
-                    if(++attempts > MAX_SPURIOUS_SAVE_RETRIES) {
-                        throw new RetryExhaustedException(attempts);
-                    }
-                    backoffWithJitter(attempts);
-                    continue;
-                }
-                catch (Throwable t) {
-                    // A non-transaction failure (e.g. a duplicate-entry or
-                    // constraint violation) is terminal: abort and propagate
-                    // without retrying so nothing is committed or mutated.
-                    saver.abort();
-                    throw t;
-                }
-            }
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
-     * Sleep for a jittered, exponentially growing interval before the next
-     * atomic read-modify-write {@code attempt}, dispersing contending callers
-     * so they do not collide again in lockstep.
-     *
-     * @param attempt the attempt number that just failed (1-based)
-     */
-    private void backoffWithJitter(int attempt) {
-        long ceiling = RETRY_BACKOFF_BASE_MILLIS * (1L << (attempt - 1));
-        long delay = ThreadLocalRandom.current().nextLong(ceiling + 1);
-        try {
-            Thread.sleep(delay);
-        }
-        catch (InterruptedException e) {
-            // Honor the interrupt by restoring the flag and abandoning the
-            // retry loop rather than silently continuing to contend.
-            Thread.currentThread().interrupt();
-            throw CheckedExceptions.throwAsRuntimeException(e);
-        }
-    }
-
-    /**
-     * Apply {@code order} and {@code page} to {@code records} client-side.
-     *
-     * @param records the records read for the match, in find order
-     * @param order the sort {@link Order} to apply, or {@code null}
-     * @param page the {@link Page} to apply, or {@code null} for all records
-     * @return the sorted and paginated {@link Set}, preserving iteration order
-     */
-    private <T extends Record> Set<T> sortAndPage(Set<T> records,
-            @Nullable Order order, @Nullable Page page) {
-        if(order != null) {
-            records = DatabaseInterface.sort(records,
-                    backwardsCompatible(order));
-        }
-        if(page != null) {
-            records = records.stream().skip(page.skip()).limit(page.limit())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-        }
-        return records;
     }
 
     /**
@@ -2349,6 +2125,27 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Sleep for a jittered, exponentially growing interval before the next
+     * atomic read-modify-write {@code attempt}, dispersing contending callers
+     * so they do not collide again in lockstep.
+     *
+     * @param attempt the attempt number that just failed (1-based)
+     */
+    private void backoffWithJitter(int attempt) {
+        long ceiling = RETRY_BACKOFF_BASE_MILLIS * (1L << (attempt - 1));
+        long delay = ThreadLocalRandom.current().nextLong(ceiling + 1);
+        try {
+            Thread.sleep(delay);
+        }
+        catch (InterruptedException e) {
+            // Honor the interrupt by restoring the flag and abandoning the
+            // retry loop rather than silently continuing to contend.
+            Thread.currentThread().interrupt();
+            throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+    }
+
+    /**
      * Partition the results of a combined multi-select query back into a single
      * {@link Selection} and populate its result, recording the {@link Link}
      * pre-fetch for the partition on {@code reader}.
@@ -3049,6 +2846,209 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Set<Long> covered = new HashSet<>(pool.keySet());
         Set<Long> frontier = extractLinkTargets(pool, covered);
         return prefetchLinks(reader, pool, covered, frontier);
+    }
+
+    /**
+     * Apply {@code order} and {@code page} to {@code records} client-side.
+     *
+     * @param records the records read for the match, in find order
+     * @param order the sort {@link Order} to apply, or {@code null}
+     * @param page the {@link Page} to apply, or {@code null} for all records
+     * @return the sorted and paginated {@link Set}, preserving iteration order
+     */
+    private <T extends Record> Set<T> sortAndPage(Set<T> records,
+            @Nullable Order order, @Nullable Page page) {
+        if(order != null) {
+            records = DatabaseInterface.sort(records,
+                    backwardsCompatible(order));
+        }
+        if(page != null) {
+            records = records.stream().skip(page.skip()).limit(page.limit())
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+        return records;
+    }
+
+    /**
+     * Perform an atomic find-modify-save for the {@code clazz} records matching
+     * {@code criteria} under the optional {@code order} and {@code page}.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the records must match
+     * @param order the sort {@link Order}, or {@code null}
+     * @param page the {@link Page} limit, or {@code null} for all matches
+     * @param consumer the mutation applied to each matching {@link Record}
+     * @return the {@link Set} of updated and committed {@link Record Records}
+     * @throws RetryExhaustedException if no attempt commits within the bound
+     */
+    private <T extends Record> Set<T> updateWithinTransaction(Class<T> clazz,
+            Criteria criteria, @Nullable Order order, @Nullable Page page,
+            Consumer<T> consumer) {
+        return updateWithinTransaction(clazz, criteria, order, page, consumer,
+                found -> {});
+    }
+
+    /**
+     * Perform an atomic find-modify-save: within a single staged transaction,
+     * find the records of type {@code clazz} matching {@code criteria} (under
+     * the optional {@code order} and {@code page}), apply {@code consumer} to
+     * each record, save, and commit. The find's read and the save's write share
+     * one transaction (and therefore one conflict footprint), which is what
+     * gives concurrent callers true mutual exclusion: a concurrent commit that
+     * overlaps the read preempts the attempt. Any {@code criteria} is
+     * supported; one that touches {@link Derived} or {@link Computed} data is
+     * matched against the full class inside the same transaction, at the cost
+     * of a class-wide conflict footprint.
+     * <p>
+     * Before any record is mutated, the {@code guard} may veto the attempt: if
+     * it throws, the transaction aborts, nothing is mutated or committed, and
+     * the exception propagates without retrying.
+     * <p>
+     * On a {@link TransactionException} the cycle is aborted and retried with
+     * jittered backoff up to a bounded number of attempts, each re-finding
+     * fresh records so the {@code consumer} always observes current state. When
+     * the attempt budget is exhausted a {@link RetryExhaustedException} is
+     * thrown rather than returning a non-committed result.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the records must match
+     * @param order the sort {@link Order}, or {@code null}
+     * @param page the {@link Page} limit, or {@code null} for all matches
+     * @param consumer the mutation applied to each matching {@link Record}
+     * @param guard a precondition applied to the freshly read {@link Set}
+     *            inside the transaction, before the {@code consumer} runs; a
+     *            throw vetoes the attempt
+     * @return the {@link Set} of updated and committed {@link Record Records}
+     * @throws RetryExhaustedException if no attempt commits within the bound
+     */
+    private <T extends Record> Set<T> updateWithinTransaction(Class<T> clazz,
+            Criteria criteria, @Nullable Order order, @Nullable Page page,
+            Consumer<T> consumer, Consumer<Set<T>> guard) {
+        // NOTE: Unlike #save, every TransactionException is retried here
+        // regardless of #spuriousSaveFailureStrategy and without a stale-data
+        // check. These primitives are built for write-conflict contention (the
+        // claim use case), where a lost commit race is exactly the condition a
+        // caller wants retried; staleness checks are off because the read is
+        // re-issued fresh inside each attempt's transaction.
+        // NOTE: A criteria that touches derived/computed data cannot be
+        // resolved by the database, so the find reads the entire class within
+        // the transaction and resolves the criteria against each instantiated
+        // Record, mirroring the non-transactional find path. That fallback
+        // widens the attempt's conflict footprint from the matched ranges to
+        // the whole class, which is why database-resolvable criteria contend
+        // less and perform best.
+        boolean dbResolvable = Record.isDatabaseResolvableCondition(clazz,
+                criteria);
+        Criteria scoped = dbResolvable ? $Criteria.withinClass(clazz, criteria)
+                : $Criteria.forClass(clazz);
+        Concourse concourse = connections.request();
+        try {
+            // NOTE: The connection is held across the bounded backoff sleeps
+            // rather than released between attempts. The staged transaction
+            // lives on this connection, and re-requesting per attempt would
+            // churn the pool; the backoff is capped at a few hundred millis so
+            // the idle occupancy is brief.
+            int attempts = 0;
+            while (true) {
+                // NOTE: The incremental path is used unconditionally (even when
+                // #supportsBulkCommands) because BatchSaver defers the
+                // server-side STAGE until commit time, which would place the
+                // find's read outside the transaction. IncrementalSaver stages
+                // synchronously, so the find's read and the save's write share
+                // one transaction (and one set of locks) &mdash; the property
+                // that gives concurrent callers mutual exclusion.
+                Saver saver = new IncrementalSaver(concourse);
+                try {
+                    saver.stage();
+                    // NOTE: A legacy server cannot sort or paginate
+                    // server-side, and a non-database-resolvable criteria
+                    // additionally rules out server-side ordering/pagination
+                    // because paging before local resolution would drop
+                    // matches. In either case the order/page are withheld from
+                    // the find and applied client-side below. The find's reads
+                    // still join the transaction's conflict footprint, so a
+                    // concurrent overlapping commit preempts this attempt and
+                    // the atomicity and mutual-exclusion guarantees are
+                    // preserved.
+                    boolean nativeOrderAndPage = dbResolvable
+                            && (hasNativeSortingAndPagination
+                                    || doesNotRequireSortingOrPagination(order,
+                                            page));
+                    Set<T> found;
+                    // NOTE: The Reader is bound to the same staged connection
+                    // as the Saver so the find reads inside the transaction;
+                    // this deliberately bypasses the result cache used by the
+                    // pooled #select path.
+                    try (Reader reader = new IncrementalReader(concourse)) {
+                        Read read = enqueueRead(reader, false, clazz, scoped,
+                                nativeOrderAndPage ? order : null,
+                                nativeOrderAndPage ? page : null);
+                        AtomicReference<Set<T>> ref = new AtomicReference<>();
+                        read.data
+                                .then($data -> read.navigated
+                                        .then($navigated -> resolveLinkTargets(
+                                                reader, $data, $navigated))
+                                        .map($targets -> instantiateAll(clazz,
+                                                false, $data, $targets)))
+                                .onResolve(ref::set);
+                        reader.drain();
+                        found = ref.get();
+                    }
+                    if(!dbResolvable) {
+                        found = found.stream()
+                                .filter(record -> record.matches(criteria))
+                                .collect(Collectors
+                                        .toCollection(LinkedHashSet::new));
+                    }
+                    if(!nativeOrderAndPage) {
+                        found = sortAndPage(found, order, page);
+                    }
+                    guard.accept(found);
+                    if(found.isEmpty()) {
+                        saver.abort();
+                        return found;
+                    }
+                    Map<Record, Boolean> seen = new HashMap<>();
+                    Map<Record, Snapshot> snapshots = new HashMap<>();
+                    for (T record : found) {
+                        consumer.accept(record);
+                        record.assign(this);
+                        record.saveWithinTransaction(saver, seen, snapshots,
+                                false);
+                    }
+                    if(saver.commit()) {
+                        seen.entrySet().stream().filter(Entry::getValue)
+                                .map(Entry::getKey).forEach(record -> {
+                                    enqueueSaveNotification(record);
+                                    record.checkpoint();
+                                });
+                        return found;
+                    }
+                    else {
+                        // Trigger the retry path below.
+                        throw new TransactionException();
+                    }
+                }
+                catch (TransactionException e) {
+                    saver.abort();
+                    if(++attempts > MAX_SPURIOUS_SAVE_RETRIES) {
+                        throw new RetryExhaustedException(attempts);
+                    }
+                    backoffWithJitter(attempts);
+                    continue;
+                }
+                catch (Throwable t) {
+                    // A non-transaction failure (e.g. a duplicate-entry or
+                    // constraint violation) is terminal: abort and propagate
+                    // without retrying so nothing is committed or mutated.
+                    saver.abort();
+                    throw t;
+                }
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
     }
 
     /**
