@@ -17,9 +17,8 @@ package com.cinchapi.runway;
 
 /**
  * A {@link RetryExhaustedException} is thrown by an atomic read-modify-write
- * operation ({@code findAndUpdate}, {@code findUniqueAndUpdate}, and
- * {@code findFirstAndUpdate}) when it cannot commit because it lost the
- * write-conflict race on every attempt up to the bounded retry limit.
+ * operation when it cannot commit because it lost the write-conflict race on
+ * every attempt up to the bounded retry limit.
  * <p>
  * This is semantically distinct from a {@code null} or empty result, which
  * means no record matched. A {@link RetryExhaustedException} means matching

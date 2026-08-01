@@ -1165,11 +1165,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * the exception propagates without retrying.
      * <p>
      * On a {@link TransactionException} the cycle is aborted and retried with
-     * jittered backoff up to {@link #MAX_SPURIOUS_SAVE_RETRIES} attempts, each
-     * re-finding fresh records so the {@code consumer} always observes current
-     * state. When the attempt budget is exhausted a
-     * {@link RetryExhaustedException} is thrown rather than returning a
-     * non-committed result.
+     * jittered backoff up to a bounded number of attempts, each re-finding
+     * fresh records so the {@code consumer} always observes current state. When
+     * the attempt budget is exhausted a {@link RetryExhaustedException} is
+     * thrown rather than returning a non-committed result.
      *
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the records must match
@@ -1334,9 +1333,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Apply {@code order} and {@code page} to {@code records} client-side, for
-     * the legacy-server path where the find could not sort or paginate
-     * server-side.
+     * Apply {@code order} and {@code page} to {@code records} client-side.
      *
      * @param records the records read for the match, in find order
      * @param order the sort {@link Order} to apply, or {@code null}

@@ -61,6 +61,9 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
         return Arrays.asList(new Object[][] { { true }, { false } });
     }
 
+    /**
+     * Whether the test run exercises the bulk Command-API read path.
+     */
     private final boolean useBulkCommands;
 
     /**
