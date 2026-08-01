@@ -1023,8 +1023,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record> Set<T> findAndUpdate(Class<T> clazz,
             Criteria criteria, Consumer<T> consumer) {
-        return updateWithinTransaction(clazz, criteria, null, null, consumer,
-                found -> {});
+        return updateWithinTransaction(clazz, criteria, null, null, consumer);
     }
 
     /**
@@ -1126,22 +1125,44 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Preconditions.checkNotNull(order,
                 "findFirstAndUpdate requires an Order");
         Set<T> updated = updateWithinTransaction(clazz, criteria, order,
-                Page.limit(1), consumer, found -> {});
+                Page.limit(1), consumer);
         return Iterables.getFirst(updated, null);
+    }
+
+    /**
+     * Perform an atomic find-modify-save for the {@code clazz} records matching
+     * {@code criteria} under the optional {@code order} and {@code page}.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the records must match
+     * @param order the sort {@link Order}, or {@code null}
+     * @param page the {@link Page} limit, or {@code null} for all matches
+     * @param consumer the mutation applied to each matching {@link Record}
+     * @return the {@link Set} of updated and committed {@link Record Records}
+     * @throws RetryExhaustedException if no attempt commits within the bound
+     */
+    private <T extends Record> Set<T> updateWithinTransaction(Class<T> clazz,
+            Criteria criteria, @Nullable Order order, @Nullable Page page,
+            Consumer<T> consumer) {
+        return updateWithinTransaction(clazz, criteria, order, page, consumer,
+                found -> {});
     }
 
     /**
      * Perform an atomic find-modify-save: within a single staged transaction,
      * find the records of type {@code clazz} matching {@code criteria} (under
-     * the optional {@code order} and {@code page}), let {@code validator}
-     * inspect the freshly read {@link Set} before any update, apply
-     * {@code consumer} to each record, save, and commit. The find's read and
-     * the save's write share one transaction (and therefore one conflict
-     * footprint), which is what gives concurrent callers true mutual exclusion:
-     * a concurrent commit that overlaps the read preempts the attempt. Any
-     * {@code criteria} is supported; one that touches {@link Derived} or
-     * {@link Computed} data is matched against the full class inside the same
-     * transaction, at the cost of a class-wide conflict footprint.
+     * the optional {@code order} and {@code page}), apply {@code consumer} to
+     * each record, save, and commit. The find's read and the save's write share
+     * one transaction (and therefore one conflict footprint), which is what
+     * gives concurrent callers true mutual exclusion: a concurrent commit that
+     * overlaps the read preempts the attempt. Any {@code criteria} is
+     * supported; one that touches {@link Derived} or {@link Computed} data is
+     * matched against the full class inside the same transaction, at the cost
+     * of a class-wide conflict footprint.
+     * <p>
+     * Before any record is mutated, the {@code guard} may veto the attempt: if
+     * it throws, the transaction aborts, nothing is mutated or committed, and
+     * the exception propagates without retrying.
      * <p>
      * On a {@link TransactionException} the cycle is aborted and retried with
      * jittered backoff up to {@link #MAX_SPURIOUS_SAVE_RETRIES} attempts, each
@@ -1155,14 +1176,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param order the sort {@link Order}, or {@code null}
      * @param page the {@link Page} limit, or {@code null} for all matches
      * @param consumer the mutation applied to each matching {@link Record}
-     * @param validator a hook that inspects the freshly read {@link Set} inside
-     *            the transaction before any update (e.g. to enforce uniqueness)
+     * @param guard a precondition applied to the freshly read {@link Set}
+     *            inside the transaction, before the {@code consumer} runs; a
+     *            throw vetoes the attempt
      * @return the {@link Set} of updated and committed {@link Record Records}
      * @throws RetryExhaustedException if no attempt commits within the bound
      */
     private <T extends Record> Set<T> updateWithinTransaction(Class<T> clazz,
             Criteria criteria, @Nullable Order order, @Nullable Page page,
-            Consumer<T> consumer, Consumer<Set<T>> validator) {
+            Consumer<T> consumer, Consumer<Set<T>> guard) {
         // NOTE: Unlike #save, every TransactionException is retried here
         // regardless of #spuriousSaveFailureStrategy and without a stale-data
         // check. These primitives are built for write-conflict contention (the
@@ -1242,7 +1264,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     if(!nativeOrderAndPage) {
                         found = sortAndPage(found, order, page);
                     }
-                    validator.accept(found);
+                    guard.accept(found);
                     if(found.isEmpty()) {
                         saver.abort();
                         return found;
