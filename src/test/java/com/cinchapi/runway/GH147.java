@@ -721,6 +721,35 @@ public class GH147 extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the governing
+     * {@link DynamicWritePolicy} is available through
+     * {@link Runway#properties()}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Runway} configured with a specific
+     * {@link DynamicWritePolicy}.</li>
+     * <li>Read {@code properties().dynamicWritePolicy()} from the built
+     * instance and from the default {@code runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The built instance returns the configured
+     * policy and the default {@code runway} returns a non-null policy.
+     */
+    @Test
+    public void testDynamicWritePolicyIsAvailableThroughProperties()
+            throws Exception {
+        DynamicWritePolicy policy = DynamicWritePolicy.javaDefaults();
+        try (Runway strict = runwayBuilder().dynamicWritePolicy(policy)
+                .build()) {
+            Assert.assertSame(policy, strict.properties().dynamicWritePolicy());
+        }
+        Assert.assertNotNull(runway.properties().dynamicWritePolicy());
+    }
+
+    /**
      * A minimal {@link Audience} used to drive writes through the access
      * control framework.
      */

@@ -2970,7 +2970,7 @@ public abstract class Record implements Comparable<Record> {
      * @return the governing {@link DynamicWritePolicy}
      */
     private DynamicWritePolicy dynamicWritePolicy() {
-        return runway != null ? runway.dynamicWritePolicy
+        return runway != null ? runway.properties().dynamicWritePolicy()
                 : DynamicWritePolicy.permissive();
     }
 

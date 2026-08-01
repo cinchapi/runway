@@ -7,6 +7,7 @@
     * The bulk `Record#set(Map)` overload applies entries individually, so a mid-map refusal leaves the earlier entries applied. The caller must catch the exception and discard the record instead of saving it.
     * A field annotated with the new `@Writable` annotation always accepts dynamic writes, regardless of the policy.
     * Records that are not assigned to a `Runway` instance follow the permissive default, and loading a record from the database always populates every field regardless of policy.
+    * The governing policy is readable through `properties().dynamicWritePolicy()`.
 * **Added `findFirst` and `findAnyFirst`** to read the single first record that matches a `Criteria` under a caller-supplied `Order`, or `null` when no record matches. The database evaluates the order and returns at most one record, so the full match set is never loaded. ([GH-139](https://github.com/cinchapi/runway/issues/139))
     * Unlike `findUnique`, the methods perform no duplicate detection and never throw when more than one record matches; the result is the first record under the order.
     * `findAnyFirst` applies the same contract across the class hierarchy, as `findAny` does for `find`.

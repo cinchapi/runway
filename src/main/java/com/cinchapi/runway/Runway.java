@@ -426,7 +426,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * {@link Record#set(String, Object) dynamic writes} to {@link Record
      * Records} that are assigned to this {@link Runway} instance.
      */
-    /* package */ DynamicWritePolicy dynamicWritePolicy = DynamicWritePolicy
+    private DynamicWritePolicy dynamicWritePolicy = DynamicWritePolicy
             .permissive();
 
     /**
@@ -441,6 +441,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * record's class, id and error for processing.
      */
     private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = DEFAULT_ON_LOAD_FAILURE_HANDLER;
+
+    /**
+     * The {@link Properties} view of this {@link Runway} instance, returned
+     * from every {@link #properties()} call.
+     */
+    private final Properties properties = new Properties();
 
     /**
      * The strategy for handling spurious {@link TransactionException
@@ -936,7 +942,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the {@link Properties}
      */
     public Properties properties() {
-        return new Properties();
+        return properties;
     }
 
     /**
@@ -3337,6 +3343,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @author Jeff Nelson
      */
     public class Properties {
+
+        /**
+         * Return the {@link DynamicWritePolicy} that governs
+         * {@link Record#set(String, Object) dynamic writes} to {@link Record
+         * Records} that are assigned to this {@link Runway} instance.
+         *
+         * @return the governing {@link DynamicWritePolicy}
+         */
+        public DynamicWritePolicy dynamicWritePolicy() {
+            return dynamicWritePolicy;
+        }
 
         /**
          * Register a listener that will be called <strong>after</strong> any
