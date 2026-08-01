@@ -36,9 +36,9 @@ import com.cinchapi.concourse.thrift.Operator;
 
 /**
  * Tests for
- * {@link Runway#findFirstAndEdit(Class, Criteria, Order, java.util.function.Consumer)
- * findFirstAndEdit}, the atomic claim-and-update primitive. Each test runs
- * under both Command-API modes (bulk enabled and disabled); the atomic edit
+ * {@link Runway#findFirstAndUpdate(Class, Criteria, Order, java.util.function.Consumer)
+ * findFirstAndUpdate}, the atomic claim-and-update primitive. Each test runs
+ * under both Command-API modes (bulk enabled and disabled); the atomic update
  * itself always uses the incremental, synchronously-staged transaction path, so
  * the matrix additionally guards the surrounding save and load operations under
  * both modes.
@@ -46,7 +46,7 @@ import com.cinchapi.concourse.thrift.Operator;
  * @author Javier Lores
  */
 @RunWith(Parameterized.class)
-public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
+public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
 
     /**
      * Return the parameter matrix that drives each test once per Command-API
@@ -67,7 +67,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * @param useBulkCommands {@code true} to exercise the bulk Command-API read
      *            path; {@code false} for the incremental path
      */
-    public FindFirstAndEditTest(boolean useBulkCommands) {
+    public FindFirstAndUpdateTest(boolean useBulkCommands) {
         this.useBulkCommands = useBulkCommands;
     }
 
@@ -78,9 +78,9 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findFirstAndEdit} edits exactly
-     * the record that sorts first under the {@link Order} and durably persists
-     * the edit.
+     * <strong>Goal:</strong> Verify that {@code findFirstAndUpdate} updates
+     * exactly the record that sorts first under the {@link Order} and durably
+     * persists the update.
      * <p>
      * <strong>Start state:</strong> Three unclaimed {@link Task Tasks} with
      * ranks 3, 2, and 1 saved in non-sorted insertion order.
@@ -88,8 +88,8 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Task Tasks} with ranks 3, 2, and 1.</li>
-     * <li>Call {@code findFirstAndEdit} ordered by {@code rank} ascending with
-     * a consumer that sets {@code owner} to {@code "worker"}.</li>
+     * <li>Call {@code findFirstAndUpdate} ordered by {@code rank} ascending
+     * with a consumer that sets {@code owner} to {@code "worker"}.</li>
      * <li>Re-load the returned {@link Task} by id from the database.</li>
      * </ul>
      * <p>
@@ -98,9 +98,9 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * persisted {@code owner}.
      */
     @Test
-    public void testFindFirstAndEditEditsFirstUnderOrderAndPersists() {
+    public void testFindFirstAndUpdateUpdatesFirstUnderOrderAndPersists() {
         runway.save(new Task(3), new Task(2), new Task(1));
-        Task first = runway.findFirstAndEdit(Task.class, unclaimed(),
+        Task first = runway.findFirstAndUpdate(Task.class, unclaimed(),
                 Order.by("rank").ascending(), task -> task.owner = "worker");
         Assert.assertNotNull(first);
         Assert.assertEquals(1, first.rank);
@@ -110,8 +110,8 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findFirstAndEdit} applies the
-     * {@link Order} client-side and still edits exactly the record that sorts
+     * <strong>Goal:</strong> Verify that {@code findFirstAndUpdate} applies the
+     * {@link Order} client-side and still updates exactly the record that sorts
      * first when the server cannot sort or paginate natively.
      * <p>
      * <strong>Start state:</strong> A {@link Runway} forced onto the legacy
@@ -122,8 +122,8 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Force {@code hasNativeSortingAndPagination} to {@code false}.</li>
      * <li>Save {@link Task Tasks} with ranks 3, 2, and 1.</li>
-     * <li>Call {@code findFirstAndEdit} ordered by {@code rank} ascending with
-     * a consumer that sets {@code owner} to {@code "worker"}.</li>
+     * <li>Call {@code findFirstAndUpdate} ordered by {@code rank} ascending
+     * with a consumer that sets {@code owner} to {@code "worker"}.</li>
      * <li>Re-load the returned {@link Task} by id from the database.</li>
      * </ul>
      * <p>
@@ -132,10 +132,10 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * persisted {@code owner}.
      */
     @Test
-    public void testFindFirstAndEditAppliesOrderClientSideOnLegacyServer() {
+    public void testFindFirstAndUpdateAppliesOrderClientSideOnLegacyServer() {
         Reflection.set("hasNativeSortingAndPagination", false, runway); // (authorized)
         runway.save(new Task(3), new Task(2), new Task(1));
-        Task first = runway.findFirstAndEdit(Task.class, unclaimed(),
+        Task first = runway.findFirstAndUpdate(Task.class, unclaimed(),
                 Order.by("rank").ascending(), task -> task.owner = "worker");
         Assert.assertNotNull(first);
         Assert.assertEquals(1, first.rank);
@@ -145,7 +145,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findFirstAndEdit} returns
+     * <strong>Goal:</strong> Verify that {@code findFirstAndUpdate} returns
      * {@code null} and never invokes the consumer when no record matches.
      * <p>
      * <strong>Start state:</strong> Three {@link Task Tasks} whose ranks are
@@ -154,18 +154,18 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Task Tasks} with ranks 1, 2, and 3.</li>
-     * <li>Call {@code findFirstAndEdit} with {@code rank > 100} and a consumer
-     * that flips an {@link AtomicBoolean}.</li>
+     * <li>Call {@code findFirstAndUpdate} with {@code rank > 100} and a
+     * consumer that flips an {@link AtomicBoolean}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The result is {@code null} and the consumer
      * never ran.
      */
     @Test
-    public void testFindFirstAndEditReturnsNullAndSkipsConsumerWhenNoMatch() {
+    public void testFindFirstAndUpdateReturnsNullAndSkipsConsumerWhenNoMatch() {
         runway.save(new Task(1), new Task(2), new Task(3));
         AtomicBoolean consumerRan = new AtomicBoolean(false);
-        Task first = runway.findFirstAndEdit(Task.class,
+        Task first = runway.findFirstAndUpdate(Task.class,
                 Criteria.where().key("rank").operator(Operator.GREATER_THAN)
                         .value(100).build(),
                 Order.by("rank").ascending(), task -> consumerRan.set(true));
@@ -174,7 +174,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findFirstAndEdit} rejects a
+     * <strong>Goal:</strong> Verify that {@code findFirstAndUpdate} rejects a
      * {@code null} {@link Order}, since "first" is undefined without one.
      * <p>
      * <strong>Start state:</strong> A single unclaimed {@link Task}.
@@ -182,15 +182,16 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save one {@link Task}.</li>
-     * <li>Call {@code findFirstAndEdit} with a {@code null} {@link Order}.</li>
+     * <li>Call {@code findFirstAndUpdate} with a {@code null}
+     * {@link Order}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> A {@link NullPointerException} is thrown.
      */
     @Test(expected = NullPointerException.class)
-    public void testFindFirstAndEditRequiresOrder() {
+    public void testFindFirstAndUpdateRequiresOrder() {
         runway.save(new Task(1));
-        runway.findFirstAndEdit(Task.class, unclaimed(), null,
+        runway.findFirstAndUpdate(Task.class, unclaimed(), null,
                 task -> task.owner = "worker");
     }
 
@@ -204,7 +205,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save a single unclaimed {@link Task}.</li>
      * <li>Start two threads that, gated by a common latch, each call
-     * {@code findFirstAndEdit} to claim it under their own owner id.</li>
+     * {@code findFirstAndUpdate} to claim it under their own owner id.</li>
      * <li>{@code join()} both threads, then re-load the {@link Task}.</li>
      * </ul>
      * <p>
@@ -213,7 +214,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * the single winner's id.
      */
     @Test
-    public void testFindFirstAndEditClaimsExactlyOneUnderConcurrency()
+    public void testFindFirstAndUpdateClaimsExactlyOneUnderConcurrency()
             throws InterruptedException {
         Task task = new Task(1);
         runway.save(task);
@@ -226,7 +227,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
             ready.countDown();
             try {
                 go.await();
-                claim1.set(runway.findFirstAndEdit(Task.class, unclaimed(),
+                claim1.set(runway.findFirstAndUpdate(Task.class, unclaimed(),
                         Order.by("rank").ascending(), t -> {
                             t.claimed = true;
                             t.owner = "one";
@@ -240,7 +241,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
             ready.countDown();
             try {
                 go.await();
-                claim2.set(runway.findFirstAndEdit(Task.class, unclaimed(),
+                claim2.set(runway.findFirstAndUpdate(Task.class, unclaimed(),
                         Order.by("rank").ascending(), t -> {
                             t.claimed = true;
                             t.owner = "two";
@@ -285,7 +286,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * two claims are distinct {@link Task Tasks} (different ids).
      */
     @Test
-    public void testFindFirstAndEditConcurrentClaimsTakeDistinctRecords()
+    public void testFindFirstAndUpdateConcurrentClaimsTakeDistinctRecords()
             throws InterruptedException {
         runway.save(new Task(1), new Task(2));
         CountDownLatch ready = new CountDownLatch(2);
@@ -296,7 +297,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
             ready.countDown();
             try {
                 go.await();
-                claim1.set(runway.findFirstAndEdit(Task.class, unclaimed(),
+                claim1.set(runway.findFirstAndUpdate(Task.class, unclaimed(),
                         Order.by("rank").ascending(), t -> {
                             t.claimed = true;
                             t.owner = "one";
@@ -310,7 +311,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
             ready.countDown();
             try {
                 go.await();
-                claim2.set(runway.findFirstAndEdit(Task.class, unclaimed(),
+                claim2.set(runway.findFirstAndUpdate(Task.class, unclaimed(),
                         Order.by("rank").ascending(), t -> {
                             t.claimed = true;
                             t.owner = "two";
@@ -332,7 +333,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findFirstAndEdit} throws
+     * <strong>Goal:</strong> Verify that {@code findFirstAndUpdate} throws
      * {@link RetryExhaustedException} &mdash; rather than returning
      * {@code null} &mdash; when it loses the commit race on every attempt.
      * <p>
@@ -341,7 +342,7 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a single unclaimed {@link Task}.</li>
-     * <li>Call {@code findFirstAndEdit} with a consumer that, on every
+     * <li>Call {@code findFirstAndUpdate} with a consumer that, on every
      * invocation, writes to the same record through a separate connection so
      * the staged transaction always conflicts at commit time.</li>
      * </ul>
@@ -350,17 +351,18 @@ public class FindFirstAndEditTest extends RunwayBaseClientServerTest {
      * and the persisted {@code owner} was never set by this caller.
      */
     @Test(expected = RetryExhaustedException.class)
-    public void testFindFirstAndEditThrowsRetryExhaustedUnderPersistentContention() {
+    public void testFindFirstAndUpdateThrowsRetryExhaustedUnderContention() {
         Task task = new Task(1);
         runway.save(task);
         long id = task.id();
-        runway.findFirstAndEdit(Task.class, unclaimed(),
+        runway.findFirstAndUpdate(Task.class, unclaimed(),
                 Order.by("rank").ascending(), t -> {
                     // Force a conflicting external write on every attempt so
                     // the staged transaction can never commit. The nested
-                    // request borrows a second connection while the edit holds
-                    // its own; this is safe because Runway uses an expandable
-                    // cached pool that grows on demand rather than blocking.
+                    // request borrows a second connection while the update
+                    // holds its own; this is safe because Runway uses an
+                    // expandable cached pool that grows on demand rather than
+                    // blocking.
                     Concourse other = runway.connections.request();
                     try {
                         other.set("rank", t.rank + 1, id);

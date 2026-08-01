@@ -32,16 +32,16 @@ import com.cinchapi.concourse.thrift.Operator;
 
 /**
  * Tests for
- * {@link Runway#findUniqueAndEdit(Class, Criteria, java.util.function.Consumer)
- * findUniqueAndEdit}. Each test runs under both Command-API modes (bulk enabled
- * and disabled); the atomic edit itself always uses the incremental,
+ * {@link Runway#findUniqueAndUpdate(Class, Criteria, java.util.function.Consumer)
+ * findUniqueAndUpdate}. Each test runs under both Command-API modes (bulk
+ * enabled and disabled); the atomic update itself always uses the incremental,
  * synchronously-staged transaction path, so the matrix additionally guards the
  * surrounding save and load operations under both modes.
  *
  * @author Javier Lores
  */
 @RunWith(Parameterized.class)
-public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
+public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
 
     /**
      * Return the parameter matrix that drives each test once per Command-API
@@ -62,7 +62,7 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
      * @param useBulkCommands {@code true} to exercise the bulk Command-API read
      *            path; {@code false} for the incremental path
      */
-    public FindUniqueAndEditTest(boolean useBulkCommands) {
+    public FindUniqueAndUpdateTest(boolean useBulkCommands) {
         this.useBulkCommands = useBulkCommands;
     }
 
@@ -73,8 +73,8 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findUniqueAndEdit} edits the
-     * sole matching record and durably persists the edit.
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} updates
+     * the sole matching record and durably persists the update.
      * <p>
      * <strong>Start state:</strong> Three {@link Item Items} with distinct
      * codes, exactly one of which matches the criteria.
@@ -82,8 +82,8 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Item Items} with codes 1, 2, and 3.</li>
-     * <li>Call {@code findUniqueAndEdit} with {@code code == 2} and a consumer
-     * that sets {@code owner} to {@code "worker"}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code code == 2} and a
+     * consumer that sets {@code owner} to {@code "worker"}.</li>
      * <li>Re-load the returned {@link Item} by id from the database.</li>
      * </ul>
      * <p>
@@ -92,9 +92,9 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
      * persisted {@code owner}.
      */
     @Test
-    public void testFindUniqueAndEditEditsSoleMatchAndPersists() {
+    public void testFindUniqueAndUpdateUpdatesSoleMatchAndPersists() {
         runway.save(new Item(1), new Item(2), new Item(3));
-        Item item = runway.findUniqueAndEdit(Item.class, code(2),
+        Item item = runway.findUniqueAndUpdate(Item.class, code(2),
                 i -> i.owner = "worker");
         Assert.assertNotNull(item);
         Assert.assertEquals(2, item.code);
@@ -104,7 +104,7 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findUniqueAndEdit} returns
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} returns
      * {@code null} and never invokes the consumer when no record matches.
      * <p>
      * <strong>Start state:</strong> Three {@link Item Items} none of which
@@ -113,25 +113,25 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Item Items} with codes 1, 2, and 3.</li>
-     * <li>Call {@code findUniqueAndEdit} with {@code code == 99} and a consumer
-     * that flips an {@link AtomicBoolean}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code code == 99} and a
+     * consumer that flips an {@link AtomicBoolean}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The result is {@code null} and the consumer
      * never ran.
      */
     @Test
-    public void testFindUniqueAndEditReturnsNullAndSkipsConsumerWhenNoMatch() {
+    public void testFindUniqueAndUpdateReturnsNullAndSkipsConsumerIfNoMatch() {
         runway.save(new Item(1), new Item(2), new Item(3));
         AtomicBoolean consumerRan = new AtomicBoolean(false);
-        Item item = runway.findUniqueAndEdit(Item.class, code(99),
+        Item item = runway.findUniqueAndUpdate(Item.class, code(99),
                 i -> consumerRan.set(true));
         Assert.assertNull(item);
         Assert.assertFalse(consumerRan.get());
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findUniqueAndEdit} throws
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} throws
      * {@link DuplicateEntryException} when more than one record matches, and
      * that neither the mutation nor a commit occurs.
      * <p>
@@ -141,8 +141,8 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save two {@link Item Items} both with code 7.</li>
-     * <li>Call {@code findUniqueAndEdit} with {@code code == 7} and a consumer
-     * that sets {@code owner}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code code == 7} and a
+     * consumer that sets {@code owner}.</li>
      * <li>Catch the expected exception, then re-load both {@link Item
      * Items}.</li>
      * </ul>
@@ -151,13 +151,13 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
      * and neither re-loaded {@link Item} has an {@code owner} set.
      */
     @Test
-    public void testFindUniqueAndEditThrowsOnDuplicateWithoutEditing() {
+    public void testFindUniqueAndUpdateThrowsOnDuplicateWithoutUpdating() {
         Item one = new Item(7);
         Item two = new Item(7);
         runway.save(one, two);
         boolean threw = false;
         try {
-            runway.findUniqueAndEdit(Item.class, code(7),
+            runway.findUniqueAndUpdate(Item.class, code(7),
                     i -> i.owner = "worker");
         }
         catch (DuplicateEntryException e) {
@@ -169,7 +169,7 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findUniqueAndEdit} still
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} still
      * detects a duplicate match when the server cannot paginate natively, so
      * the unique guard does not depend on server-side pagination.
      * <p>
@@ -181,8 +181,8 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Force {@code hasNativeSortingAndPagination} to {@code false}.</li>
      * <li>Save two {@link Item Items} both with code 7.</li>
-     * <li>Call {@code findUniqueAndEdit} with {@code code == 7} and a consumer
-     * that sets {@code owner}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code code == 7} and a
+     * consumer that sets {@code owner}.</li>
      * <li>Catch the expected exception, then re-load both {@link Item
      * Items}.</li>
      * </ul>
@@ -191,14 +191,14 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
      * and neither re-loaded {@link Item} has an {@code owner} set.
      */
     @Test
-    public void testFindUniqueAndEditThrowsOnDuplicateOnLegacyServer() {
+    public void testFindUniqueAndUpdateThrowsOnDuplicateOnLegacyServer() {
         Reflection.set("hasNativeSortingAndPagination", false, runway); // (authorized)
         Item one = new Item(7);
         Item two = new Item(7);
         runway.save(one, two);
         boolean threw = false;
         try {
-            runway.findUniqueAndEdit(Item.class, code(7),
+            runway.findUniqueAndUpdate(Item.class, code(7),
                     i -> i.owner = "worker");
         }
         catch (DuplicateEntryException e) {
@@ -222,7 +222,7 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * A {@link Record} with a queryable {@code code} and an editable
+     * A {@link Record} with a queryable {@code code} and a mutable
      * {@code owner}.
      *
      * @author Javier Lores
@@ -235,7 +235,7 @@ public class FindUniqueAndEditTest extends RunwayBaseClientServerTest {
         int code;
 
         /**
-         * The editable owner, or {@code null} when unset.
+         * The mutable owner, or {@code null} when unset.
          */
         String owner;
 

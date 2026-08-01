@@ -32,16 +32,16 @@ import com.cinchapi.concourse.thrift.Operator;
 
 /**
  * Tests for
- * {@link Runway#findAndEdit(Class, Criteria, java.util.function.Consumer)
- * findAndEdit}. Each test runs under both Command-API modes (bulk enabled and
- * disabled); the atomic edit itself always uses the incremental,
+ * {@link Runway#findAndUpdate(Class, Criteria, java.util.function.Consumer)
+ * findAndUpdate}. Each test runs under both Command-API modes (bulk enabled and
+ * disabled); the atomic update itself always uses the incremental,
  * synchronously-staged transaction path, so the matrix additionally guards the
  * surrounding save and load operations under both modes.
  *
  * @author Javier Lores
  */
 @RunWith(Parameterized.class)
-public class FindAndEditTest extends RunwayBaseClientServerTest {
+public class FindAndUpdateTest extends RunwayBaseClientServerTest {
 
     /**
      * Return the parameter matrix that drives each test once per Command-API
@@ -62,7 +62,7 @@ public class FindAndEditTest extends RunwayBaseClientServerTest {
      * @param useBulkCommands {@code true} to exercise the bulk Command-API read
      *            path; {@code false} for the incremental path
      */
-    public FindAndEditTest(boolean useBulkCommands) {
+    public FindAndUpdateTest(boolean useBulkCommands) {
         this.useBulkCommands = useBulkCommands;
     }
 
@@ -73,8 +73,8 @@ public class FindAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findAndEdit} edits every
-     * matching record and durably persists all of the edits.
+     * <strong>Goal:</strong> Verify that {@code findAndUpdate} updates every
+     * matching record and durably persists all of the updates.
      * <p>
      * <strong>Start state:</strong> Three {@link Doc Docs} that all match the
      * criteria.
@@ -82,7 +82,7 @@ public class FindAndEditTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Doc Docs} with ranks 1, 2, and 3.</li>
-     * <li>Call {@code findAndEdit} with {@code rank > 0} and a consumer that
+     * <li>Call {@code findAndUpdate} with {@code rank > 0} and a consumer that
      * sets {@code owner} to {@code "worker"}.</li>
      * <li>Re-load each returned {@link Doc} by id from the database.</li>
      * </ul>
@@ -92,12 +92,12 @@ public class FindAndEditTest extends RunwayBaseClientServerTest {
      * persisted {@code owner}.
      */
     @Test
-    public void testFindAndEditEditsAllMatchesAndPersists() {
+    public void testFindAndUpdateUpdatesAllMatchesAndPersists() {
         runway.save(new Doc(1), new Doc(2), new Doc(3));
-        Set<Doc> edited = runway.findAndEdit(Doc.class, rankPositive(),
+        Set<Doc> updated = runway.findAndUpdate(Doc.class, rankPositive(),
                 doc -> doc.owner = "worker");
-        Assert.assertEquals(3, edited.size());
-        for (Doc doc : edited) {
+        Assert.assertEquals(3, updated.size());
+        for (Doc doc : updated) {
             Assert.assertEquals("worker", doc.owner);
             Assert.assertEquals("worker",
                     runway.load(Doc.class, doc.id()).owner);
@@ -105,7 +105,7 @@ public class FindAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findAndEdit} returns an empty
+     * <strong>Goal:</strong> Verify that {@code findAndUpdate} returns an empty
      * {@link Set} and never invokes the consumer when no record matches.
      * <p>
      * <strong>Start state:</strong> Three {@link Doc Docs} none of which
@@ -114,28 +114,28 @@ public class FindAndEditTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Doc Docs} with ranks 1, 2, and 3.</li>
-     * <li>Call {@code findAndEdit} with {@code rank > 100} and a consumer that
-     * flips an {@link AtomicBoolean}.</li>
+     * <li>Call {@code findAndUpdate} with {@code rank > 100} and a consumer
+     * that flips an {@link AtomicBoolean}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The returned {@link Set} is empty and the
      * consumer never ran.
      */
     @Test
-    public void testFindAndEditReturnsEmptyAndSkipsConsumerWhenNoMatch() {
+    public void testFindAndUpdateReturnsEmptyAndSkipsConsumerWhenNoMatch() {
         runway.save(new Doc(1), new Doc(2), new Doc(3));
         AtomicBoolean consumerRan = new AtomicBoolean(false);
-        Set<Doc> edited = runway.findAndEdit(
+        Set<Doc> updated = runway.findAndUpdate(
                 Doc.class, Criteria.where().key("rank")
                         .operator(Operator.GREATER_THAN).value(100).build(),
                 doc -> consumerRan.set(true));
-        Assert.assertTrue(edited.isEmpty());
+        Assert.assertTrue(updated.isEmpty());
         Assert.assertFalse(consumerRan.get());
     }
 
     /**
      * <strong>Goal:</strong> Verify the all-or-nothing guarantee: when the
-     * consumer throws partway through the match set, no record's edit is
+     * consumer throws partway through the match set, no record's update is
      * persisted.
      * <p>
      * <strong>Start state:</strong> Three {@link Doc Docs} that all match the
@@ -144,8 +144,8 @@ public class FindAndEditTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Doc Docs} with ranks 1, 2, and 3.</li>
-     * <li>Call {@code findAndEdit} with a consumer that sets {@code owner} but
-     * throws when it reaches the rank-2 {@link Doc}.</li>
+     * <li>Call {@code findAndUpdate} with a consumer that sets {@code owner}
+     * but throws when it reaches the rank-2 {@link Doc}.</li>
      * <li>Catch the thrown exception, then re-load all three {@link Doc
      * Docs}.</li>
      * </ul>
@@ -154,14 +154,14 @@ public class FindAndEditTest extends RunwayBaseClientServerTest {
      * re-loaded {@link Doc Docs} has an {@code owner} set.
      */
     @Test
-    public void testFindAndEditIsAllOrNothingWhenConsumerThrows() {
+    public void testFindAndUpdateIsAllOrNothingWhenConsumerThrows() {
         Doc one = new Doc(1);
         Doc two = new Doc(2);
         Doc three = new Doc(3);
         runway.save(one, two, three);
         boolean threw = false;
         try {
-            runway.findAndEdit(Doc.class, rankPositive(), doc -> {
+            runway.findAndUpdate(Doc.class, rankPositive(), doc -> {
                 if(doc.rank == 2) {
                     throw new IllegalStateException("boom");
                 }
@@ -189,7 +189,7 @@ public class FindAndEditTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * A {@link Record} with a queryable {@code rank} and an editable
+     * A {@link Record} with a queryable {@code rank} and a mutable
      * {@code owner}.
      *
      * @author Javier Lores
@@ -202,7 +202,7 @@ public class FindAndEditTest extends RunwayBaseClientServerTest {
         int rank;
 
         /**
-         * The editable owner, or {@code null} when unset.
+         * The mutable owner, or {@code null} when unset.
          */
         String owner;
 

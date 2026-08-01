@@ -974,10 +974,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Atomically find every {@link Record} of type {@code clazz} that matches
      * the {@code criteria}, apply the {@code consumer} to each, and persist all
-     * of the edits as a single transaction.
+     * of the updates as a single transaction.
      * <p>
      * The find, the {@code consumer} application, and the save run as one
-     * transaction: either every edit commits or none do. When no record
+     * transaction: either every update commits or none do. When no record
      * matches, the {@code consumer} is never invoked, nothing is committed, and
      * an empty {@link Set} is returned. The returned {@link Set} preserves the
      * iteration order of the underlying find.
@@ -987,29 +987,29 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * {@code consumer} may run more than once and must be safe to do so; it
      * must mutate the {@link Record} it is handed rather than one captured
      * earlier. The {@code consumer} runs before the save's validation, so an
-     * edit that violates a {@code Required}/{@code Unique} constraint surfaces
-     * from the save path.
+     * update that violates a {@code Required}/{@code Unique} constraint
+     * surfaces from the save path.
      *
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the records must match
      * @param consumer the mutation to apply to each matching {@link Record}
-     * @return the {@link Set} of edited {@link Record Records}, empty when none
-     *         matched
-     * @throws RetryExhaustedException if the edit cannot commit within the
+     * @return the {@link Set} of updated {@link Record Records}, empty when
+     *         none matched
+     * @throws RetryExhaustedException if the update cannot commit within the
      *             bounded number of attempts due to persistent contention
      */
-    public <T extends Record> Set<T> findAndEdit(Class<T> clazz,
+    public <T extends Record> Set<T> findAndUpdate(Class<T> clazz,
             Criteria criteria, Consumer<T> consumer) {
-        return editWithinTransaction(clazz, criteria, null, null, consumer,
+        return updateWithinTransaction(clazz, criteria, null, null, consumer,
                 found -> {});
     }
 
     /**
      * Atomically find the one {@link Record} of type {@code clazz} that matches
      * the {@code criteria}, apply the {@code consumer} to it, and persist the
-     * edit as a single transaction.
+     * update as a single transaction.
      * <p>
-     * Returns the edited {@link Record}, or {@code null} when nothing matches
+     * Returns the updated {@link Record}, or {@code null} when nothing matches
      * (in which case the {@code consumer} is never invoked and nothing is
      * committed). Throws {@link DuplicateEntryException} when more than one
      * record matches, consistent with
@@ -1025,14 +1025,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the record must match
      * @param consumer the mutation to apply to the matching {@link Record}
-     * @return the edited {@link Record}, or {@code null} if none matches
+     * @return the updated {@link Record}, or {@code null} if none matches
      * @throws DuplicateEntryException if more than one record matches
-     * @throws RetryExhaustedException if the edit cannot commit within the
+     * @throws RetryExhaustedException if the update cannot commit within the
      *             bounded number of attempts due to persistent contention
      */
-    public <T extends Record> T findUniqueAndEdit(Class<T> clazz,
+    public <T extends Record> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, Consumer<T> consumer) {
-        Set<T> edited = editWithinTransaction(clazz, criteria, null,
+        Set<T> updated = updateWithinTransaction(clazz, criteria, null,
                 DatabaseInterface.UNIQUE_PAGINATION, consumer, found -> {
                     if(found.size() > 1) {
                         throw duplicateEntryException(
@@ -1040,17 +1040,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 clazz);
                     }
                 });
-        return Iterables.getFirst(edited, null);
+        return Iterables.getFirst(updated, null);
     }
 
     /**
      * Atomically find the first {@link Record} of type {@code clazz} that
      * matches the {@code criteria} under the supplied {@code order}, apply the
-     * {@code consumer} to it, and persist the edit as a single transaction.
+     * {@code consumer} to it, and persist the update as a single transaction.
      * <p>
      * "First" is defined entirely by {@code order}, which is required. Returns
-     * the edited {@link Record}, or {@code null} when nothing matches (in which
-     * case the {@code consumer} is never invoked and nothing is committed).
+     * the updated {@link Record}, or {@code null} when nothing matches (in
+     * which case the {@code consumer} is never invoked and nothing is
+     * committed).
      * <p>
      * This is the claim-and-update primitive: concurrent callers contending for
      * the same record are serialized by the database, so at most one commits
@@ -1065,23 +1066,24 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param criteria the {@link Criteria} the record must match
      * @param order the {@link Order} that defines "first"
      * @param consumer the mutation to apply to the matching {@link Record}
-     * @return the edited {@link Record}, or {@code null} if none matches
-     * @throws RetryExhaustedException if the edit cannot commit within the
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws RetryExhaustedException if the update cannot commit within the
      *             bounded number of attempts due to persistent contention
      */
-    public <T extends Record> T findFirstAndEdit(Class<T> clazz,
+    public <T extends Record> T findFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, Consumer<T> consumer) {
-        Preconditions.checkNotNull(order, "findFirstAndEdit requires an Order");
-        Set<T> edited = editWithinTransaction(clazz, criteria, order,
+        Preconditions.checkNotNull(order,
+                "findFirstAndUpdate requires an Order");
+        Set<T> updated = updateWithinTransaction(clazz, criteria, order,
                 Page.limit(1), consumer, found -> {});
-        return Iterables.getFirst(edited, null);
+        return Iterables.getFirst(updated, null);
     }
 
     /**
      * Perform an atomic find-modify-save: within a single staged transaction,
      * find the records of type {@code clazz} matching {@code criteria} (under
      * the optional {@code order} and {@code page}), let {@code validator}
-     * inspect the freshly read {@link Set} before any edit, apply
+     * inspect the freshly read {@link Set} before any update, apply
      * {@code consumer} to each record, save, and commit. The find's read and
      * the save's write share one transaction (and therefore one set of locks),
      * which is what gives concurrent callers true mutual exclusion.
@@ -1099,11 +1101,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param page the {@link Page} limit, or {@code null} for all matches
      * @param consumer the mutation applied to each matching {@link Record}
      * @param validator a hook that inspects the freshly read {@link Set} inside
-     *            the transaction before any edit (e.g. to enforce uniqueness)
-     * @return the {@link Set} of edited and committed {@link Record Records}
+     *            the transaction before any update (e.g. to enforce uniqueness)
+     * @return the {@link Set} of updated and committed {@link Record Records}
      * @throws RetryExhaustedException if no attempt commits within the bound
      */
-    private <T extends Record> Set<T> editWithinTransaction(Class<T> clazz,
+    private <T extends Record> Set<T> updateWithinTransaction(Class<T> clazz,
             Criteria criteria, @Nullable Order order, @Nullable Page page,
             Consumer<T> consumer, Consumer<Set<T>> validator) {
         // NOTE: Unlike #save, every TransactionException is retried here
