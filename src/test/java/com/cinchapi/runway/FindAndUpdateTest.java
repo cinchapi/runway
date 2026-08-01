@@ -21,6 +21,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -183,6 +184,57 @@ public class FindAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@link Record} the consumer attaches
+     * remains saveable after a terminal failure, so its unsaved changes are not
+     * silently dropped by a later save.
+     * <p>
+     * <strong>Start state:</strong> Two {@link Doc Docs} that match the
+     * criteria and one persisted {@link Memo} whose {@code owner} was then
+     * modified in memory but not saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Doc Docs} with ranks 1 and 2 and a {@link Memo}.</li>
+     * <li>Set the {@link Memo Memo's} in-memory {@code owner} to
+     * {@code "author"} without a save.</li>
+     * <li>Call {@code findAndUpdate} with a consumer that attaches the
+     * {@link Memo} to each {@link Doc} and throws on its second
+     * invocation.</li>
+     * <li>Catch the thrown exception, save the {@link Memo}, then re-load it by
+     * id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exception propagates, the subsequent save
+     * succeeds, and the re-loaded {@link Memo Memo's} {@code owner} is
+     * {@code "author"}, proving the aborted attempt did not leave the
+     * {@link Memo} looking saved.
+     */
+    @Test
+    public void testFindAndUpdateAttachedRecordStaysSaveableAfterFailure() {
+        Doc one = new Doc(1);
+        Doc two = new Doc(2);
+        Memo memo = new Memo(9);
+        runway.save(one, two, memo);
+        memo.owner = "author";
+        AtomicInteger invocations = new AtomicInteger(0);
+        boolean threw = false;
+        try {
+            runway.findAndUpdate(Doc.class, rankPositive(), doc -> {
+                doc.attachment = memo;
+                if(invocations.incrementAndGet() == 2) {
+                    throw new IllegalStateException("boom");
+                }
+            });
+        }
+        catch (IllegalStateException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertTrue(runway.save(memo));
+        Assert.assertEquals("author", runway.load(Memo.class, memo.id()).owner);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findAndUpdate} only matches
      * records of the target class, even when records of an unrelated class
      * share the queried key.
@@ -329,6 +381,11 @@ public class FindAndUpdateTest extends RunwayBaseClientServerTest {
          * The mutable owner, or {@code null} when unset.
          */
         String owner;
+
+        /**
+         * An attached {@link Memo}, or {@code null} when none is attached.
+         */
+        Memo attachment;
 
         /**
          * Construct a new instance.

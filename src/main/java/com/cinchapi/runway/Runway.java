@@ -2911,9 +2911,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * <p>
      * On a {@link TransactionException} the cycle is aborted and retried with
      * jittered backoff up to a bounded number of attempts, each re-finding
-     * fresh records so the {@code consumer} always observes current state. When
-     * the attempt budget is exhausted a {@link RetryExhaustedException} is
-     * thrown rather than returning a non-committed result.
+     * fresh records so the {@code consumer} always observes current state. A
+     * failed attempt restores the metadata of every {@link Record} it staged,
+     * so unsaved changes remain pending instead of appearing saved. When the
+     * attempt budget is exhausted a {@link RetryExhaustedException} is thrown
+     * rather than returning a non-committed result.
      *
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the records must match
@@ -2963,6 +2965,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 // one transaction (and one set of locks) &mdash; the property
                 // that gives concurrent callers mutual exclusion.
                 Saver saver = new IncrementalSaver(concourse);
+                // NOTE: Snapshots are taken because saveWithinTransaction
+                // stamps Record metadata (checksum, realm flags, author) while
+                // staging. Every failed attempt restores them; otherwise a
+                // Record reached through the consumer's mutations would appear
+                // saved and the next attempt (or a later #save) would silently
+                // skip its writes.
+                Map<Record, Boolean> seen = new HashMap<>();
+                Map<Record, Snapshot> snapshots = new HashMap<>();
                 try {
                     saver.stage();
                     // NOTE: A legacy server cannot sort or paginate
@@ -3013,8 +3023,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         saver.abort();
                         return found;
                     }
-                    Map<Record, Boolean> seen = new HashMap<>();
-                    Map<Record, Snapshot> snapshots = new HashMap<>();
                     for (T record : found) {
                         consumer.accept(record);
                         record.assign(this);
@@ -3036,6 +3044,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 catch (TransactionException e) {
                     saver.abort();
+                    restore(snapshots);
                     if(++attempts > MAX_SPURIOUS_SAVE_RETRIES) {
                         throw new RetryExhaustedException(attempts);
                     }
@@ -3047,6 +3056,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     // constraint violation) is terminal: abort and propagate
                     // without retrying so nothing is committed or mutated.
                     saver.abort();
+                    restore(snapshots);
                     throw t;
                 }
             }
