@@ -1737,20 +1737,22 @@ public abstract class Record implements Comparable<Record> {
      * {@link #set(String, Object) Set} each key/value pair from {@code data} in
      * this {@link Record}.
      * <p>
-     * By default, every key in {@code data} is checked against the governing
-     * {@link DynamicWritePolicy} before any entry is applied, so a policy
-     * refusal leaves this {@link Record} unchanged. Each entry is then applied
-     * through {@link #set(String, Object)}, so a subclass override of that
-     * method also governs how each entry is handled.
+     * Each entry is applied through {@link #set(String, Object)} in the
+     * iteration order of {@code data}, so a subclass override of that method
+     * also governs how each entry is handled. If the governing
+     * {@link DynamicWritePolicy} refuses an entry, the entries that were
+     * already applied remain in place, so the caller is responsible for
+     * catching the exception and discarding this {@link Record} instead of
+     * {@link #save() saving} it.
      * </p>
      *
      * @param data a mapping from each key name to the value to set
      * @throws NonWritableFieldException if a key in {@code data} names a field
      *             that the governing {@link DynamicWritePolicy} does not permit
-     *             writing; in that case, no entry from {@code data} is applied
+     *             writing; the entries applied before the refusal remain in
+     *             place
      */
     public void set(Map<String, Object> data) {
-        data.keySet().forEach(this::verifyDynamicallyWritable);
         data.forEach((key, value) -> {
             set(key, value);
         });

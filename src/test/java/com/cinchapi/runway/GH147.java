@@ -543,8 +543,8 @@ public class GH147 extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link Record#set(java.util.Map)}
-     * checks every key against the governing policy before it applies any
-     * entry, so a refusal leaves the {@link Record} unchanged.
+     * applies each entry in iteration order until the governing policy refuses
+     * one, so the entries before the refusal remain applied.
      * <p>
      * <strong>Start state:</strong> A {@link Runway} that enforces the
      * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy.
@@ -559,11 +559,11 @@ public class GH147 extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The call throws
-     * {@link NonWritableFieldException} and neither field changes, even though
-     * the writable entry appears first in the map's iteration order.
+     * {@link NonWritableFieldException}, the {@code description} entry is
+     * applied and the {@code name} field keeps its original value.
      */
     @Test
-    public void testSetMapIsAtomicWhenPolicyRefusesAnEntry() throws Exception {
+    public void testSetMapAppliesEntriesBeforePolicyRefusal() throws Exception {
         try (Runway strict = strictRunway()) {
             Vault vault = new Vault("vault", "code");
             vault.assign(strict);
@@ -573,16 +573,52 @@ public class GH147 extends RunwayBaseClientServerTest {
                 Assert.fail("Expected a NonWritableFieldException");
             }
             catch (NonWritableFieldException e) {
-                Assert.assertNull(vault.description);
+                Assert.assertEquals("changed", vault.description);
                 Assert.assertEquals("vault", vault.name);
             }
         }
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the pre-application policy check in
-     * {@link Record#set(java.util.Map)} does not refuse writable fields or
-     * dynamic attributes, so a fully permitted map still applies in full.
+     * <strong>Goal:</strong> Verify that {@link Record#set(java.util.Map)}
+     * stops at a policy refusal, so the entries after the refused entry are not
+     * applied.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} that enforces the
+     * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Vault} and assign it to the strict
+     * {@link Runway}.</li>
+     * <li>Call {@code set} with a map that lists the non-writable final
+     * {@code name} key before the writable {@code description} key.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws
+     * {@link NonWritableFieldException} and neither field changes.
+     */
+    @Test
+    public void testSetMapDoesNotApplyEntriesAfterPolicyRefusal()
+            throws Exception {
+        try (Runway strict = strictRunway()) {
+            Vault vault = new Vault("vault", "code");
+            vault.assign(strict);
+            try {
+                vault.set(ImmutableMap.of("name", "changed", "description",
+                        "changed"));
+                Assert.fail("Expected a NonWritableFieldException");
+            }
+            catch (NonWritableFieldException e) {
+                Assert.assertEquals("vault", vault.name);
+                Assert.assertNull(vault.description);
+            }
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#set(java.util.Map)}
+     * applies every entry when the governing policy permits all of them.
      * <p>
      * <strong>Start state:</strong> A {@link Runway} that enforces the
      * {@link DynamicWritePolicy#javaDefaults() javaDefaults} policy.
