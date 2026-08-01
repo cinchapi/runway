@@ -3339,6 +3339,33 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public class Properties {
 
         /**
+         * Return the {@link DynamicWritePolicy} that governs
+         * {@link Record#set(String, Object) dynamic writes} to {@link Record
+         * Records} that are assigned to this {@link Runway} instance.
+         *
+         * @return the governing {@link DynamicWritePolicy}
+         */
+        public DynamicWritePolicy dynamicWritePolicy() {
+            return dynamicWritePolicy;
+        }
+
+        /**
+         * Set the {@link DynamicWritePolicy} that governs
+         * {@link Record#set(String, Object) dynamic writes} to {@link Record
+         * Records} that are assigned to this {@link Runway} instance.
+         * <p>
+         * The new policy replaces the current one and governs every subsequent
+         * dynamic write.
+         *
+         * @param policy the {@link DynamicWritePolicy} to use
+         * @return this {@link Properties} for chaining
+         */
+        public Properties dynamicWritePolicy(DynamicWritePolicy policy) {
+            dynamicWritePolicy = policy;
+            return this;
+        }
+
+        /**
          * Register a listener that will be called <strong>after</strong> any
          * {@link Record} of the specified {@code type} (or a subclass) is
          * successfully saved.
