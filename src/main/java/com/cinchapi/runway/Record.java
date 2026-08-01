@@ -144,6 +144,15 @@ import com.google.gson.stream.JsonWriter;
  * dump or {@link #toString()} output unless they are annotated as
  * {@link Readable}.
  * </p>
+ * <p>
+ * By default, the {@link DynamicWritePolicy} of the assigned {@link Runway}
+ * instance determines whether {@link #set(String, Object)} can write final,
+ * private, package-private or protected fields. Dynamic write handling can be
+ * customized in three ways: configure a different {@link DynamicWritePolicy} on
+ * the {@link Runway} instance, annotate individual fields as {@link Writable}
+ * to exempt them from the policy, or override {@link #set(String, Object)} in a
+ * subclass to implement completely custom handling.
+ * </p>
  *
  * @author Jeff Nelson
  */
@@ -1725,10 +1734,23 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * {@link #set(String, Object) Set} each key/value pair within {@code data}
-     * as a dynamic attribute in this {@link Record}.
+     * {@link #set(String, Object) Set} each key/value pair from {@code data} in
+     * this {@link Record}.
+     * <p>
+     * Each entry is applied through {@link #set(String, Object)} in the
+     * iteration order of {@code data}, so a subclass override of that method
+     * also governs how each entry is handled. If the governing
+     * {@link DynamicWritePolicy} refuses an entry, the entries that were
+     * already applied remain in place, so the caller is responsible for
+     * catching the exception and discarding this {@link Record} instead of
+     * {@link #save() saving} it.
+     * </p>
      *
-     * @param data
+     * @param data a mapping from each key name to the value to set
+     * @throws NonWritableFieldException if a key in {@code data} names a field
+     *             that the governing {@link DynamicWritePolicy} does not permit
+     *             writing; the entries applied before the refusal remain in
+     *             place
      */
     public void set(Map<String, Object> data) {
         data.forEach((key, value) -> {
@@ -1737,12 +1759,29 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Set a dynamic attribute in this Record.
+     * Set the value for {@code key} in this {@link Record}. By default, if
+     * {@code key} names a field, the field is written. Otherwise, the key/value
+     * pair is stored as a dynamic attribute.
+     * <p>
+     * By default, a write to a field &mdash; whether the field is part of the
+     * schema or the {@link Record Record's} internal framework state &mdash; is
+     * governed by the {@link DynamicWritePolicy} of the assigned {@link Runway}
+     * instance. If the policy does not permit writing the field, then this
+     * method throws a {@link NonWritableFieldException} and no data is changed.
+     * A field annotated as {@link Writable} is always exempt from the policy.
+     * </p>
+     * <p>
+     * A subclass may override this method to implement completely custom
+     * handling of dynamic writes.
+     * </p>
      *
      * @param key the key name
      * @param value the value to set
+     * @throws NonWritableFieldException if {@code key} names a field that the
+     *             governing {@link DynamicWritePolicy} does not permit writing
      */
     public void set(String key, Object value) {
+        verifyKeyIsDynamicallyWritable(key);
         if(dynamicData.containsKey(key)) {
             dynamicData.put(key, value);
         }
@@ -2722,55 +2761,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Resolve a single positively named {@code key} into the {@link Entry} that
-     * will be contributed to a {@link #map} result.
-     * <p>
-     * For a bare key, the {@link Entry} is {@code (key, get(key))}. For a
-     * navigation key (e.g., {@code "company.name"}), the {@link Entry} is keyed
-     * by the root and valued by the nested {@link Map} (or list of nested
-     * {@link Map Maps} for a sequence-valued destination) representing the
-     * navigation path's value on the linked {@link Record Records}. A
-     * non-navigable destination resolves to {@code null}.
-     * </p>
-     *
-     * @param key the (possibly navigation) key to resolve
-     * @param options the {@link SerializationOptions} applied along any
-     *            navigation path
-     * @return the resolved {@link Entry}; never {@code null}, though its value
-     *         may be {@code null} when the navigation destination is
-     *         non-navigable
-     */
-    private Entry<String, Object> resolveEntry(String key,
-            SerializationOptions options) {
-        Object value;
-        String[] stops = key.split("\\.");
-        if(stops.length > 1) {
-            key = stops[0];
-            String path = StringUtils.join(stops, '.', 1, stops.length);
-            Object destination = get(key);
-            if(destination instanceof Record) {
-                value = ((Record) destination).map(options, path);
-            }
-            else if(Sequences.isSequence(destination)) {
-                List<Object> $value = Lists.newArrayList();
-                Sequences.forEach(destination, item -> {
-                    if(item instanceof Record) {
-                        $value.add(((Record) item).map(options, path));
-                    }
-                });
-                value = $value;
-            }
-            else {
-                value = null;
-            }
-        }
-        else {
-            value = get(key);
-        }
-        return new SimpleEntry<>(key, value);
-    }
-
-    /**
      * Return a map that contains all "readable" data in this {@link Record}.
      * <p>
      * To get access to non-readable fields, use the
@@ -2968,6 +2958,20 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return value;
+    }
+
+    /**
+     * Return the {@link DynamicWritePolicy} that governs
+     * {@link #set(String, Object) dynamic writes} to this {@link Record}. If
+     * this {@link Record} is not {@link #assign(Runway) assigned} to a
+     * {@link Runway} instance, the {@link DynamicWritePolicy#permissive()
+     * permissive} default applies.
+     *
+     * @return the governing {@link DynamicWritePolicy}
+     */
+    private DynamicWritePolicy dynamicWritePolicy() {
+        return runway != null ? runway.dynamicWritePolicy
+                : DynamicWritePolicy.permissive();
     }
 
     /**
@@ -3313,6 +3317,55 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Resolve a single positively named {@code key} into the {@link Entry} that
+     * will be contributed to a {@link #map} result.
+     * <p>
+     * For a bare key, the {@link Entry} is {@code (key, get(key))}. For a
+     * navigation key (e.g., {@code "company.name"}), the {@link Entry} is keyed
+     * by the root and valued by the nested {@link Map} (or list of nested
+     * {@link Map Maps} for a sequence-valued destination) representing the
+     * navigation path's value on the linked {@link Record Records}. A
+     * non-navigable destination resolves to {@code null}.
+     * </p>
+     *
+     * @param key the (possibly navigation) key to resolve
+     * @param options the {@link SerializationOptions} applied along any
+     *            navigation path
+     * @return the resolved {@link Entry}; never {@code null}, though its value
+     *         may be {@code null} when the navigation destination is
+     *         non-navigable
+     */
+    private Entry<String, Object> resolveEntry(String key,
+            SerializationOptions options) {
+        Object value;
+        String[] stops = key.split("\\.");
+        if(stops.length > 1) {
+            key = stops[0];
+            String path = StringUtils.join(stops, '.', 1, stops.length);
+            Object destination = get(key);
+            if(destination instanceof Record) {
+                value = ((Record) destination).map(options, path);
+            }
+            else if(Sequences.isSequence(destination)) {
+                List<Object> $value = Lists.newArrayList();
+                Sequences.forEach(destination, item -> {
+                    if(item instanceof Record) {
+                        $value.add(((Record) item).map(options, path));
+                    }
+                });
+                value = $value;
+            }
+            else {
+                value = null;
+            }
+        }
+        else {
+            value = get(key);
+        }
+        return new SimpleEntry<>(key, value);
+    }
+
+    /**
      * Transforms the provided {@code value} into a primitive form that can be
      * stored within {@link Concourse concourse}. The transformation is
      * recursive, handling nested {@link Record records} and
@@ -3380,6 +3433,39 @@ public abstract class Record implements Comparable<Record> {
             }
 
             return primitive;
+        }
+    }
+
+    /**
+     * Verify that the governing {@link DynamicWritePolicy} permits a
+     * {@link #set(String, Object) dynamic write} to {@code key} and throw a
+     * {@link NonWritableFieldException} if it does not.
+     * <p>
+     * A key that does not name a field is always writable because it stores a
+     * dynamic attribute instead of writing a field.
+     * </p>
+     *
+     * @param key the key name
+     * @throws NonWritableFieldException if {@code key} names a field that the
+     *             governing {@link DynamicWritePolicy} does not permit writing
+     */
+    private void verifyKeyIsDynamicallyWritable(String key) {
+        if(!dynamicData.containsKey(key)) {
+            Field field;
+            try {
+                field = StaticAnalysis.instance().getField(this, key);
+            }
+            catch (IllegalArgumentException e) {
+                field = null;
+            }
+            if(field == null) {
+                field = INTERNAL_FIELDS.get(key);
+            }
+            if(field != null && !dynamicWritePolicy().isWritable(field)) {
+                throw new NonWritableFieldException(AnyStrings.format(
+                        "Cannot set '{}' because it is not a writable field in {}",
+                        key, getClass().getSimpleName()));
+            }
         }
     }
 

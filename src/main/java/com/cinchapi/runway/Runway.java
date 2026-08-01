@@ -415,6 +415,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /* package */ final ConnectionPool connections;
 
     /**
+     * The {@link DynamicWritePolicy} that governs
+     * {@link Record#set(String, Object) dynamic writes} to {@link Record
+     * Records} that are assigned to this {@link Runway} instance.
+     */
+    /* package */ DynamicWritePolicy dynamicWritePolicy = DynamicWritePolicy
+            .permissive();
+
+    /**
      * A flag that indicates whether the connected server supports result set
      * sorting and pagination.
      */
@@ -2622,6 +2630,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public static class Builder {
 
+        /**
+         * The {@link DynamicWritePolicy} for the built {@link Runway} instance.
+         */
+        private DynamicWritePolicy dynamicWritePolicy = DynamicWritePolicy
+                .permissive();
         private String environment = "";
         private String host = "localhost";
         private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = null;
@@ -2641,6 +2654,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             ConnectionPool connections = ConnectionPool.newCachedConnectionPool(
                     host, port, username, password, environment);
             Runway db = new Runway(connections);
+            db.dynamicWritePolicy = dynamicWritePolicy;
             db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
@@ -2695,6 +2709,26 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
 
             return db;
+        }
+
+        /**
+         * Set the {@link DynamicWritePolicy} that governs
+         * {@link Record#set(String, Object) dynamic writes} to {@link Record
+         * Records} that are assigned to the {@link Runway} instance.
+         * <p>
+         * The default is {@link DynamicWritePolicy#permissive()}, which allows
+         * a dynamic write to reach any field. Provide
+         * {@link DynamicWritePolicy#javaDefaults()} or a custom
+         * {@link DynamicWritePolicy#builder() built} policy to refuse dynamic
+         * writes to final or less visible fields.
+         * </p>
+         *
+         * @param policy the {@link DynamicWritePolicy} to use
+         * @return this builder
+         */
+        public Builder dynamicWritePolicy(DynamicWritePolicy policy) {
+            this.dynamicWritePolicy = policy;
+            return this;
         }
 
         /**

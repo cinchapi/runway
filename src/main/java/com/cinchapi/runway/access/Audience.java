@@ -769,10 +769,10 @@ public interface Audience extends DatabaseInterface {
                 throw new RestrictedAccessException();
             }
         }
+        record.set(data);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
         }
-        record.set(data);
     }
 
     /**
@@ -801,10 +801,10 @@ public interface Audience extends DatabaseInterface {
                 throw new RestrictedAccessException();
             }
         }
+        record.set(key, value);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
         }
-        record.set(key, value);
     }
 
 }
