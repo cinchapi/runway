@@ -145,10 +145,13 @@ import com.google.gson.stream.JsonWriter;
  * {@link Readable}.
  * </p>
  * <p>
- * The {@link DynamicWritePolicy} of the assigned {@link Runway} instance
- * determines whether {@link #set(String, Object)} can write final, private,
- * package-private or protected fields, unless a field is annotated as
- * {@link Writable}.
+ * By default, the {@link DynamicWritePolicy} of the assigned {@link Runway}
+ * instance determines whether {@link #set(String, Object)} can write final,
+ * private, package-private or protected fields. Dynamic write handling can be
+ * customized in three ways: configure a different {@link DynamicWritePolicy} on
+ * the {@link Runway} instance, annotate individual fields as {@link Writable}
+ * to exempt them from the policy, or override {@link #set(String, Object)} in a
+ * subclass to implement completely custom handling.
  * </p>
  *
  * @author Jeff Nelson
@@ -1734,9 +1737,11 @@ public abstract class Record implements Comparable<Record> {
      * {@link #set(String, Object) Set} each key/value pair from {@code data} in
      * this {@link Record}.
      * <p>
-     * Every key in {@code data} is checked against the governing
+     * By default, every key in {@code data} is checked against the governing
      * {@link DynamicWritePolicy} before any entry is applied, so a policy
-     * refusal leaves this {@link Record} unchanged.
+     * refusal leaves this {@link Record} unchanged. Each entry is then applied
+     * through {@link #set(String, Object)}, so a subclass override of that
+     * method also governs how each entry is handled.
      * </p>
      *
      * @param data a mapping from each key name to the value to set
@@ -1752,15 +1757,20 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Set the value for {@code key} in this {@link Record}. If {@code key}
-     * names a field, the field is written. Otherwise, the key/value pair is
-     * stored as a dynamic attribute.
+     * Set the value for {@code key} in this {@link Record}. By default, if
+     * {@code key} names a field, the field is written. Otherwise, the key/value
+     * pair is stored as a dynamic attribute.
      * <p>
-     * A write to a field &mdash; whether the field is part of the schema or the
-     * {@link Record Record's} internal framework state &mdash; is governed by
-     * the {@link DynamicWritePolicy} of the assigned {@link Runway} instance.
-     * If the policy does not permit writing the field, then this method throws
-     * a {@link NonWritableFieldException} and no data is changed.
+     * By default, a write to a field &mdash; whether the field is part of the
+     * schema or the {@link Record Record's} internal framework state &mdash; is
+     * governed by the {@link DynamicWritePolicy} of the assigned {@link Runway}
+     * instance. If the policy does not permit writing the field, then this
+     * method throws a {@link NonWritableFieldException} and no data is changed.
+     * A field annotated as {@link Writable} is always exempt from the policy.
+     * </p>
+     * <p>
+     * A subclass may override this method to implement completely custom
+     * handling of dynamic writes.
      * </p>
      *
      * @param key the key name

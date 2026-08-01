@@ -40,9 +40,11 @@ import javax.annotation.concurrent.Immutable;
  * </p>
  * <p>
  * A field annotated as {@link Writable} is always writable, regardless of the
- * policy's rules. A policy only governs writes made through
- * {@link Record#set(String, Object)}; it never affects the framework's ability
- * to populate fields when a {@link Record} is loaded from the database.
+ * policy's rules. A policy governs the default behavior of
+ * {@link Record#set(String, Object)}; a {@link Record} subclass that overrides
+ * that method may implement completely custom handling. A policy never affects
+ * the framework's ability to populate fields when a {@link Record} is loaded
+ * from the database.
  * </p>
  *
  * @author Jeff Nelson
