@@ -1453,6 +1453,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     .filter(record -> realms.names().isEmpty() || !Sets
                             .intersection(record.realms(), realms.names())
                             .isEmpty());
+            if(hasFilter) {
+                // Apply the filter before pagination so the page is drawn
+                // only from records that pass the filter, consistent with
+                // the native read path.
+                stream = stream.filter(filter);
+            }
             if(page != null) {
                 stream = stream.skip(page.skip()).limit(page.limit());
             }
@@ -1617,6 +1623,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     .filter(record -> realms.names().isEmpty() || !Sets
                             .intersection(record.realms(), realms.names())
                             .isEmpty());
+            if(hasFilter) {
+                // Apply the filter before pagination so the page is drawn
+                // only from records that pass the filter, consistent with
+                // the native read path.
+                stream = stream.filter(filter);
+            }
             if(page != null) {
                 stream = stream.skip(page.skip()).limit(page.limit());
             }

@@ -1,5 +1,8 @@
 # Changelog
 
+#### Version 2.2.0 (TBD)
+* Fixed a bug where reads against a Concourse server without native sorting and pagination support (older than 0.10) ignored the client-side `filter` whenever an `Order` or a `Page` was requested, so `load`, `loadAny`, `find`, and `findAny` overloads that accept a filter could return records the filter rejects. The filter now applies on that path and pagination operates over the records that pass the filter, consistent with the behavior on servers that support native sorting and pagination. ([GH-149](https://github.com/cinchapi/runway/issues/149))
+
 #### Version 2.1.1 (July 30, 2026)
 * Fixed a bug where loading a record by id through an abstract class with no scanned descendants (most importantly, the `Record` base class itself via `load(Record.class, id)`) threw `InstantiationException` instead of resolving the record's concrete class from its stored section. ([GH-145](https://github.com/cinchapi/runway/issues/145))
 * Loading a record by id through an abstract class now returns `null` when the id does not name a Runway record (its data has no class section), consistent with how invalid records are indistinguishable from invisible ones. ([GH-145](https://github.com/cinchapi/runway/issues/145))
