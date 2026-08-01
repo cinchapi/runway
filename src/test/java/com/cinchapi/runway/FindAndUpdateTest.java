@@ -178,6 +178,75 @@ public class FindAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findAndUpdate} only matches
+     * records of the target class, even when records of an unrelated class
+     * share the queried key.
+     * <p>
+     * <strong>Start state:</strong> Two {@link Doc Docs} and one {@link Memo}
+     * whose {@code rank} values all satisfy the criteria.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Doc Docs} with ranks 1 and 2 and a {@link Memo} with rank
+     * 3.</li>
+     * <li>Call {@code findAndUpdate} for {@link Doc} with {@code rank > 0} and
+     * a consumer that sets {@code owner} to {@code "worker"}.</li>
+     * <li>Re-load the {@link Memo} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Exactly the two {@link Doc Docs} are returned
+     * and updated, and the re-loaded {@link Memo Memo's} {@code owner} is still
+     * unset.
+     */
+    @Test
+    public void testFindAndUpdateOnlyMatchesRecordsOfTargetClass() {
+        Memo memo = new Memo(3);
+        runway.save(new Doc(1), new Doc(2), memo);
+        Set<Doc> updated = runway.findAndUpdate(Doc.class, rankPositive(),
+                doc -> doc.owner = "worker");
+        Assert.assertEquals(2, updated.size());
+        for (Doc doc : updated) {
+            Assert.assertEquals("worker",
+                    runway.load(Doc.class, doc.id()).owner);
+        }
+        Assert.assertNull(runway.load(Memo.class, memo.id()).owner);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findAndUpdate} excludes
+     * subclass records, consistent with how {@code find} resolves a class
+     * exactly rather than across its hierarchy.
+     * <p>
+     * <strong>Start state:</strong> One {@link Doc} and one {@link SpecialDoc}
+     * whose {@code rank} values both satisfy the criteria.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Doc} with rank 1 and a {@link SpecialDoc} with rank
+     * 2.</li>
+     * <li>Call {@code findAndUpdate} for {@link Doc} with {@code rank > 0} and
+     * a consumer that sets {@code owner} to {@code "worker"}.</li>
+     * <li>Re-load the {@link SpecialDoc} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Only the {@link Doc} is returned and updated,
+     * and the re-loaded {@link SpecialDoc SpecialDoc's} {@code owner} is still
+     * unset.
+     */
+    @Test
+    public void testFindAndUpdateExcludesSubclassRecords() {
+        Doc doc = new Doc(1);
+        SpecialDoc special = new SpecialDoc(2);
+        runway.save(doc, special);
+        Set<Doc> updated = runway.findAndUpdate(Doc.class, rankPositive(),
+                d -> d.owner = "worker");
+        Assert.assertEquals(1, updated.size());
+        Assert.assertEquals(doc.id(), updated.iterator().next().id());
+        Assert.assertEquals("worker", runway.load(Doc.class, doc.id()).owner);
+        Assert.assertNull(runway.load(SpecialDoc.class, special.id()).owner);
+    }
+
+    /**
      * Return a {@link Criteria} matching every {@link Doc} whose {@code rank}
      * is positive.
      *
@@ -212,6 +281,52 @@ public class FindAndUpdateTest extends RunwayBaseClientServerTest {
          * @param rank the queryable rank
          */
         public Doc(int rank) {
+            this.rank = rank;
+        }
+    }
+
+    /**
+     * A {@link Doc} subclass used to verify that {@code findAndUpdate} resolves
+     * the target class exactly rather than across its hierarchy.
+     *
+     * @author Jeff Nelson
+     */
+    public static class SpecialDoc extends Doc {
+
+        /**
+         * Construct a new instance.
+         *
+         * @param rank the queryable rank
+         */
+        public SpecialDoc(int rank) {
+            super(rank);
+        }
+    }
+
+    /**
+     * A {@link Record} of an unrelated class that shares the queryable
+     * {@code rank} key with {@link Doc}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Memo extends Record {
+
+        /**
+         * The queryable rank.
+         */
+        int rank;
+
+        /**
+         * The mutable owner, or {@code null} when unset.
+         */
+        String owner;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param rank the queryable rank
+         */
+        public Memo(int rank) {
             this.rank = rank;
         }
     }

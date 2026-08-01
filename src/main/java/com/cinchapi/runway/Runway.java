@@ -1115,6 +1115,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         // claim use case), where a lost commit race is exactly the condition a
         // caller wants retried; staleness checks are off because the read is
         // re-issued fresh inside each attempt's transaction.
+        Criteria scoped = $Criteria.withinClass(clazz, criteria);
         Concourse concourse = connections.request();
         try {
             // NOTE: The connection is held across the bounded backoff sleeps
@@ -1148,7 +1149,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     // this deliberately bypasses the result cache used by the
                     // pooled #select path.
                     try (Reader reader = new IncrementalReader(concourse)) {
-                        Read read = enqueueRead(reader, false, clazz, criteria,
+                        Read read = enqueueRead(reader, false, clazz, scoped,
                                 nativeOrderAndPage ? order : null,
                                 nativeOrderAndPage ? page : null);
                         AtomicReference<Set<T>> ref = new AtomicReference<>();
