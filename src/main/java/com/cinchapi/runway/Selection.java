@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import java.util.function.Predicate;
@@ -662,10 +663,14 @@ public interface Selection<T extends Record> {
          * @throws IllegalStateException if an explicit page has been set,
          *             because the one-row page is intrinsic to a first-result
          *             operation
+         * @throws NullPointerException if the configured order is {@code null},
+         *             because "first" is meaningless without an order
          */
         public FirstBuilder<T> first() {
             checkState(state.page == null,
                     "A first Selection cannot have an explicit Page");
+            checkNotNull(state.order,
+                    "An Order is required to determine the first record");
             state.first = true;
             return new FirstBuilder<>(state);
         }

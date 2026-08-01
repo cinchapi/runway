@@ -861,6 +861,25 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code first()} rejects a {@code null}
+     * sort order, because "first" is meaningless without one.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Selection} with a {@code null} {@link Order}, then
+     * call {@code first()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link NullPointerException} is thrown.
+     */
+    @Test(expected = NullPointerException.class)
+    public void testFirstRejectsNullOrder() {
+        Selection.of(Widget.class).order((Order) null).first();
+    }
+
+    /**
      * A simple test {@link Record} with a name and score.
      */
     class Widget extends Record {
