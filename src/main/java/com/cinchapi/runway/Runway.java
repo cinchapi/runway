@@ -482,13 +482,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     private final boolean supportsTransitiveNavigation;
 
     /**
-     * A queue of records that have been successfully saved and are waiting for
-     * save notification processing.
+     * A queue of pending notification dispatches for records that have been
+     * successfully saved or deleted.
      */
-    private BlockingQueue<Record> saveNotificationQueue;
+    private BlockingQueue<Runnable> saveNotificationQueue;
 
     /**
-     * An executor service dedicated to processing save notifications.
+     * An executor service dedicated to processing save and delete
+     * notifications.
      */
     private ExecutorService saveNotificationExecutor;
 
@@ -497,6 +498,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     @Nullable
     private Consumer<Record> saveListener;
+
+    /**
+     * The consumer that processes delete notifications for records.
+     */
+    @Nullable
+    private Consumer<Record> deleteListener;
 
     /**
      * The cached {@link Gateway} instance that provides intelligent routing to
@@ -882,7 +889,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     if(saver.commit()) {
                         seen.entrySet().stream().filter(e -> e.getValue())
                                 .map(e -> e.getKey()).forEach(record -> {
-                                    enqueueSaveNotification(record);
+                                    if(record.isDeleted()) {
+                                        enqueueDeleteNotification(record);
+                                    }
+                                    else {
+                                        enqueueSaveNotification(record);
+                                    }
                                     record.checkpoint();
                                 });
                         return true;
@@ -1234,7 +1246,18 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     /* package */ final void enqueueSaveNotification(Record record) {
         if(saveListener != null) {
-            saveNotificationQueue.offer(record);
+            saveNotificationQueue.offer(() -> saveListener.accept(record));
+        }
+    }
+
+    /**
+     * Queue up a record for delete notification processing.
+     *
+     * @param record the record that was deleted
+     */
+    /* package */ final void enqueueDeleteNotification(Record record) {
+        if(deleteListener != null) {
+            saveNotificationQueue.offer(() -> deleteListener.accept(record));
         }
     }
 
@@ -2019,9 +2042,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Lazily initialize the save notification infrastructure (queue and
-     * executor) if it has not already been set up. This allows {@link #onSave}
-     * listeners to be registered after the {@link Runway} instance is built.
+     * Ensure that this {@link Runway} instance is able to dispatch save and
+     * delete notifications to registered listeners. This method is safe to call
+     * multiple times, so {@link Properties#onSave} and
+     * {@link Properties#onDelete} listeners can be registered after the
+     * {@link Runway} instance is built.
      */
     private synchronized void ensureSaveNotificationInfrastructure() {
         if(saveNotificationQueue == null) {
@@ -2037,9 +2062,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             saveNotificationExecutor.submit(() -> {
                 while (!Thread.currentThread().isInterrupted()) {
                     try {
-                        Record record = saveNotificationQueue.take();
+                        Runnable notification = saveNotificationQueue.take();
                         try {
-                            saveListener.accept(record);
+                            notification.run();
                         }
                         catch (Exception e) {
                             // Silently swallow exceptions
@@ -2629,6 +2654,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private int port = 1717;
         private String username = "admin";
         private List<Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
+        private List<Entry<Class<? extends Record>, Consumer<? extends Record>>> deleteListeners = new ArrayList<>();
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
         /**
@@ -2636,7 +2662,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          *
          * @return a {@link Runway} instance
          */
-        @SuppressWarnings("unchecked")
         public Runway build() {
             ConnectionPool connections = ConnectionPool.newCachedConnectionPool(
                     host, port, username, password, environment);
@@ -2646,52 +2671,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 db.onLoadFailureHandler = onLoadFailureHandler;
             }
 
-            // Initialize save notification components if a listener is provided
-            if(!saveListeners.isEmpty()) {
-                List<Entry<Class<? extends Record>, Consumer<? extends Record>>> listeners = new ArrayList<>(
-                        saveListeners);
-                db.saveListener = record -> {
-                    for (Entry<Class<? extends Record>, Consumer<? extends Record>> entry : listeners) {
-                        if(entry.getKey().isAssignableFrom(record.getClass())) {
-                            try {
-                                Consumer<Record> consumer = (Consumer<Record>) entry
-                                        .getValue();
-                                consumer.accept(record);
-                            }
-                            catch (Exception e) {
-                                // Swallow and continue to next matching
-                                // listener
-                            }
-                        }
-                    }
-                };
-                db.saveNotificationQueue = new LinkedBlockingQueue<>();
-                ThreadFactory threadFactory = r -> {
-                    Thread thread = new Thread(r,
-                            "runway-save-notification-worker");
-                    thread.setDaemon(true);
-                    return thread;
-                };
-                db.saveNotificationExecutor = Executors
-                        .newSingleThreadExecutor(threadFactory);
-                db.saveNotificationExecutor.submit(() -> {
-                    while (!Thread.currentThread().isInterrupted()) {
-                        try {
-                            Record record = db.saveNotificationQueue.take();
-                            try {
-                                db.saveListener.accept(record);
-                            }
-                            catch (Exception e) {
-                                // Silently swallow exceptions from the
-                                // composed listener
-                            }
-                        }
-                        catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                    }
-                });
+            // Initialize notification components if any listener is provided
+            db.saveListener = compose(saveListeners);
+            db.deleteListener = compose(deleteListeners);
+            if(db.saveListener != null || db.deleteListener != null) {
+                db.ensureSaveNotificationInfrastructure();
             }
 
             return db;
@@ -2717,6 +2701,64 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Builder host(String host) {
             this.host = host;
             return this;
+        }
+
+        /**
+         * Provide a listener that will be called <strong>after</strong> a
+         * record of the specified {@code type} (or any subclass) is deleted by
+         * a successful save.
+         * <p>
+         * A record is deleted when it is saved after being marked with
+         * {@link Record#deleteOnSave()}, or when it is pulled into a committed
+         * deletion through annotations like {@link CascadeDelete} and
+         * {@link JoinDelete}. Every record that a save deletes fires delete
+         * listeners instead of {@link #onSave(Class, Consumer) save listeners}.
+         * </p>
+         * <p>
+         * The {@code listener} is only invoked for records that are instances
+         * of {@code type} (including subclasses).
+         * </p>
+         * <p>
+         * This method is <strong>compositional</strong>: calling it multiple
+         * times adds additional listeners rather than replacing previous ones.
+         * All matching listeners fire in registration order. If a listener
+         * throws an exception, it is caught and suppressed, and subsequent
+         * matching listeners still fire.
+         * </p>
+         * <p>
+         * The listener is executed asynchronously in a dedicated thread to
+         * prevent blocking the main application flow.
+         * </p>
+         *
+         * @param type the {@link Record} type (or superclass) to listen for
+         * @param listener a consumer that processes deleted records of the
+         *            specified type
+         * @return this builder
+         */
+        public <T extends Record> Builder onDelete(Class<T> type,
+                Consumer<T> listener) {
+            deleteListeners.add(new SimpleImmutableEntry<>(type, listener));
+            return this;
+        }
+
+        /**
+         * Provide a listener that will be called <strong>after</strong> any
+         * record is deleted by a successful save.
+         * <p>
+         * This is equivalent to calling {@link #onDelete(Class, Consumer)
+         * onDelete(Record.class, listener)}.
+         * </p>
+         * <p>
+         * This method is <strong>compositional</strong>: calling it multiple
+         * times adds additional listeners rather than replacing previous ones.
+         * All matching listeners fire in registration order.
+         * </p>
+         *
+         * @param listener a consumer that processes deleted records
+         * @return this builder
+         */
+        public Builder onDelete(Consumer<Record> listener) {
+            return onDelete(Record.class, listener);
         }
 
         /**
@@ -2758,6 +2800,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * listener for {@code Player.class} will fire for {@code Player}
          * records and any subclass of {@code Player}, but not for unrelated
          * {@link Record} types.
+         * </p>
+         * <p>
+         * Every record that a committed save writes fires this listener,
+         * including linked records saved alongside the record that
+         * {@link Record#save()} was called on and records updated through
+         * {@link CaptureDelete} cleanup. A record whose save results in
+         * deletion fires {@link #onDelete(Class, Consumer) delete listeners}
+         * instead.
          * </p>
          * <p>
          * This method is <strong>compositional</strong>: calling it multiple
@@ -2865,6 +2915,44 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return this;
         }
 
+        /**
+         * Return a single {@link Consumer} that dispatches a {@link Record} to
+         * every one of the {@code listeners} whose registered type the record
+         * is an instance of. An exception thrown by a listener is suppressed,
+         * and dispatch continues with the remaining listeners.
+         *
+         * @param listeners the type-filtered listeners, in registration order
+         * @return the composed {@link Consumer}, or {@code null} if
+         *         {@code listeners} is empty
+         */
+        @SuppressWarnings("unchecked")
+        @Nullable
+        private static Consumer<Record> compose(
+                List<Entry<Class<? extends Record>, Consumer<? extends Record>>> listeners) {
+            if(listeners.isEmpty()) {
+                return null;
+            }
+            else {
+                List<Entry<Class<? extends Record>, Consumer<? extends Record>>> snapshot = new ArrayList<>(
+                        listeners);
+                return record -> {
+                    for (Entry<Class<? extends Record>, Consumer<? extends Record>> entry : snapshot) {
+                        if(entry.getKey().isAssignableFrom(record.getClass())) {
+                            try {
+                                Consumer<Record> consumer = (Consumer<Record>) entry
+                                        .getValue();
+                                consumer.accept(record);
+                            }
+                            catch (Exception e) {
+                                // Swallow and continue to next matching
+                                // listener
+                            }
+                        }
+                    }
+                };
+            }
+        }
+
     }
 
     /**
@@ -2878,7 +2966,60 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         /**
          * Register a listener that will be called <strong>after</strong> any
          * {@link Record} of the specified {@code type} (or a subclass) is
-         * successfully saved.
+         * deleted by a successful save.
+         * <p>
+         * The new listener is chained with any previously registered listeners
+         * &mdash; it does not replace them.
+         * </p>
+         *
+         * @param type the {@link Record} type (or superclass) to listen for
+         * @param listener a consumer that processes deleted {@link Record
+         *            Records} of the specified type
+         * @return this {@link Properties} for chaining
+         */
+        @SuppressWarnings("unchecked")
+        public <T extends Record> Properties onDelete(Class<T> type,
+                Consumer<T> listener) {
+            ensureSaveNotificationInfrastructure();
+            Consumer<Record> previous = deleteListener;
+            deleteListener = record -> {
+                if(type.isAssignableFrom(record.getClass())) {
+                    try {
+                        ((Consumer<Record>) (Consumer<?>) listener)
+                                .accept(record);
+                    }
+                    catch (Exception e) {
+                        // Swallow to match builder behavior
+                    }
+                }
+                if(previous != null) {
+                    previous.accept(record);
+                }
+            };
+            return this;
+        }
+
+        /**
+         * Register a listener that will be called <strong>after</strong> any
+         * {@link Record} is deleted by a successful save.
+         * <p>
+         * This is equivalent to calling {@link #onDelete(Class, Consumer)
+         * onDelete(Record.class, listener)}.
+         * </p>
+         *
+         * @param listener a consumer that processes deleted {@link Record
+         *            Records}
+         * @return this {@link Properties} for chaining
+         */
+        public Properties onDelete(Consumer<Record> listener) {
+            return onDelete(Record.class, listener);
+        }
+
+        /**
+         * Register a listener that will be called <strong>after</strong> any
+         * {@link Record} of the specified {@code type} (or a subclass) is
+         * successfully saved. A {@link Record} whose save results in deletion
+         * fires {@link #onDelete(Class, Consumer) delete listeners} instead.
          * <p>
          * The new listener is chained with any previously registered listeners
          * &mdash; it does not replace them.

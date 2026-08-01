@@ -1,0 +1,651 @@
+/*
+ * Copyright (c) 2013-2026 Cinchapi Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ */
+package com.cinchapi.runway;
+
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.junit.Assert;
+import org.junit.Test;
+
+/**
+ * Unit tests for delete notifications and their interplay with save
+ * notifications in {@link Runway}.
+ *
+ * @author Jeff Nelson
+ */
+public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
+
+    /**
+     * <strong>Goal:</strong> Verify that a save which deletes a {@link Record}
+     * fires the delete listener and removes the record from the database.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TrackedRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener via
+     * {@link Runway.Builder#onDelete(java.util.function.Consumer)}.</li>
+     * <li>Save a {@link TrackedRecord}.</li>
+     * <li>Call {@link Record#deleteOnSave()} and save the record again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires with the deleted
+     * {@link Record} and the record no longer loads from the database.
+     */
+    @Test
+    public void testDeleteListenerCalledWhenSaveDeletesRecord()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deletedRecords.add(record);
+            latch.countDown();
+        }).build();
+
+        TrackedRecord record = new TrackedRecord();
+        record.name = "To Be Deleted";
+        Assert.assertTrue(record.save());
+
+        record.deleteOnSave();
+        Assert.assertTrue(record.save());
+
+        Assert.assertTrue("Delete listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(1, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(record));
+        Assert.assertNull("Record should have been deleted",
+                runway.load(TrackedRecord.class, record.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save which deletes a {@link Record}
+     * does not fire the save listener.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TrackedRecord} and a
+     * {@link Runway} with only a save listener registered.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener with a call counter.</li>
+     * <li>Save a {@link TrackedRecord} and await the notification.</li>
+     * <li>Call {@link Record#deleteOnSave()} and save the record again.</li>
+     * <li>Wait to confirm no additional notification arrives.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save listener fires exactly once, for the
+     * initial save only.
+     */
+    @Test
+    public void testSaveListenerNotCalledWhenSaveDeletesRecord()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicInteger saveCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            saveCount.incrementAndGet();
+            latch.countDown();
+        }).build();
+
+        TrackedRecord record = new TrackedRecord();
+        record.name = "Saved Then Deleted";
+        Assert.assertTrue(record.save());
+        Assert.assertTrue("Save listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        record.deleteOnSave();
+        Assert.assertTrue(record.save());
+
+        // Give some time for any potential async processing
+        Thread.sleep(1000);
+
+        Assert.assertEquals(
+                "Save listener should not fire when the save deletes the record",
+                1, saveCount.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a typed delete listener only fires for
+     * {@link Record Records} of the registered type.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TrackedRecord} and a saved
+     * {@link OtherRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener for {@link TrackedRecord} only.</li>
+     * <li>Delete the {@link OtherRecord} via a save.</li>
+     * <li>Delete the {@link TrackedRecord} via a save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The listener fires only for the
+     * {@link TrackedRecord}.
+     */
+    @Test
+    public void testTypedDeleteListenerOnlyFiresForMatchingType()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(TrackedRecord.class, record -> {
+            deletedRecords.add(record);
+            latch.countDown();
+        }).build();
+
+        OtherRecord other = new OtherRecord();
+        other.label = "Other";
+        Assert.assertTrue(other.save());
+
+        TrackedRecord tracked = new TrackedRecord();
+        tracked.name = "Tracked";
+        Assert.assertTrue(tracked.save());
+
+        other.deleteOnSave();
+        Assert.assertTrue(other.save());
+
+        tracked.deleteOnSave();
+        Assert.assertTrue(tracked.save());
+
+        Assert.assertTrue("Typed delete listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(1, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(tracked));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a standard save does not fire the
+     * delete listener.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener with a call counter.</li>
+     * <li>Save a {@link TrackedRecord} without marking it for deletion.</li>
+     * <li>Wait to confirm no notification arrives.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener is never called.
+     */
+    @Test
+    public void testDeleteListenerNotCalledOnStandardSave() throws Exception {
+        AtomicInteger deleteCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deleteCount.incrementAndGet();
+        }).build();
+
+        TrackedRecord record = new TrackedRecord();
+        record.name = "Standard Save";
+        Assert.assertTrue(record.save());
+
+        // Give some time for any potential async processing
+        Thread.sleep(1000);
+
+        Assert.assertEquals(
+                "Delete listener should not fire for a standard save", 0,
+                deleteCount.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a delete listener registered after
+     * build via {@link Runway.Properties#onDelete(java.util.function.Consumer)}
+     * fires when a save deletes a {@link Record}.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} built with no listeners.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Runway} without any listeners.</li>
+     * <li>Register a delete listener via {@code properties().onDelete}.</li>
+     * <li>Save a {@link TrackedRecord}, then delete it via a save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The post-build delete listener fires with the
+     * deleted {@link Record}.
+     */
+    @Test
+    public void testOnDeleteAfterBuild() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().build();
+
+        runway.properties().onDelete(record -> {
+            deletedRecords.add(record);
+            latch.countDown();
+        });
+
+        TrackedRecord record = new TrackedRecord();
+        record.name = "Post-Build Delete";
+        Assert.assertTrue(record.save());
+
+        record.deleteOnSave();
+        Assert.assertTrue(record.save());
+
+        Assert.assertTrue(
+                "Post-build delete listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(1, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(record));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a bulk save containing a modified
+     * {@link Record} and a {@link Record} marked for deletion routes each to
+     * the matching listener.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link TrackedRecord
+     * TrackedRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener and a delete listener.</li>
+     * <li>Save two {@link TrackedRecord TrackedRecords} in bulk.</li>
+     * <li>Modify one record and mark the other with
+     * {@link Record#deleteOnSave()}.</li>
+     * <li>Save both records in bulk.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save listener fires for the two initial
+     * saves and the update; the delete listener fires only for the deleted
+     * {@link Record}.
+     */
+    @Test
+    public void testMixedBulkSaveRoutesNotificationsByKind() throws Exception {
+        CountDownLatch saveLatch = new CountDownLatch(3);
+        CountDownLatch deleteLatch = new CountDownLatch(1);
+        AtomicInteger saveCount = new AtomicInteger(0);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            saveCount.incrementAndGet();
+            saveLatch.countDown();
+        }).onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        TrackedRecord kept = new TrackedRecord();
+        kept.name = "Kept";
+        TrackedRecord removed = new TrackedRecord();
+        removed.name = "Removed";
+        Assert.assertTrue(runway.save(kept, removed));
+
+        kept.name = "Kept (Updated)";
+        removed.deleteOnSave();
+        Assert.assertTrue(runway.save(kept, removed));
+
+        Assert.assertTrue("Save listener calls did not arrive within timeout",
+                saveLatch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue("Delete listener was not called within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+
+        // Give some time to catch any extra, misrouted notifications
+        Thread.sleep(1000);
+
+        Assert.assertEquals(3, saveCount.get());
+        Assert.assertEquals(1, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(removed));
+        Assert.assertNull(runway.load(TrackedRecord.class, removed.id()));
+        Assert.assertNotNull(runway.load(TrackedRecord.class, kept.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that delete listeners compose and that an
+     * exception in one listener does not prevent the next from firing.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TrackedRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register two delete listeners; the first always throws.</li>
+     * <li>Delete the {@link TrackedRecord} via a save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second listener still fires.
+     */
+    @Test
+    public void testDeleteListenerCompositionAndErrorIsolation()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicInteger secondCount = new AtomicInteger(0);
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            throw new RuntimeException(
+                    "Intentional exception from first listener");
+        }).onDelete(record -> {
+            secondCount.incrementAndGet();
+            latch.countDown();
+        }).build();
+
+        TrackedRecord record = new TrackedRecord();
+        record.name = "Error Isolation";
+        Assert.assertTrue(record.save());
+
+        record.deleteOnSave();
+        Assert.assertTrue(record.save());
+
+        Assert.assertTrue(
+                "Second delete listener was not called despite first throwing",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(1, secondCount.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a companion {@link Record} deleted
+     * through {@link CascadeDelete} fires the delete listener alongside the
+     * explicitly deleted {@link Record}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CascadeParent} linked to a
+     * saved {@link CascadeChild}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener.</li>
+     * <li>Save a {@link CascadeParent} and its linked
+     * {@link CascadeChild}.</li>
+     * <li>Mark the parent with {@link Record#deleteOnSave()} and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires for both the parent
+     * and the cascaded child, and neither record loads afterwards.
+     */
+    @Test
+    public void testDeleteListenerFiredForCascadeDeletedCompanion()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deletedRecords.add(record);
+            latch.countDown();
+        }).build();
+
+        CascadeChild child = new CascadeChild();
+        child.name = "Cascade Child";
+        CascadeParent parent = new CascadeParent();
+        parent.name = "Cascade Parent";
+        parent.child = child;
+        Assert.assertTrue(runway.save(parent, child));
+
+        parent.deleteOnSave();
+        Assert.assertTrue(parent.save());
+
+        Assert.assertTrue(
+                "Delete listener did not fire for both records within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(2, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertTrue(deletedRecords.contains(child));
+        Assert.assertNull(runway.load(CascadeParent.class, parent.id()));
+        Assert.assertNull(runway.load(CascadeChild.class, child.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} which joins a
+     * deletion through {@link JoinDelete} fires the delete listener alongside
+     * the explicitly deleted {@link Record}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link JoinParent} whose
+     * {@link JoinDelete} field links to a saved {@link JoinTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener.</li>
+     * <li>Save a {@link JoinParent} linked to a {@link JoinTarget}.</li>
+     * <li>Mark the target with {@link Record#deleteOnSave()} and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires for both the target
+     * and the joined parent, and neither record loads afterwards.
+     */
+    @Test
+    public void testDeleteListenerFiredForJoinDeletedRecord() throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deletedRecords.add(record);
+            latch.countDown();
+        }).build();
+
+        JoinTarget target = new JoinTarget();
+        target.name = "Join Target";
+        JoinParent parent = new JoinParent();
+        parent.name = "Join Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+
+        target.deleteOnSave();
+        Assert.assertTrue(target.save());
+
+        Assert.assertTrue(
+                "Delete listener did not fire for both records within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(2, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertNull(runway.load(JoinTarget.class, target.id()));
+        Assert.assertNull(runway.load(JoinParent.class, parent.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} side-saved through
+     * {@link CaptureDelete} cleanup fires the save listener while the deleted
+     * {@link Record} fires the delete listener.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CaptureParent} whose
+     * {@link CaptureDelete} field links to a saved {@link CaptureTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener and a delete listener.</li>
+     * <li>Save a {@link CaptureParent} linked to a {@link CaptureTarget} and
+     * await the two initial save notifications.</li>
+     * <li>Mark the target with {@link Record#deleteOnSave()} and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires for the target; the
+     * save listener fires a third time for the side-saved parent; the parent's
+     * reference is nullified in the database.
+     */
+    @Test
+    public void testSaveListenerFiredForCaptureDeleteSideSave()
+            throws Exception {
+        CountDownLatch saveLatch = new CountDownLatch(3);
+        CountDownLatch deleteLatch = new CountDownLatch(1);
+        Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            savedRecords.add(record);
+            saveLatch.countDown();
+        }).onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        CaptureTarget target = new CaptureTarget();
+        target.name = "Capture Target";
+        CaptureParent parent = new CaptureParent();
+        parent.name = "Capture Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+
+        target.deleteOnSave();
+        Assert.assertTrue(target.save());
+
+        Assert.assertTrue(
+                "Save listener did not fire for the side-saved record within timeout",
+                saveLatch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue("Delete listener was not called within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+
+        Assert.assertTrue(savedRecords.contains(parent));
+        Assert.assertEquals(1, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(target));
+
+        CaptureParent loaded = runway.load(CaptureParent.class, parent.id());
+        Assert.assertNull(
+                "Target reference should be null after the capture cleanup",
+                loaded.target);
+        Assert.assertNull(runway.load(CaptureTarget.class, target.id()));
+    }
+
+    /**
+     * A test {@link Record} whose lifecycle events are tracked by listeners.
+     *
+     * @author Jeff Nelson
+     */
+    public static class TrackedRecord extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+    }
+
+    /**
+     * A test {@link Record} of a different type, used to verify typed listener
+     * filtering.
+     *
+     * @author Jeff Nelson
+     */
+    public static class OtherRecord extends Record {
+
+        /**
+         * A label that identifies the record in tests.
+         */
+        public String label;
+    }
+
+    /**
+     * A test {@link Record} whose linked {@link CascadeChild} is deleted with
+     * it via {@link CascadeDelete}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class CascadeParent extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        /**
+         * The child that is deleted alongside this record.
+         */
+        @CascadeDelete
+        public CascadeChild child;
+    }
+
+    /**
+     * A test {@link Record} that is deleted when its owning
+     * {@link CascadeParent} is deleted.
+     *
+     * @author Jeff Nelson
+     */
+    public static class CascadeChild extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+    }
+
+    /**
+     * A test {@link Record} that joins the deletion of its linked
+     * {@link JoinTarget} via {@link JoinDelete}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class JoinParent extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        /**
+         * The target whose deletion this record joins.
+         */
+        @JoinDelete
+        public JoinTarget target;
+    }
+
+    /**
+     * A test {@link Record} whose deletion pulls in linked {@link JoinParent
+     * JoinParents}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class JoinTarget extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+    }
+
+    /**
+     * A test {@link Record} whose reference to a {@link CaptureTarget} is
+     * removed via {@link CaptureDelete} when the target is deleted.
+     *
+     * @author Jeff Nelson
+     */
+    public static class CaptureParent extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        /**
+         * The reference that is nullified when the target is deleted.
+         */
+        @CaptureDelete
+        public CaptureTarget target;
+    }
+
+    /**
+     * A test {@link Record} whose deletion triggers {@link CaptureDelete}
+     * cleanup in referencing {@link CaptureParent CaptureParents}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class CaptureTarget extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+    }
+}

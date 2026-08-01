@@ -1998,6 +1998,16 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if this {@link Record} is slated for deletion when it
+     * is {@link #save() saved}, or was deleted by a successful save.
+     *
+     * @return {@code true} if this {@link Record} is deleted
+     */
+    final boolean isDeleted() {
+        return deleted;
+    }
+
+    /**
      * Return {@code true} if this {@link Record Record's} data in the database
      * has been modified since this {@link Record} was last loaded or saved.
      *
@@ -2282,7 +2292,7 @@ public abstract class Record implements Comparable<Record> {
             saver.clear(AUTHOR_KEY, id);
         }
         if(deleted) {
-            deleteWithinTransaction(saver, preventStaleWrite);
+            deleteWithinTransaction(saver, seen, snapshots, preventStaleWrite);
         }
         else if(!hasUnsavedChanges()) {
             // This Record hasn't been modified, so simply go through each
@@ -2830,13 +2840,22 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Perform an actual "deletion" of this {@link Record} from the database.
      *
-     * @param concourse the {@link Concourse} connection for the active
-     *            transaction
+     * @param saver the {@link Saver} that owns the active transaction
+     * @param seen {@link Record Records} already processed in this save
+     * @param snapshots if non-{@code null}, each {@link Record} self-snapshots
+     *            its metadata before mutation for retry support
      * @param preventStaleWrite if {@code true}, reject the deletion when this
      *            {@link Record} has been externally modified
      */
-    private void deleteWithinTransaction(Saver saver,
+    private void deleteWithinTransaction(Saver saver, Map<Record, Boolean> seen,
+            @Nullable Map<Record, Snapshot> snapshots,
             boolean preventStaleWrite) {
+        // Mark this Record as processed so it is eligible for post-commit
+        // delete notification, even when it enters the delete path directly
+        // as a companion (e.g., @CascadeDelete or @JoinDelete) rather than
+        // through #saveWithinTransaction.
+        seen.put(this, true);
+
         // Ensure any fields to which this Record must @CascadeDelete are
         // deleted within this transaction
         Set<Field> dependents = StaticAnalysis.instance()
@@ -2926,8 +2945,8 @@ public abstract class Record implements Comparable<Record> {
                             throw CheckedExceptions.wrapAsRuntimeException(e);
                         }
                     }
-                    record.saveWithinTransaction(saver, new HashMap<>(),
-                            new HashMap<>(), preventStaleWrite);
+                    record.saveWithinTransaction(saver, seen, snapshots,
+                            preventStaleWrite);
                 }
             });
         }
@@ -2935,7 +2954,8 @@ public abstract class Record implements Comparable<Record> {
         // Perform the deletion(s)
         saver.clear(id);
         for (Record record : waitingToBeDeleted) {
-            record.deleteWithinTransaction(saver, preventStaleWrite);
+            record.deleteWithinTransaction(saver, seen, snapshots,
+                    preventStaleWrite);
         }
     }
 
@@ -3030,8 +3050,8 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Ensure that {@code record} is scheduled for
-     * {@link #deleteWithinTransaction(Concourse) deletion} alongside this
-     * {@link Record}.
+     * {@link #deleteWithinTransaction(Saver, Map, Map, boolean) deletion}
+     * alongside this {@link Record}.
      *
      * @param record
      */

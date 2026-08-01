@@ -1,5 +1,10 @@
 # Changelog
 
+#### Version 2.2.0 (TBD)
+* **Added an `onDelete` listener API** to `Runway.Builder` and `Runway.Properties` for reacting to record deletions. A delete listener is called after a save deletes a record, whether the record was explicitly marked with `deleteOnSave()` or was pulled into the deletion through annotations like `@CascadeDelete` and `@JoinDelete`. Delete listeners mirror save listeners: they are typed, compositional, asynchronous, and exception-suppressing. ([GH-65](https://github.com/cinchapi/runway/issues/65))
+* **Behavior change:** a save that deletes a record now fires delete listeners instead of save listeners. Previously, save listeners reported the deleted record as if it had been written. ([GH-65](https://github.com/cinchapi/runway/issues/65))
+* **Behavior change:** a record that is updated during `@CaptureDelete` cleanup (because a record it references was deleted) now fires save listeners. Previously, that update was not reported to any listener. ([GH-65](https://github.com/cinchapi/runway/issues/65))
+
 #### Version 2.1.1 (July 30, 2026)
 * Fixed a bug where loading a record by id through an abstract class with no scanned descendants (most importantly, the `Record` base class itself via `load(Record.class, id)`) threw `InstantiationException` instead of resolving the record's concrete class from its stored section. ([GH-145](https://github.com/cinchapi/runway/issues/145))
 * Loading a record by id through an abstract class now returns `null` when the id does not name a Runway record (its data has no class section), consistent with how invalid records are indistinguishable from invisible ones. ([GH-145](https://github.com/cinchapi/runway/issues/145))
