@@ -1781,7 +1781,7 @@ public abstract class Record implements Comparable<Record> {
      *             governing {@link DynamicWritePolicy} does not permit writing
      */
     public void set(String key, Object value) {
-        verifyDynamicallyWritable(key);
+        verifyKeyIsDynamicallyWritable(key);
         if(dynamicData.containsKey(key)) {
             dynamicData.put(key, value);
         }
@@ -2761,55 +2761,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Resolve a single positively named {@code key} into the {@link Entry} that
-     * will be contributed to a {@link #map} result.
-     * <p>
-     * For a bare key, the {@link Entry} is {@code (key, get(key))}. For a
-     * navigation key (e.g., {@code "company.name"}), the {@link Entry} is keyed
-     * by the root and valued by the nested {@link Map} (or list of nested
-     * {@link Map Maps} for a sequence-valued destination) representing the
-     * navigation path's value on the linked {@link Record Records}. A
-     * non-navigable destination resolves to {@code null}.
-     * </p>
-     *
-     * @param key the (possibly navigation) key to resolve
-     * @param options the {@link SerializationOptions} applied along any
-     *            navigation path
-     * @return the resolved {@link Entry}; never {@code null}, though its value
-     *         may be {@code null} when the navigation destination is
-     *         non-navigable
-     */
-    private Entry<String, Object> resolveEntry(String key,
-            SerializationOptions options) {
-        Object value;
-        String[] stops = key.split("\\.");
-        if(stops.length > 1) {
-            key = stops[0];
-            String path = StringUtils.join(stops, '.', 1, stops.length);
-            Object destination = get(key);
-            if(destination instanceof Record) {
-                value = ((Record) destination).map(options, path);
-            }
-            else if(Sequences.isSequence(destination)) {
-                List<Object> $value = Lists.newArrayList();
-                Sequences.forEach(destination, item -> {
-                    if(item instanceof Record) {
-                        $value.add(((Record) item).map(options, path));
-                    }
-                });
-                value = $value;
-            }
-            else {
-                value = null;
-            }
-        }
-        else {
-            value = get(key);
-        }
-        return new SimpleEntry<>(key, value);
-    }
-
-    /**
      * Return a map that contains all "readable" data in this {@link Record}.
      * <p>
      * To get access to non-readable fields, use the
@@ -3366,6 +3317,55 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Resolve a single positively named {@code key} into the {@link Entry} that
+     * will be contributed to a {@link #map} result.
+     * <p>
+     * For a bare key, the {@link Entry} is {@code (key, get(key))}. For a
+     * navigation key (e.g., {@code "company.name"}), the {@link Entry} is keyed
+     * by the root and valued by the nested {@link Map} (or list of nested
+     * {@link Map Maps} for a sequence-valued destination) representing the
+     * navigation path's value on the linked {@link Record Records}. A
+     * non-navigable destination resolves to {@code null}.
+     * </p>
+     *
+     * @param key the (possibly navigation) key to resolve
+     * @param options the {@link SerializationOptions} applied along any
+     *            navigation path
+     * @return the resolved {@link Entry}; never {@code null}, though its value
+     *         may be {@code null} when the navigation destination is
+     *         non-navigable
+     */
+    private Entry<String, Object> resolveEntry(String key,
+            SerializationOptions options) {
+        Object value;
+        String[] stops = key.split("\\.");
+        if(stops.length > 1) {
+            key = stops[0];
+            String path = StringUtils.join(stops, '.', 1, stops.length);
+            Object destination = get(key);
+            if(destination instanceof Record) {
+                value = ((Record) destination).map(options, path);
+            }
+            else if(Sequences.isSequence(destination)) {
+                List<Object> $value = Lists.newArrayList();
+                Sequences.forEach(destination, item -> {
+                    if(item instanceof Record) {
+                        $value.add(((Record) item).map(options, path));
+                    }
+                });
+                value = $value;
+            }
+            else {
+                value = null;
+            }
+        }
+        else {
+            value = get(key);
+        }
+        return new SimpleEntry<>(key, value);
+    }
+
+    /**
      * Transforms the provided {@code value} into a primitive form that can be
      * stored within {@link Concourse concourse}. The transformation is
      * recursive, handling nested {@link Record records} and
@@ -3449,7 +3449,7 @@ public abstract class Record implements Comparable<Record> {
      * @throws NonWritableFieldException if {@code key} names a field that the
      *             governing {@link DynamicWritePolicy} does not permit writing
      */
-    private void verifyDynamicallyWritable(String key) {
+    private void verifyKeyIsDynamicallyWritable(String key) {
         if(!dynamicData.containsKey(key)) {
             Field field;
             try {
