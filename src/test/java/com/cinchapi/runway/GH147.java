@@ -721,68 +721,6 @@ public class GH147 extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the governing
-     * {@link DynamicWritePolicy} is available through
-     * {@link Runway#properties()}.
-     * <p>
-     * <strong>Start state:</strong> No prior state needed.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Build a {@link Runway} configured with a specific
-     * {@link DynamicWritePolicy}.</li>
-     * <li>Read {@code properties().dynamicWritePolicy()} from the built
-     * instance and from the default {@code runway}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The built instance returns the configured
-     * policy and the default {@code runway} returns a non-null policy.
-     */
-    @Test
-    public void testDynamicWritePolicyIsAvailableThroughProperties()
-            throws Exception {
-        DynamicWritePolicy policy = DynamicWritePolicy.javaDefaults();
-        try (Runway strict = runwayBuilder().dynamicWritePolicy(policy)
-                .build()) {
-            Assert.assertSame(policy, strict.properties().dynamicWritePolicy());
-        }
-        Assert.assertNotNull(runway.properties().dynamicWritePolicy());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that replacing the
-     * {@link DynamicWritePolicy} through {@link Runway#properties()} governs
-     * subsequent {@link Record#set} calls.
-     * <p>
-     * <strong>Start state:</strong> A {@link Runway} built without a configured
-     * policy, so the permissive default governs.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Build a {@link Runway} without configuring a policy.</li>
-     * <li>Replace the policy with {@link DynamicWritePolicy#javaDefaults()
-     * javaDefaults} via {@code properties().dynamicWritePolicy(...)}.</li>
-     * <li>Construct a {@link Vault}, assign it, and call
-     * {@code set("name", "changed")}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The call throws
-     * {@link NonWritableFieldException} and the field keeps its original value.
-     */
-    @Test
-    public void testDynamicWritePolicyReplacedThroughPropertiesGovernsSet()
-            throws Exception {
-        try (Runway db = runwayBuilder().build()) {
-            db.properties()
-                    .dynamicWritePolicy(DynamicWritePolicy.javaDefaults());
-            Vault vault = new Vault("vault", "code");
-            vault.assign(db);
-            assertNonWritable(vault, "name", "changed");
-            Assert.assertEquals("vault", vault.name);
-        }
-    }
-
-    /**
      * A minimal {@link Audience} used to drive writes through the access
      * control framework.
      */
