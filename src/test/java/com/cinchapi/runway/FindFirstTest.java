@@ -33,8 +33,8 @@ import com.cinchapi.concourse.time.Time;
 
 /**
  * Tests for {@link DatabaseInterface#findFirst(Class, Criteria, Order)
- * findFirst} and {@link DatabaseInterface#findFirstAny(Class, Criteria, Order)
- * findFirstAny}. Each test runs once with bulk Command-API support enabled and
+ * findFirst} and {@link DatabaseInterface#findAnyFirst(Class, Criteria, Order)
+ * findAnyFirst}. Each test runs once with bulk Command-API support enabled and
  * once with it disabled so the behavior is verified on both the bulk and
  * incremental command-read paths.
  *
@@ -202,7 +202,7 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code findFirstAny} includes
+     * <strong>Goal:</strong> Verify that {@code findAnyFirst} includes
      * descendant types while {@code findFirst} excludes them, over the same
      * match set.
      * <p>
@@ -213,20 +213,20 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save a {@link Job} with rank 2 and a {@link PriorityJob} with rank
      * 1.</li>
-     * <li>Call {@code findFirstAny(Job.class, ...)} ordered by {@code rank}
+     * <li>Call {@code findAnyFirst(Job.class, ...)} ordered by {@code rank}
      * ascending.</li>
      * <li>Call {@code findFirst(Job.class, ...)} ordered by {@code rank}
      * ascending.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> {@code findFirstAny} returns the
+     * <strong>Expected:</strong> {@code findAnyFirst} returns the
      * {@link PriorityJob} (rank 1); {@code findFirst} returns the base
      * {@link Job} (rank 2), excluding the descendant.
      */
     @Test
-    public void testFindFirstAnyIncludesDescendants() {
+    public void testFindAnyFirstIncludesDescendants() {
         runway.save(new Job(2), new PriorityJob(1));
-        Job any = runway.findFirstAny(Job.class, rankPositive(),
+        Job any = runway.findAnyFirst(Job.class, rankPositive(),
                 Order.by("rank").ascending());
         Assert.assertTrue(any instanceof PriorityJob);
         Assert.assertEquals(1, any.rank);
@@ -410,7 +410,7 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
 
     /**
      * A descendant {@link Job} used to verify the {@code findFirst} (exact
-     * type) versus {@code findFirstAny} (type hierarchy) contract.
+     * type) versus {@code findAnyFirst} (type hierarchy) contract.
      *
      * @author Javier Lores
      */
