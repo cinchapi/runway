@@ -54,10 +54,9 @@ public final class Selections {
     /**
      * Return the result of the {@link Selection} at the given {@code index}.
      * <p>
-     * The return type is unchecked. For ID-based selections, this returns a
-     * single {@link Record} (or {@code null}). For criteria-based or load-all
-     * selections, this returns a {@link java.util.Set Set} of {@link Record
-     * Records}.
+     * The return type is unchecked &mdash; the caller is responsible for
+     * casting to the result type of the {@link Selection Selection's}
+     * operation.
      * </p>
      *
      * @param <T> the expected result type

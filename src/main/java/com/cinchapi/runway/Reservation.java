@@ -92,6 +92,11 @@ final class Reservation {
     private final boolean unique;
 
     /**
+     * Whether this is a first-result reservation.
+     */
+    private final boolean first;
+
+    /**
      * Construct a new {@link Reservation}.
      *
      * @param builder the {@link Builder}
@@ -106,6 +111,7 @@ final class Reservation {
         this.any = builder.any;
         this.counting = builder.counting;
         this.unique = builder.unique;
+        this.first = builder.first;
     }
 
     @Override
@@ -121,7 +127,8 @@ final class Reservation {
                     && Objects.equals(order, other.order)
                     && Objects.equals(page, other.page)
                     && Objects.equals(realms, other.realms) && any == other.any
-                    && counting == other.counting && unique == other.unique;
+                    && counting == other.counting && unique == other.unique
+                    && first == other.first;
         }
         else {
             return false;
@@ -131,7 +138,7 @@ final class Reservation {
     @Override
     public int hashCode() {
         return Objects.hash(clazz, id, criteria, order, page, realms, any,
-                counting, unique);
+                counting, unique, first);
     }
 
     @Override
@@ -159,6 +166,9 @@ final class Reservation {
         }
         if(unique) {
             sb.append(", unique=true");
+        }
+        if(first) {
+            sb.append(", first=true");
         }
         return sb.append('}').toString();
     }
@@ -218,6 +228,11 @@ final class Reservation {
          * Whether this is a unique-result reservation.
          */
         private boolean unique;
+
+        /**
+         * Whether this is a first-result reservation.
+         */
+        private boolean first;
 
         /**
          * Construct a new {@link Builder}.
@@ -313,6 +328,17 @@ final class Reservation {
          */
         Builder unique(boolean unique) {
             this.unique = unique;
+            return this;
+        }
+
+        /**
+         * Set whether this is a first-result reservation.
+         *
+         * @param first {@code true} for first
+         * @return this {@link Builder}
+         */
+        Builder first(boolean first) {
+            this.first = first;
             return this;
         }
 
