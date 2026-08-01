@@ -17,6 +17,8 @@ package com.cinchapi.runway;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.Assert;
@@ -210,6 +212,88 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} supports a
+     * {@link Criteria} over derived data that the database cannot resolve,
+     * updating the sole matching record.
+     * <p>
+     * <strong>Start state:</strong> Three {@link Item Items} with codes 1, 2,
+     * and 3, of which only the even-coded one matches the derived
+     * {@code parity} criteria.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Item Items} with codes 1, 2, and 3.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code parity == "even"} and a
+     * consumer that sets {@code owner} to {@code "worker"}.</li>
+     * <li>Re-load the returned {@link Item} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Item} has code 2 and the
+     * re-loaded {@link Item} shows the persisted {@code owner}.
+     */
+    @Test
+    public void testFindUniqueAndUpdateUpdatesSoleDerivedCriteriaMatch() {
+        runway.save(new Item(1), new Item(2), new Item(3));
+        Item item = runway.findUniqueAndUpdate(Item.class, parity("even"),
+                i -> i.owner = "worker");
+        Assert.assertNotNull(item);
+        Assert.assertEquals(2, item.code);
+        Assert.assertEquals("worker", runway.load(Item.class, item.id()).owner);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} detects a
+     * duplicate match under a {@link Criteria} over derived data that the
+     * database cannot resolve, and that no record is updated.
+     * <p>
+     * <strong>Start state:</strong> Three {@link Item Items} with codes 1, 2,
+     * and 3, of which the two odd-coded ones match the derived {@code parity}
+     * criteria.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Item Items} with codes 1, 2, and 3.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code parity == "odd"} and a
+     * consumer that sets {@code owner}.</li>
+     * <li>Catch the expected exception, then re-load every {@link Item}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown
+     * and no re-loaded {@link Item} has an {@code owner} set.
+     */
+    @Test
+    public void testFindUniqueAndUpdateThrowsOnDuplicateDerivedCriteriaMatch() {
+        Item one = new Item(1);
+        Item two = new Item(2);
+        Item three = new Item(3);
+        runway.save(one, two, three);
+        boolean threw = false;
+        try {
+            runway.findUniqueAndUpdate(Item.class, parity("odd"),
+                    i -> i.owner = "worker");
+        }
+        catch (DuplicateEntryException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertNull(runway.load(Item.class, one.id()).owner);
+        Assert.assertNull(runway.load(Item.class, two.id()).owner);
+        Assert.assertNull(runway.load(Item.class, three.id()).owner);
+    }
+
+    /**
+     * Return a {@link Criteria} matching every {@link Item} whose derived
+     * {@code parity} equals the given {@code value}.
+     *
+     * @param value the parity to match; {@code "odd"} or {@code "even"}
+     * @return the {@code parity == value} {@link Criteria}
+     */
+    private static Criteria parity(String value) {
+        return Criteria.where().key("parity").operator(Operator.EQUALS)
+                .value(value).build();
+    }
+
+    /**
      * Return a {@link Criteria} matching every {@link Item} whose {@code code}
      * equals the given {@code value}.
      *
@@ -246,6 +330,13 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
          */
         public Item(int code) {
             this.code = code;
+        }
+
+        @Override
+        protected Map<String, Object> derived() {
+            Map<String, Object> derived = new HashMap<>();
+            derived.put("parity", code % 2 == 0 ? "even" : "odd");
+            return derived;
         }
     }
 

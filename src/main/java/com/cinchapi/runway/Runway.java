@@ -995,6 +995,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Records} persisted in the database and writes through the standard save
      * path; records supplied by an attached {@link AdHocDataSource} are never
      * matched, and a {@link Record#overrideSave() save override} has no effect.
+     * <p>
+     * <strong>NOTE:</strong> Any {@link Criteria} is supported, including one
+     * that references {@link Derived} or {@link Computed} data. A
+     * {@link Criteria} that references only stored keys keeps the operation's
+     * conflict footprint narrow, so it contends least and performs best under
+     * concurrency; one that touches {@link Derived} or {@link Computed} data
+     * broadens the footprint to every {@link Record} in {@code clazz}, so it is
+     * more likely to retry, and ultimately throw
+     * {@link RetryExhaustedException}, when concurrent writes touch the class.
      *
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the records must match
@@ -1032,6 +1041,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Records} persisted in the database and writes through the standard save
      * path; records supplied by an attached {@link AdHocDataSource} are never
      * matched, and a {@link Record#overrideSave() save override} has no effect.
+     * <p>
+     * <strong>NOTE:</strong> Any {@link Criteria} is supported, including one
+     * that references {@link Derived} or {@link Computed} data. A
+     * {@link Criteria} that references only stored keys keeps the operation's
+     * conflict footprint narrow, so it contends least and performs best under
+     * concurrency; one that touches {@link Derived} or {@link Computed} data
+     * broadens the footprint to every {@link Record} in {@code clazz}, so it is
+     * more likely to retry, and ultimately throw
+     * {@link RetryExhaustedException}, when concurrent writes touch the class.
      *
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the record must match
@@ -1077,6 +1095,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Records} persisted in the database and writes through the standard save
      * path; records supplied by an attached {@link AdHocDataSource} are never
      * matched, and a {@link Record#overrideSave() save override} has no effect.
+     * <p>
+     * <strong>NOTE:</strong> Any {@link Criteria} is supported, including one
+     * that references {@link Derived} or {@link Computed} data. A
+     * {@link Criteria} that references only stored keys keeps the operation's
+     * conflict footprint narrow, so it contends least and performs best under
+     * concurrency; one that touches {@link Derived} or {@link Computed} data
+     * broadens the footprint to every {@link Record} in {@code clazz}, so it is
+     * more likely to retry, and ultimately throw
+     * {@link RetryExhaustedException}, when concurrent writes touch the class.
      *
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the record must match
@@ -1101,8 +1128,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * the optional {@code order} and {@code page}), let {@code validator}
      * inspect the freshly read {@link Set} before any update, apply
      * {@code consumer} to each record, save, and commit. The find's read and
-     * the save's write share one transaction (and therefore one set of locks),
-     * which is what gives concurrent callers true mutual exclusion.
+     * the save's write share one transaction (and therefore one conflict
+     * footprint), which is what gives concurrent callers true mutual exclusion:
+     * a concurrent commit that overlaps the read preempts the attempt. Any
+     * {@code criteria} is supported; one that touches {@link Derived} or
+     * {@link Computed} data is matched against the full class inside the same
+     * transaction, at the cost of a class-wide conflict footprint.
      * <p>
      * On a {@link TransactionException} the cycle is aborted and retried with
      * jittered backoff up to {@link #MAX_SPURIOUS_SAVE_RETRIES} attempts, each
@@ -1130,7 +1161,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         // claim use case), where a lost commit race is exactly the condition a
         // caller wants retried; staleness checks are off because the read is
         // re-issued fresh inside each attempt's transaction.
-        Criteria scoped = $Criteria.withinClass(clazz, criteria);
+        // NOTE: A criteria that touches derived/computed data cannot be
+        // resolved by the database, so the find reads the entire class within
+        // the transaction and resolves the criteria against each instantiated
+        // Record, mirroring the non-transactional find path. That fallback
+        // widens the attempt's conflict footprint from the matched ranges to
+        // the whole class, which is why database-resolvable criteria contend
+        // less and perform best.
+        boolean dbResolvable = Record.isDatabaseResolvableCondition(clazz,
+                criteria);
+        Criteria scoped = dbResolvable ? $Criteria.withinClass(clazz, criteria)
+                : $Criteria.forClass(clazz);
         Concourse concourse = connections.request();
         try {
             // NOTE: The connection is held across the bounded backoff sleeps
@@ -1151,13 +1192,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 try {
                     saver.stage();
                     // NOTE: A legacy server cannot sort or paginate
-                    // server-side, so the order/page are withheld from the
-                    // find and applied client-side below. The find still reads
-                    // (and therefore locks) every match inside the
-                    // transaction, so the atomicity and mutual-exclusion
-                    // guarantees are preserved.
-                    boolean nativeOrderAndPage = hasNativeSortingAndPagination
-                            || doesNotRequireSortingOrPagination(order, page);
+                    // server-side, and a non-database-resolvable criteria
+                    // additionally rules out server-side ordering/pagination
+                    // because paging before local resolution would drop
+                    // matches. In either case the order/page are withheld from
+                    // the find and applied client-side below. The find's reads
+                    // still join the transaction's conflict footprint, so a
+                    // concurrent overlapping commit preempts this attempt and
+                    // the atomicity and mutual-exclusion guarantees are
+                    // preserved.
+                    boolean nativeOrderAndPage = dbResolvable
+                            && (hasNativeSortingAndPagination
+                                    || doesNotRequireSortingOrPagination(order,
+                                            page));
                     Set<T> found;
                     // NOTE: The Reader is bound to the same staged connection
                     // as the Saver so the find reads inside the transaction;
@@ -1177,6 +1224,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 .onResolve(ref::set);
                         reader.drain();
                         found = ref.get();
+                    }
+                    if(!dbResolvable) {
+                        found = found.stream()
+                                .filter(record -> record.matches(criteria))
+                                .collect(Collectors
+                                        .toCollection(LinkedHashSet::new));
                     }
                     if(!nativeOrderAndPage) {
                         found = sortAndPage(found, order, page);

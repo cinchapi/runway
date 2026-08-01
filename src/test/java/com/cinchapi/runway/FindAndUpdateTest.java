@@ -17,6 +17,8 @@ package com.cinchapi.runway;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -247,6 +249,56 @@ public class FindAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findAndUpdate} supports a
+     * {@link Criteria} over derived data that the database cannot resolve,
+     * updating exactly the matching records.
+     * <p>
+     * <strong>Start state:</strong> Three {@link Doc Docs} with ranks 1, 2, and
+     * 3, of which the odd-ranked two match the derived {@code parity} criteria.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Doc Docs} with ranks 1, 2, and 3.</li>
+     * <li>Call {@code findAndUpdate} with {@code parity == "odd"} and a
+     * consumer that sets {@code owner} to {@code "worker"}.</li>
+     * <li>Re-load each returned {@link Doc} and the non-matching {@link Doc} by
+     * id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Two odd-ranked {@link Doc Docs} are returned
+     * with the persisted {@code owner}, and the even-ranked {@link Doc} has no
+     * {@code owner}.
+     */
+    @Test
+    public void testFindAndUpdateUpdatesOnlyDerivedCriteriaMatches() {
+        Doc one = new Doc(1);
+        Doc two = new Doc(2);
+        Doc three = new Doc(3);
+        runway.save(one, two, three);
+        Set<Doc> updated = runway.findAndUpdate(Doc.class, parity("odd"),
+                doc -> doc.owner = "worker");
+        Assert.assertEquals(2, updated.size());
+        for (Doc doc : updated) {
+            Assert.assertEquals(1, doc.rank % 2);
+            Assert.assertEquals("worker",
+                    runway.load(Doc.class, doc.id()).owner);
+        }
+        Assert.assertNull(runway.load(Doc.class, two.id()).owner);
+    }
+
+    /**
+     * Return a {@link Criteria} matching every {@link Doc} whose derived
+     * {@code parity} equals the given {@code value}.
+     *
+     * @param value the parity to match; {@code "odd"} or {@code "even"}
+     * @return the {@code parity == value} {@link Criteria}
+     */
+    private static Criteria parity(String value) {
+        return Criteria.where().key("parity").operator(Operator.EQUALS)
+                .value(value).build();
+    }
+
+    /**
      * Return a {@link Criteria} matching every {@link Doc} whose {@code rank}
      * is positive.
      *
@@ -282,6 +334,13 @@ public class FindAndUpdateTest extends RunwayBaseClientServerTest {
          */
         public Doc(int rank) {
             this.rank = rank;
+        }
+
+        @Override
+        protected Map<String, Object> derived() {
+            Map<String, Object> derived = new HashMap<>();
+            derived.put("parity", rank % 2 == 0 ? "even" : "odd");
+            return derived;
         }
     }
 

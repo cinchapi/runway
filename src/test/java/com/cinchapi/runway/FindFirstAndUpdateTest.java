@@ -17,6 +17,8 @@ package com.cinchapi.runway;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -375,6 +377,57 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findFirstAndUpdate} supports a
+     * {@link Criteria} over derived data that the database cannot resolve,
+     * updating exactly the matching record that sorts first under the
+     * {@link Order}.
+     * <p>
+     * <strong>Start state:</strong> Three unclaimed {@link Task Tasks} with
+     * ranks 3, 2, and 1 saved in non-sorted insertion order, of which the two
+     * odd-ranked ones match the derived {@code parity} criteria.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Task Tasks} with ranks 3, 2, and 1.</li>
+     * <li>Call {@code findFirstAndUpdate} with {@code parity == "odd"} ordered
+     * by {@code rank} ascending and a consumer that sets {@code owner} to
+     * {@code "worker"}.</li>
+     * <li>Re-load every {@link Task} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Task} has rank 1 with the
+     * persisted {@code owner}, and neither other {@link Task} (including the
+     * odd-ranked rank-3 match) has an {@code owner} set.
+     */
+    @Test
+    public void testFindFirstAndUpdateUpdatesFirstDerivedCriteriaMatch() {
+        Task three = new Task(3);
+        Task two = new Task(2);
+        Task one = new Task(1);
+        runway.save(three, two, one);
+        Task first = runway.findFirstAndUpdate(Task.class, parity("odd"),
+                Order.by("rank").ascending(), task -> task.owner = "worker");
+        Assert.assertNotNull(first);
+        Assert.assertEquals(1, first.rank);
+        Assert.assertEquals("worker",
+                runway.load(Task.class, first.id()).owner);
+        Assert.assertNull(runway.load(Task.class, two.id()).owner);
+        Assert.assertNull(runway.load(Task.class, three.id()).owner);
+    }
+
+    /**
+     * Return a {@link Criteria} matching every {@link Task} whose derived
+     * {@code parity} equals the given {@code value}.
+     *
+     * @param value the parity to match; {@code "odd"} or {@code "even"}
+     * @return the {@code parity == value} {@link Criteria}
+     */
+    private static Criteria parity(String value) {
+        return Criteria.where().key("parity").operator(Operator.EQUALS)
+                .value(value).build();
+    }
+
+    /**
      * Return a {@link Criteria} matching every unclaimed {@link Task}, i.e. one
      * whose {@code claimed} flag is {@code false}.
      *
@@ -416,6 +469,13 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
         public Task(int rank) {
             this.rank = rank;
             this.claimed = false;
+        }
+
+        @Override
+        protected Map<String, Object> derived() {
+            Map<String, Object> derived = new HashMap<>();
+            derived.put("parity", rank % 2 == 0 ? "even" : "odd");
+            return derived;
         }
     }
 
