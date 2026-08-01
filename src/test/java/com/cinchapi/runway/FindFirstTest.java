@@ -276,6 +276,41 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that first {@link Selection Selections} can
+     * be batched through {@code select} and that each one resolves to its own
+     * single record.
+     * <p>
+     * <strong>Start state:</strong> Three {@link Job Jobs} with ranks 1, 2, and
+     * 3.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Job Jobs} with ranks 1, 2, and 3.</li>
+     * <li>Execute one {@code select} call with two first {@link Selection
+     * Selections}: one ordered by {@code rank} ascending and one ordered by
+     * {@code rank} descending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first result is the rank-1 {@link Job} and
+     * the second result is the rank-3 {@link Job}.
+     */
+    @Test
+    public void testBatchedFirstSelectionsResolveIndependently() {
+        runway.save(new Job(1), new Job(2), new Job(3));
+        Selections results = runway.select(
+                Selection.of(Job.class).where(rankPositive())
+                        .order(Order.by("rank").ascending()).first(),
+                Selection.of(Job.class).where(rankPositive())
+                        .order(Order.by("rank").descending()).first());
+        Job lowest = results.next();
+        Job highest = results.next();
+        Assert.assertNotNull(lowest);
+        Assert.assertEquals(1, lowest.rank);
+        Assert.assertNotNull(highest);
+        Assert.assertEquals(3, highest.rank);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findFirst} honors the requested
      * {@link Realms}, skipping a record that would sort first overall but lies
      * outside the realm.
@@ -414,6 +449,118 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findFirst} serves the
+     * order-first record from a single attached {@link AdHocDataSource}.
+     * <p>
+     * <strong>Start state:</strong> One attached {@link AdHocDataSource} that
+     * supplies three {@link AdHocJob AdHocJobs} in non-sorted order; nothing is
+     * saved in the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach a source that supplies {@link AdHocJob AdHocJobs} with ranks
+     * 3, 1, and 2.</li>
+     * <li>Call {@code findFirst} with {@code rank > 0} ordered by {@code rank}
+     * ascending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link AdHocJob} has rank 1.
+     */
+    @Test
+    public void testFindFirstWithAttachedSourceReturnsOrderFirstRecord() {
+        AdHocDataSource<AdHocJob> source = new AdHocDataSource<>(AdHocJob.class,
+                () -> Arrays.asList(new AdHocJob(3), new AdHocJob(1),
+                        new AdHocJob(2)));
+        runway.attach(source);
+        try {
+            AdHocJob first = runway.findFirst(AdHocJob.class, rankPositive(),
+                    Order.by("rank").ascending());
+            Assert.assertNotNull(first);
+            Assert.assertEquals(1, first.rank);
+        }
+        finally {
+            runway.detach(AdHocJob.class);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findFirst} across multiple
+     * attached {@link AdHocDataSource AdHocDataSources} returns the record that
+     * sorts first among the per-source firsts, even when it comes from a
+     * later-attached source.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} for the same class; the second source supplies the
+     * globally order-first record.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach a source that supplies {@link AdHocJob AdHocJobs} with ranks 6
+     * and 4, and a second source with ranks 5 and 3.</li>
+     * <li>Call {@code findFirst} with {@code rank > 0} ordered by {@code rank}
+     * ascending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link AdHocJob} has rank 3, the
+     * first among the per-source firsts (4 and 3).
+     */
+    @Test
+    public void testFindFirstWithAttachedSourcesPicksFirstAcrossSources() {
+        AdHocDataSource<AdHocJob> evens = new AdHocDataSource<>(AdHocJob.class,
+                () -> Arrays.asList(new AdHocJob(6), new AdHocJob(4)));
+        AdHocDataSource<AdHocJob> odds = new AdHocDataSource<>(AdHocJob.class,
+                () -> Arrays.asList(new AdHocJob(5), new AdHocJob(3)));
+        runway.attach(evens, odds);
+        try {
+            AdHocJob first = runway.findFirst(AdHocJob.class, rankPositive(),
+                    Order.by("rank").ascending());
+            Assert.assertNotNull(first);
+            Assert.assertEquals(3, first.rank);
+        }
+        finally {
+            runway.detach(AdHocJob.class);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findFirst} across multiple
+     * attached {@link AdHocDataSource AdHocDataSources} returns {@code null}
+     * when no record in any source matches the criteria.
+     * <p>
+     * <strong>Start state:</strong> Two attached {@link AdHocDataSource
+     * AdHocDataSources} whose records all have ranks below the criteria
+     * threshold.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach two sources that supply {@link AdHocJob AdHocJobs} with ranks
+     * 1 through 4.</li>
+     * <li>Call {@code findFirst} with {@code rank > 100} ordered by
+     * {@code rank} ascending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code null}.
+     */
+    @Test
+    public void testFindFirstWithAttachedSourcesReturnsNullWhenNoMatch() {
+        AdHocDataSource<AdHocJob> evens = new AdHocDataSource<>(AdHocJob.class,
+                () -> Arrays.asList(new AdHocJob(2), new AdHocJob(4)));
+        AdHocDataSource<AdHocJob> odds = new AdHocDataSource<>(AdHocJob.class,
+                () -> Arrays.asList(new AdHocJob(1), new AdHocJob(3)));
+        runway.attach(evens, odds);
+        try {
+            AdHocJob first = runway.findFirst(
+                    AdHocJob.class, Criteria.where().key("rank")
+                            .operator(Operator.GREATER_THAN).value(100).build(),
+                    Order.by("rank").ascending());
+            Assert.assertNull(first);
+        }
+        finally {
+            runway.detach(AdHocJob.class);
+        }
+    }
+
+    /**
      * Return a {@link Criteria} matching every {@link Job} whose {@code rank}
      * is positive, which is every {@link Job} these tests create.
      *
@@ -499,6 +646,29 @@ public class FindFirstTest extends RunwayBaseClientServerTest {
             this.locked = locked;
             this.lockedAt = lockedAt;
             this.lastSyncedAt = lastSyncedAt;
+        }
+    }
+
+    /**
+     * An ad hoc counterpart to {@link Job} used to verify first-result reads
+     * against attached {@link AdHocDataSource AdHocDataSources}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class AdHocJob extends AdHocRecord {
+
+        /**
+         * The orderable rank.
+         */
+        int rank;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param rank the orderable rank
+         */
+        public AdHocJob(int rank) {
+            this.rank = rank;
         }
     }
 

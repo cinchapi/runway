@@ -743,6 +743,143 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that
+     * {@code Selection.of(clazz).where(criteria).order(order).first()} routes
+     * to {@code findFirst(clazz, criteria, order)}.
+     * <p>
+     * <strong>Start state:</strong> Three saved {@link Widget Widgets} with
+     * distinct scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save three {@link Widget Widgets} in non-sorted order.</li>
+     * <li>Execute a first {@link Selection} with criteria ordered by
+     * {@code score} ascending.</li>
+     * <li>Compare against {@code runway.findFirst} with the same
+     * arguments.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both return the single lowest-score
+     * {@link Widget}.
+     */
+    @Test
+    public void testFirstRoutesToFindFirst() {
+        runway.save(new Widget("c", 3), new Widget("a", 1), new Widget("b", 2));
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(0).build();
+        Order order = Order.by("score").ascending();
+        Widget expected = runway.findFirst(Widget.class, criteria, order);
+        Selections results = runway.select(Selection.of(Widget.class)
+                .where(criteria).order(order).first());
+        Widget actual = results.next();
+        Assert.assertNotNull(actual);
+        Assert.assertEquals(expected.id(), actual.id());
+        Assert.assertEquals(1, actual.score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@code Selection.ofAny(clazz).where(criteria).order(order).first()}
+     * routes to {@code findAnyFirst(clazz, criteria, order)}.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Widget Widgets} with
+     * distinct scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Widget Widgets}.</li>
+     * <li>Execute a hierarchy-inclusive first {@link Selection} ordered by
+     * {@code score} ascending.</li>
+     * <li>Compare against {@code runway.findAnyFirst} with the same
+     * arguments.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both return the single lowest-score
+     * {@link Widget}.
+     */
+    @Test
+    public void testAnyFirstRoutesToFindAnyFirst() {
+        runway.save(new Widget("c", 3), new Widget("a", 1));
+        Criteria criteria = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(0).build();
+        Order order = Order.by("score").ascending();
+        Widget expected = runway.findAnyFirst(Widget.class, criteria, order);
+        Selections results = runway.select(Selection.ofAny(Widget.class)
+                .where(criteria).order(order).first());
+        Widget actual = results.next();
+        Assert.assertNotNull(actual);
+        Assert.assertEquals(expected.id(), actual.id());
+        Assert.assertEquals(1, actual.score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a first {@link Selection} without
+     * criteria returns the order-first record of the target class.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Widget Widgets} with
+     * distinct scores.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Widget Widgets} in non-sorted order.</li>
+     * <li>Execute a first {@link Selection} with no criteria ordered by
+     * {@code score} ascending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is the single lowest-score
+     * {@link Widget}.
+     */
+    @Test
+    public void testFirstWithoutCriteriaReturnsOrderFirstRecord() {
+        runway.save(new Widget("b", 2), new Widget("a", 1));
+        Selections results = runway.select(Selection.of(Widget.class)
+                .order(Order.by("score").ascending()).first());
+        Widget actual = results.next();
+        Assert.assertNotNull(actual);
+        Assert.assertEquals(1, actual.score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code first()} cannot be combined
+     * with an explicit {@link Page}, because the one-row page is intrinsic to a
+     * first {@link Selection}.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Selection} with an explicit {@link Page}, then an
+     * {@link Order}, then call {@code first()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown.
+     */
+    @Test(expected = IllegalStateException.class)
+    public void testFirstRejectsExplicitPage() {
+        Selection.of(Widget.class).page(Page.limit(5))
+                .order(Order.by("score").ascending()).first();
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code first()} rejects a {@code null}
+     * sort order, because "first" is meaningless without one.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Selection} with a {@code null} {@link Order}, then
+     * call {@code first()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link NullPointerException} is thrown.
+     */
+    @Test(expected = NullPointerException.class)
+    public void testFirstRejectsNullOrder() {
+        Selection.of(Widget.class).order((Order) null).first();
+    }
+
+    /**
      * A simple test {@link Record} with a name and score.
      */
     class Widget extends Record {
