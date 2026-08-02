@@ -3693,7 +3693,16 @@ public abstract class Record implements Comparable<Record> {
             T next = update.apply(current);
             boolean settled;
             if(Objects.equals(current, next)) {
-                settled = verify(key);
+                // Nothing to write, but confirm the read isn't stale before
+                // treating the no-op as settled.
+                Concourse concourse = connections.request();
+                try {
+                    settled = concourse.verify(key,
+                            serializeScalarValue(current), id);
+                }
+                finally {
+                    connections.release(concourse);
+                }
             }
             else {
                 settled = exchange(key, next);
@@ -3708,37 +3717,6 @@ public abstract class Record implements Comparable<Record> {
                 policy.backoff(attempts);
                 refresh();
             }
-        }
-    }
-
-    /**
-     * Return {@code true} if the database still holds the value this
-     * {@link Record} has in memory for {@code key}.
-     * <p>
-     * A {@code false} return means another writer changed the stored value
-     * after this {@link Record} last observed it; {@link #refresh() refresh} to
-     * observe the current state.
-     * </p>
-     *
-     * @param key the name of the intrinsic field to verify
-     * @return {@code true} if the stored value matches this {@link Record
-     *         Record's} in-memory value for {@code key}
-     * @throws IllegalArgumentException if {@code key} is not eligible for
-     *             atomic operations
-     * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance or has no in-memory value for
-     *             {@code key}
-     */
-    private boolean verify(String key) {
-        Verify.that(runway != null, "Cannot verify because this Record isn't"
-                + " pinned to a Runway instance");
-        Object expected = serializeScalarValue(atomicValue(atomicField(key)));
-        Concourse concourse = connections.request();
-        try {
-            return concourse.verify(key, expected, id);
-        }
-        finally {
-            connections.release(concourse);
         }
     }
 
