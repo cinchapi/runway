@@ -63,6 +63,27 @@ public class AtomicRetryPolicyTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a backoff interval too large to scale
+     * without numeric overflow is rejected when the policy is created, so
+     * {@link AtomicRetryPolicy#backoff(int) backoff} can never compute an
+     * invalid pause.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@link AtomicRetryPolicy#create(int, long)} with a backoff of
+     * {@link Long#MAX_VALUE} milliseconds.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
+     */
+    @Test(expected = IllegalArgumentException.class)
+    public void testCreateRejectsOverflowingBackoff() {
+        AtomicRetryPolicy.create(5, Long.MAX_VALUE);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that the configured retry limit is reported
      * back by the {@link AtomicRetryPolicy#limit() limit} accessor.
      * <p>

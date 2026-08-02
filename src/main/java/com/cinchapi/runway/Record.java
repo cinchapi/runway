@@ -1300,6 +1300,12 @@ public abstract class Record implements Comparable<Record> {
      * before anything is written.
      * </p>
      * <p>
+     * A {@link Record} replacement must have no unsaved changes, and that
+     * includes one that was never {@link #save() saved}: the write stores a
+     * link to the replacement without saving it, so an unsaved replacement
+     * would leave the link pointing at state the database does not hold.
+     * </p>
+     * <p>
      * <strong>NOTE:</strong> This is a targeted write, not a {@link #save()
      * save}: the {@link #beforeSave() beforeSave} hook and any save listeners
      * do not run. The write does count as a modification for stale-write
@@ -1312,8 +1318,9 @@ public abstract class Record implements Comparable<Record> {
      *            current; must not be {@code null}
      * @return {@code true} if the exchange is successful
      * @throws IllegalArgumentException if {@code key} is not eligible for
-     *             atomic operations, or {@code replacement} is {@code null} or
-     *             is not an instance of the field's type
+     *             atomic operations, or {@code replacement} is {@code null}, is
+     *             not an instance of the field's type, or is a {@link Record}
+     *             with unsaved changes
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, has no in-memory value for
      *             {@code key}, or {@code replacement} violates the field's
@@ -1331,6 +1338,24 @@ public abstract class Record implements Comparable<Record> {
                         + " replacement is a {} and the field stores a {}",
                 key, __, replacement.getClass().getSimpleName(),
                 field.getType().getSimpleName());
+        Record target;
+        if(replacement instanceof Record) {
+            target = (Record) replacement;
+        }
+        else if(replacement instanceof DeferredReference) {
+            // NOTE: An unloaded DeferredReference always originates from a
+            // stored link, so its target is known to be persisted and there
+            // is nothing to check.
+            target = ((DeferredReference<?>) replacement).$ref();
+        }
+        else {
+            target = null;
+        }
+        Verify.thatArgument(target == null || !target.hasUnsavedChanges(),
+                "Cannot atomically operate on {} in {} because the"
+                        + " replacement has unsaved changes and this"
+                        + " targeted write cannot save it",
+                key, __);
         checkIsSavable(field, key, replacement);
         Object expected = getAtomicableFieldValue(field, this);
         Concourse concourse = connections.request();
@@ -1340,6 +1365,7 @@ public abstract class Record implements Comparable<Record> {
                     serializeScalarValue(replacement))) {
                 Reflection.set(key, replacement, this);
                 clearComputeOnceCache();
+                _audit = null;
                 if(clean) {
                     // The record and the database were in sync before the
                     // exchange and the exchange kept them in sync, so refresh
@@ -1406,11 +1432,12 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      * <p>
      * This {@link Record} must not have unsaved changes; that includes a
-     * {@link Record} that was never {@link #save() saved}. A retry
-     * {@link #refresh() refreshes} this {@link Record} from the database, which
-     * would silently discard staged state, so the operation refuses a dirty
-     * {@link Record} before anything is read or written. {@link #save() Save}
-     * or {@link #refresh() refresh} first.
+     * {@link Record} that was never {@link #save() saved} and one with unsaved
+     * {@link #realms() realm} membership changes. A retry {@link #refresh()
+     * refreshes} this {@link Record} from the database, which would silently
+     * discard staged state, so the operation refuses a dirty {@link Record}
+     * before anything is read or written. {@link #save() Save} or
+     * {@link #refresh() refresh} first.
      * </p>
      * <p>
      * If the {@code update} function returns a value equal to its input,
@@ -3703,6 +3730,10 @@ public abstract class Record implements Comparable<Record> {
         Verify.that(!hasUnsavedChanges(),
                 "Cannot atomically update {} in {} because this Record has"
                         + " unsaved changes",
+                key, __);
+        Verify.that(!_hasModifiedRealms,
+                "Cannot atomically update {} in {} because this Record has"
+                        + " unsaved realm changes",
                 key, __);
         AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
         int attempts = 0;

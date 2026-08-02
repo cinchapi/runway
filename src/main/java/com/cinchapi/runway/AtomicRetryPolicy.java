@@ -61,6 +61,13 @@ public final class AtomicRetryPolicy {
     private static final int MAX_BACKOFF_EXPONENT = 10;
 
     /**
+     * The largest permitted backoff base, which guarantees that the scaled
+     * pause ceiling always fits in a {@code long}.
+     */
+    private static final long MAX_BACKOFF_MILLIS = (Long.MAX_VALUE
+            - 1) >> MAX_BACKOFF_EXPONENT;
+
+    /**
      * The shared instance returned from {@link #defaults()}.
      */
     private static final AtomicRetryPolicy DEFAULT = new AtomicRetryPolicy(
@@ -77,7 +84,9 @@ public final class AtomicRetryPolicy {
      *            pause is scaled; {@code 0} disables the pause
      * @return the {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code limit} or
-     *             {@code backoffMillis} is negative
+     *             {@code backoffMillis} is negative, or if
+     *             {@code backoffMillis} is too large for the policy to scale
+     *             without numeric overflow
      */
     public static AtomicRetryPolicy create(int limit, long backoffMillis) {
         return new AtomicRetryPolicy(limit, backoffMillis);
@@ -116,6 +125,9 @@ public final class AtomicRetryPolicy {
                 "The retry limit cannot be negative");
         Preconditions.checkArgument(backoffMillis >= 0,
                 "The backoff interval cannot be negative");
+        Preconditions.checkArgument(backoffMillis <= MAX_BACKOFF_MILLIS,
+                "The backoff interval cannot exceed %s milliseconds",
+                MAX_BACKOFF_MILLIS);
         this.limit = limit;
         this.backoffMillis = backoffMillis;
     }

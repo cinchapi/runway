@@ -128,6 +128,82 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
+     * {@link Record} replacement that was never saved, so a link to a record
+     * that does not exist in the database is never stored.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} linked to a saved
+     * {@link Owner}, with a second {@link Owner} that was never saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter} whose {@code owner} is a saved
+     * {@link Owner}.</li>
+     * <li>Call {@code exchange("owner", unsaved)} with a never-saved
+     * {@link Owner}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
+     * and the stored link still targets the original {@link Owner}.
+     */
+    @Test
+    public void testExchangeRejectsNeverSavedLinkReplacement() {
+        Owner first = new Owner();
+        Meter meter = new Meter();
+        meter.owner = first;
+        runway.save(meter);
+        Owner unsaved = new Owner();
+        try {
+            meter.exchange("owner", unsaved);
+            Assert.fail("Expected an IllegalArgumentException");
+        }
+        catch (IllegalArgumentException e) {
+            Assert.assertEquals(first.id(),
+                    runway.load(Meter.class, meter.id()).owner.id());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
+     * {@link Record} replacement that has unsaved changes, so a link is never
+     * stored to a record whose persisted state diverges from the state the
+     * caller sees in memory.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} linked to a saved
+     * {@link Owner}, with a second saved {@link Owner} that was modified after
+     * its save.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter} whose {@code owner} is the first {@link Owner}
+     * and save a second {@link Owner}.</li>
+     * <li>Change the second {@link Owner Owner's} {@code name} without a
+     * save.</li>
+     * <li>Call {@code exchange("owner", second)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
+     * and the stored link still targets the first {@link Owner}.
+     */
+    @Test
+    public void testExchangeRejectsDirtyLinkReplacement() {
+        Owner first = new Owner();
+        Owner second = new Owner();
+        Meter meter = new Meter();
+        meter.owner = first;
+        runway.save(meter, second);
+        second.name = "changed";
+        try {
+            meter.exchange("owner", second);
+            Assert.fail("Expected an IllegalArgumentException");
+        }
+        catch (IllegalArgumentException e) {
+            Assert.assertEquals(first.id(),
+                    runway.load(Meter.class, meter.id()).owner.id());
+        }
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code exchange} accepts a replacement
      * that satisfies the field's {@link ValidatedBy} validator.
      * <p>
@@ -424,6 +500,34 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a successful {@code exchange}
+     * invalidates the cached audit trail, so a later {@code audit} call on the
+     * same instance sees the revision the exchange wrote.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} whose audit trail was
+     * already read once on the same instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter} and read {@code audit("value")} to populate the
+     * instance's cached trail.</li>
+     * <li>Call {@code exchange("value", 10L)}.</li>
+     * <li>Read {@code audit("value")} again on the same instance.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second audit read contains more revisions
+     * than the first.
+     */
+    @Test
+    public void testExchangeInvalidatesCachedAudit() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        int revisions = meter.audit("value").size();
+        Assert.assertTrue(meter.exchange("value", 10L));
+        Assert.assertTrue(meter.audit("value").size() > revisions);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code getAndUpdate} returns the prior
      * value and durably persists the updated one.
      * <p>
@@ -491,9 +595,12 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Save a {@link Meter} and count the revisions for {@code value}.</li>
+     * <li>Save a {@link Meter} and count the revisions for {@code value}
+     * through a freshly loaded copy, so the count reads the database instead of
+     * an instance-level cache.</li>
      * <li>Call {@code getAndUpdate("value", v -> v)}.</li>
-     * <li>Count the revisions for {@code value} again.</li>
+     * <li>Count the revisions for {@code value} through another freshly loaded
+     * copy.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The call returns the current value and the
@@ -503,10 +610,12 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     public void testGetAndUpdateWithoutChangeVerifiesWithoutWrite() {
         Meter meter = new Meter();
         runway.save(meter);
-        int revisions = meter.audit("value").size();
+        int revisions = runway.load(Meter.class, meter.id()).audit("value")
+                .size();
         long result = meter.getAndUpdate("value", (Long v) -> v);
         Assert.assertEquals(0, result);
-        Assert.assertEquals(revisions, meter.audit("value").size());
+        Assert.assertEquals(revisions,
+                runway.load(Meter.class, meter.id()).audit("value").size());
     }
 
     /**
@@ -562,6 +671,40 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     public void testGetAndUpdateRefusesUnsavedRecord() {
         Meter meter = new Meter();
         meter.getAndUpdate("value", (Long v) -> v + 1);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code getAndUpdate} refuses a record
+     * with unsaved realm changes, so a retry's refresh can never silently
+     * discard them.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} with an unsaved realm
+     * addition.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}, then call {@code addRealm("test")} without a
+     * save.</li>
+     * <li>Call {@code getAndUpdate("value", v -> v + 1)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown,
+     * the unsaved realm membership survives in memory and the stored
+     * {@code value} remains {@code 0}.
+     */
+    @Test
+    public void testGetAndUpdateRefusesRecordWithUnsavedRealmChanges() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        meter.addRealm("test");
+        try {
+            meter.getAndUpdate("value", (Long v) -> v + 1);
+            Assert.fail("Expected an IllegalStateException");
+        }
+        catch (IllegalStateException e) {
+            Assert.assertTrue(meter.realms().contains("test"));
+            Assert.assertEquals(0, runway.load(Meter.class, meter.id()).value);
+        }
     }
 
     /**
