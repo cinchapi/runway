@@ -636,7 +636,8 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
         public Set<String> tags = null;
 
         /**
-         * A validated field; atomic operations must consult the validator.
+         * A validated field; atomic operations must reject a value that fails
+         * validation.
          */
         @ValidatedBy(EvenValidator.class)
         public long score = 2;

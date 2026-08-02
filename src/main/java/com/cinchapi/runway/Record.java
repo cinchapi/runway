@@ -1371,7 +1371,7 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance or has no stored value for
+     *             {@link Runway} instance or has no in-memory value for
      *             {@code key}
      */
     public final <T> T getAndUpdate(String key, UnaryOperator<T> update) {
@@ -1981,7 +1981,7 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance or has no stored value for
+     *             {@link Runway} instance or has no in-memory value for
      *             {@code key}
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
@@ -3679,7 +3679,7 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance or has no stored value for
+     *             {@link Runway} instance or has no in-memory value for
      *             {@code key}
      */
     private <T> AtomicUpdate<T> updateAtomically(String key,

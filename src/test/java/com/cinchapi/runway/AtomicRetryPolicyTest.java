@@ -103,8 +103,8 @@ public class AtomicRetryPolicyTest {
 
     /**
      * <strong>Goal:</strong> Verify that a zero backoff interval never sleeps
-     * and never throws, so tests and latency-sensitive callers can pause-free
-     * retry.
+     * and never throws, so tests and latency-sensitive callers can retry
+     * without a pause.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
