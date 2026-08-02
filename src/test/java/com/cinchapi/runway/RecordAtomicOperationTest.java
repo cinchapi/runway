@@ -27,8 +27,7 @@ import com.cinchapi.runway.validation.Validator;
 
 /**
  * Tests for the single-key atomic operations on {@link Record}:
- * {@link Record#verify(String) verify},
- * {@link Record#verifyAndSwap(String, Object) verifyAndSwap},
+ * {@link Record#exchange(String, Object) exchange},
  * {@link Record#getAndUpdate(String, java.util.function.UnaryOperator)
  * getAndUpdate} and
  * {@link Record#updateAndGet(String, java.util.function.UnaryOperator)
@@ -39,59 +38,8 @@ import com.cinchapi.runway.validation.Validator;
 public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
 
     /**
-     * <strong>Goal:</strong> Verify that {@code verify} returns {@code true}
-     * when the database still holds the {@link Record Record's} in-memory
-     * value.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Meter} with no concurrent
-     * modification.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link Meter}.</li>
-     * <li>Call {@code verify("value")}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The call returns {@code true}.
-     */
-    @Test
-    public void testVerifyReturnsTrueWhenValueIsCurrent() {
-        Meter meter = new Meter();
-        runway.save(meter);
-        Assert.assertTrue(meter.verify("value"));
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@code verify} returns {@code false}
-     * when another writer changed the stored value after this {@link Record}
-     * last observed it.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Meter} and a second loaded
-     * copy of it.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link Meter} with {@code value = 0}.</li>
-     * <li>Load a fresh copy, set {@code value = 5}, and save it.</li>
-     * <li>Call {@code verify("value")} on the original (now stale)
-     * instance.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The call returns {@code false}.
-     */
-    @Test
-    public void testVerifyReturnsFalseWhenValueChangedExternally() {
-        Meter meter = new Meter();
-        runway.save(meter);
-        Meter fresh = runway.load(Meter.class, meter.id());
-        fresh.value = 5;
-        runway.save(fresh);
-        Assert.assertFalse(meter.verify("value"));
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that a successful {@code verifyAndSwap}
-     * durably persists the replacement and syncs the in-memory field.
+     * <strong>Goal:</strong> Verify that a successful {@code exchange} durably
+     * persists the replacement and syncs the in-memory field.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} with
      * {@code value = 0}.
@@ -99,27 +47,26 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link Meter}.</li>
-     * <li>Call {@code verifyAndSwap("value", 10L)}.</li>
+     * <li>Call {@code exchange("value", 10L)}.</li>
      * <li>Re-load the {@link Meter} from the database.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The swap returns {@code true}, the re-loaded
-     * {@link Meter} has {@code value == 10} and the original instance's
-     * in-memory {@code value} is also {@code 10}.
+     * <strong>Expected:</strong> The exchange returns {@code true}, the
+     * re-loaded {@link Meter} has {@code value == 10} and the original
+     * instance's in-memory {@code value} is also {@code 10}.
      */
     @Test
-    public void testVerifyAndSwapPersistsReplacement() {
+    public void testExchangePersistsReplacement() {
         Meter meter = new Meter();
         runway.save(meter);
-        Assert.assertTrue(meter.verifyAndSwap("value", 10L));
+        Assert.assertTrue(meter.exchange("value", 10L));
         Assert.assertEquals(10, meter.value);
         Assert.assertEquals(10, runway.load(Meter.class, meter.id()).value);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a stale {@code verifyAndSwap} fails
-     * without writing and without disturbing either the stored or the in-memory
-     * state.
+     * <strong>Goal:</strong> Verify that a stale {@code exchange} fails without
+     * writing and without disturbing either the stored or the in-memory state.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} whose stored value
      * was changed through a second loaded copy.
@@ -128,29 +75,29 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save a {@link Meter} with {@code value = 0}.</li>
      * <li>Load a fresh copy, set {@code value = 5}, and save it.</li>
-     * <li>Call {@code verifyAndSwap("value", 10L)} on the original (now stale)
+     * <li>Call {@code exchange("value", 10L)} on the original (now stale)
      * instance.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The swap returns {@code false}, the database
-     * still holds {@code 5} and the stale instance still holds {@code 0} in
-     * memory.
+     * <strong>Expected:</strong> The exchange returns {@code false}, the
+     * database still holds {@code 5} and the stale instance still holds
+     * {@code 0} in memory.
      */
     @Test
-    public void testVerifyAndSwapFailsWhenStale() {
+    public void testExchangeFailsWhenStale() {
         Meter meter = new Meter();
         runway.save(meter);
         Meter fresh = runway.load(Meter.class, meter.id());
         fresh.value = 5;
         runway.save(fresh);
-        Assert.assertFalse(meter.verifyAndSwap("value", 10L));
+        Assert.assertFalse(meter.exchange("value", 10L));
         Assert.assertEquals(0, meter.value);
         Assert.assertEquals(5, runway.load(Meter.class, meter.id()).value);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code verifyAndSwap} supports
-     * {@link Record}-typed fields by swapping one link for another.
+     * <strong>Goal:</strong> Verify that {@code exchange} supports
+     * {@link Record}-typed fields by exchanging one link for another.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} linked to one
      * {@link Owner}, with a second saved {@link Owner} available.
@@ -159,30 +106,30 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save a {@link Meter} whose {@code owner} is the first
      * {@link Owner}.</li>
-     * <li>Call {@code verifyAndSwap("owner", second)}.</li>
+     * <li>Call {@code exchange("owner", second)}.</li>
      * <li>Re-load the {@link Meter} from the database.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The swap returns {@code true}, the in-memory
-     * {@code owner} is the second {@link Owner} and the re-loaded {@link Meter}
-     * links to the second {@link Owner Owner's} id.
+     * <strong>Expected:</strong> The exchange returns {@code true}, the
+     * in-memory {@code owner} is the second {@link Owner} and the re-loaded
+     * {@link Meter} links to the second {@link Owner Owner's} id.
      */
     @Test
-    public void testVerifyAndSwapSupportsLinkFields() {
+    public void testExchangeSupportsLinkFields() {
         Owner first = new Owner();
         Owner second = new Owner();
         Meter meter = new Meter();
         meter.owner = first;
         runway.save(meter, second);
-        Assert.assertTrue(meter.verifyAndSwap("owner", second));
+        Assert.assertTrue(meter.exchange("owner", second));
         Assert.assertSame(second, meter.owner);
         Assert.assertEquals(second.id(),
                 runway.load(Meter.class, meter.id()).owner.id());
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code verifyAndSwap} accepts a
-     * replacement that satisfies the field's {@link ValidatedBy} validator.
+     * <strong>Goal:</strong> Verify that {@code exchange} accepts a replacement
+     * that satisfies the field's {@link ValidatedBy} validator.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} whose {@code score}
      * field requires an even value.
@@ -190,24 +137,24 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link Meter} with {@code score = 2}.</li>
-     * <li>Call {@code verifyAndSwap("score", 4L)}.</li>
+     * <li>Call {@code exchange("score", 4L)}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The swap returns {@code true} and the
+     * <strong>Expected:</strong> The exchange returns {@code true} and the
      * re-loaded {@link Meter} has {@code score == 4}.
      */
     @Test
-    public void testVerifyAndSwapAcceptsValidReplacement() {
+    public void testExchangeAcceptsValidReplacement() {
         Meter meter = new Meter();
         runway.save(meter);
-        Assert.assertTrue(meter.verifyAndSwap("score", 4L));
+        Assert.assertTrue(meter.exchange("score", 4L));
         Assert.assertEquals(4, runway.load(Meter.class, meter.id()).score);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code verifyAndSwap} rejects a
-     * replacement that fails the field's {@link ValidatedBy} validator before
-     * anything is written.
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a replacement
+     * that fails the field's {@link ValidatedBy} validator before anything is
+     * written.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} whose {@code score}
      * field requires an even value.
@@ -215,18 +162,18 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link Meter} with {@code score = 2}.</li>
-     * <li>Call {@code verifyAndSwap("score", 3L)}.</li>
+     * <li>Call {@code exchange("score", 3L)}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> An {@link IllegalStateException} is thrown and
      * the stored {@code score} remains {@code 2}.
      */
     @Test
-    public void testVerifyAndSwapRejectsInvalidReplacement() {
+    public void testExchangeRejectsInvalidReplacement() {
         Meter meter = new Meter();
         runway.save(meter);
         try {
-            meter.verifyAndSwap("score", 3L);
+            meter.exchange("score", 3L);
             Assert.fail("Expected an IllegalStateException");
         }
         catch (IllegalStateException e) {
@@ -235,7 +182,7 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code verifyAndSwap} rejects an empty
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects an empty
      * replacement for a {@link Required} field.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} whose {@code label}
@@ -244,20 +191,20 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link Meter}.</li>
-     * <li>Call {@code verifyAndSwap("label", "")}.</li>
+     * <li>Call {@code exchange("label", "")}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> An {@link IllegalStateException} is thrown.
      */
     @Test(expected = IllegalStateException.class)
-    public void testVerifyAndSwapRejectsEmptyReplacementForRequiredField() {
+    public void testExchangeRejectsEmptyReplacementForRequiredField() {
         Meter meter = new Meter();
         runway.save(meter);
-        meter.verifyAndSwap("label", "");
+        meter.exchange("label", "");
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code verifyAndSwap} rejects a
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
      * {@link Unique} field because a single-key atomic operation cannot enforce
      * the uniqueness constraint.
      * <p>
@@ -266,86 +213,85 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link Meter}.</li>
-     * <li>Call {@code verifyAndSwap("code", "abc")}.</li>
+     * <li>Call {@code exchange("code", "abc")}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
      */
     @Test(expected = IllegalArgumentException.class)
-    public void testVerifyAndSwapRejectsUniqueField() {
+    public void testExchangeRejectsUniqueField() {
         Meter meter = new Meter();
         runway.save(meter);
-        meter.verifyAndSwap("code", "abc");
+        meter.exchange("code", "abc");
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code verifyAndSwap} rejects a
-     * collection field because it does not store a single value.
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a collection
+     * field because it does not store a single value.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link Meter}.</li>
-     * <li>Call {@code verifyAndSwap("tags", "abc")}.</li>
+     * <li>Call {@code exchange("tags", "abc")}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
      */
     @Test(expected = IllegalArgumentException.class)
-    public void testVerifyAndSwapRejectsCollectionField() {
+    public void testExchangeRejectsCollectionField() {
         Meter meter = new Meter();
         runway.save(meter);
-        meter.verifyAndSwap("tags", "abc");
+        meter.exchange("tags", "abc");
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code verifyAndSwap} rejects a key
-     * that does not name an intrinsic field.
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a key that
+     * does not name an intrinsic field.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link Meter}.</li>
-     * <li>Call {@code verifyAndSwap("wat", 1L)}.</li>
+     * <li>Call {@code exchange("wat", 1L)}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
      */
     @Test(expected = IllegalArgumentException.class)
-    public void testVerifyAndSwapRejectsUnknownKey() {
+    public void testExchangeRejectsUnknownKey() {
         Meter meter = new Meter();
         runway.save(meter);
-        meter.verifyAndSwap("wat", 1L);
+        meter.exchange("wat", 1L);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code verifyAndSwap} rejects a
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
      * {@code null} replacement because null is represented as key absence and
-     * cannot be swapped in atomically.
+     * cannot be exchanged in atomically.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link Meter}.</li>
-     * <li>Call {@code verifyAndSwap("value", null)}.</li>
+     * <li>Call {@code exchange("value", null)}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
      */
     @Test(expected = IllegalArgumentException.class)
-    public void testVerifyAndSwapRejectsNullReplacement() {
+    public void testExchangeRejectsNullReplacement() {
         Meter meter = new Meter();
         runway.save(meter);
-        meter.verifyAndSwap("value", null);
+        meter.exchange("value", null);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code verifyAndSwap} rejects the
-     * operation when the field has no in-memory value to use as the expected
-     * operand.
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects the operation
+     * when the field has no in-memory value to use as the expected operand.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} whose {@code note}
      * field is {@code null}.
@@ -353,46 +299,45 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link Meter}.</li>
-     * <li>Call {@code verifyAndSwap("note", "hello")}.</li>
+     * <li>Call {@code exchange("note", "hello")}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> An {@link IllegalStateException} is thrown.
      */
     @Test(expected = IllegalStateException.class)
-    public void testVerifyAndSwapRejectsNullCurrentValue() {
+    public void testExchangeRejectsNullCurrentValue() {
         Meter meter = new Meter();
         runway.save(meter);
-        meter.verifyAndSwap("note", "hello");
+        meter.exchange("note", "hello");
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a successful {@code verifyAndSwap} on
-     * a record with no unsaved changes leaves the record with no unsaved
-     * changes.
+     * <strong>Goal:</strong> Verify that a successful {@code exchange} on a
+     * record with no unsaved changes leaves the record with no unsaved changes.
      * <p>
      * <strong>Start state:</strong> A freshly saved {@link Meter}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link Meter} and confirm it has no unsaved changes.</li>
-     * <li>Call {@code verifyAndSwap("value", 10L)}.</li>
+     * <li>Call {@code exchange("value", 10L)}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> {@code hasUnsavedChanges()} returns
-     * {@code false} after the swap.
+     * {@code false} after the exchange.
      */
     @Test
-    public void testVerifyAndSwapKeepsCleanRecordClean() {
+    public void testExchangeKeepsCleanRecordClean() {
         Meter meter = new Meter();
         runway.save(meter);
         Assert.assertFalse(meter.hasUnsavedChanges());
-        Assert.assertTrue(meter.verifyAndSwap("value", 10L));
+        Assert.assertTrue(meter.exchange("value", 10L));
         Assert.assertFalse(meter.hasUnsavedChanges());
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a successful {@code verifyAndSwap} on
-     * a record with pending changes preserves those changes so a later
+     * <strong>Goal:</strong> Verify that a successful {@code exchange} on a
+     * record with pending changes preserves those changes so a later
      * {@code save} still persists them.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} with an unsaved
@@ -402,21 +347,21 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save a {@link Meter}, then set {@code label = "changed"} without
      * saving.</li>
-     * <li>Call {@code verifyAndSwap("value", 10L)}.</li>
+     * <li>Call {@code exchange("value", 10L)}.</li>
      * <li>Save the {@link Meter} and re-load it from the database.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The record reports unsaved changes after the
-     * swap, and the re-loaded {@link Meter} has both {@code label ==
+     * exchange, and the re-loaded {@link Meter} has both {@code label ==
      * "changed"} and {@code value == 10}.
      */
     @Test
-    public void testVerifyAndSwapPreservesPendingChanges() {
+    public void testExchangePreservesPendingChanges() {
         Meter meter = new Meter();
         runway.save(meter);
         meter.label = "changed";
         Assert.assertTrue(meter.hasUnsavedChanges());
-        Assert.assertTrue(meter.verifyAndSwap("value", 10L));
+        Assert.assertTrue(meter.exchange("value", 10L));
         Assert.assertTrue(meter.hasUnsavedChanges());
         Assert.assertTrue(meter.save());
         Meter loaded = runway.load(Meter.class, meter.id());
@@ -697,7 +642,7 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
         public long score = 2;
 
         /**
-         * A link field; atomic operations must support swapping links.
+         * A link field; atomic operations must support exchanging links.
          */
         public Owner owner = null;
 

@@ -1220,6 +1220,102 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Atomically exchange the value of {@code key} for {@code replacement} if
+     * and only if the database still holds the value this {@link Record} has in
+     * memory for {@code key}.
+     * <p>
+     * This is the conditional counterpart to {@link #set(String, Object) set}:
+     * {@code set} stages a value that takes effect on the next {@link #save()
+     * save} no matter what the database holds, whereas {@code exchange} writes
+     * through to the database immediately and only if no other writer changed
+     * the stored value after this {@link Record} last observed it. It has the
+     * same semantics as
+     * {@link Concourse#verifyAndSwap(String, Object, long, Object)
+     * verifyAndSwap}, with this {@link Record Record's} in-memory value as the
+     * expected operand.
+     * </p>
+     * <p>
+     * On success, the in-memory field is updated to {@code replacement} and a
+     * record with no unsaved changes remains without unsaved changes. On
+     * failure, nothing changes anywhere; the caller may {@link #refresh()
+     * refresh} and try again, or use
+     * {@link #getAndUpdate(String, UnaryOperator) getAndUpdate} to have the
+     * retry loop managed automatically.
+     * </p>
+     * <p>
+     * Only an intrinsic, single-value field with a non-null value on both sides
+     * of the exchange is eligible: {@code null} is represented as key absence,
+     * multi-value fields have no single-exchange semantics, and {@link Unique}
+     * fields are refused because uniqueness cannot be enforced within a
+     * single-key operation. A {@link Required} field refuses an empty
+     * replacement and a {@link ValidatedBy} field refuses a replacement that
+     * fails validation; either refusal happens before anything is written.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> This is a targeted write, not a {@link #save()
+     * save}: the {@link #beforeSave() beforeSave} hook and any save listeners
+     * do not run. The write does count as a modification for stale-write
+     * detection, so a later {@link #save(boolean) save(preventStaleWrite)} may
+     * require a {@link #refresh() refresh} first.
+     * </p>
+     *
+     * @param key the name of the intrinsic field whose value is exchanged
+     * @param replacement the value to store if the expected value is still
+     *            current; must not be {@code null}
+     * @return {@code true} if the exchange is successful
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations or {@code replacement} is {@code null}
+     * @throws IllegalStateException if this {@link Record} is not pinned to a
+     *             {@link Runway} instance, has no in-memory value for
+     *             {@code key}, or {@code replacement} violates the field's
+     *             constraints
+     */
+    public final <T> boolean exchange(String key, T replacement) {
+        Verify.that(runway != null, "Cannot perform an atomic exchange"
+                + " because this Record isn't pinned to a Runway instance");
+        Verify.thatArgument(replacement != null,
+                "The replacement value cannot be null");
+        Field field = atomicField(key);
+        if(field.isAnnotationPresent(Required.class)
+                && Empty.ness().describes(replacement)) {
+            throw new IllegalStateException(
+                    AnyStrings.format("{} is required in {}", key, __));
+        }
+        if(field.isAnnotationPresent(ValidatedBy.class)) {
+            Class<? extends Validator> validatorClass = field
+                    .getAnnotation(ValidatedBy.class).value();
+            Validator validator = Reflection.newInstance(validatorClass);
+            if(!validator.validate(replacement)) {
+                throw new IllegalStateException(validator.getErrorMessage());
+            }
+        }
+        Object expected = atomicValue(field);
+        Concourse concourse = connections.request();
+        try {
+            boolean clean = !hasUnsavedChanges();
+            if(concourse.verifyAndSwap(key, serializeScalarValue(expected), id,
+                    serializeScalarValue(replacement))) {
+                Reflection.set(key, replacement, this);
+                clearComputeOnceCache();
+                if(clean) {
+                    // The record and the database were in sync before the
+                    // exchange and the exchange kept them in sync, so refresh
+                    // the checksum to prevent a later save from re-writing
+                    // every field.
+                    __checksum = checksum();
+                }
+                return true;
+            }
+            else {
+                return false;
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Return the value associated with {@code key}.
      * <p>
      * Navigation keys (e.g., {@code "participant.userId"}) are supported and
@@ -1257,25 +1353,24 @@ public abstract class Record implements Comparable<Record> {
      * The {@code update} function receives the value this {@link Record}
      * currently holds for {@code key} and returns the value that should take
      * its place. The replacement is written with
-     * {@link #verifyAndSwap(String, Object) verifyAndSwap} semantics, so it
-     * only lands if the database still holds the value the function was applied
-     * to. When a concurrent writer wins the race, this {@link Record} is
-     * {@link #refresh() refreshed} and the {@code update} function is
-     * re-applied to the fresh value; the function may therefore run more than
-     * once and must be safe to do so. Retries are governed by the
-     * {@link AtomicRetryPolicy} configured on the {@link Runway} instance this
-     * {@link Record} is pinned to.
+     * {@link #exchange(String, Object) exchange} semantics, so it only lands if
+     * the database still holds the value the function was applied to. When a
+     * concurrent writer wins the race, this {@link Record} is {@link #refresh()
+     * refreshed} and the {@code update} function is re-applied to the fresh
+     * value; the function may therefore run more than once and must be safe to
+     * do so. Retries are governed by the {@link AtomicRetryPolicy} configured
+     * on the {@link Runway} instance this {@link Record} is pinned to.
      * </p>
      * <p>
      * If the {@code update} function returns a value equal to its input,
-     * nothing is written; the read is instead {@link #verify(String) verified}
-     * as current (and retried if it is not), so a no-op decision is never made
+     * nothing is written; the read is instead verified as current against the
+     * database (and retried if it is not), so a no-op decision is never made
      * against stale data.
      * </p>
      * <p>
      * The eligibility rules, constraint checks, in-memory synchronization, and
-     * save-pipeline caveats of {@link #verifyAndSwap(String, Object)
-     * verifyAndSwap} apply.
+     * save-pipeline caveats of {@link #exchange(String, Object) exchange}
+     * apply.
      * </p>
      *
      * @param key the name of the intrinsic field to update
@@ -1820,6 +1915,12 @@ public abstract class Record implements Comparable<Record> {
      * A subclass may override this method to implement completely custom
      * handling of dynamic writes.
      * </p>
+     * <p>
+     * The write is unconditional and takes effect on the next {@link #save()
+     * save}. Use {@link #exchange(String, Object) exchange} to instead write
+     * through to the database immediately, and only if this {@link Record
+     * Record's} view of {@code key} is still current.
+     * </p>
      *
      * @param key the key name
      * @param value the value to set
@@ -1897,125 +1998,6 @@ public abstract class Record implements Comparable<Record> {
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
         return updateAtomically(key, update).after();
-    }
-
-    /**
-     * Return {@code true} if the database still holds the value this
-     * {@link Record} has in memory for {@code key}.
-     * <p>
-     * A {@code false} return means another writer changed the stored value
-     * after this {@link Record} last observed it; {@link #refresh() refresh} to
-     * observe the current state.
-     * </p>
-     *
-     * @param key the name of the intrinsic field to verify
-     * @return {@code true} if the stored value matches this {@link Record
-     *         Record's} in-memory value for {@code key}
-     * @throws IllegalArgumentException if {@code key} is not eligible for
-     *             atomic operations
-     * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance or has no in-memory value for
-     *             {@code key}
-     */
-    public final boolean verify(String key) {
-        Verify.that(runway != null, "Cannot verify because this Record isn't"
-                + " pinned to a Runway instance");
-        Object expected = serializeScalarValue(atomicValue(atomicField(key)));
-        Concourse concourse = connections.request();
-        try {
-            return concourse.verify(key, expected, id);
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
-     * Atomically set {@code key} to {@code replacement} if and only if the
-     * database still holds the value this {@link Record} has in memory for
-     * {@code key}.
-     * <p>
-     * This is an optimistic, single-key compare-and-swap: the in-memory value
-     * is the expected operand, so the write only lands if no other writer
-     * changed the stored value after this {@link Record} last observed it. On
-     * success, the in-memory field is updated to {@code replacement} and a
-     * record with no unsaved changes remains without unsaved changes. On
-     * failure, nothing changes anywhere; the caller may {@link #refresh()
-     * refresh} and try again, or use
-     * {@link #getAndUpdate(String, UnaryOperator) getAndUpdate} to have the
-     * retry loop managed automatically.
-     * </p>
-     * <p>
-     * Only an intrinsic, single-value field with a non-null value on both sides
-     * of the swap is eligible: {@code null} is represented as key absence,
-     * multi-value fields have no single-swap semantics, and {@link Unique}
-     * fields are refused because uniqueness cannot be enforced within a
-     * single-key operation. A {@link Required} field refuses an empty
-     * replacement and a {@link ValidatedBy} field refuses a replacement that
-     * fails validation; either refusal happens before anything is written.
-     * </p>
-     * <p>
-     * <strong>NOTE:</strong> This is a targeted write, not a {@link #save()
-     * save}: the {@link #beforeSave() beforeSave} hook and any save listeners
-     * do not run. The write does count as a modification for stale-write
-     * detection, so a later {@link #save(boolean) save(preventStaleWrite)} may
-     * require a {@link #refresh() refresh} first.
-     * </p>
-     *
-     * @param key the name of the intrinsic field to swap
-     * @param replacement the value to store if the expected value is still
-     *            current; must not be {@code null}
-     * @return {@code true} if the swap is successful
-     * @throws IllegalArgumentException if {@code key} is not eligible for
-     *             atomic operations or {@code replacement} is {@code null}
-     * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has no in-memory value for
-     *             {@code key}, or {@code replacement} violates the field's
-     *             constraints
-     */
-    public final <T> boolean verifyAndSwap(String key, T replacement) {
-        Verify.that(runway != null, "Cannot perform an atomic swap because"
-                + " this Record isn't pinned to a Runway instance");
-        Verify.thatArgument(replacement != null,
-                "The replacement value cannot be null");
-        Field field = atomicField(key);
-        if(field.isAnnotationPresent(Required.class)
-                && Empty.ness().describes(replacement)) {
-            throw new IllegalStateException(
-                    AnyStrings.format("{} is required in {}", key, __));
-        }
-        if(field.isAnnotationPresent(ValidatedBy.class)) {
-            Class<? extends Validator> validatorClass = field
-                    .getAnnotation(ValidatedBy.class).value();
-            Validator validator = Reflection.newInstance(validatorClass);
-            if(!validator.validate(replacement)) {
-                throw new IllegalStateException(validator.getErrorMessage());
-            }
-        }
-        Object expected = atomicValue(field);
-        Concourse concourse = connections.request();
-        try {
-            boolean clean = !hasUnsavedChanges();
-            if(concourse.verifyAndSwap(key, serializeScalarValue(expected), id,
-                    serializeScalarValue(replacement))) {
-                Reflection.set(key, replacement, this);
-                clearComputeOnceCache();
-                if(clean) {
-                    // The record and the database were in sync before the
-                    // swap and the swap kept them in sync, so refresh the
-                    // checksum to prevent a later save from re-writing every
-                    // field.
-                    __checksum = checksum();
-                }
-                return true;
-            }
-            else {
-                return false;
-            }
-        }
-        finally {
-            connections.release(concourse);
-        }
     }
 
     @Override
@@ -3712,7 +3694,7 @@ public abstract class Record implements Comparable<Record> {
                 settled = verify(key);
             }
             else {
-                settled = verifyAndSwap(key, next);
+                settled = exchange(key, next);
             }
             if(settled) {
                 return new AtomicUpdate<>(current, next);
@@ -3724,6 +3706,37 @@ public abstract class Record implements Comparable<Record> {
                 policy.backoff(attempts);
                 refresh();
             }
+        }
+    }
+
+    /**
+     * Return {@code true} if the database still holds the value this
+     * {@link Record} has in memory for {@code key}.
+     * <p>
+     * A {@code false} return means another writer changed the stored value
+     * after this {@link Record} last observed it; {@link #refresh() refresh} to
+     * observe the current state.
+     * </p>
+     *
+     * @param key the name of the intrinsic field to verify
+     * @return {@code true} if the stored value matches this {@link Record
+     *         Record's} in-memory value for {@code key}
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations
+     * @throws IllegalStateException if this {@link Record} is not pinned to a
+     *             {@link Runway} instance or has no in-memory value for
+     *             {@code key}
+     */
+    private boolean verify(String key) {
+        Verify.that(runway != null, "Cannot verify because this Record isn't"
+                + " pinned to a Runway instance");
+        Object expected = serializeScalarValue(atomicValue(atomicField(key)));
+        Concourse concourse = connections.request();
+        try {
+            return concourse.verify(key, expected, id);
+        }
+        finally {
+            connections.release(concourse);
         }
     }
 
