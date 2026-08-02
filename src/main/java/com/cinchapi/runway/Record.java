@@ -1292,31 +1292,7 @@ public abstract class Record implements Comparable<Record> {
      *             {@code key}
      */
     public final <T> T getAndUpdate(String key, UnaryOperator<T> update) {
-        Verify.that(runway != null, "Cannot perform an atomic update because"
-                + " this Record isn't pinned to a Runway instance");
-        AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
-        int attempts = 0;
-        for (;;) {
-            T current = atomicValue(atomicField(key));
-            T next = update.apply(current);
-            boolean settled;
-            if(Objects.equals(current, next)) {
-                settled = verify(key);
-            }
-            else {
-                settled = verifyAndSwap(key, next);
-            }
-            if(settled) {
-                return current;
-            }
-            else if(++attempts > policy.limit()) {
-                throw new RetryExhaustedException(attempts);
-            }
-            else {
-                policy.backoff(attempts);
-                refresh();
-            }
-        }
+        return update(key, update).before;
     }
 
     @Override
@@ -1920,8 +1896,7 @@ public abstract class Record implements Comparable<Record> {
      *             {@code key}
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
-        getAndUpdate(key, update);
-        return atomicValue(atomicField(key));
+        return update(key, update).after;
     }
 
     /**
@@ -3702,6 +3677,56 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Atomically apply {@code update} to the value of {@code key} and return an
+     * {@link AtomicUpdate} that carries both the replaced value and the value
+     * that took effect.
+     * <p>
+     * This is the core loop behind {@link #getAndUpdate(String, UnaryOperator)
+     * getAndUpdate} and {@link #updateAndGet(String, UnaryOperator)
+     * updateAndGet}, which each return one side of the result.
+     * </p>
+     *
+     * @param key the name of the intrinsic field to update
+     * @param update the function that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @return the {@link AtomicUpdate} that took effect
+     * @throws RetryExhaustedException if contention persists beyond the retries
+     *             permitted by the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations
+     * @throws IllegalStateException if this {@link Record} is not pinned to a
+     *             {@link Runway} instance or has no stored value for
+     *             {@code key}
+     */
+    private <T> AtomicUpdate<T> update(String key, UnaryOperator<T> update) {
+        Verify.that(runway != null, "Cannot perform an atomic update because"
+                + " this Record isn't pinned to a Runway instance");
+        AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
+        int attempts = 0;
+        for (;;) {
+            T current = atomicValue(atomicField(key));
+            T next = update.apply(current);
+            boolean settled;
+            if(Objects.equals(current, next)) {
+                settled = verify(key);
+            }
+            else {
+                settled = verifyAndSwap(key, next);
+            }
+            if(settled) {
+                return new AtomicUpdate<>(current, next);
+            }
+            else if(++attempts > policy.limit()) {
+                throw new RetryExhaustedException(attempts);
+            }
+            else {
+                policy.backoff(attempts);
+                refresh();
+            }
+        }
+    }
+
+    /**
      * Verify that the governing {@link DynamicWritePolicy} permits a
      * {@link #set(String, Object) dynamic write} to {@code key} and throw a
      * {@link NonWritableFieldException} if it does not.
@@ -5188,6 +5213,37 @@ public abstract class Record implements Comparable<Record> {
          */
         public InvalidSectionException(String message) {
             super(message);
+        }
+
+    }
+
+    /**
+     * The before-and-after state of a successful single-key atomic update.
+     *
+     * @author Jeff Nelson
+     */
+    @Immutable
+    private static final class AtomicUpdate<T> {
+
+        /**
+         * The value that was replaced.
+         */
+        private final T before;
+
+        /**
+         * The value that took effect.
+         */
+        private final T after;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param before the value that was replaced
+         * @param after the value that took effect
+         */
+        private AtomicUpdate(T before, T after) {
+            this.before = before;
+            this.after = after;
         }
 
     }
