@@ -1292,7 +1292,7 @@ public abstract class Record implements Comparable<Record> {
      *             {@code key}
      */
     public final <T> T getAndUpdate(String key, UnaryOperator<T> update) {
-        return update(key, update).before;
+        return update(key, update).before();
     }
 
     @Override
@@ -1896,7 +1896,7 @@ public abstract class Record implements Comparable<Record> {
      *             {@code key}
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
-        return update(key, update).after;
+        return update(key, update).after();
     }
 
     /**
@@ -5244,6 +5244,24 @@ public abstract class Record implements Comparable<Record> {
         private AtomicUpdate(T before, T after) {
             this.before = before;
             this.after = after;
+        }
+
+        /**
+         * Return the value that took effect.
+         *
+         * @return the replacement value
+         */
+        public T after() {
+            return after;
+        }
+
+        /**
+         * Return the value that was replaced.
+         *
+         * @return the prior value
+         */
+        public T before() {
+            return before;
         }
 
     }
