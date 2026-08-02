@@ -445,8 +445,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The {@link AtomicRetryPolicy} that governs how atomic read-modify-write
      * operations respond to persistent contention.
      */
-    /* package */ AtomicRetryPolicy atomicRetryPolicy = AtomicRetryPolicy
-            .defaults();
+    private AtomicRetryPolicy atomicRetryPolicy = AtomicRetryPolicy.defaults();
 
     /**
      * A flag that indicates if the connected server has enough functionality to
@@ -2984,6 +2983,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @author Jeff Nelson
      */
     public class Properties {
+
+        /**
+         * Return the {@link AtomicRetryPolicy} that governs how atomic
+         * read-modify-write operations respond to persistent contention.
+         *
+         * @return the {@link AtomicRetryPolicy}
+         */
+        public AtomicRetryPolicy atomicRetryPolicy() {
+            return atomicRetryPolicy;
+        }
 
         /**
          * Register a listener that will be called <strong>after</strong> any

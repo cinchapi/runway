@@ -1294,7 +1294,7 @@ public abstract class Record implements Comparable<Record> {
     public final <T> T getAndUpdate(String key, UnaryOperator<T> update) {
         Verify.that(runway != null, "Cannot perform an atomic update because"
                 + " this Record isn't pinned to a Runway instance");
-        AtomicRetryPolicy policy = runway.atomicRetryPolicy;
+        AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
         int attempts = 0;
         for (;;) {
             T current = atomicValue(atomicField(key));
