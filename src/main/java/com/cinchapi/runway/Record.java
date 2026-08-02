@@ -294,17 +294,62 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Use reflection to get the value for {@code field} in {@code record}.
+     * Return the {@link Field} named {@code key} if it is eligible for
+     * single-key atomic operations on {@code record}.
      *
-     * @param field
-     * @param record
-     * @return the value
+     * @param key the name of an intrinsic field
+     * @param record the {@link Record} that owns the field
+     * @return the eligible {@link Field}
+     * @throws IllegalArgumentException if {@code key} does not name an
+     *             intrinsic field, or names one that is transient, multi-value,
+     *             or {@link Unique}
      */
+    private static Field getAtomicableField(String key, Record record) {
+        Field field = StaticAnalysis.instance().getField(record, key);
+        Verify.thatArgument(field != null, "{} is not an intrinsic field of {}",
+                key, record.__);
+        Verify.thatArgument(!Modifier.isTransient(field.getModifiers()),
+                "Cannot atomically operate on {} in {} because it is"
+                        + " transient and never stored",
+                key, record.__);
+        Verify.thatArgument(!field.isAnnotationPresent(Unique.class),
+                "Cannot atomically operate on {} in {} because uniqueness"
+                        + " cannot be enforced within a single-key operation",
+                key, record.__);
+        Verify.thatArgument(
+                !Collection.class.isAssignableFrom(field.getType())
+                        && !field.getType().isArray(),
+                "Cannot atomically operate on {} in {} because it does not"
+                        + " store a single value",
+                key, record.__);
+        return field;
+    }
+
     /**
-     * Get the value of a field from a {@link Record} using reflection.
+     * Return {@code record}'s in-memory value for {@code field} for use as the
+     * expected operand of a single-key atomic operation.
      *
-     * @param field the field to access
-     * @param record the record instance
+     * @param field an {@link #getAtomicableField(String, Record) eligible}
+     *            {@link Field}
+     * @param record the {@link Record} that owns the field
+     * @return the in-memory value
+     * @throws IllegalStateException if the field has no value
+     */
+    @SuppressWarnings("unchecked")
+    private static <T> T getAtomicableFieldValue(Field field, Record record) {
+        T value = (T) getFieldValue(field, record);
+        Verify.that(value != null,
+                "Cannot atomically operate on {} in {} because it has no"
+                        + " value",
+                field.getName(), record.__);
+        return value;
+    }
+
+    /**
+     * Return the value of {@code field} in {@code record}.
+     *
+     * @param field the {@link Field} to read
+     * @param record the {@link Record} that owns the field
      * @return the field value
      */
     private static Object getFieldValue(Field field, Record record) {
@@ -1275,9 +1320,9 @@ public abstract class Record implements Comparable<Record> {
                 + " because this Record isn't pinned to a Runway instance");
         Verify.thatArgument(replacement != null,
                 "The replacement value cannot be null");
-        Field field = atomicField(key);
+        Field field = getAtomicableField(key, this);
         checkIsSavable(field, key, replacement);
-        Object expected = atomicValue(field);
+        Object expected = getAtomicableFieldValue(field, this);
         Concourse concourse = connections.request();
         try {
             boolean clean = !hasUnsavedChanges();
@@ -1962,6 +2007,11 @@ public abstract class Record implements Comparable<Record> {
         }
     }
 
+    @Override
+    public final String toString() {
+        return json();
+    }
+
     /**
      * Atomically apply {@code update} to the value of {@code key} and return
      * the value that the update produced.
@@ -1986,11 +2036,6 @@ public abstract class Record implements Comparable<Record> {
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
         return updateAtomically(key, update).after();
-    }
-
-    @Override
-    public final String toString() {
-        return json();
     }
 
     /**
@@ -2645,55 +2690,6 @@ public abstract class Record implements Comparable<Record> {
             });
         }
         return derived;
-    }
-
-    /**
-     * Return the {@link Field} named {@code key} if it is eligible for
-     * single-key atomic operations.
-     *
-     * @param key the name of an intrinsic field
-     * @return the eligible {@link Field}
-     * @throws IllegalArgumentException if {@code key} does not name an
-     *             intrinsic field, or names one that is transient, multi-value,
-     *             or {@link Unique}
-     */
-    private Field atomicField(String key) {
-        Field field = StaticAnalysis.instance().getField(this, key);
-        Verify.thatArgument(field != null, "{} is not an intrinsic field of {}",
-                key, __);
-        Verify.thatArgument(!Modifier.isTransient(field.getModifiers()),
-                "Cannot atomically operate on {} in {} because it is"
-                        + " transient and never stored",
-                key, __);
-        Verify.thatArgument(!field.isAnnotationPresent(Unique.class),
-                "Cannot atomically operate on {} in {} because uniqueness"
-                        + " cannot be enforced within a single-key operation",
-                key, __);
-        Verify.thatArgument(
-                !Collection.class.isAssignableFrom(field.getType())
-                        && !field.getType().isArray(),
-                "Cannot atomically operate on {} in {} because it does not"
-                        + " store a single value",
-                key, __);
-        return field;
-    }
-
-    /**
-     * Return this {@link Record Record's} in-memory value for {@code field} for
-     * use as the expected operand of a single-key atomic operation.
-     *
-     * @param field an {@link #atomicField(String) eligible} {@link Field}
-     * @return the in-memory value
-     * @throws IllegalStateException if the field has no value
-     */
-    @SuppressWarnings("unchecked")
-    private <T> T atomicValue(Field field) {
-        T value = (T) getFieldValue(field, this);
-        Verify.that(value != null,
-                "Cannot atomically operate on {} in {} because it has no"
-                        + " value",
-                field.getName(), __);
-        return value;
     }
 
     /**
@@ -3689,7 +3685,8 @@ public abstract class Record implements Comparable<Record> {
         AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
         int attempts = 0;
         for (;;) {
-            T current = atomicValue(atomicField(key));
+            T current = getAtomicableFieldValue(getAtomicableField(key, this),
+                    this);
             T next = update.apply(current);
             boolean settled;
             if(Objects.equals(current, next)) {
@@ -5212,6 +5209,49 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * An immutable snapshot of a {@link Record Record's} mutable metadata, used
+     * to restore state after a failed save retry.
+     *
+     * @author Jeff Nelson
+     */
+    final class Snapshot {
+
+        // NOTE: The current implementation only captures some
+        // metadata, but it is expandable to capture other data
+        // in the future
+
+        /**
+         * The snapshotted value of {@link Record#_hasModifiedRealms}.
+         */
+        final boolean hasModifiedRealms;
+
+        /**
+         * The snapshotted value of {@link Record#__checksum}.
+         */
+        final String checksum;
+
+        /**
+         * The snapshotted value of {@link Record#_author}.
+         */
+        final Record author;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param hasModifiedRealms the current value of
+         *            {@link Record#_hasModifiedRealms}
+         * @param checksum the current value of {@link Record#__checksum}
+         * @param author the current value of {@link Record#_author}
+         */
+        Snapshot() {
+            this.hasModifiedRealms = Record.this._hasModifiedRealms;
+            this.checksum = Record.this.__checksum;
+            this.author = Record.this._author;
+        }
+
+    }
+
+    /**
      * The before-and-after state of a successful single-key atomic update.
      *
      * @author Jeff Nelson
@@ -5256,49 +5296,6 @@ public abstract class Record implements Comparable<Record> {
          */
         public T before() {
             return before;
-        }
-
-    }
-
-    /**
-     * An immutable snapshot of a {@link Record Record's} mutable metadata, used
-     * to restore state after a failed save retry.
-     *
-     * @author Jeff Nelson
-     */
-    final class Snapshot {
-
-        // NOTE: The current implementation only captures some
-        // metadata, but it is expandable to capture other data
-        // in the future
-
-        /**
-         * The snapshotted value of {@link Record#_hasModifiedRealms}.
-         */
-        final boolean hasModifiedRealms;
-
-        /**
-         * The snapshotted value of {@link Record#__checksum}.
-         */
-        final String checksum;
-
-        /**
-         * The snapshotted value of {@link Record#_author}.
-         */
-        final Record author;
-
-        /**
-         * Construct a new instance.
-         *
-         * @param hasModifiedRealms the current value of
-         *            {@link Record#_hasModifiedRealms}
-         * @param checksum the current value of {@link Record#__checksum}
-         * @param author the current value of {@link Record#_author}
-         */
-        Snapshot() {
-            this.hasModifiedRealms = Record.this._hasModifiedRealms;
-            this.checksum = Record.this.__checksum;
-            this.author = Record.this._author;
         }
 
     }
