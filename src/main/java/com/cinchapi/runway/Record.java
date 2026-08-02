@@ -1292,7 +1292,7 @@ public abstract class Record implements Comparable<Record> {
      *             {@code key}
      */
     public final <T> T getAndUpdate(String key, UnaryOperator<T> update) {
-        return update(key, update).before();
+        return updateAtomically(key, update).before();
     }
 
     @Override
@@ -1896,7 +1896,7 @@ public abstract class Record implements Comparable<Record> {
      *             {@code key}
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
-        return update(key, update).after();
+        return updateAtomically(key, update).after();
     }
 
     /**
@@ -3698,7 +3698,8 @@ public abstract class Record implements Comparable<Record> {
      *             {@link Runway} instance or has no stored value for
      *             {@code key}
      */
-    private <T> AtomicUpdate<T> update(String key, UnaryOperator<T> update) {
+    private <T> AtomicUpdate<T> updateAtomically(String key,
+            UnaryOperator<T> update) {
         Verify.that(runway != null, "Cannot perform an atomic update because"
                 + " this Record isn't pinned to a Runway instance");
         AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
