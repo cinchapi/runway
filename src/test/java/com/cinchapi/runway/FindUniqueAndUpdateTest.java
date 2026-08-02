@@ -36,9 +36,9 @@ import com.cinchapi.concourse.thrift.Operator;
  * Tests for
  * {@link Runway#findUniqueAndUpdate(Class, Criteria, java.util.function.Consumer)
  * findUniqueAndUpdate}. Each test runs under both Command-API modes (bulk
- * enabled and disabled); the atomic update itself always uses the incremental,
- * synchronously-staged transaction path, so the matrix additionally guards the
- * surrounding save and load operations under both modes.
+ * enabled and disabled), so the matrix drives the atomic update through both of
+ * its transaction paths: batched submissions when the server supports bulk
+ * commands and the incremental path otherwise.
  *
  * @author Javier Lores
  */

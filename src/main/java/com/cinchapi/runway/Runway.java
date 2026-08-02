@@ -2957,14 +2957,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // the idle occupancy is brief.
             int attempts = 0;
             while (true) {
-                // NOTE: The incremental path is used unconditionally (even when
-                // #supportsBulkCommands) because BatchSaver defers the
-                // server-side STAGE until commit time, which would place the
-                // find's read outside the transaction. IncrementalSaver stages
-                // synchronously, so the find's read and the save's write share
-                // one transaction (and one set of locks) &mdash; the property
-                // that gives concurrent callers mutual exclusion.
-                Saver saver = new IncrementalSaver(concourse);
+                // NOTE: The transaction is opened on the connection itself
+                // rather than through Saver#stage. Every read and write that
+                // follows on the connection, batched submissions included,
+                // carries the transaction's token, so the find's read and the
+                // save's write share one transaction (and one set of locks),
+                // the property that gives concurrent callers mutual exclusion.
+                // The BatchSaver must not receive stage(): it would bundle a
+                // second STAGE into its commit-time submission.
+                Saver saver = supportsBulkCommands ? new BatchSaver(concourse)
+                        : new IncrementalSaver(concourse);
                 // NOTE: Snapshots are taken because saveWithinTransaction
                 // stamps Record metadata (checksum, realm flags, author) while
                 // staging. Every failed attempt restores them; otherwise a
@@ -2974,7 +2976,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 Map<Record, Boolean> seen = new HashMap<>();
                 Map<Record, Snapshot> snapshots = new HashMap<>();
                 try {
-                    saver.stage();
+                    concourse.stage();
                     // NOTE: A legacy server cannot sort or paginate
                     // server-side, and a non-database-resolvable criteria
                     // additionally rules out server-side ordering/pagination
@@ -2994,7 +2996,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     // as the Saver so the find reads inside the transaction;
                     // this deliberately bypasses the result cache used by the
                     // pooled #select path.
-                    try (Reader reader = new IncrementalReader(concourse)) {
+                    try (Reader reader = supportsBulkCommands
+                            ? new BatchReader(concourse)
+                            : new IncrementalReader(concourse)) {
                         Read read = enqueueRead(reader, false, clazz, scoped,
                                 nativeOrderAndPage ? order : null,
                                 nativeOrderAndPage ? page : null);

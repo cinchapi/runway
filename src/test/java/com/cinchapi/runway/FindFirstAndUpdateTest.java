@@ -40,10 +40,10 @@ import com.cinchapi.concourse.thrift.Operator;
  * Tests for
  * {@link Runway#findFirstAndUpdate(Class, Criteria, Order, java.util.function.Consumer)
  * findFirstAndUpdate}, the atomic claim-and-update primitive. Each test runs
- * under both Command-API modes (bulk enabled and disabled); the atomic update
- * itself always uses the incremental, synchronously-staged transaction path, so
- * the matrix additionally guards the surrounding save and load operations under
- * both modes.
+ * under both Command-API modes (bulk enabled and disabled), so the matrix
+ * drives the atomic update through both of its transaction paths: batched
+ * submissions when the server supports bulk commands and the incremental path
+ * otherwise.
  *
  * @author Javier Lores
  */
