@@ -1276,19 +1276,7 @@ public abstract class Record implements Comparable<Record> {
         Verify.thatArgument(replacement != null,
                 "The replacement value cannot be null");
         Field field = atomicField(key);
-        if(field.isAnnotationPresent(Required.class)
-                && Empty.ness().describes(replacement)) {
-            throw new IllegalStateException(
-                    AnyStrings.format("{} is required in {}", key, __));
-        }
-        if(field.isAnnotationPresent(ValidatedBy.class)) {
-            Class<? extends Validator> validatorClass = field
-                    .getAnnotation(ValidatedBy.class).value();
-            Validator validator = Reflection.newInstance(validatorClass);
-            if(!validator.validate(replacement)) {
-                throw new IllegalStateException(validator.getErrorMessage());
-            }
-        }
+        checkIsSavable(field, key, replacement);
         Object expected = atomicValue(field);
         Concourse concourse = connections.request();
         try {
@@ -2516,14 +2504,7 @@ public abstract class Record implements Comparable<Record> {
                     String key = field.getName();
                     Object value = getFieldValue(field, this);
                     boolean isSequence = Sequences.isSequence(value);
-                    // Enforce that Required fields have a non-empty value
-                    if(field.isAnnotationPresent(Required.class) && (isSequence
-                            ? Sequences.stream(value)
-                                    .allMatch(Empty.ness()::describes)
-                            : Empty.ness().describes(value))) {
-                        throw new IllegalStateException(AnyStrings
-                                .format("{}  is required in {}", key, __));
-                    }
+                    checkIsSavable(field, key, value);
                     if(value != null) {
                         // Enforce that Unique fields have non-duplicated
                         // values across the class
@@ -2536,21 +2517,6 @@ public abstract class Record implements Comparable<Record> {
                             else {
                                 checkIsUnique(saver, field, key, value,
                                         alreadyVerifiedUniqueConstraints);
-                            }
-                        }
-                        // Apply custom validation
-                        if(field.isAnnotationPresent(ValidatedBy.class)) {
-                            Class<? extends Validator> validatorClass = field
-                                    .getAnnotation(ValidatedBy.class).value();
-                            Validator validator = Reflection
-                                    .newInstance(validatorClass);
-                            if(isSequence
-                                    ? Sequences.stream(value).anyMatch(
-                                            Predicates.not(validator::validate))
-                                    : !validator.validate(value)) {
-                                throw new IllegalStateException(
-                                        validator.getErrorMessage());
-
                             }
                         }
                         value = transform(value, saver, seen, snapshots,
@@ -2770,6 +2736,42 @@ public abstract class Record implements Comparable<Record> {
         catch (ReflectiveOperationException e) {
             inViolation = true;
             throw CheckedExceptions.wrapAsRuntimeException(e);
+        }
+    }
+
+    /**
+     * Ensure that {@code value} is savable for the {@code field} named
+     * {@code key} by enforcing the constraints that can be checked without a
+     * database query: a {@link Required} field refuses an empty value and a
+     * {@link ValidatedBy} field refuses a value that fails validation.
+     * <p>
+     * {@link Unique} enforcement requires a database query, so it is not
+     * covered here.
+     * </p>
+     *
+     * @param field the {@link Field} whose declared constraints apply
+     * @param key the field's name
+     * @param value the value to check; may be {@code null} or a sequence
+     * @throws IllegalStateException if {@code value} violates a constraint
+     */
+    private void checkIsSavable(Field field, String key, Object value) {
+        boolean isSequence = Sequences.isSequence(value);
+        if(field.isAnnotationPresent(Required.class) && (isSequence
+                ? Sequences.stream(value).allMatch(Empty.ness()::describes)
+                : Empty.ness().describes(value))) {
+            throw new IllegalStateException(
+                    AnyStrings.format("{} is required in {}", key, __));
+        }
+        if(value != null && field.isAnnotationPresent(ValidatedBy.class)) {
+            Class<? extends Validator> validatorClass = field
+                    .getAnnotation(ValidatedBy.class).value();
+            Validator validator = Reflection.newInstance(validatorClass);
+            if(isSequence
+                    ? Sequences.stream(value)
+                            .anyMatch(Predicates.not(validator::validate))
+                    : !validator.validate(value)) {
+                throw new IllegalStateException(validator.getErrorMessage());
+            }
         }
     }
 
