@@ -118,6 +118,7 @@ import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import com.google.common.io.BaseEncoding;
 import com.google.common.primitives.Longs;
+import com.google.common.primitives.Primitives;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.TypeAdapter;
@@ -1293,8 +1294,10 @@ public abstract class Record implements Comparable<Record> {
      * multi-value fields have no single-exchange semantics, and {@link Unique}
      * fields are refused because uniqueness cannot be enforced within a
      * single-key operation. A {@link Required} field refuses an empty
-     * replacement and a {@link ValidatedBy} field refuses a replacement that
-     * fails validation; either refusal happens before anything is written.
+     * replacement, a {@link ValidatedBy} field refuses a replacement that fails
+     * validation, and every field refuses a replacement that is not an instance
+     * of its type (boxed, when the field is primitive); each refusal happens
+     * before anything is written.
      * </p>
      * <p>
      * <strong>NOTE:</strong> This is a targeted write, not a {@link #save()
@@ -1309,7 +1312,8 @@ public abstract class Record implements Comparable<Record> {
      *            current; must not be {@code null}
      * @return {@code true} if the exchange is successful
      * @throws IllegalArgumentException if {@code key} is not eligible for
-     *             atomic operations or {@code replacement} is {@code null}
+     *             atomic operations, or {@code replacement} is {@code null} or
+     *             is not an instance of the field's type
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, has no in-memory value for
      *             {@code key}, or {@code replacement} violates the field's
@@ -1321,6 +1325,12 @@ public abstract class Record implements Comparable<Record> {
         Verify.thatArgument(replacement != null,
                 "The replacement value cannot be null");
         Field field = getAtomicableField(key, this);
+        Verify.thatArgument(
+                Primitives.wrap(field.getType()).isInstance(replacement),
+                "Cannot atomically operate on {} in {} because the"
+                        + " replacement is a {} and the field stores a {}",
+                key, __, replacement.getClass().getSimpleName(),
+                field.getType().getSimpleName());
         checkIsSavable(field, key, replacement);
         Object expected = getAtomicableFieldValue(field, this);
         Concourse concourse = connections.request();
@@ -1395,6 +1405,14 @@ public abstract class Record implements Comparable<Record> {
      * on the {@link Runway} instance this {@link Record} is pinned to.
      * </p>
      * <p>
+     * This {@link Record} must not have unsaved changes; that includes a
+     * {@link Record} that was never {@link #save() saved}. A retry
+     * {@link #refresh() refreshes} this {@link Record} from the database, which
+     * would silently discard staged state, so the operation refuses a dirty
+     * {@link Record} before anything is read or written. {@link #save() Save}
+     * or {@link #refresh() refresh} first.
+     * </p>
+     * <p>
      * If the {@code update} function returns a value equal to its input,
      * nothing is written; the read is instead verified as current against the
      * database (and retried if it is not), so a no-op decision is never made
@@ -1416,8 +1434,8 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance or has no in-memory value for
-     *             {@code key}
+     *             {@link Runway} instance, has unsaved changes, or has no
+     *             in-memory value for {@code key}
      */
     public final <T> T getAndUpdate(String key, UnaryOperator<T> update) {
         return updateAtomically(key, update).before();
@@ -2031,8 +2049,8 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance or has no in-memory value for
-     *             {@code key}
+     *             {@link Runway} instance, has unsaved changes, or has no
+     *             in-memory value for {@code key}
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
         return updateAtomically(key, update).after();
@@ -3675,13 +3693,17 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance or has no in-memory value for
-     *             {@code key}
+     *             {@link Runway} instance, has unsaved changes, or has no
+     *             in-memory value for {@code key}
      */
     private <T> AtomicUpdate<T> updateAtomically(String key,
             UnaryOperator<T> update) {
         Verify.that(runway != null, "Cannot perform an atomic update because"
                 + " this Record isn't pinned to a Runway instance");
+        Verify.that(!hasUnsavedChanges(),
+                "Cannot atomically update {} in {} because this Record has"
+                        + " unsaved changes",
+                key, __);
         AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
         int attempts = 0;
         for (;;) {

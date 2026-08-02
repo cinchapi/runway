@@ -312,6 +312,60 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a replacement
+     * that is not an instance of the field's type before anything is written.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} with
+     * {@code value = 0}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Call {@code exchange("value", "oops")} with a {@link String}
+     * replacement on the {@code long} field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
+     * and the stored {@code value} remains {@code 0}.
+     */
+    @Test
+    public void testExchangeRejectsWrongTypedReplacement() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        try {
+            meter.exchange("value", "oops");
+            Assert.fail("Expected an IllegalArgumentException");
+        }
+        catch (IllegalArgumentException e) {
+            Assert.assertEquals(0, runway.load(Meter.class, meter.id()).value);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a replacement
+     * whose boxed type does not match a primitive field's type, so the stored
+     * type never diverges from the type a {@code save} would write.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} with
+     * {@code value = 0}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Call {@code exchange("value", 10)} with an {@link Integer}
+     * replacement on the {@code long} field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
+     */
+    @Test(expected = IllegalArgumentException.class)
+    public void testExchangeRejectsMismatchedBoxedReplacement() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        meter.exchange("value", 10);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a successful {@code exchange} on a
      * record with no unsaved changes leaves the record with no unsaved changes.
      * <p>
@@ -453,6 +507,85 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
         long result = meter.getAndUpdate("value", (Long v) -> v);
         Assert.assertEquals(0, result);
         Assert.assertEquals(revisions, meter.audit("value").size());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code getAndUpdate} refuses a record
+     * that has unsaved changes, so a lost race can never silently discard the
+     * staged state.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} with an unsaved
+     * modification to a different field.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}, then set {@code label = "changed"} without
+     * saving.</li>
+     * <li>Call {@code getAndUpdate("value", v -> v + 1)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown,
+     * the staged {@code label} survives in memory, the record still reports
+     * unsaved changes and the stored {@code value} remains {@code 0}.
+     */
+    @Test
+    public void testGetAndUpdateRefusesRecordWithUnsavedChanges() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        meter.label = "changed";
+        try {
+            meter.getAndUpdate("value", (Long v) -> v + 1);
+            Assert.fail("Expected an IllegalStateException");
+        }
+        catch (IllegalStateException e) {
+            Assert.assertEquals("changed", meter.label);
+            Assert.assertTrue(meter.hasUnsavedChanges());
+            Assert.assertEquals(0, runway.load(Meter.class, meter.id()).value);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code getAndUpdate} refuses a record
+     * that was never saved instead of burning retries and blaming contention.
+     * <p>
+     * <strong>Start state:</strong> A new, never-saved {@link Meter}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Meter} without saving it.</li>
+     * <li>Call {@code getAndUpdate("value", v -> v + 1)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown.
+     */
+    @Test(expected = IllegalStateException.class)
+    public void testGetAndUpdateRefusesUnsavedRecord() {
+        Meter meter = new Meter();
+        meter.getAndUpdate("value", (Long v) -> v + 1);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code updateAndGet} refuses a record
+     * that has unsaved changes, matching the {@code getAndUpdate} contract.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} with an unsaved
+     * modification to a different field.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}, then set {@code label = "changed"} without
+     * saving.</li>
+     * <li>Call {@code updateAndGet("value", v -> v + 1)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown.
+     */
+    @Test(expected = IllegalStateException.class)
+    public void testUpdateAndGetRefusesRecordWithUnsavedChanges() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        meter.label = "changed";
+        meter.updateAndGet("value", (Long v) -> v + 1);
     }
 
     /**
