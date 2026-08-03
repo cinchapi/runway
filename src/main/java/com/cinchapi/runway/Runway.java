@@ -25,7 +25,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -74,7 +73,6 @@ import com.cinchapi.concourse.server.plugin.util.Versions;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.Record.InvalidRecordException;
-import com.cinchapi.runway.Record.Snapshot;
 import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.db.BatchReader;
 import com.cinchapi.runway.db.BatchSaver;
@@ -348,25 +346,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 runway.onLoadFailureHandler.accept(clazz, id, e);
                 throw CheckedExceptions.throwAsRuntimeException(e);
             }
-        }
-    }
-
-    /**
-     * Restore the mutable metadata on each {@link Record} from a previously
-     * captured snapshot.
-     * <p>
-     * This is used during spurious save failure retry to undo the side effects
-     * that {@link Record#saveWithinTransaction saveWithinTransaction} performs
-     * on metadata fields (checksum, realm flags, author), since the transaction
-     * was aborted and none of those mutations should persist.
-     * </p>
-     *
-     * @param snapshot a mapping from {@link Record} to its captured
-     *            {@link Record.Snapshot}
-     */
-    private static void restore(Map<Record, Record.Snapshot> snapshot) {
-        for (Entry<Record, Record.Snapshot> entry : snapshot.entrySet()) {
-            entry.getKey().restore(entry.getValue());
         }
     }
 
@@ -1060,25 +1039,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Record current = null;
         try {
             boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
-            // NOTE: Snapshots are taken on every save because
-            // saveWithinTransaction mutates Record metadata (__checksum,
-            // _hasModifiedRealms, _author) before saver.commit() runs. If
-            // a queued validator throws inside commit(), the in-memory
-            // state must be rolled back so a subsequent save() of the
-            // same Record still observes hasUnsavedChanges() and writes
-            // the record's fields. The map is identity-keyed because a
-            // save can process multiple id-equal instances of the same
-            // record and each instance must restore its own metadata.
-            Map<Record, Snapshot> snapshots = new IdentityHashMap<>();
-            Map<Record, Boolean> seen = new HashMap<>();
-            Set<Long> deletedIds = new HashSet<>();
+            SaveContext context = new SaveContext(preventStaleWrites);
             int attempts = 0;
             while (true) {
                 Saver saver = supportsBulkCommands ? new BatchSaver(concourse)
                         : new IncrementalSaver(concourse);
                 try {
-                    seen.clear();
-                    deletedIds.clear();
+                    context.begin(saver);
                     saver.stage();
                     for (Record record : records) {
                         Supplier<Boolean> override = record.overrideSave();
@@ -1094,11 +1061,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         else {
                             current = record;
                             record.assign(this);
-                            record.saveWithinTransaction(saver, seen, snapshots,
-                                    deletedIds, preventStaleWrites);
+                            record.saveWithinTransaction(context);
                         }
                     }
-                    if(!deletedIds.isEmpty()) {
+                    if(context.hasDeletions()) {
                         // NOTE: A deletion is final within a save. A record
                         // staged before a deletion may reference (or hold
                         // data for) a record that the save has since
@@ -1108,32 +1074,28 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         // staged removals leave every survivor's in-memory
                         // state untouched, so a failed transaction has
                         // nothing to roll back.
-                        for (Record record : seen.keySet()) {
-                            if(!deletedIds.contains(record.id())
+                        Set<Long> deletions = context.deletions();
+                        context.each((record, outcome) -> {
+                            if(outcome != SaveContext.Outcome.DELETED
                                     && record.reconcileCaptureDeleteReferences(
-                                            saver, deletedIds)) {
-                                // NOTE: The record's stored data changes at
+                                            saver, deletions)) {
+                                // The record's stored data changes at
                                 // commit, so it must dispatch a save
                                 // notification.
-                                seen.replace(record, true);
+                                context.markChanged(record);
                             }
-                        }
-                        for (long id : deletedIds) {
+                        });
+                        for (long id : deletions) {
                             saver.clear(id);
                         }
                     }
                     if(saver.commit()) {
-                        // NOTE: Deletion is tracked by id instead of by
-                        // instance state because a save can process multiple
-                        // id-equal instances of the same record (e.g., a
-                        // copy loaded for @JoinDelete or @CaptureDelete
-                        // processing alongside the caller's instance).
-                        seen.forEach((record, changed) -> {
-                            if(deletedIds.contains(record.id())) {
+                        context.each((record, outcome) -> {
+                            if(outcome == SaveContext.Outcome.DELETED) {
                                 enqueueDeleteNotification(record);
                                 record.checkpoint();
                             }
-                            else if(changed) {
+                            else if(outcome == SaveContext.Outcome.CHANGED) {
                                 enqueueSaveNotification(record);
                                 record.checkpoint();
                             }
@@ -1146,7 +1108,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return true;
                     }
                     else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {
-                        restore(snapshots);
+                        context.restore();
                         return false;
                     }
                     else {
@@ -1166,15 +1128,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         // because linked records that are recursively saved may
                         // show false positives when concurrent saves share the
                         // same linked record.
-                        restore(snapshots);
+                        context.restore();
                         continue;
                     }
                     else if(t instanceof StaleDataException) {
-                        restore(snapshots);
+                        context.restore();
                         throw (StaleDataException) t;
                     }
                     else {
-                        for (Record record : seen.keySet()) {
+                        for (Record record : context.records()) {
                             if(record.inZombieState(concourse)) {
                                 // TODO: this is currently disabled because
                                 // zombie detection throughout the codebase is
@@ -1183,7 +1145,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 // concourse.clear(record.id());
                             }
                         }
-                        restore(snapshots);
+                        context.restore();
                         // A deferred Unique check throws from commit() after
                         // the loop advances #current, so blame the Record
                         // the violation names rather than the last one.

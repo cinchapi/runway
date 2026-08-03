@@ -589,8 +589,6 @@ public abstract class Record implements Comparable<Record> {
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         T record = (T) newDefaultInstance(clazz, connections);
         setInternalFieldValue("id", id, record);
-        setInternalFieldValue("waitingToBeDeleted", new LinkedHashSet<>(),
-                record);
         record.assign(runway);
         record.load(concourse, existing, data, prefix, targets);
         record.onLoad();
@@ -633,28 +631,19 @@ public abstract class Record implements Comparable<Record> {
     /**
      * If {@code value} is a {@link Record}, {@link DeferredReference} or a
      * {@link Sequences#isSequence(Object) Sequence} that contains either, try
-     * to {@link #saveWithinTransaction(Saver, Map, Map, Set, boolean) save} it,
-     * in case it has {@link #hasUnsavedChanges() unsaved} changes.
+     * to {@link #saveWithinTransaction(SaveContext) save} it, in case it has
+     * {@link #hasUnsavedChanges() unsaved} changes.
      *
      * @param value the value to inspect for {@link Record} references
-     * @param saver the {@link Saver} that owns the active transaction
-     * @param seen {@link Record Records} already processed in this save
-     * @param snapshots if non-{@code null}, each {@link Record} self-snapshots
-     *            its metadata before mutation for retry support
-     * @param deletedIds the ids of {@link Record Records} deleted within this
-     *            save
-     * @param preventStaleWrite if {@code true}, reject the save of any
-     *            {@link Record} that has been externally modified
+     * @param context the {@link SaveContext} that tracks the active save
      */
     @SuppressWarnings("rawtypes")
     private static void saveModifiedReferenceWithinTransaction(Object value,
-            Saver saver, Map<Record, Boolean> seen,
-            @Nullable Map<Record, Snapshot> snapshots, Set<Long> deletedIds,
-            boolean preventStaleWrite) {
+            SaveContext context) {
         if(Sequences.isSequence(value)) {
             Sequences.forEach(value,
-                    item -> saveModifiedReferenceWithinTransaction(item, saver,
-                            seen, snapshots, deletedIds, preventStaleWrite));
+                    item -> saveModifiedReferenceWithinTransaction(item,
+                            context));
         }
         else {
             Record record = null;
@@ -666,9 +655,8 @@ public abstract class Record implements Comparable<Record> {
                 record = deferred.$ref();
             }
 
-            if(record != null && !seen.containsKey(record)) {
-                record.saveWithinTransaction(saver, seen, snapshots, deletedIds,
-                        preventStaleWrite);
+            if(record != null && !context.isSeen(record)) {
+                record.saveWithinTransaction(context);
             }
         }
     }
@@ -973,12 +961,6 @@ public abstract class Record implements Comparable<Record> {
      * Transient so it does not participate in persistence or equality.
      */
     private transient Map<String, Object> _computeOnceCache;
-
-    /**
-     * Tracks dependent {@link Records} that are pending
-     * {@link #delete(Concourse) deletion} from {@link Concourse}.
-     */
-    private Set<Record> waitingToBeDeleted = new LinkedHashSet<>();
 
     /**
      * This {@link Record Record's} checksum as of the most recent time it was
@@ -2581,29 +2563,20 @@ public abstract class Record implements Comparable<Record> {
      * enforcing field constraints and recursively saving linked {@link Record
      * Records}.
      *
-     * @param saver the {@link Saver} that owns the active transaction
-     * @param seen {@link Record Records} already processed in this save
-     * @param snapshots if non-{@code null}, each {@link Record} self-snapshots
-     *            its metadata before mutation for retry support
-     * @param deletedIds the ids of {@link Record Records} deleted within this
-     *            save
-     * @param preventStaleWrite if {@code true}, reject the save when this
-     *            {@link Record} has been externally modified
-     * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
+     * @param context the {@link SaveContext} that tracks the active save
+     * @throws StaleDataException if the {@code context}
+     *             {@link SaveContext#preventStaleWrite() prevents} stale writes
      *             and this {@link Record} has stale data
      * @throws IllegalStateException if a {@link Required} or
      *             {@link ValidatedBy} field constraint is violated
      * @throws ConstraintViolationException if a {@link Unique} field constraint
      *             is violated
      */
-    void saveWithinTransaction(final Saver saver, Map<Record, Boolean> seen,
-            @Nullable Map<Record, Snapshot> snapshots, Set<Long> deletedIds,
-            boolean preventStaleWrite) {
-        if(snapshots != null) {
-            snapshots.putIfAbsent(this, snapshot());
-        }
+    void saveWithinTransaction(SaveContext context) {
+        Saver saver = context.saver();
+        context.snapshot(this);
         Preconditions.checkState(!inViolation);
-        if(preventStaleWrite && checkpointTs != 0) {
+        if(context.preventStaleWrite() && checkpointTs != 0) {
             saver.audit(id, audit -> {
                 if(isStaleAudit(audit, checkpointTs)) {
                     throw new StaleDataException(id);
@@ -2611,12 +2584,7 @@ public abstract class Record implements Comparable<Record> {
             });
         }
         errors.clear();
-        // Re-key (remove, then put) so this instance owns the #seen entry
-        // for its id; an id-equal copy loaded during another Record's delete
-        // processing must not stand in for this Record when post-commit
-        // notifications and checkpoints are dispatched.
-        Boolean priorChanged = seen.remove(this);
-        seen.put(this, true);
+        context.claim(this);
         if(_hasModifiedRealms) {
             saver.reconcile(REALMS_KEY, id, _realms);
             _hasModifiedRealms = false;
@@ -2633,27 +2601,27 @@ public abstract class Record implements Comparable<Record> {
             saver.clear(AUTHOR_KEY, id);
         }
         if(deleted) {
-            deleteWithinTransaction(saver, seen, snapshots, deletedIds,
-                    preventStaleWrite);
+            deleteWithinTransaction(context);
+            // Deleting this Record may schedule companion deletions (e.g.,
+            // @CascadeDelete and @JoinDelete), and each companion may
+            // schedule more, so drain the queue until the deletion closure
+            // is complete.
+            Record companion;
+            while ((companion = context.pollPendingDeletion()) != null) {
+                companion.deleteWithinTransaction(context);
+            }
         }
         else if(!hasUnsavedChanges()) {
             // This Record hasn't been modified, so simply go through each
             // field and try to save any outgoing Record references that contain
             // modifications.
-            // NOTE: Downgrade the #seen entry unless an id-equal instance
-            // already staged writes within this save; in that case the
-            // record's data still changes at commit and the save
-            // notification must not be lost.
-            if(priorChanged == null || !priorChanged) {
-                seen.replace(this, true, false);
-            }
             for (Field field : fields()) {
                 Object value = getFieldValue(field, this);
-                saveModifiedReferenceWithinTransaction(value, saver, seen,
-                        snapshots, deletedIds, preventStaleWrite);
+                saveModifiedReferenceWithinTransaction(value, context);
             }
         }
         else {
+            context.markChanged(this);
             beforeSave();
             saver.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
@@ -2677,8 +2645,7 @@ public abstract class Record implements Comparable<Record> {
                                         alreadyVerifiedUniqueConstraints);
                             }
                         }
-                        value = transform(value, saver, seen, snapshots,
-                                deletedIds, preventStaleWrite);
+                        value = transform(value, context);
                         if(value.getClass().isArray()) {
                             saver.reconcile(key, id, (Object[]) value);
                         }
@@ -3117,27 +3084,15 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Perform an actual "deletion" of this {@link Record} from the database.
      *
-     * @param saver the {@link Saver} that owns the active transaction
-     * @param seen {@link Record Records} already processed in this save
-     * @param snapshots if non-{@code null}, each {@link Record} self-snapshots
-     *            its metadata before mutation for retry support
-     * @param deletedIds the ids of {@link Record Records} deleted within this
-     *            save
-     * @param preventStaleWrite if {@code true}, reject the deletion when this
-     *            {@link Record} has been externally modified
+     * @param context the {@link SaveContext} that tracks the active save
      */
-    private void deleteWithinTransaction(Saver saver, Map<Record, Boolean> seen,
-            @Nullable Map<Record, Snapshot> snapshots, Set<Long> deletedIds,
-            boolean preventStaleWrite) {
-        // Mark this Record as processed so it is eligible for post-commit
-        // delete notification, even when it enters the delete path directly
-        // as a companion (e.g., @CascadeDelete or @JoinDelete) rather than
-        // through #saveWithinTransaction. Re-key (remove, then put) so this
-        // deleted instance owns the #seen entry for its id instead of an
-        // id-equal copy that was processed earlier.
-        seen.remove(this);
-        seen.put(this, true);
-        deletedIds.add(id);
+    private void deleteWithinTransaction(SaveContext context) {
+        Saver saver = context.saver();
+        // Mark the deletion up front so this instance speaks for its id,
+        // even when it enters the delete path directly as a companion
+        // (e.g., @CascadeDelete or @JoinDelete) rather than through
+        // #saveWithinTransaction.
+        context.markDeleted(this);
 
         // Ensure any fields to which this Record must @CascadeDelete are
         // deleted within this transaction
@@ -3147,12 +3102,12 @@ public abstract class Record implements Comparable<Record> {
             try {
                 Object value = dependent.get(this);
                 if(value instanceof Record) {
-                    ensureDeletion((Record) value);
+                    ensureDeletion((Record) value, context);
                 }
                 else if(Sequences.isSequence(value)) {
                     Sequences.forEach(value, item -> {
                         if(item instanceof Record) {
-                            ensureDeletion((Record) item);
+                            ensureDeletion((Record) item, context);
                         }
                     });
                 }
@@ -3177,7 +3132,7 @@ public abstract class Record implements Comparable<Record> {
                     Class<? extends Record> clazz = Reflection
                             .getClassCasted(__);
                     Record record = db.load(clazz, id);
-                    ensureDeletion(record);
+                    ensureDeletion(record, context);
                 }
             });
         }
@@ -3190,11 +3145,6 @@ public abstract class Record implements Comparable<Record> {
                 .getCaptureDeleteLookupCondition(this);
         if(potentialCaptureDeletes != null) {
             saver.select(SECTION_KEY, potentialCaptureDeletes, result -> {
-                Set<Long> seenIds = Sets
-                        .newHashSetWithExpectedSize(seen.size());
-                for (Record member : seen.keySet()) {
-                    seenIds.add(member.id);
-                }
                 for (Entry<Long, Set<Object>> entry : result.entrySet()) {
                     long id = entry.getKey();
                     // NOTE: When an id-equal instance of this Record is
@@ -3203,7 +3153,7 @@ public abstract class Record implements Comparable<Record> {
                     // Runway#save stages the removal of the stored
                     // reference; a re-save of a freshly loaded copy would
                     // overwrite staged changes with stale values.
-                    if(!seenIds.contains(id)) {
+                    if(!context.isSeen(id)) {
                         String __ = (String) Iterables
                                 .getLast(entry.getValue());
                         Class<? extends Record> clazz = Reflection
@@ -3211,8 +3161,7 @@ public abstract class Record implements Comparable<Record> {
                         Record record = db.load(clazz, id);
                         if(record.removeCaptureDeleteReferences(
                                 ImmutableSet.of(this.id))) {
-                            record.saveWithinTransaction(saver, seen, snapshots,
-                                    deletedIds, preventStaleWrite);
+                            record.saveWithinTransaction(context);
                         }
                         else {
                             // The loaded copy holds no reference to this
@@ -3224,12 +3173,10 @@ public abstract class Record implements Comparable<Record> {
             });
         }
 
-        // Perform the deletion(s)
+        // Perform the deletion; companions scheduled above are processed
+        // when the #saveWithinTransaction that initiated the deletion
+        // drains the context's queue.
         saver.clear(id);
-        for (Record record : waitingToBeDeleted) {
-            record.deleteWithinTransaction(saver, seen, snapshots, deletedIds,
-                    preventStaleWrite);
-        }
     }
 
     /**
@@ -3460,15 +3407,16 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Ensure that {@code record} is scheduled for
-     * {@link #deleteWithinTransaction(Saver, Map, Map, Set, boolean) deletion}
-     * alongside this {@link Record}.
+     * {@link #deleteWithinTransaction(SaveContext) deletion} alongside this
+     * {@link Record}.
      *
-     * @param record
+     * @param record the {@link Record} that joins the deletion
+     * @param context the {@link SaveContext} that tracks the active save
      */
-    private void ensureDeletion(Record record) {
+    private void ensureDeletion(Record record, SaveContext context) {
         if(!record.deleted) {
-            waitingToBeDeleted.add(record);
             record.deleted = true;
+            context.scheduleDeletion(record);
         }
     }
 
@@ -3890,27 +3838,16 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * @param value the value to be transformed
-     * @param saver the {@link Saver} that owns the active transaction
-     * @param seen {@link Record Records} already processed in this save
-     * @param snapshots if non-{@code null}, each {@link Record} self-snapshots
-     *            its metadata before mutation for retry support
-     * @param deletedIds the ids of {@link Record Records} deleted within this
-     *            save
-     * @param preventStaleWrite if {@code true}, reject the save of any
-     *            {@link Record} that has been externally modified
+     * @param context the {@link SaveContext} that tracks the active save
      * @return a {@link Concourse} primitive or an array of {@link Concourse}
      *         primitives
      */
     @SuppressWarnings("rawtypes")
-    private Object transform(@Nonnull Object value, Saver saver,
-            Map<Record, Boolean> seen,
-            @Nullable Map<Record, Snapshot> snapshots, Set<Long> deletedIds,
-            boolean preventStaleWrite) {
+    private Object transform(@Nonnull Object value, SaveContext context) {
         if(Sequences.isSequence(value)) {
             ArrayBuilder<Object> array = ArrayBuilder.builder();
             Sequences.forEach(value, item -> {
-                array.add(transform(item, saver, seen, snapshots, deletedIds,
-                        preventStaleWrite));
+                array.add(transform(item, context));
             });
             return array.length() > 0 ? array.build() : Array.containing();
         }
@@ -3930,9 +3867,8 @@ public abstract class Record implements Comparable<Record> {
 
             // Ensure that Record references are saved within the current
             // transaction
-            if(record != null && !seen.containsKey(record)) {
-                record.saveWithinTransaction(saver, seen, snapshots, deletedIds,
-                        preventStaleWrite);
+            if(record != null && !context.isSeen(record)) {
+                record.saveWithinTransaction(context);
             }
 
             return primitive;
