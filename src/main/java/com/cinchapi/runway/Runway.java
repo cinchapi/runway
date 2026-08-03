@@ -710,7 +710,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param order the {@link Order} that defines "first"
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one; it must not return {@code null}
+     *            current one, which is {@code null} when the field has no
+     *            value; it must not return {@code null}
      * @return the updated {@link Record}, or {@code null} if none matches
      * @throws RetryExhaustedException if the update cannot commit within the
      *             bounds of the governing {@link AtomicRetryPolicy}
@@ -740,7 +741,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param criteria the {@link Criteria} the record must match
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one; it must not return {@code null}
+     *            current one, which is {@code null} when the field has no
+     *            value; it must not return {@code null}
      * @return the updated {@link Record}, or {@code null} if none matches
      * @throws DuplicateEntryException if more than one record in the hierarchy
      *             matches
@@ -780,7 +782,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param order the {@link Order} that defines "first"
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one; it must not return {@code null}
+     *            current one, which is {@code null} when the field has no
+     *            value; it must not return {@code null}
      * @return the updated {@link Record}, or {@code null} if none matches
      * @throws RetryExhaustedException if the update cannot commit within the
      *             bounds of the governing {@link AtomicRetryPolicy}
@@ -853,7 +856,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param criteria the {@link Criteria} the record must match
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one; it must not return {@code null}
+     *            current one, which is {@code null} when the field has no
+     *            value; it must not return {@code null}
      * @return the updated {@link Record}, or {@code null} if none matches
      * @throws DuplicateEntryException if more than one record matches
      * @throws RetryExhaustedException if the update cannot commit within the
@@ -2892,7 +2896,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * A {@code null} {@code order} requires the match to be unique: when more
      * than one record matches, a {@link DuplicateEntryException} propagates. A
      * non-{@code null} {@code order} selects the first match it defines.
-     * 
+     *
      * @param any {@code true} to match across the {@code clazz} hierarchy
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the record must match
