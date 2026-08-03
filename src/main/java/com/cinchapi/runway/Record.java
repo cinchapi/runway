@@ -214,6 +214,116 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the {@link Field} named {@code key} if it is eligible for
+     * single-key atomic operations on {@code record}.
+     *
+     * @param key the name of an intrinsic field
+     * @param record the {@link Record} that owns the field
+     * @return the eligible {@link Field}
+     * @throws IllegalArgumentException if {@code key} does not name an
+     *             intrinsic field, or names one that is transient, multi-value,
+     *             link-typed, non-primitive, or {@link Unique}
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field
+     */
+    static Field getAtomicableField(String key, Record record) {
+        Field field = StaticAnalysis.instance().getField(record, key);
+        Verify.thatArgument(field != null, "{} is not an intrinsic field of {}",
+                key, record.__);
+        record.verifyKeyIsDynamicallyWritable(key);
+        Verify.thatArgument(!Modifier.isTransient(field.getModifiers()),
+                "Cannot atomically operate on {} in {} because it is"
+                        + " transient and never stored",
+                key, record.__);
+        Verify.thatArgument(!field.isAnnotationPresent(Unique.class),
+                "Cannot atomically operate on {} in {} because uniqueness"
+                        + " cannot be enforced within a single-key operation",
+                key, record.__);
+        Verify.thatArgument(
+                !Collection.class.isAssignableFrom(field.getType())
+                        && !field.getType().isArray(),
+                "Cannot atomically operate on {} in {} because it does not"
+                        + " store a single value",
+                key, record.__);
+        Verify.thatArgument(
+                !Record.class.isAssignableFrom(field.getType())
+                        && field.getType() != DeferredReference.class,
+                "Cannot atomically operate on {} in {} because it stores a"
+                        + " link to another Record whose state cannot be"
+                        + " covered by a single-key operation",
+                key, record.__);
+        Verify.thatArgument(field.getType().isPrimitive()
+                || BOXED_PRIMITIVE_TYPES.contains(field.getType())
+                || field.getType().isEnum() || field.getType() == Tag.class,
+                "Cannot atomically operate on {} in {} because its type is"
+                        + " not a primitive, an enum, or a Tag",
+                key, record.__);
+        return field;
+    }
+
+    /**
+     * Return {@code record}'s in-memory value for {@code field} for use as the
+     * expected operand of a single-key atomic operation.
+     *
+     * @param field an {@link #getAtomicableField(String, Record) eligible}
+     *            {@link Field}
+     * @param record the {@link Record} that owns the field
+     * @return the in-memory value
+     * @throws IllegalStateException if the field has no value
+     */
+    @SuppressWarnings("unchecked")
+    static <T> T getAtomicableFieldValue(Field field, Record record) {
+        T value = (T) getFieldValue(field, record);
+        Verify.that(value != null,
+                "Cannot atomically operate on {} in {} because it has no"
+                        + " value",
+                field.getName(), record.__);
+        return value;
+    }
+
+    /**
+     * Serialize {@code value} by converting it to an object that can be stored
+     * within the database. This method assumes that {@code value} is a scalar
+     * (e.g. not a {@link Sequences#isSequence(Object)}).
+     *
+     * @param value
+     * @return the serialized value
+     */
+    @SuppressWarnings("rawtypes")
+    static Object serializeScalarValue(@Nonnull Object value) {
+        Preconditions.checkArgument(!Sequences.isSequence(value));
+        Preconditions.checkNotNull(value);
+        if(value instanceof Record) {
+            Record record = (Record) value;
+            return Link.to(record.id);
+        }
+        else if(value instanceof DeferredReference) {
+            DeferredReference deferred = (DeferredReference) value;
+            return Link.to(deferred.$id());
+        }
+        else if(value.getClass().isPrimitive() || value instanceof String
+                || value instanceof Tag || value instanceof Link
+                || value instanceof Integer || value instanceof Long
+                || value instanceof Float || value instanceof Double
+                || value instanceof Boolean || value instanceof Timestamp) {
+            return value;
+        }
+        else if(value instanceof Enum) {
+            return Tag.create(((Enum) value).name());
+        }
+        else if(value instanceof Serializable) {
+            ByteBuffer bytes = Serializables.getBytes((Serializable) value);
+            Tag base64 = Tag.create(BaseEncoding.base64Url()
+                    .encode(ByteBuffers.toByteArray(bytes)));
+            return base64;
+        }
+        else {
+            return Tag.create(new Gson().toJson(value));
+        }
+    }
+
+    /**
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
      * track of linked records to prevent infinite recursion.
      *
@@ -292,75 +402,6 @@ public abstract class Record implements Comparable<Record> {
             }
 
         };
-    }
-
-    /**
-     * Return the {@link Field} named {@code key} if it is eligible for
-     * single-key atomic operations on {@code record}.
-     *
-     * @param key the name of an intrinsic field
-     * @param record the {@link Record} that owns the field
-     * @return the eligible {@link Field}
-     * @throws IllegalArgumentException if {@code key} does not name an
-     *             intrinsic field, or names one that is transient, multi-value,
-     *             link-typed, non-primitive, or {@link Unique}
-     * @throws NonWritableFieldException if the governing
-     *             {@link DynamicWritePolicy} does not permit writing to the
-     *             field
-     */
-    static Field getAtomicableField(String key, Record record) {
-        Field field = StaticAnalysis.instance().getField(record, key);
-        Verify.thatArgument(field != null, "{} is not an intrinsic field of {}",
-                key, record.__);
-        record.verifyKeyIsDynamicallyWritable(key);
-        Verify.thatArgument(!Modifier.isTransient(field.getModifiers()),
-                "Cannot atomically operate on {} in {} because it is"
-                        + " transient and never stored",
-                key, record.__);
-        Verify.thatArgument(!field.isAnnotationPresent(Unique.class),
-                "Cannot atomically operate on {} in {} because uniqueness"
-                        + " cannot be enforced within a single-key operation",
-                key, record.__);
-        Verify.thatArgument(
-                !Collection.class.isAssignableFrom(field.getType())
-                        && !field.getType().isArray(),
-                "Cannot atomically operate on {} in {} because it does not"
-                        + " store a single value",
-                key, record.__);
-        Verify.thatArgument(
-                !Record.class.isAssignableFrom(field.getType())
-                        && field.getType() != DeferredReference.class,
-                "Cannot atomically operate on {} in {} because it stores a"
-                        + " link to another Record whose state cannot be"
-                        + " covered by a single-key operation",
-                key, record.__);
-        Verify.thatArgument(field.getType().isPrimitive()
-                || BOXED_PRIMITIVE_TYPES.contains(field.getType())
-                || field.getType().isEnum() || field.getType() == Tag.class,
-                "Cannot atomically operate on {} in {} because its type is"
-                        + " not a primitive, an enum, or a Tag",
-                key, record.__);
-        return field;
-    }
-
-    /**
-     * Return {@code record}'s in-memory value for {@code field} for use as the
-     * expected operand of a single-key atomic operation.
-     *
-     * @param field an {@link #getAtomicableField(String, Record) eligible}
-     *            {@link Field}
-     * @param record the {@link Record} that owns the field
-     * @return the in-memory value
-     * @throws IllegalStateException if the field has no value
-     */
-    @SuppressWarnings("unchecked")
-    static <T> T getAtomicableFieldValue(Field field, Record record) {
-        T value = (T) getFieldValue(field, record);
-        Verify.that(value != null,
-                "Cannot atomically operate on {} in {} because it has no"
-                        + " value",
-                field.getName(), record.__);
-        return value;
     }
 
     /**
@@ -633,47 +674,6 @@ public abstract class Record implements Comparable<Record> {
                 record.saveWithinTransaction(saver, seen, snapshots,
                         preventStaleWrite);
             }
-        }
-    }
-
-    /**
-     * Serialize {@code value} by converting it to an object that can be stored
-     * within the database. This method assumes that {@code value} is a scalar
-     * (e.g. not a {@link Sequences#isSequence(Object)}).
-     *
-     * @param value
-     * @return the serialized value
-     */
-    @SuppressWarnings("rawtypes")
-    static Object serializeScalarValue(@Nonnull Object value) {
-        Preconditions.checkArgument(!Sequences.isSequence(value));
-        Preconditions.checkNotNull(value);
-        if(value instanceof Record) {
-            Record record = (Record) value;
-            return Link.to(record.id);
-        }
-        else if(value instanceof DeferredReference) {
-            DeferredReference deferred = (DeferredReference) value;
-            return Link.to(deferred.$id());
-        }
-        else if(value.getClass().isPrimitive() || value instanceof String
-                || value instanceof Tag || value instanceof Link
-                || value instanceof Integer || value instanceof Long
-                || value instanceof Float || value instanceof Double
-                || value instanceof Boolean || value instanceof Timestamp) {
-            return value;
-        }
-        else if(value instanceof Enum) {
-            return Tag.create(((Enum) value).name());
-        }
-        else if(value instanceof Serializable) {
-            ByteBuffer bytes = Serializables.getBytes((Serializable) value);
-            Tag base64 = Tag.create(BaseEncoding.base64Url()
-                    .encode(ByteBuffers.toByteArray(bytes)));
-            return base64;
-        }
-        else {
-            return Tag.create(new Gson().toJson(value));
         }
     }
 
@@ -1363,7 +1363,7 @@ public abstract class Record implements Comparable<Record> {
             boolean clean = !hasUnsavedChanges();
             if(concourse.verifyAndSwap(key, serializeScalarValue(expected), id,
                     serializeScalarValue(replacement))) {
-                applyAtomicWrite(key, replacement, clean);
+                applyValueChange(key, replacement, clean);
                 return true;
             }
             else {
@@ -1372,25 +1372,6 @@ public abstract class Record implements Comparable<Record> {
         }
         finally {
             connections.release(concourse);
-        }
-    }
-
-    /**
-     * Apply the in-memory effects of a successfully committed single-key atomic
-     * write of {@code replacement} to {@code key}.
-     *
-     * @param key the name of the field that was written
-     * @param replacement the value that now holds in the database
-     * @param clean {@code true} if this {@link Record} had no unsaved changes
-     *            when the write began, in which case it reports none after this
-     *            method returns
-     */
-    void applyAtomicWrite(String key, Object replacement, boolean clean) {
-        Reflection.set(key, replacement, this);
-        clearComputeOnceCache();
-        _audit = null;
-        if(clean) {
-            __checksum = checksum();
         }
     }
 
@@ -2291,6 +2272,61 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Apply the in-memory effects of a successfully committed single-key atomic
+     * write of {@code replacement} to {@code key}.
+     *
+     * @param key the name of the field that was written
+     * @param replacement the value that now holds in the database
+     * @param clean {@code true} if this {@link Record} had no unsaved changes
+     *            when the write began, in which case it reports none after this
+     *            method returns
+     */
+    void applyValueChange(String key, Object replacement, boolean clean) {
+        Reflection.set(key, replacement, this);
+        clearComputeOnceCache();
+        _audit = null;
+        if(clean) {
+            __checksum = checksum();
+        }
+    }
+
+    /**
+     * Ensure that {@code value} is savable for the {@code field} named
+     * {@code key} by enforcing the constraints that can be checked without a
+     * database query: a {@link Required} field refuses an empty value and a
+     * {@link ValidatedBy} field refuses a value that fails validation.
+     * <p>
+     * {@link Unique} enforcement requires a database query, so it is not
+     * covered here.
+     * </p>
+     *
+     * @param field the {@link Field} whose declared constraints apply
+     * @param key the field's name
+     * @param value the value to check; may be {@code null} or a sequence
+     * @throws IllegalStateException if {@code value} violates a constraint
+     */
+    void checkIsSavable(Field field, String key, Object value) {
+        boolean isSequence = Sequences.isSequence(value);
+        if(field.isAnnotationPresent(Required.class) && (isSequence
+                ? Sequences.stream(value).allMatch(Empty.ness()::describes)
+                : Empty.ness().describes(value))) {
+            throw new IllegalStateException(
+                    AnyStrings.format("{} is required in {}", key, __));
+        }
+        if(value != null && field.isAnnotationPresent(ValidatedBy.class)) {
+            Class<? extends Validator> validatorClass = field
+                    .getAnnotation(ValidatedBy.class).value();
+            Validator validator = Reflection.newInstance(validatorClass);
+            if(isSequence
+                    ? Sequences.stream(value)
+                            .anyMatch(Predicates.not(validator::validate))
+                    : !validator.validate(value)) {
+                throw new IllegalStateException(validator.getErrorMessage());
+            }
+        }
+    }
+
+    /**
      * Mark this {@link Record} as synchronized with the database.
      */
     final void checkpoint() {
@@ -2787,42 +2823,6 @@ public abstract class Record implements Comparable<Record> {
         catch (ReflectiveOperationException e) {
             inViolation = true;
             throw CheckedExceptions.wrapAsRuntimeException(e);
-        }
-    }
-
-    /**
-     * Ensure that {@code value} is savable for the {@code field} named
-     * {@code key} by enforcing the constraints that can be checked without a
-     * database query: a {@link Required} field refuses an empty value and a
-     * {@link ValidatedBy} field refuses a value that fails validation.
-     * <p>
-     * {@link Unique} enforcement requires a database query, so it is not
-     * covered here.
-     * </p>
-     *
-     * @param field the {@link Field} whose declared constraints apply
-     * @param key the field's name
-     * @param value the value to check; may be {@code null} or a sequence
-     * @throws IllegalStateException if {@code value} violates a constraint
-     */
-    void checkIsSavable(Field field, String key, Object value) {
-        boolean isSequence = Sequences.isSequence(value);
-        if(field.isAnnotationPresent(Required.class) && (isSequence
-                ? Sequences.stream(value).allMatch(Empty.ness()::describes)
-                : Empty.ness().describes(value))) {
-            throw new IllegalStateException(
-                    AnyStrings.format("{} is required in {}", key, __));
-        }
-        if(value != null && field.isAnnotationPresent(ValidatedBy.class)) {
-            Class<? extends Validator> validatorClass = field
-                    .getAnnotation(ValidatedBy.class).value();
-            Validator validator = Reflection.newInstance(validatorClass);
-            if(isSequence
-                    ? Sequences.stream(value)
-                            .anyMatch(Predicates.not(validator::validate))
-                    : !validator.validate(value)) {
-                throw new IllegalStateException(validator.getErrorMessage());
-            }
         }
     }
 

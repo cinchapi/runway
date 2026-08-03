@@ -720,7 +720,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             UnaryOperator<V> update) {
         Preconditions.checkNotNull(order,
                 "findAnyFirstAndUpdate requires an Order");
-        return updateWithinTransaction(true, clazz, criteria, order, key,
+        return readAndUpdateAtomically(true, clazz, criteria, order, key,
                 update);
     }
 
@@ -749,7 +749,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
-        return updateWithinTransaction(true, clazz, criteria, null, key,
+        return readAndUpdateAtomically(true, clazz, criteria, null, key,
                 update);
     }
 
@@ -790,7 +790,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             UnaryOperator<V> update) {
         Preconditions.checkNotNull(order,
                 "findFirstAndUpdate requires an Order");
-        return updateWithinTransaction(false, clazz, criteria, order, key,
+        return readAndUpdateAtomically(false, clazz, criteria, order, key,
                 update);
     }
 
@@ -861,7 +861,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
-        return updateWithinTransaction(false, clazz, criteria, null, key,
+        return readAndUpdateAtomically(false, clazz, criteria, null, key,
                 update);
     }
 
@@ -2892,6 +2892,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * A {@code null} {@code order} requires the match to be unique: when more
      * than one record matches, a {@link DuplicateEntryException} propagates. A
      * non-{@code null} {@code order} selects the first match it defines.
+     * 
      * @param any {@code true} to match across the {@code clazz} hierarchy
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the record must match
@@ -2907,9 +2908,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @throws RetryExhaustedException if the update cannot commit within the
      *             bounds of the governing {@link AtomicRetryPolicy}
      */
-    private <T extends Record, V> T updateWithinTransaction(boolean any,
-            Class<T> clazz, Criteria criteria, @Nullable Order order, String key,
-            UnaryOperator<V> update) {
+    private <T extends Record, V> T readAndUpdateAtomically(boolean any,
+            Class<T> clazz, Criteria criteria, @Nullable Order order,
+            String key, UnaryOperator<V> update) {
         AtomicRetryPolicy policy = properties().atomicRetryPolicy();
         Concourse concourse = connections.request();
         try {
@@ -2961,7 +2962,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                     record.id());
                         }
                         if(transaction.commit()) {
-                            record.applyAtomicWrite(key, next, clean);
+                            record.applyValueChange(key, next, clean);
                             return record;
                         }
                         else {
