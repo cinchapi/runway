@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
 import java.util.function.Predicate;
@@ -35,7 +36,10 @@ import com.cinchapi.concourse.thrift.Operator;
  * <li>{@link #ofUnique} &mdash; unique-result queries</li>
  * </ul>
  * Each factory has an {@code Any} variant (e.g., {@link #ofAny},
- * {@link #ofAnyUnique}) that includes descendants of the target class.
+ * {@link #ofAnyUnique}) that includes descendants of the target class. A
+ * first-result operation is expressed with the {@link OrderedBuilder#first()
+ * first()} terminal, which becomes available once a sort order is set because
+ * "first" is only meaningful under an order.
  * </p>
  * <p>
  * A {@link Selection} has a lifecycle with three states:
@@ -193,6 +197,22 @@ public interface Selection<T extends Record> {
                 result.origin = selection;
                 return result;
             }
+            else if(resolved instanceof FirstSelection) {
+                FirstSelection<T> first = (FirstSelection<T>) resolved;
+                DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
+                        resolved.clazz, resolved.any);
+                state.first = true;
+                state.criteria = first.criteria != null
+                        ? Criteria.where().group(first.criteria).and()
+                                .group(injected).build()
+                        : injected;
+                state.order = first.order;
+                state.filter = first.filter;
+                state.realms = first.realms;
+                FirstSelection<T> result = new FirstSelection<>(state);
+                result.origin = selection;
+                return result;
+            }
             else {
                 // LoadClassSelection — visibility criteria becomes the sole
                 // criteria, promoting to FindSelection
@@ -325,6 +345,9 @@ public interface Selection<T extends Record> {
             else if(state.unique) {
                 return new UniqueSelection<>(state);
             }
+            else if(state.first) {
+                return new FirstSelection<>(state);
+            }
             else if(state.criteria != null) {
                 return new FindSelection<>(state);
             }
@@ -445,6 +468,26 @@ public interface Selection<T extends Record> {
     }
 
     /**
+     * A builder for first-result {@link Selection Selections}. The first
+     * operation is fully specified when this builder is reached; only realms
+     * and any remain available.
+     *
+     * @param <T> the {@link Record} type
+     */
+    final class FirstBuilder<T extends Record>
+            extends Builder<T, FirstBuilder<T>> {
+
+        /**
+         * Construct a new {@link FirstBuilder}.
+         *
+         * @param state the shared builder state
+         */
+        FirstBuilder(DatabaseSelection.BuilderState<T> state) {
+            super(state);
+        }
+    }
+
+    /**
      * A builder for ID-based {@link Selection Selections}. Only realms and any
      * are available.
      *
@@ -528,11 +571,11 @@ public interface Selection<T extends Record> {
          * Set the sort {@code order}.
          *
          * @param order the sort order
-         * @return a {@link SortableBuilder} for chaining
+         * @return an {@link OrderedBuilder} for chaining
          */
-        public SortableBuilder<T> order(Order order) {
+        public OrderedBuilder<T> order(Order order) {
             state.order = order;
-            return new SortableBuilder<>(state);
+            return new OrderedBuilder<>(state);
         }
 
         /**
@@ -565,6 +608,104 @@ public interface Selection<T extends Record> {
         public QueryBuilder<T> where(Criteria criteria) {
             state.criteria = criteria;
             return new QueryBuilder<>(state);
+        }
+    }
+
+    /**
+     * A builder for {@link Selection Selections} that have a sort order set. In
+     * addition to the configuration a {@link SortableBuilder} offers, the
+     * {@link #first()} terminal is available because "first" is only meaningful
+     * under an order.
+     *
+     * @param <T> the {@link Record} type
+     */
+    final class OrderedBuilder<T extends Record>
+            extends Builder<T, OrderedBuilder<T>> {
+
+        /**
+         * Construct a new {@link OrderedBuilder}.
+         *
+         * @param state the shared builder state
+         */
+        OrderedBuilder(DatabaseSelection.BuilderState<T> state) {
+            super(state);
+        }
+
+        /**
+         * Alias for {@link #where(Criteria)}.
+         *
+         * @param criteria the query criteria
+         * @return this builder for chaining
+         */
+        public OrderedBuilder<T> criteria(Criteria criteria) {
+            return where(criteria);
+        }
+
+        /**
+         * Apply a client-side {@code filter}.
+         *
+         * @param filter the filter predicate
+         * @return this builder for chaining
+         */
+        @SuppressWarnings("unchecked")
+        public OrderedBuilder<T> filter(Predicate<T> filter) {
+            state.filter = filter != null ? filter
+                    : (Predicate<T>) DatabaseSelection.NO_FILTER;
+            return this;
+        }
+
+        /**
+         * Mark this as a first-result operation, whose result is the single
+         * record that sorts first under the configured order, or {@code null}
+         * when nothing matches.
+         *
+         * @return a {@link FirstBuilder} for chaining
+         * @throws IllegalStateException if an explicit page has been set,
+         *             because the one-row page is intrinsic to a first-result
+         *             operation
+         * @throws NullPointerException if the configured order is {@code null},
+         *             because "first" is meaningless without an order
+         */
+        public FirstBuilder<T> first() {
+            checkState(state.page == null,
+                    "A first Selection cannot have an explicit Page");
+            checkNotNull(state.order,
+                    "An Order is required to determine the first record");
+            state.first = true;
+            return new FirstBuilder<>(state);
+        }
+
+        /**
+         * Set or replace the sort {@code order}.
+         *
+         * @param order the sort order
+         * @return this builder for chaining
+         */
+        public OrderedBuilder<T> order(Order order) {
+            state.order = order;
+            return this;
+        }
+
+        /**
+         * Set the {@code page} for pagination.
+         *
+         * @param page the pagination
+         * @return a {@link SortableBuilder} for chaining
+         */
+        public SortableBuilder<T> page(Page page) {
+            state.page = page;
+            return new SortableBuilder<>(state);
+        }
+
+        /**
+         * Set or replace the query {@code criteria}.
+         *
+         * @param criteria the query criteria
+         * @return this builder for chaining
+         */
+        public OrderedBuilder<T> where(Criteria criteria) {
+            state.criteria = criteria;
+            return this;
         }
     }
 
@@ -623,11 +764,11 @@ public interface Selection<T extends Record> {
          * Set the sort {@code order}.
          *
          * @param order the sort order
-         * @return a {@link SortableBuilder} for chaining
+         * @return an {@link OrderedBuilder} for chaining
          */
-        public SortableBuilder<T> order(Order order) {
+        public OrderedBuilder<T> order(Order order) {
             state.order = order;
-            return new SortableBuilder<>(state);
+            return new OrderedBuilder<>(state);
         }
 
         /**
@@ -664,8 +805,9 @@ public interface Selection<T extends Record> {
     }
 
     /**
-     * A builder for {@link Selection Selections} that have a sort order or
-     * pagination set. Counting and ID-based lookups are no longer available.
+     * A builder for {@link Selection Selections} that have pagination set, with
+     * or without a sort order. Counting, ID-based lookups, and
+     * {@link OrderedBuilder#first() first} are no longer available.
      *
      * @param <T> the {@link Record} type
      */
@@ -708,11 +850,11 @@ public interface Selection<T extends Record> {
          * Set or replace the sort {@code order}.
          *
          * @param order the sort order
-         * @return this builder for chaining
+         * @return an {@link OrderedBuilder} for chaining
          */
-        public SortableBuilder<T> order(Order order) {
+        public OrderedBuilder<T> order(Order order) {
             state.order = order;
-            return this;
+            return new OrderedBuilder<>(state);
         }
 
         /**

@@ -48,6 +48,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -79,6 +80,7 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
+import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
@@ -117,6 +119,7 @@ import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
 import com.google.common.io.BaseEncoding;
 import com.google.common.primitives.Longs;
+import com.google.common.primitives.Primitives;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.TypeAdapter;
@@ -143,6 +146,15 @@ import com.google.gson.stream.JsonWriter;
  * And, by default, private fields are never included in a {@link #json() json}
  * dump or {@link #toString()} output unless they are annotated as
  * {@link Readable}.
+ * </p>
+ * <p>
+ * By default, the {@link DynamicWritePolicy} of the assigned {@link Runway}
+ * instance determines whether {@link #set(String, Object)} can write final,
+ * private, package-private or protected fields. Dynamic write handling can be
+ * customized in three ways: configure a different {@link DynamicWritePolicy} on
+ * the {@link Runway} instance, annotate individual fields as {@link Writable}
+ * to exempt them from the policy, or override {@link #set(String, Object)} in a
+ * subclass to implement completely custom handling.
  * </p>
  *
  * @author Jeff Nelson
@@ -199,6 +211,110 @@ public abstract class Record implements Comparable<Record> {
         }
         finally {
             connections.release(concourse);
+        }
+    }
+
+    /**
+     * Return the {@link Field} named {@code key} if it is eligible for
+     * single-key atomic operations on {@code record}.
+     *
+     * @param key the name of an intrinsic field
+     * @param record the {@link Record} that owns the field
+     * @return the eligible {@link Field}
+     * @throws IllegalArgumentException if {@code key} does not name an
+     *             intrinsic field, or names one that is transient, multi-value,
+     *             link-typed, non-primitive, or {@link Unique}
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field
+     */
+    static Field getAtomicableField(String key, Record record) {
+        Field field = StaticAnalysis.instance().getField(record, key);
+        Verify.thatArgument(field != null, "{} is not an intrinsic field of {}",
+                key, record.__);
+        record.verifyKeyIsDynamicallyWritable(key);
+        Verify.thatArgument(!Modifier.isTransient(field.getModifiers()),
+                "Cannot atomically operate on {} in {} because it is"
+                        + " transient and never stored",
+                key, record.__);
+        Verify.thatArgument(!field.isAnnotationPresent(Unique.class),
+                "Cannot atomically operate on {} in {} because uniqueness"
+                        + " cannot be enforced within a single-key operation",
+                key, record.__);
+        Verify.thatArgument(
+                !Collection.class.isAssignableFrom(field.getType())
+                        && !field.getType().isArray(),
+                "Cannot atomically operate on {} in {} because it does not"
+                        + " store a single value",
+                key, record.__);
+        Verify.thatArgument(
+                !Record.class.isAssignableFrom(field.getType())
+                        && field.getType() != DeferredReference.class,
+                "Cannot atomically operate on {} in {} because it stores a"
+                        + " link to another Record whose state cannot be"
+                        + " covered by a single-key operation",
+                key, record.__);
+        Verify.thatArgument(field.getType().isPrimitive()
+                || BOXED_PRIMITIVE_TYPES.contains(field.getType())
+                || field.getType().isEnum() || field.getType() == Tag.class,
+                "Cannot atomically operate on {} in {} because its type is"
+                        + " not a primitive, an enum, or a Tag",
+                key, record.__);
+        return field;
+    }
+
+    /**
+     * Return {@code record}'s in-memory value for {@code field} for use as the
+     * expected operand of a single-key atomic operation.
+     *
+     * @param field an {@link #getAtomicableField(String, Record) eligible}
+     *            {@link Field}
+     * @param record the {@link Record} that owns the field
+     * @return the in-memory value, or {@code null} if the field has no value
+     */
+    @SuppressWarnings("unchecked")
+    static <T> T getAtomicableFieldValue(Field field, Record record) {
+        return (T) getFieldValue(field, record);
+    }
+
+    /**
+     * Serialize {@code value} by converting it to an object that can be stored
+     * within the database. This method assumes that {@code value} is a scalar
+     * (e.g. not a {@link Sequences#isSequence(Object)}).
+     *
+     * @param value
+     * @return the serialized value
+     */
+    @SuppressWarnings("rawtypes")
+    static Object serializeScalarValue(@Nonnull Object value) {
+        Preconditions.checkArgument(!Sequences.isSequence(value));
+        Preconditions.checkNotNull(value);
+        if(value instanceof Record) {
+            Record record = (Record) value;
+            return Link.to(record.id);
+        }
+        else if(value instanceof DeferredReference) {
+            DeferredReference deferred = (DeferredReference) value;
+            return Link.to(deferred.$id());
+        }
+        else if(value.getClass().isPrimitive() || value instanceof String
+                || value instanceof Tag || value instanceof Link
+                || value instanceof Integer || value instanceof Long
+                || value instanceof Float || value instanceof Double
+                || value instanceof Boolean || value instanceof Timestamp) {
+            return value;
+        }
+        else if(value instanceof Enum) {
+            return Tag.create(((Enum) value).name());
+        }
+        else if(value instanceof Serializable) {
+            ByteBuffer bytes = Serializables.getBytes((Serializable) value);
+            Tag base64 = Tag.create(BaseEncoding.base64Url()
+                    .encode(ByteBuffers.toByteArray(bytes)));
+            return base64;
+        }
+        else {
+            return Tag.create(new Gson().toJson(value));
         }
     }
 
@@ -284,17 +400,10 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Use reflection to get the value for {@code field} in {@code record}.
+     * Return the value of {@code field} in {@code record}.
      *
-     * @param field
-     * @param record
-     * @return the value
-     */
-    /**
-     * Get the value of a field from a {@link Record} using reflection.
-     *
-     * @param field the field to access
-     * @param record the record instance
+     * @param field the {@link Field} to read
+     * @param record the {@link Record} that owns the field
      * @return the field value
      */
     private static Object getFieldValue(Field field, Record record) {
@@ -560,47 +669,6 @@ public abstract class Record implements Comparable<Record> {
                 record.saveWithinTransaction(saver, seen, snapshots,
                         preventStaleWrite);
             }
-        }
-    }
-
-    /**
-     * Serialize {@code value} by converting it to an object that can be stored
-     * within the database. This method assumes that {@code value} is a scalar
-     * (e.g. not a {@link Sequences#isSequence(Object)}).
-     *
-     * @param value
-     * @return the serialized value
-     */
-    @SuppressWarnings("rawtypes")
-    private static Object serializeScalarValue(@Nonnull Object value) {
-        Preconditions.checkArgument(!Sequences.isSequence(value));
-        Preconditions.checkNotNull(value);
-        if(value instanceof Record) {
-            Record record = (Record) value;
-            return Link.to(record.id);
-        }
-        else if(value instanceof DeferredReference) {
-            DeferredReference deferred = (DeferredReference) value;
-            return Link.to(deferred.$id());
-        }
-        else if(value.getClass().isPrimitive() || value instanceof String
-                || value instanceof Tag || value instanceof Link
-                || value instanceof Integer || value instanceof Long
-                || value instanceof Float || value instanceof Double
-                || value instanceof Boolean || value instanceof Timestamp) {
-            return value;
-        }
-        else if(value instanceof Enum) {
-            return Tag.create(((Enum) value).name());
-        }
-        else if(value instanceof Serializable) {
-            ByteBuffer bytes = Serializables.getBytes((Serializable) value);
-            Tag base64 = Tag.create(BaseEncoding.base64Url()
-                    .encode(ByteBuffers.toByteArray(bytes)));
-            return base64;
-        }
-        else {
-            return Tag.create(new Gson().toJson(value));
         }
     }
 
@@ -1210,6 +1278,110 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Atomically exchange the value of {@code key} for {@code replacement} if
+     * and only if the database still holds the value this {@link Record} has in
+     * memory for {@code key}.
+     * <p>
+     * This is the conditional counterpart to {@link #set(String, Object) set}:
+     * {@code set} stages a value that takes effect on the next {@link #save()
+     * save} no matter what the database holds, whereas {@code exchange} writes
+     * through to the database immediately and only if no other writer changed
+     * the stored value after this {@link Record} last observed it. It has the
+     * same semantics as
+     * {@link Concourse#verifyAndSwap(String, Object, long, Object)
+     * verifyAndSwap}, with this {@link Record Record's} in-memory value as the
+     * expected operand. A {@code null} in-memory value expects absence: the
+     * exchange succeeds only if the database stores no value for {@code key}.
+     * An exchange never succeeds against a {@link Record} that does not exist
+     * in the database, whether it was never saved or its data was since erased;
+     * in that case nothing is written.
+     * </p>
+     * <p>
+     * On success, the in-memory field is updated to {@code replacement} and a
+     * record with no unsaved changes remains without unsaved changes. On
+     * failure, nothing changes anywhere; the caller may {@link #refresh()
+     * refresh} and try again, or use
+     * {@link #getAndUpdate(String, UnaryOperator) getAndUpdate}. A
+     * {@link Record} that is staged for deletion is refused.
+     * </p>
+     * <p>
+     * Only an intrinsic, single-value field whose type is a Java primitive or
+     * its boxed form, a {@link String}, a {@link Timestamp}, an enum, or a
+     * {@link Tag} is eligible. Transient and {@link Unique} fields are not
+     * eligible. The {@code replacement} must be a non-null instance of the
+     * field's type (boxed, when the field is primitive), must not be empty when
+     * the field is {@link Required}, and must pass the field's
+     * {@link ValidatedBy} validation. Each refusal happens before anything is
+     * written. The write is subject to the same {@link DynamicWritePolicy} that
+     * governs {@link #set(String, Object) set}.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> This is a targeted write, not a {@link #save()
+     * save}: the {@link #beforeSave() beforeSave} hook and any save listeners
+     * do not run. The write does count as a modification for stale-write
+     * detection, so a later {@link #save(boolean) save(preventStaleWrite)} may
+     * require a {@link #refresh() refresh} first.
+     * </p>
+     *
+     * @param key the name of the intrinsic field whose value is exchanged
+     * @param replacement the value to store if the expected value is still
+     *            current; must not be {@code null}
+     * @return {@code true} if the exchange is successful
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or {@code replacement} is {@code null} or
+     *             is not an instance of the field's type
+     * @throws IllegalStateException if this {@link Record} is not pinned to a
+     *             {@link Runway} instance, is staged for deletion, or
+     *             {@code replacement} violates the field's constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
+     */
+    public final <T> boolean exchange(String key, T replacement) {
+        Verify.that(runway != null, "Cannot perform an atomic exchange"
+                + " because this Record isn't pinned to a Runway instance");
+        Verify.that(!deleted,
+                "Cannot atomically exchange {} in {} because this Record is"
+                        + " staged for deletion",
+                key, __);
+        Verify.thatArgument(replacement != null,
+                "The replacement value cannot be null");
+        Field field = getAtomicableField(key, this);
+        Verify.thatArgument(
+                Primitives.wrap(field.getType()).isInstance(replacement),
+                "Cannot atomically operate on {} in {} because the"
+                        + " replacement is a {} and the field stores a {}",
+                key, __, replacement.getClass().getSimpleName(),
+                field.getType().getSimpleName());
+        checkIsSavable(field, key, replacement);
+        Object expected = getAtomicableFieldValue(field, this);
+        Concourse concourse = connections.request();
+        try {
+            boolean clean = !hasUnsavedChanges();
+            boolean swapped;
+            if(expected == null) {
+                swapped = setIfAbsent(concourse, key,
+                        serializeScalarValue(replacement));
+            }
+            else {
+                swapped = concourse.verifyAndSwap(key,
+                        serializeScalarValue(expected), id,
+                        serializeScalarValue(replacement));
+            }
+            if(swapped) {
+                applyValueChange(key, replacement, clean);
+                return true;
+            }
+            else {
+                return false;
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Return the value associated with {@code key}.
      * <p>
      * Navigation keys (e.g., {@code "participant.userId"}) are supported and
@@ -1238,6 +1410,57 @@ public abstract class Record implements Comparable<Record> {
     public Map<String, Object> get(String... keys) {
         return Arrays.asList(keys).stream()
                 .collect(Collectors.toMap(Function.identity(), this::get));
+    }
+
+    /**
+     * Atomically apply {@code update} to the value of {@code key} and return
+     * the value that was replaced.
+     * <p>
+     * The {@code update} function receives the current value for {@code key},
+     * or {@code null} when the field has no value, and returns the value that
+     * should take its place. When this method returns, the produced value is
+     * durably stored and this {@link Record Record's} in-memory value for
+     * {@code key} matches it. If the update cannot be committed within the
+     * bounds of the {@link AtomicRetryPolicy} configured on the {@link Runway}
+     * instance this {@link Record} is pinned to, a
+     * {@link RetryExhaustedException} is thrown and nothing is written; this
+     * {@link Record Record's} in-memory value for {@code key} may reflect a
+     * value that a concurrent writer stored.
+     * </p>
+     * <p>
+     * The {@code update} function may be applied more than once, so it must be
+     * free of side effects. If the function returns a value equal to its input,
+     * nothing is written.
+     * </p>
+     * <p>
+     * This {@link Record} must not have unsaved changes; that includes a
+     * {@link Record} that was never {@link #save() saved}. {@link #save() save}
+     * or {@link #refresh() refresh} first. A {@link Record} that is staged for
+     * deletion is refused.
+     * </p>
+     * <p>
+     * The eligibility rules, constraint checks, and save-pipeline caveats of
+     * {@link #exchange(String, Object) exchange} apply.
+     * </p>
+     *
+     * @param key the name of the intrinsic field to update
+     * @param update the function that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @return the value that was current immediately before the update took
+     *         effect, or {@code null} if the field had no value
+     * @throws RetryExhaustedException if the update cannot be committed within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or {@code update} returns {@code null}
+     * @throws IllegalStateException if this {@link Record} is not pinned to a
+     *             {@link Runway} instance, has unsaved changes, or is staged
+     *             for deletion
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
+     */
+    public final <T> T getAndUpdate(String key, UnaryOperator<T> update) {
+        return updateAtomically(key, update).before();
     }
 
     @Override
@@ -1725,10 +1948,23 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * {@link #set(String, Object) Set} each key/value pair within {@code data}
-     * as a dynamic attribute in this {@link Record}.
+     * {@link #set(String, Object) Set} each key/value pair from {@code data} in
+     * this {@link Record}.
+     * <p>
+     * Each entry is applied through {@link #set(String, Object)} in the
+     * iteration order of {@code data}, so a subclass override of that method
+     * also governs how each entry is handled. If the governing
+     * {@link DynamicWritePolicy} refuses an entry, the entries that were
+     * already applied remain in place, so the caller is responsible for
+     * catching the exception and discarding this {@link Record} instead of
+     * {@link #save() saving} it.
+     * </p>
      *
-     * @param data
+     * @param data a mapping from each key name to the value to set
+     * @throws NonWritableFieldException if a key in {@code data} names a field
+     *             that the governing {@link DynamicWritePolicy} does not permit
+     *             writing; the entries applied before the refusal remain in
+     *             place
      */
     public void set(Map<String, Object> data) {
         data.forEach((key, value) -> {
@@ -1737,12 +1973,35 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Set a dynamic attribute in this Record.
+     * Set the value for {@code key} in this {@link Record}. By default, if
+     * {@code key} names a field, the field is written. Otherwise, the key/value
+     * pair is stored as a dynamic attribute.
+     * <p>
+     * By default, a write to a field &mdash; whether the field is part of the
+     * schema or the {@link Record Record's} internal framework state &mdash; is
+     * governed by the {@link DynamicWritePolicy} of the assigned {@link Runway}
+     * instance. If the policy does not permit writing the field, then this
+     * method throws a {@link NonWritableFieldException} and no data is changed.
+     * A field annotated as {@link Writable} is always exempt from the policy.
+     * </p>
+     * <p>
+     * A subclass may override this method to implement completely custom
+     * handling of dynamic writes.
+     * </p>
+     * <p>
+     * The write is unconditional and takes effect on the next {@link #save()
+     * save}. Use {@link #exchange(String, Object) exchange} to instead write
+     * through to the database immediately, and only if this {@link Record
+     * Record's} view of {@code key} is still current.
+     * </p>
      *
      * @param key the key name
      * @param value the value to set
+     * @throws NonWritableFieldException if {@code key} names a field that the
+     *             governing {@link DynamicWritePolicy} does not permit writing
      */
     public void set(String key, Object value) {
+        verifyKeyIsDynamicallyWritable(key);
         if(dynamicData.containsKey(key)) {
             dynamicData.put(key, value);
         }
@@ -1791,6 +2050,35 @@ public abstract class Record implements Comparable<Record> {
     @Override
     public final String toString() {
         return json();
+    }
+
+    /**
+     * Atomically apply {@code update} to the value of {@code key} and return
+     * the value that the update produced.
+     * <p>
+     * This method has the same contract as
+     * {@link #getAndUpdate(String, UnaryOperator) getAndUpdate}, but returns
+     * the replacement value instead of the replaced one.
+     * </p>
+     *
+     * @param key the name of the intrinsic field to update
+     * @param update the function that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @return the value that is current immediately after the update takes
+     *         effect
+     * @throws RetryExhaustedException if the update cannot be committed within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or {@code update} returns {@code null}
+     * @throws IllegalStateException if this {@link Record} is not pinned to a
+     *             {@link Runway} instance, has unsaved changes, or is staged
+     *             for deletion
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
+     */
+    public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
+        return updateAtomically(key, update).after();
     }
 
     /**
@@ -1988,6 +2276,61 @@ public abstract class Record implements Comparable<Record> {
      */
     protected Map<Class<?>, TypeAdapter<?>> typeAdapters() {
         return ImmutableMap.of();
+    }
+
+    /**
+     * Apply the in-memory effects of a successfully committed single-key atomic
+     * write of {@code replacement} to {@code key}.
+     *
+     * @param key the name of the field that was written
+     * @param replacement the value that now holds in the database
+     * @param clean {@code true} if this {@link Record} had no unsaved changes
+     *            when the write began, in which case it reports none after this
+     *            method returns
+     */
+    void applyValueChange(String key, Object replacement, boolean clean) {
+        Reflection.set(key, replacement, this);
+        clearComputeOnceCache();
+        _audit = null;
+        if(clean) {
+            __checksum = checksum();
+        }
+    }
+
+    /**
+     * Ensure that {@code value} is savable for the {@code field} named
+     * {@code key} by enforcing the constraints that can be checked without a
+     * database query: a {@link Required} field refuses an empty value and a
+     * {@link ValidatedBy} field refuses a value that fails validation.
+     * <p>
+     * {@link Unique} enforcement requires a database query, so it is not
+     * covered here.
+     * </p>
+     *
+     * @param field the {@link Field} whose declared constraints apply
+     * @param key the field's name
+     * @param value the value to check; may be {@code null} or a sequence
+     * @throws IllegalStateException if {@code value} violates a constraint
+     */
+    void checkIsSavable(Field field, String key, Object value) {
+        boolean isSequence = Sequences.isSequence(value);
+        if(field.isAnnotationPresent(Required.class) && (isSequence
+                ? Sequences.stream(value).allMatch(Empty.ness()::describes)
+                : Empty.ness().describes(value))) {
+            throw new IllegalStateException(
+                    AnyStrings.format("{} is required in {}", key, __));
+        }
+        if(value != null && field.isAnnotationPresent(ValidatedBy.class)) {
+            Class<? extends Validator> validatorClass = field
+                    .getAnnotation(ValidatedBy.class).value();
+            Validator validator = Reflection.newInstance(validatorClass);
+            if(isSequence
+                    ? Sequences.stream(value)
+                            .anyMatch(Predicates.not(validator::validate))
+                    : !validator.validate(value)) {
+                throw new IllegalStateException(validator.getErrorMessage());
+            }
+        }
     }
 
     /**
@@ -2314,14 +2657,7 @@ public abstract class Record implements Comparable<Record> {
                     String key = field.getName();
                     Object value = getFieldValue(field, this);
                     boolean isSequence = Sequences.isSequence(value);
-                    // Enforce that Required fields have a non-empty value
-                    if(field.isAnnotationPresent(Required.class) && (isSequence
-                            ? Sequences.stream(value)
-                                    .allMatch(Empty.ness()::describes)
-                            : Empty.ness().describes(value))) {
-                        throw new IllegalStateException(AnyStrings
-                                .format("{}  is required in {}", key, __));
-                    }
+                    checkIsSavable(field, key, value);
                     if(value != null) {
                         // Enforce that Unique fields have non-duplicated
                         // values across the class
@@ -2334,21 +2670,6 @@ public abstract class Record implements Comparable<Record> {
                             else {
                                 checkIsUnique(saver, field, key, value,
                                         alreadyVerifiedUniqueConstraints);
-                            }
-                        }
-                        // Apply custom validation
-                        if(field.isAnnotationPresent(ValidatedBy.class)) {
-                            Class<? extends Validator> validatorClass = field
-                                    .getAnnotation(ValidatedBy.class).value();
-                            Validator validator = Reflection
-                                    .newInstance(validatorClass);
-                            if(isSequence
-                                    ? Sequences.stream(value).anyMatch(
-                                            Predicates.not(validator::validate))
-                                    : !validator.validate(value)) {
-                                throw new IllegalStateException(
-                                        validator.getErrorMessage());
-
                             }
                         }
                         value = transform(value, saver, seen, snapshots,
@@ -2732,55 +3053,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Resolve a single positively named {@code key} into the {@link Entry} that
-     * will be contributed to a {@link #map} result.
-     * <p>
-     * For a bare key, the {@link Entry} is {@code (key, get(key))}. For a
-     * navigation key (e.g., {@code "company.name"}), the {@link Entry} is keyed
-     * by the root and valued by the nested {@link Map} (or list of nested
-     * {@link Map Maps} for a sequence-valued destination) representing the
-     * navigation path's value on the linked {@link Record Records}. A
-     * non-navigable destination resolves to {@code null}.
-     * </p>
-     *
-     * @param key the (possibly navigation) key to resolve
-     * @param options the {@link SerializationOptions} applied along any
-     *            navigation path
-     * @return the resolved {@link Entry}; never {@code null}, though its value
-     *         may be {@code null} when the navigation destination is
-     *         non-navigable
-     */
-    private Entry<String, Object> resolveEntry(String key,
-            SerializationOptions options) {
-        Object value;
-        String[] stops = key.split("\\.");
-        if(stops.length > 1) {
-            key = stops[0];
-            String path = StringUtils.join(stops, '.', 1, stops.length);
-            Object destination = get(key);
-            if(destination instanceof Record) {
-                value = ((Record) destination).map(options, path);
-            }
-            else if(Sequences.isSequence(destination)) {
-                List<Object> $value = Lists.newArrayList();
-                Sequences.forEach(destination, item -> {
-                    if(item instanceof Record) {
-                        $value.add(((Record) item).map(options, path));
-                    }
-                });
-                value = $value;
-            }
-            else {
-                value = null;
-            }
-        }
-        else {
-            value = get(key);
-        }
-        return new SimpleEntry<>(key, value);
-    }
-
-    /**
      * Return a map that contains all "readable" data in this {@link Record}.
      * <p>
      * To get access to non-readable fields, use the
@@ -2988,6 +3260,20 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return value;
+    }
+
+    /**
+     * Return the {@link DynamicWritePolicy} that governs
+     * {@link #set(String, Object) dynamic writes} to this {@link Record}. If
+     * this {@link Record} is not {@link #assign(Runway) assigned} to a
+     * {@link Runway} instance, the {@link DynamicWritePolicy#permissive()
+     * permissive} default applies.
+     *
+     * @return the governing {@link DynamicWritePolicy}
+     */
+    private DynamicWritePolicy dynamicWritePolicy() {
+        return runway != null ? runway.properties().dynamicWritePolicy()
+                : DynamicWritePolicy.permissive();
     }
 
     /**
@@ -3268,6 +3554,39 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Overwrite the in-memory value of {@code field} with the value the
+     * database currently stores for {@code key} and invalidate the cached audit
+     * trail, without touching any other state in this {@link Record}.
+     *
+     * @param field an {@link #getAtomicableField(String, Record) eligible}
+     *            {@link Field}
+     * @param key the field's name
+     * @throws IllegalStateException if the field is primitive-typed and the
+     *             database no longer stores a value for {@code key}
+     */
+    private void refreshAtomicableField(Field field, String key) {
+        Concourse concourse = connections.request();
+        try {
+            Object stored = Iterables.getFirst(concourse.select(key, id), null);
+            Object fresh = stored != null
+                    ? convert(key, field.getType(), stored, concourse,
+                            new ConcurrentHashMap<>(), null)
+                    : null;
+            Verify.that(fresh != null || !field.getType().isPrimitive(),
+                    "Cannot atomically operate on {} in {} because it no"
+                            + " longer has a stored value",
+                    key, __);
+            Reflection.set(key, fresh, this);
+            clearComputeOnceCache();
+            _audit = null;
+            __checksum = checksum();
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Recursively replace all references to a specific {@link Record} with
      * another {@link Record} throughout the object graph.
      *
@@ -3330,6 +3649,98 @@ public abstract class Record implements Comparable<Record> {
                 set(key, sequence.get());
             }
         });
+    }
+
+    /**
+     * Resolve a single positively named {@code key} into the {@link Entry} that
+     * will be contributed to a {@link #map} result.
+     * <p>
+     * For a bare key, the {@link Entry} is {@code (key, get(key))}. For a
+     * navigation key (e.g., {@code "company.name"}), the {@link Entry} is keyed
+     * by the root and valued by the nested {@link Map} (or list of nested
+     * {@link Map Maps} for a sequence-valued destination) representing the
+     * navigation path's value on the linked {@link Record Records}. A
+     * non-navigable destination resolves to {@code null}.
+     * </p>
+     *
+     * @param key the (possibly navigation) key to resolve
+     * @param options the {@link SerializationOptions} applied along any
+     *            navigation path
+     * @return the resolved {@link Entry}; never {@code null}, though its value
+     *         may be {@code null} when the navigation destination is
+     *         non-navigable
+     */
+    private Entry<String, Object> resolveEntry(String key,
+            SerializationOptions options) {
+        Object value;
+        String[] stops = key.split("\\.");
+        if(stops.length > 1) {
+            key = stops[0];
+            String path = StringUtils.join(stops, '.', 1, stops.length);
+            Object destination = get(key);
+            if(destination instanceof Record) {
+                value = ((Record) destination).map(options, path);
+            }
+            else if(Sequences.isSequence(destination)) {
+                List<Object> $value = Lists.newArrayList();
+                Sequences.forEach(destination, item -> {
+                    if(item instanceof Record) {
+                        $value.add(((Record) item).map(options, path));
+                    }
+                });
+                value = $value;
+            }
+            else {
+                value = null;
+            }
+        }
+        else {
+            value = get(key);
+        }
+        return new SimpleEntry<>(key, value);
+    }
+
+    /**
+     * Atomically store {@code value} for {@code key} in this {@link Record} if
+     * and only if this {@link Record} exists in the database and currently
+     * stores no value for {@code key}.
+     *
+     * @param concourse the {@link Concourse} connection to use; must not
+     *            already be in a transaction
+     * @param key the field name
+     * @param value the database-ready value to store
+     * @return {@code true} if the value is stored
+     */
+    private boolean setIfAbsent(Concourse concourse, String key, Object value) {
+        concourse.stage();
+        try {
+            Map<String, Set<Object>> stored = concourse
+                    .select(ImmutableList.of(SECTION_KEY, key), id);
+            if(stored.getOrDefault(SECTION_KEY, ImmutableSet.of()).isEmpty()) {
+                // Without the section metadata this Record does not exist in
+                // the database (it was never saved, or its data was erased),
+                // so a write here would orphan the value in a record that no
+                // load or find can ever return.
+                concourse.abort();
+                return false;
+            }
+            else if(stored.getOrDefault(key, ImmutableSet.of()).isEmpty()) {
+                concourse.set(key, value, id);
+                return concourse.commit();
+            }
+            else {
+                concourse.abort();
+                return false;
+            }
+        }
+        catch (TransactionException e) {
+            concourse.abort();
+            return false;
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            throw t;
+        }
     }
 
     /**
@@ -3400,6 +3811,113 @@ public abstract class Record implements Comparable<Record> {
             }
 
             return primitive;
+        }
+    }
+
+    /**
+     * Atomically apply {@code update} to the value of {@code key} and return an
+     * {@link AtomicUpdate} that carries both the replaced value and the value
+     * that took effect.
+     * <p>
+     * This is the core loop behind {@link #getAndUpdate(String, UnaryOperator)
+     * getAndUpdate} and {@link #updateAndGet(String, UnaryOperator)
+     * updateAndGet}, which each return one side of the result.
+     * </p>
+     *
+     * @param key the name of the intrinsic field to update
+     * @param update the function that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @return the {@link AtomicUpdate} that took effect
+     * @throws RetryExhaustedException if the update cannot be committed within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or {@code update} returns {@code null}
+     * @throws IllegalStateException if this {@link Record} is not pinned to a
+     *             {@link Runway} instance, has unsaved changes, or is staged
+     *             for deletion
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
+     */
+    private <T> AtomicUpdate<T> updateAtomically(String key,
+            UnaryOperator<T> update) {
+        Verify.that(runway != null, "Cannot perform an atomic update because"
+                + " this Record isn't pinned to a Runway instance");
+        Verify.that(!hasUnsavedChanges(),
+                "Cannot atomically update {} in {} because this Record has"
+                        + " unsaved changes",
+                key, __);
+        Verify.that(!deleted,
+                "Cannot atomically update {} in {} because this Record is"
+                        + " staged for deletion",
+                key, __);
+        AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
+        int attempts = 0;
+        for (;;) {
+            Field field = getAtomicableField(key, this);
+            T current = getAtomicableFieldValue(field, this);
+            T next = update.apply(current);
+            Verify.thatArgument(next != null,
+                    "The update function cannot return null");
+            boolean settled;
+            if(Objects.equals(current, next)) {
+                // Nothing to write, but confirm the read isn't stale before
+                // treating the no-op as settled.
+                Concourse concourse = connections.request();
+                try {
+                    settled = concourse.verify(key,
+                            serializeScalarValue(current), id);
+                }
+                finally {
+                    connections.release(concourse);
+                }
+            }
+            else {
+                settled = exchange(key, next);
+            }
+            if(settled) {
+                return new AtomicUpdate<>(current, next);
+            }
+            else if(++attempts > policy.limit()) {
+                throw new RetryExhaustedException(attempts);
+            }
+            else {
+                policy.backoff(attempts);
+                refreshAtomicableField(field, key);
+            }
+        }
+    }
+
+    /**
+     * Verify that the governing {@link DynamicWritePolicy} permits a
+     * {@link #set(String, Object) dynamic write} to {@code key} and throw a
+     * {@link NonWritableFieldException} if it does not.
+     * <p>
+     * A key that does not name a field is always writable because it stores a
+     * dynamic attribute instead of writing a field.
+     * </p>
+     *
+     * @param key the key name
+     * @throws NonWritableFieldException if {@code key} names a field that the
+     *             governing {@link DynamicWritePolicy} does not permit writing
+     */
+    private void verifyKeyIsDynamicallyWritable(String key) {
+        if(!dynamicData.containsKey(key)) {
+            Field field;
+            try {
+                field = StaticAnalysis.instance().getField(this, key);
+            }
+            catch (IllegalArgumentException e) {
+                field = null;
+            }
+            if(field == null) {
+                field = INTERNAL_FIELDS.get(key);
+            }
+            if(field != null && !dynamicWritePolicy().isWritable(field)) {
+                throw new NonWritableFieldException(AnyStrings.format(
+                        "Cannot set '{}' because it is not a writable field in {}",
+                        key, getClass().getSimpleName()));
+            }
         }
     }
 
@@ -4900,6 +5418,55 @@ public abstract class Record implements Comparable<Record> {
             this.hasModifiedRealms = Record.this._hasModifiedRealms;
             this.checksum = Record.this.__checksum;
             this.author = Record.this._author;
+        }
+
+    }
+
+    /**
+     * The before-and-after state of a successful single-key atomic update.
+     *
+     * @author Jeff Nelson
+     */
+    @Immutable
+    private static final class AtomicUpdate<T> {
+
+        /**
+         * The value that was replaced.
+         */
+        private final T before;
+
+        /**
+         * The value that took effect.
+         */
+        private final T after;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param before the value that was replaced
+         * @param after the value that took effect
+         */
+        private AtomicUpdate(T before, T after) {
+            this.before = before;
+            this.after = after;
+        }
+
+        /**
+         * Return the value that took effect.
+         *
+         * @return the replacement value
+         */
+        public T after() {
+            return after;
+        }
+
+        /**
+         * Return the value that was replaced.
+         *
+         * @return the prior value
+         */
+        public T before() {
+            return before;
         }
 
     }
