@@ -3694,7 +3694,9 @@ public abstract class Record implements Comparable<Record> {
     private boolean setIfAbsent(Concourse concourse, String key, Object value) {
         concourse.stage();
         try {
-            if(concourse.get(SECTION_KEY, id) == null) {
+            Map<String, Set<Object>> stored = concourse
+                    .select(ImmutableList.of(SECTION_KEY, key), id);
+            if(stored.getOrDefault(SECTION_KEY, ImmutableSet.of()).isEmpty()) {
                 // Without the section metadata this Record does not exist in
                 // the database (it was never saved, or its data was erased),
                 // so a write here would orphan the value in a record that no
@@ -3702,7 +3704,7 @@ public abstract class Record implements Comparable<Record> {
                 concourse.abort();
                 return false;
             }
-            else if(concourse.select(key, id).isEmpty()) {
+            else if(stored.getOrDefault(key, ImmutableSet.of()).isEmpty()) {
                 concourse.set(key, value, id);
                 return concourse.commit();
             }
