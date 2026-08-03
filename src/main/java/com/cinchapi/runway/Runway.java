@@ -25,6 +25,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -1065,8 +1066,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // a queued validator throws inside commit(), the in-memory
             // state must be rolled back so a subsequent save() of the
             // same Record still observes hasUnsavedChanges() and writes
-            // the record's fields.
-            Map<Record, Snapshot> snapshots = new HashMap<>();
+            // the record's fields. The map is identity-keyed because a
+            // save can process multiple id-equal instances of the same
+            // record and each instance must restore its own metadata.
+            Map<Record, Snapshot> snapshots = new IdentityHashMap<>();
             Map<Record, Boolean> seen = new HashMap<>();
             Set<Long> deletedIds = new HashSet<>();
             int attempts = 0;
@@ -1094,6 +1097,38 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             record.saveWithinTransaction(saver, seen, snapshots,
                                     deletedIds, preventStaleWrites);
                         }
+                    }
+                    if(!deletedIds.isEmpty()) {
+                        // NOTE: A deletion is final within a save. A record
+                        // staged before a deletion may reference (or hold
+                        // data for) a record that the save has since
+                        // deleted, so reconcile every survivor against the
+                        // deleted ids and re-assert each deletion as the
+                        // last write for its record.
+                        for (Record record : new ArrayList<>(seen.keySet())) {
+                            if(!deletedIds.contains(record.id())
+                                    && record.removeCaptureDeleteReferences(
+                                            deletedIds)) {
+                                // NOTE: The record already passed the stale
+                                // data check when it first saved within
+                                // this transaction, so it is not
+                                // re-validated.
+                                record.saveWithinTransaction(saver, seen,
+                                        snapshots, deletedIds, false);
+                            }
+                            else {
+                                // The record was itself deleted or holds no
+                                // reference to a deleted record, so there
+                                // is nothing to reconcile.
+                            }
+                        }
+                        for (long id : deletedIds) {
+                            saver.clear(id);
+                        }
+                    }
+                    else {
+                        // Nothing was deleted, so every staged write stands
+                        // as recorded.
                     }
                     if(saver.commit()) {
                         // NOTE: Deletion is tracked by id instead of by

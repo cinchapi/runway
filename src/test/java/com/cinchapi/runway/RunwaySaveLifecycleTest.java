@@ -1095,6 +1095,51 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a linked {@link Record} fires its save
+     * notification when it is also passed as a top-level argument of the same
+     * bulk save.
+     * <p>
+     * <strong>Start state:</strong> A freshly created {@link ParentRecord} with
+     * a linked, freshly created {@link ChildRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener.</li>
+     * <li>Call {@code runway.save(parent, child)} so the save processes the
+     * child once as a linked reference and once as a top-level argument.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save listener fires for both {@link Record
+     * Records}.
+     */
+    @Test
+    public void testSaveListenerFiredForLinkedRecordAlsoPassedToBulkSave()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            savedRecords.add(record);
+            latch.countDown();
+        }).build();
+
+        ChildRecord child = new ChildRecord();
+        child.label = "Child";
+        ParentRecord parent = new ParentRecord();
+        parent.name = "Parent";
+        parent.child = child;
+
+        Assert.assertTrue(runway.save(parent, child));
+
+        Assert.assertTrue("Save listener should fire for both records",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(2, savedRecords.size());
+        Assert.assertTrue(savedRecords.contains(parent));
+        Assert.assertTrue(savedRecords.contains(child));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a linked {@link Record} with no
      * unsaved changes does not trigger a save notification when the parent is
      * saved.

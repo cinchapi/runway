@@ -515,6 +515,13 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(1, deletedRecords.size());
         Assert.assertTrue(deletedRecords.contains(target));
 
+        // Assert against the raw stored data (before any load can perform
+        // ad-hoc dangling link cleanup) to prove the capture cleanup was
+        // committed durably
+        Assert.assertTrue(
+                "The capture cleanup must remove the stored reference",
+                client.select("target", parent.id()).isEmpty());
+
         CaptureParent loaded = runway.load(CaptureParent.class, parent.id());
         Assert.assertNull(
                 "Target reference should be null after the capture cleanup",
@@ -684,8 +691,9 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save notification for the parent delivers
-     * the same instance that was saved, and the follow-up save with
-     * {@code preventStaleWrites} succeeds without a {@link StaleDataException}.
+     * the same instance that was saved, the parent's stored reference to the
+     * target is removed, and the follow-up save with {@code preventStaleWrites}
+     * succeeds without a {@link StaleDataException}.
      */
     @Test
     public void testCallerInstanceNotifiedWhenCaptureCleanedRecordInSameSave()
@@ -722,6 +730,13 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(1, deletedRecords.size());
         Assert.assertTrue(deletedRecords.contains(target));
 
+        // Assert against the raw stored data (before any load can perform
+        // ad-hoc dangling link cleanup) to prove the capture cleanup was
+        // committed durably
+        Assert.assertTrue(
+                "The capture cleanup must remove the stored reference",
+                client.select("target", parent.id()).isEmpty());
+
         Record notified = null;
         for (Record record : savedRecords) {
             if(record.id() == parent.id()) {
@@ -754,8 +769,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The delete listener fires for the target, the
-     * parent's updated name persists in the database, and the parent's
-     * reference to the target resolves to {@code null}.
+     * parent's updated name persists in the database, and the parent's stored
+     * reference to the target is removed.
      */
     @Test
     public void testCaptureCleanupDoesNotRevertChangesOfRecordInSameSave()
@@ -783,6 +798,13 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue("Delete listener was not called within timeout",
                 deleteLatch.await(5, TimeUnit.SECONDS));
         Assert.assertTrue(deletedRecords.contains(target));
+
+        // Assert against the raw stored data (before any load can perform
+        // ad-hoc dangling link cleanup) to prove the capture cleanup was
+        // committed durably
+        Assert.assertTrue(
+                "The capture cleanup must remove the stored reference",
+                client.select("target", parent.id()).isEmpty());
 
         CaptureParent loaded = runway.load(CaptureParent.class, parent.id());
         Assert.assertEquals(
@@ -860,6 +882,110 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
                 2, saveCount.get());
         Assert.assertNull(runway.load(JoinTarget.class, target.id()));
         Assert.assertNull(runway.load(JoinParent.class, parent.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link JoinParent} with unsaved
+     * changes cannot be re-created by its own staged writes when it joins a
+     * deletion in the same save (GH-157).
+     * <p>
+     * <strong>Start state:</strong> A saved {@link JoinParent} whose
+     * {@link JoinDelete} field links to a saved {@link JoinTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener.</li>
+     * <li>Modify the parent's name and mark the target with
+     * {@link Record#deleteOnSave()}.</li>
+     * <li>Save both records in bulk, with the target ordered first so the join
+     * deletion clears the parent before the parent's own modified instance
+     * stages its writes.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires for both records and
+     * neither record holds any stored data after the save.
+     */
+    @Test
+    public void testJoinDeletedRecordNotResurrectedByModifiedInstanceInSameSave()
+            throws Exception {
+        CountDownLatch deleteLatch = new CountDownLatch(2);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        JoinTarget target = new JoinTarget();
+        target.name = "Join Target";
+        JoinParent parent = new JoinParent();
+        parent.name = "Join Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+
+        parent.name = "Join Parent (Updated)";
+        target.deleteOnSave();
+        Assert.assertTrue(runway.save(target, parent));
+
+        Assert.assertTrue(
+                "Delete listener did not fire for both records within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(2, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertTrue("The join deleted record must not survive the save",
+                client.describe(parent.id()).isEmpty());
+        Assert.assertNull(runway.load(JoinParent.class, parent.id()));
+        Assert.assertNull(runway.load(JoinTarget.class, target.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a failed save restores the unsaved
+     * changes of a caller-held {@link Record} even when the save also processed
+     * an internally loaded copy of it for {@link CaptureDelete} cleanup.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CaptureParent} whose
+     * {@link CaptureDelete} field links to a saved {@link CaptureTarget}, and a
+     * saved {@link UniqueRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Modify the parent's name and mark the target with
+     * {@link Record#deleteOnSave()}.</li>
+     * <li>Save the target, the parent and a {@link UniqueRecord} that violates
+     * its unique constraint, with the target ordered first so the cleanup copy
+     * of the parent saves before the caller's instance.</li>
+     * <li>After the save fails, save the parent alone.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The failed save does not consume the parent's
+     * unsaved changes, and the follow-up save persists the updated name.
+     */
+    @Test
+    public void testFailedSaveRestoresCallerInstanceProcessedAlongsideCopy()
+            throws Exception {
+        CaptureTarget target = new CaptureTarget();
+        target.name = "Capture Target";
+        CaptureParent parent = new CaptureParent();
+        parent.name = "Capture Parent";
+        parent.target = target;
+        UniqueRecord original = new UniqueRecord();
+        original.token = "GH-157";
+        Assert.assertTrue(runway.save(parent, target, original));
+
+        parent.name = "Capture Parent (Updated)";
+        target.deleteOnSave();
+        UniqueRecord duplicate = new UniqueRecord();
+        duplicate.token = "GH-157";
+        Assert.assertFalse("The save must fail on the unique violation",
+                runway.save(target, parent, duplicate));
+
+        Assert.assertTrue("The failed save must not consume unsaved changes",
+                parent.hasUnsavedChanges());
+        Assert.assertTrue(runway.save(parent));
+        CaptureParent loaded = runway.load(CaptureParent.class, parent.id());
+        Assert.assertEquals("Capture Parent (Updated)", loaded.name);
     }
 
     /**
@@ -989,5 +1115,21 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
          * A name that identifies the record in tests.
          */
         public String name;
+    }
+
+    /**
+     * A test {@link Record} with a {@link Unique} field, used to force a save
+     * to fail.
+     *
+     * @author Jeff Nelson
+     */
+    public static class UniqueRecord extends Record {
+
+        /**
+         * A value that must be unique across all {@link UniqueRecord
+         * UniqueRecords}.
+         */
+        @Unique
+        public String token;
     }
 }
