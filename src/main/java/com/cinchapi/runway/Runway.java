@@ -715,6 +715,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the updated {@link Record}, or {@code null} if none matches
      * @throws RetryExhaustedException if the update cannot commit within the
      *             bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or {@code update} returns {@code null} or
+     *             a value that is not an instance of the field's type
+     * @throws IllegalStateException if the value produced by {@code update}
+     *             violates the field's constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
      */
     public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
@@ -748,6 +756,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *             matches
      * @throws RetryExhaustedException if the update cannot commit within the
      *             bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or {@code update} returns {@code null} or
+     *             a value that is not an instance of the field's type
+     * @throws IllegalStateException if the value produced by {@code update}
+     *             violates the field's constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
      */
     public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
@@ -787,6 +803,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @return the updated {@link Record}, or {@code null} if none matches
      * @throws RetryExhaustedException if the update cannot commit within the
      *             bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or {@code update} returns {@code null} or
+     *             a value that is not an instance of the field's type
+     * @throws IllegalStateException if the value produced by {@code update}
+     *             violates the field's constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
      */
     public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
@@ -862,6 +886,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @throws DuplicateEntryException if more than one record matches
      * @throws RetryExhaustedException if the update cannot commit within the
      *             bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or {@code update} returns {@code null} or
+     *             a value that is not an instance of the field's type
+     * @throws IllegalStateException if the value produced by {@code update}
+     *             violates the field's constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
      */
     public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
