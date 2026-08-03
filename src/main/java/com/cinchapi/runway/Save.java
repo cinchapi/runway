@@ -31,14 +31,14 @@ import javax.annotation.Nullable;
 import com.cinchapi.runway.db.Saver;
 
 /**
- * A {@link SaveContext} tracks the state of one save.
+ * A {@link Save} is one logical save operation in motion.
  * <p>
  * A save can process multiple in-memory instances of the same logical record
  * (e.g., the caller's instance alongside a copy loaded for
- * {@link CaptureDelete} or {@link JoinDelete} handling). The context keeps one
+ * {@link CaptureDelete} or {@link JoinDelete} handling). The save keeps one
  * entry per record id that pairs the instance that currently speaks for the
- * record with the record's {@link Outcome}, so every question the save asks
- * about a record has exactly one answer.
+ * record with the record's {@link Outcome}, so every question asked about a
+ * record during the save has exactly one answer.
  * </p>
  * <p>
  * An {@link Outcome} is monotonic: it only ever rises from {@link Outcome#CLEAN
@@ -47,26 +47,26 @@ import com.cinchapi.runway.db.Saver;
  * later instance of the same record.
  * </p>
  * <p>
- * The context also holds the metadata {@link Record.Snapshot snapshots} needed
- * to {@link #restore() restore} every participating instance if the save fails,
+ * The save also holds the metadata {@link Record.Snapshot snapshots} needed to
+ * {@link #restore() restore} every participating instance if the save fails,
  * and the queue of companion deletions that annotations like
  * {@link CascadeDelete} and {@link JoinDelete} schedule. Snapshots are
  * identity-keyed, because id-equal copies must each restore their own metadata,
- * and they survive {@link #begin(Saver) retry attempts}; all other state is
+ * and they survive {@link #stage(Saver) retry attempts}; all other state is
  * per-attempt.
  * </p>
  * <p>
- * The context also owns the attempt lifecycle: {@link #begin(Saver) begin}
- * stages an attempt's transaction, {@link #commit() commit} enforces deletion
- * finality before committing it, and {@link #abort() abort} discards it. The
- * driver of a save reaches the transaction only through those methods, while
- * each participating {@link Record} stages its reads and writes through the
- * {@link #saver() Saver} that the context carries.
+ * The save also owns the attempt lifecycle: {@link #stage(Saver) stage} opens
+ * an attempt's transaction, {@link #commit() commit} enforces deletion finality
+ * before committing it, and {@link #abort() abort} discards it. The driver of a
+ * save reaches the transaction only through those methods, while each
+ * participating {@link Record} stages its reads and writes through the
+ * {@link #saver() Saver} that the save carries.
  * </p>
  *
  * @author Jeff Nelson
  */
-final class SaveContext {
+final class Save {
 
     /**
      * One {@link Entry} per record id processed within the active attempt.
@@ -105,7 +105,7 @@ final class SaveContext {
      * @param preventStaleWrite whether the save rejects any {@link Record} that
      *            has been externally modified
      */
-    SaveContext(boolean preventStaleWrite) {
+    Save(boolean preventStaleWrite) {
         this.preventStaleWrite = preventStaleWrite;
     }
 
@@ -115,21 +115,6 @@ final class SaveContext {
      */
     void abort() {
         saver.abort();
-    }
-
-    /**
-     * Begin a save attempt against {@code saver}: stage the attempt's
-     * transaction and forget the per-attempt state. The {@link Record.Snapshot
-     * snapshots} are kept, so a retry can still {@link #restore() restore}
-     * instances that participated in an earlier attempt.
-     *
-     * @param saver the {@link Saver} that owns the attempt's transaction
-     */
-    void begin(Saver saver) {
-        this.saver = saver;
-        entries.clear();
-        pendingDeletions.clear();
-        saver.stage();
     }
 
     /**
@@ -185,7 +170,7 @@ final class SaveContext {
      * @param consumer the consumer that accepts each speaking instance and the
      *            record's {@link Outcome}
      */
-    void each(BiConsumer<Record, Outcome> consumer) {
+    void forEach(BiConsumer<Record, Outcome> consumer) {
         for (Entry entry : entries.values()) {
             consumer.accept(entry.instance, entry.outcome);
         }
@@ -306,6 +291,21 @@ final class SaveContext {
         if(!snapshots.containsKey(record)) {
             snapshots.put(record, record.snapshot());
         }
+    }
+
+    /**
+     * Stage the transaction for a new attempt against {@code saver} and forget
+     * the per-attempt state. The {@link Record.Snapshot snapshots} are kept, so
+     * a retry can still {@link #restore() restore} instances that participated
+     * in an earlier attempt.
+     *
+     * @param saver the {@link Saver} that owns the attempt's transaction
+     */
+    void stage(Saver saver) {
+        this.saver = saver;
+        entries.clear();
+        pendingDeletions.clear();
+        saver.stage();
     }
 
     /**

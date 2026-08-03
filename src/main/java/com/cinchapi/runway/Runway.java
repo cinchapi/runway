@@ -1039,19 +1039,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Record current = null;
         try {
             boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
-            SaveContext context = new SaveContext(preventStaleWrites);
+            Save save = new Save(preventStaleWrites);
             int attempts = 0;
             while (true) {
                 Saver saver = supportsBulkCommands ? new BatchSaver(concourse)
                         : new IncrementalSaver(concourse);
                 try {
-                    context.begin(saver);
+                    save.stage(saver);
                     for (Record record : records) {
                         Supplier<Boolean> override = record.overrideSave();
                         if(override != null && !override.get()) {
                             // Early exit the entire transaction because an
                             // overriden save has failed.
-                            context.abort();
+                            save.abort();
                             return false;
                         }
                         else if(override != null) {
@@ -1060,16 +1060,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         else {
                             current = record;
                             record.assign(this);
-                            record.saveWithinTransaction(context);
+                            record.saveWithinTransaction(save);
                         }
                     }
-                    if(context.commit()) {
-                        context.each((record, outcome) -> {
-                            if(outcome == SaveContext.Outcome.DELETED) {
+                    if(save.commit()) {
+                        save.forEach((record, outcome) -> {
+                            if(outcome == Save.Outcome.DELETED) {
                                 enqueueDeleteNotification(record);
                                 record.checkpoint();
                             }
-                            else if(outcome == SaveContext.Outcome.CHANGED) {
+                            else if(outcome == Save.Outcome.CHANGED) {
                                 enqueueSaveNotification(record);
                                 record.checkpoint();
                             }
@@ -1082,7 +1082,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return true;
                     }
                     else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {
-                        context.restore();
+                        save.restore();
                         return false;
                     }
                     else {
@@ -1091,7 +1091,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     }
                 }
                 catch (Throwable t) {
-                    context.abort();
+                    save.abort();
                     if(t instanceof TransactionException
                             && retrySpuriousSaveFailure
                             && ++attempts <= MAX_SPURIOUS_SAVE_RETRIES
@@ -1102,15 +1102,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         // because linked records that are recursively saved may
                         // show false positives when concurrent saves share the
                         // same linked record.
-                        context.restore();
+                        save.restore();
                         continue;
                     }
                     else if(t instanceof StaleDataException) {
-                        context.restore();
+                        save.restore();
                         throw (StaleDataException) t;
                     }
                     else {
-                        for (Record record : context.records()) {
+                        for (Record record : save.records()) {
                             if(record.inZombieState(concourse)) {
                                 // TODO: this is currently disabled because
                                 // zombie detection throughout the codebase is
@@ -1119,7 +1119,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 // concourse.clear(record.id());
                             }
                         }
-                        context.restore();
+                        save.restore();
                         // A deferred Unique check throws from commit() after
                         // the loop advances #current, so blame the Record
                         // the violation names rather than the last one.
