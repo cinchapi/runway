@@ -2640,12 +2640,11 @@ public abstract class Record implements Comparable<Record> {
             // This Record hasn't been modified, so simply go through each
             // field and try to save any outgoing Record references that contain
             // modifications.
-            if(priorChanged != null && priorChanged) {
-                // NOTE: An id-equal instance already staged writes within
-                // this save, so the record's data still changes at commit
-                // and the save notification must not be lost.
-            }
-            else {
+            // NOTE: Downgrade the #seen entry unless an id-equal instance
+            // already staged writes within this save; in that case the
+            // record's data still changes at commit and the save
+            // notification must not be lost.
+            if(priorChanged == null || !priorChanged) {
                 seen.replace(this, true, false);
             }
             for (Field field : fields()) {
@@ -3200,16 +3199,13 @@ public abstract class Record implements Comparable<Record> {
                             break;
                         }
                     }
-                    if(live) {
-                        // NOTE: An id-equal instance of this Record is
-                        // already part of the active save, so its state
-                        // governs the record's data and the pre-commit
-                        // reconciliation in Runway#save removes the
-                        // reference from it; a re-save of a freshly loaded
-                        // copy would overwrite staged changes with stale
-                        // values.
-                    }
-                    else {
+                    // NOTE: When an id-equal instance of this Record is
+                    // part of the active save, its state governs the
+                    // record's data and the pre-commit reconciliation in
+                    // Runway#save removes the reference from it; a re-save
+                    // of a freshly loaded copy would overwrite staged
+                    // changes with stale values.
+                    if(!live) {
                         String __ = (String) Iterables
                                 .getLast(entry.getValue());
                         Class<? extends Record> clazz = Reflection
