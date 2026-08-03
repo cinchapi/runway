@@ -304,11 +304,15 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} does not name an
      *             intrinsic field, or names one that is transient, multi-value,
      *             or {@link Unique}
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field
      */
     private static Field getAtomicableField(String key, Record record) {
         Field field = StaticAnalysis.instance().getField(record, key);
         Verify.thatArgument(field != null, "{} is not an intrinsic field of {}",
                 key, record.__);
+        record.verifyKeyIsDynamicallyWritable(key);
         Verify.thatArgument(!Modifier.isTransient(field.getModifiers()),
                 "Cannot atomically operate on {} in {} because it is"
                         + " transient and never stored",
@@ -1297,13 +1301,19 @@ public abstract class Record implements Comparable<Record> {
      * replacement, a {@link ValidatedBy} field refuses a replacement that fails
      * validation, and every field refuses a replacement that is not an instance
      * of its type (boxed, when the field is primitive); each refusal happens
-     * before anything is written.
+     * before anything is written. The write is also subject to the same
+     * {@link DynamicWritePolicy} that governs {@link #set(String, Object) set},
+     * so a field the policy refuses cannot be exchanged.
      * </p>
      * <p>
-     * A {@link Record} replacement must have no unsaved changes, and that
-     * includes one that was never {@link #save() saved}: the write stores a
-     * link to the replacement without saving it, so an unsaved replacement
-     * would leave the link pointing at state the database does not hold.
+     * A {@link Record} replacement must have no staged changes; that includes
+     * one that was never {@link #save() saved}, one with unsaved
+     * {@link #realms() realm} membership changes and one that is staged for
+     * deletion. The write stores a link to the replacement without saving it,
+     * so a replacement with staged changes would leave the link pointing at
+     * state the database does not hold. For the same reason, the replacement
+     * must be persisted in the same database as this {@link Record}; the write
+     * stores the link without copying any data across databases.
      * </p>
      * <p>
      * <strong>NOTE:</strong> This is a targeted write, not a {@link #save()
@@ -1320,11 +1330,14 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations, or {@code replacement} is {@code null}, is
      *             not an instance of the field's type, or is a {@link Record}
-     *             with unsaved changes
+     *             with staged changes
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, has no in-memory value for
      *             {@code key}, or {@code replacement} violates the field's
      *             constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
      */
     public final <T> boolean exchange(String key, T replacement) {
         Verify.that(runway != null, "Cannot perform an atomic exchange"
@@ -1351,9 +1364,9 @@ public abstract class Record implements Comparable<Record> {
         else {
             target = null;
         }
-        Verify.thatArgument(target == null || !target.hasUnsavedChanges(),
+        Verify.thatArgument(target == null || !target.hasStagedChanges(),
                 "Cannot atomically operate on {} in {} because the"
-                        + " replacement has unsaved changes and this"
+                        + " replacement has staged changes and this"
                         + " targeted write cannot save it",
                 key, __);
         checkIsSavable(field, key, replacement);
@@ -1424,20 +1437,27 @@ public abstract class Record implements Comparable<Record> {
      * its place. The replacement is written with
      * {@link #exchange(String, Object) exchange} semantics, so it only lands if
      * the database still holds the value the function was applied to. When a
-     * concurrent writer wins the race, this {@link Record} is {@link #refresh()
-     * refreshed} and the {@code update} function is re-applied to the fresh
-     * value; the function may therefore run more than once and must be safe to
-     * do so. Retries are governed by the {@link AtomicRetryPolicy} configured
-     * on the {@link Runway} instance this {@link Record} is pinned to.
+     * concurrent writer wins the race, the current stored value for {@code key}
+     * is re-read and the {@code update} function is re-applied to it; the
+     * function may therefore run more than once and must be safe to do so.
+     * Retries are governed by the {@link AtomicRetryPolicy} configured on the
+     * {@link Runway} instance this {@link Record} is pinned to.
      * </p>
      * <p>
      * This {@link Record} must not have unsaved changes; that includes a
-     * {@link Record} that was never {@link #save() saved} and one with unsaved
-     * {@link #realms() realm} membership changes. A retry {@link #refresh()
-     * refreshes} this {@link Record} from the database, which would silently
-     * discard staged state, so the operation refuses a dirty {@link Record}
-     * before anything is read or written. {@link #save() Save} or
-     * {@link #refresh() refresh} first.
+     * {@link Record} that was never {@link #save() saved}. A retry overwrites
+     * the in-memory value of {@code key} with the current stored value, so the
+     * operation refuses a dirty {@link Record} before anything is read or
+     * written; {@link #save() save} or {@link #refresh() refresh} first. A
+     * {@link Record} that is staged for deletion is also refused.
+     * </p>
+     * <p>
+     * A retry touches nothing but {@code key}: staged {@link #realms() realm}
+     * changes and loaded linked {@link Record Records} elsewhere in the object
+     * graph survive untouched. If the value of {@code key} itself is a linked
+     * {@link Record} with staged changes, a retry fails instead of replacing
+     * it, and if the stored value for {@code key} is concurrently removed, the
+     * operation fails because there is nothing left to update.
      * </p>
      * <p>
      * If the {@code update} function returns a value equal to its input,
@@ -1461,8 +1481,13 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has unsaved changes, or has no
-     *             in-memory value for {@code key}
+     *             {@link Runway} instance, has unsaved changes, is staged for
+     *             deletion, has no in-memory or stored value for {@code key},
+     *             or must retry while the value of {@code key} is a linked
+     *             {@link Record} with staged changes
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
      */
     public final <T> T getAndUpdate(String key, UnaryOperator<T> update) {
         return updateAtomically(key, update).before();
@@ -2076,8 +2101,13 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has unsaved changes, or has no
-     *             in-memory value for {@code key}
+     *             {@link Runway} instance, has unsaved changes, is staged for
+     *             deletion, has no in-memory or stored value for {@code key},
+     *             or must retry while the value of {@code key} is a linked
+     *             {@link Record} with staged changes
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
         return updateAtomically(key, update).after();
@@ -2315,6 +2345,18 @@ public abstract class Record implements Comparable<Record> {
         else {
             return !__checksum.equals(checksum());
         }
+    }
+
+    /**
+     * Return {@code true} if this {@link Record} has any staged state that a
+     * {@link #save() save} would persist: unsaved field changes, unsaved
+     * {@link #realms() realm} membership changes or a pending
+     * {@link #deleteOnSave() deletion}.
+     *
+     * @return {@code true} if there is staged state
+     */
+    private boolean hasStagedChanges() {
+        return hasUnsavedChanges() || _hasModifiedRealms || deleted;
     }
 
     /**
@@ -3702,6 +3744,62 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Overwrite the in-memory value of {@code field} with the value the
+     * database currently stores for {@code key}, without touching any other
+     * state in this {@link Record}.
+     * <p>
+     * If the current in-memory value is a linked {@link Record} with
+     * {@link #hasStagedChanges() staged changes}, this method refuses to
+     * replace it so those changes are never silently dropped from the object
+     * graph. If the database no longer stores a value for {@code key}, there is
+     * nothing left to atomically operate on.
+     * </p>
+     *
+     * @param field an {@link #getAtomicableField(String, Record) eligible}
+     *            {@link Field}
+     * @param key the field's name
+     * @throws IllegalStateException if the current in-memory value is a linked
+     *             {@link Record} with staged changes, or if the database no
+     *             longer stores a value for {@code key}
+     */
+    private void refreshAtomicableField(Field field, String key) {
+        Object current = getFieldValue(field, this);
+        Record link;
+        if(current instanceof Record) {
+            link = (Record) current;
+        }
+        else if(current instanceof DeferredReference) {
+            link = ((DeferredReference<?>) current).$ref();
+        }
+        else {
+            link = null;
+        }
+        Verify.that(link == null || !link.hasStagedChanges(),
+                "Cannot retry the atomic update of {} in {} because the"
+                        + " linked Record it holds has staged changes that"
+                        + " the retry would discard",
+                key, __);
+        Concourse concourse = connections.request();
+        try {
+            Object stored = Iterables.getFirst(concourse.select(key, id), null);
+            Object fresh = stored != null
+                    ? convert(key, field.getType(), stored, concourse,
+                            new ConcurrentHashMap<>(), null)
+                    : null;
+            Verify.that(fresh != null,
+                    "Cannot atomically operate on {} in {} because it no"
+                            + " longer has a stored value",
+                    key, __);
+            Reflection.set(key, fresh, this);
+            clearComputeOnceCache();
+            __checksum = checksum();
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Atomically apply {@code update} to the value of {@code key} and return an
      * {@link AtomicUpdate} that carries both the replaced value and the value
      * that took effect.
@@ -3720,8 +3818,13 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has unsaved changes, or has no
-     *             in-memory value for {@code key}
+     *             {@link Runway} instance, has unsaved changes, is staged for
+     *             deletion, has no in-memory or stored value for {@code key},
+     *             or must retry while the value of {@code key} is a linked
+     *             {@link Record} with staged changes
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
      */
     private <T> AtomicUpdate<T> updateAtomically(String key,
             UnaryOperator<T> update) {
@@ -3731,15 +3834,15 @@ public abstract class Record implements Comparable<Record> {
                 "Cannot atomically update {} in {} because this Record has"
                         + " unsaved changes",
                 key, __);
-        Verify.that(!_hasModifiedRealms,
-                "Cannot atomically update {} in {} because this Record has"
-                        + " unsaved realm changes",
+        Verify.that(!deleted,
+                "Cannot atomically update {} in {} because this Record is"
+                        + " staged for deletion",
                 key, __);
         AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
         int attempts = 0;
         for (;;) {
-            T current = getAtomicableFieldValue(getAtomicableField(key, this),
-                    this);
+            Field field = getAtomicableField(key, this);
+            T current = getAtomicableFieldValue(field, this);
             T next = update.apply(current);
             boolean settled;
             if(Objects.equals(current, next)) {
@@ -3765,7 +3868,7 @@ public abstract class Record implements Comparable<Record> {
             }
             else {
                 policy.backoff(attempts);
-                refresh();
+                refreshAtomicableField(field, key);
             }
         }
     }
