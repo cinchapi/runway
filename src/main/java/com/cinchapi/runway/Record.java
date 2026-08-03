@@ -1382,9 +1382,8 @@ public abstract class Record implements Comparable<Record> {
      * @param key the name of the field that was written
      * @param replacement the value that now holds in the database
      * @param clean {@code true} if this {@link Record} had no unsaved changes
-     *            when the write began; the record and the database were in sync
-     *            and the write kept them in sync, so the checksum is refreshed
-     *            to prevent a later save from re-writing every field
+     *            when the write began, in which case it reports none after this
+     *            method returns
      */
     void applyAtomicWrite(String key, Object replacement, boolean clean) {
         Reflection.set(key, replacement, this);

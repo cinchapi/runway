@@ -761,10 +761,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The field eligibility rules, value constraints, and targeted-write
      * semantics of {@link Record#getAndUpdate(String, UnaryOperator)
      * getAndUpdate} apply to {@code key} and {@code update}. Concurrent callers
-     * contending for the same {@link Record} are mutually excluded: at most one
-     * commits and the rest retry against fresh state, per the governing
-     * {@link AtomicRetryPolicy}, so the {@code update} operator may run more
-     * than once and must be safe to do so.
+     * contending for the same {@link Record} are mutually excluded, and the
+     * {@code update} operator may run more than once, so it must be free of
+     * side effects.
      * <p>
      * <strong>NOTE:</strong> This method operates solely on {@link Record
      * Records} persisted in the database; records supplied by an attached
@@ -836,10 +835,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * The field eligibility rules, value constraints, and targeted-write
      * semantics of {@link Record#getAndUpdate(String, UnaryOperator)
      * getAndUpdate} apply to {@code key} and {@code update}. Concurrent callers
-     * contending for the same {@link Record} are mutually excluded: at most one
-     * commits and the rest retry against fresh state, per the governing
-     * {@link AtomicRetryPolicy}, so the {@code update} operator may run more
-     * than once and must be safe to do so.
+     * contending for the same {@link Record} are mutually excluded, and the
+     * {@code update} operator may run more than once, so it must be free of
+     * side effects.
      * <p>
      * <strong>NOTE:</strong> This method operates solely on {@link Record
      * Records} persisted in the database; records supplied by an attached
@@ -1555,6 +1553,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param reader the {@link Reader} that records the read when the selection
      *            can be resolved with a single recorded query
      * @param selection the {@link LoadClassSelection} to resolve
+     * @param transaction the active {@link Transaction} view, or {@code null}
+     *            when resolving through the connection pool
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}, whose companion
      *         value (when a filter without pagination is applied) carries the
@@ -1638,6 +1638,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param reader the {@link Reader} that records the count when the
      *            selection can be resolved with a single recorded query
      * @param selection the {@link CountSelection} to resolve
+     * @param transaction the active {@link Transaction} view, or {@code null}
+     *            when resolving through the connection pool
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}; no companion value
      *         is carried because the underlying {@link #fetch(Selection)} (when
@@ -1695,6 +1697,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param reader the {@link Reader} that records the read when the selection
      *            can be resolved with a single recorded query
      * @param selection the {@link FindSelection} to resolve
+     * @param transaction the active {@link Transaction} view, or {@code null}
+     *            when resolving through the connection pool
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}, whose companion
      *         value (when a filter without pagination is applied) carries the
@@ -1806,6 +1810,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param reader the {@link Reader} that records the underlying read
      * @param selection the {@link FirstSelection} to resolve
+     * @param transaction the active {@link Transaction} view, or {@code null}
+     *            when resolving through the connection pool
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}
      */
@@ -1829,6 +1835,58 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         // propagated.
         return inner.map(selected -> new SelectResult<>(
                 Iterables.getFirst(selected.result, null)));
+    }
+
+    /**
+     * Resolve {@code selection} against the database by dispatching to the
+     * type-appropriate resolver, recording any required reads on {@code reader}
+     * and mutating {@code selection} with its result when the reads resolve.
+     *
+     * @param reader the {@link Reader} that records the required reads
+     * @param selection the {@link DatabaseSelection} to resolve
+     * @param transaction the {@link Transaction} view on whose behalf the
+     *            resolution runs, or {@code null} when resolving through the
+     *            connection pool; when non-{@code null}, nested reads and
+     *            private readers stay on the view's connection so they join its
+     *            transaction
+     * @param <T> the {@link Record} type
+     */
+    @SuppressWarnings({ "rawtypes" })
+    private <T extends Record> void $selectFromDatabase(Reader reader,
+            DatabaseSelection<T> selection, @Nullable Transaction transaction) {
+        Pending<? extends SelectResult<?>> pending;
+        if(selection instanceof CountSelection) {
+            pending = $selectCount(reader, (CountSelection<T>) selection,
+                    transaction);
+        }
+        else if(selection instanceof LoadRecordSelection) {
+            pending = $selectRecord(reader, (LoadRecordSelection<T>) selection);
+        }
+        else if(selection instanceof LoadClassSelection) {
+            pending = $selectClass(reader, (LoadClassSelection<T>) selection,
+                    transaction);
+        }
+        else if(selection instanceof FindSelection) {
+            pending = $selectCriteria(reader, (FindSelection<T>) selection,
+                    transaction);
+        }
+        else if(selection instanceof UniqueSelection) {
+            pending = $selectUnique(reader, (UniqueSelection<T>) selection,
+                    transaction);
+        }
+        else if(selection instanceof FirstSelection) {
+            pending = $selectFirst(reader, (FirstSelection<T>) selection,
+                    transaction);
+        }
+        else {
+            throw new IllegalStateException(
+                    "Unsupported Selection type " + selection.getClass());
+        }
+        pending.onResolve(res -> {
+            ((DatabaseSelection) selection).setResult(res.result);
+            selection.cacheValue = res.cacheValue;
+            selection.setState(Selection.State.FINISHED);
+        });
     }
 
     /**
@@ -2022,6 +2080,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param reader the {@link Reader} that records the underlying read
      * @param selection the {@link UniqueSelection} to resolve
+     * @param transaction the active {@link Transaction} view, or {@code null}
+     *            when resolving through the connection pool
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}, whose companion
      *         value carries any companion value produced by the inner query
@@ -2106,55 +2166,16 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Resolve {@code selection} against the database by dispatching to the
-     * type-appropriate resolver, recording any required reads on {@code reader}
-     * and mutating {@code selection} with its result when the reads resolve.
+     * Return the {@link DatabaseInterface} through which a resolver's nested
+     * reads must execute: the transactional view when one is active, and this
+     * {@link Runway} instance otherwise.
      *
-     * @param reader the {@link Reader} that records the required reads
-     * @param selection the {@link DatabaseSelection} to resolve
-     * @param transaction the {@link Transaction} view on whose behalf the
-     *            resolution runs, or {@code null} when resolving through the
-     *            connection pool; when non-{@code null}, nested reads and
-     *            private readers stay on the view's connection so they join its
-     *            transaction
-     * @param <T> the {@link Record} type
+     * @param transaction the active {@link Transaction} view, or {@code null}
+     *            when resolving through the connection pool
+     * @return the {@link DatabaseInterface} for nested reads
      */
-    @SuppressWarnings({ "rawtypes" })
-    private <T extends Record> void $selectFromDatabase(Reader reader,
-            DatabaseSelection<T> selection, @Nullable Transaction transaction) {
-        Pending<? extends SelectResult<?>> pending;
-        if(selection instanceof CountSelection) {
-            pending = $selectCount(reader, (CountSelection<T>) selection,
-                    transaction);
-        }
-        else if(selection instanceof LoadRecordSelection) {
-            pending = $selectRecord(reader, (LoadRecordSelection<T>) selection);
-        }
-        else if(selection instanceof LoadClassSelection) {
-            pending = $selectClass(reader, (LoadClassSelection<T>) selection,
-                    transaction);
-        }
-        else if(selection instanceof FindSelection) {
-            pending = $selectCriteria(reader, (FindSelection<T>) selection,
-                    transaction);
-        }
-        else if(selection instanceof UniqueSelection) {
-            pending = $selectUnique(reader, (UniqueSelection<T>) selection,
-                    transaction);
-        }
-        else if(selection instanceof FirstSelection) {
-            pending = $selectFirst(reader, (FirstSelection<T>) selection,
-                    transaction);
-        }
-        else {
-            throw new IllegalStateException(
-                    "Unsupported Selection type " + selection.getClass());
-        }
-        pending.onResolve(res -> {
-            ((DatabaseSelection) selection).setResult(res.result);
-            selection.cacheValue = res.cacheValue;
-            selection.setState(Selection.State.FINISHED);
-        });
+    private DatabaseInterface api(@Nullable Transaction transaction) {
+        return transaction != null ? transaction : this;
     }
 
     /**
@@ -2865,19 +2886,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Return the {@link DatabaseInterface} through which a resolver's nested
-     * reads must execute: the transactional view when one is active, and this
-     * {@link Runway} instance otherwise.
-     *
-     * @param transaction the active {@link Transaction} view, or {@code null}
-     *            when resolving through the connection pool
-     * @return the {@link DatabaseInterface} for nested reads
-     */
-    private DatabaseInterface api(@Nullable Transaction transaction) {
-        return transaction != null ? transaction : this;
-    }
-
-    /**
      * Return a private synchronous {@link Reader} for a resolver that must
      * drive its own reads: bound to the {@code transaction} view's staged
      * connection when one is active, and borrowed from the connection pool
@@ -2899,13 +2907,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * {@code update} to the value of {@code key}, and commit the find and the
      * write as one transaction.
      * <p>
-     * The find executes through a {@link Transaction} view, so everything it
-     * reads joins the transaction's conflict footprint: a concurrent commit
-     * that overlaps the read preempts the attempt, the attempt aborts, and the
-     * whole cycle (re-find, re-apply, re-write) is retried per the governing
-     * {@link AtomicRetryPolicy} until it commits or the policy's limit is
-     * exhausted. Any other failure aborts without a retry and propagates,
-     * having neither mutated nor committed anything.
+     * The find and the write share one transaction, so concurrent callers
+     * contending for the same {@link Record} are mutually excluded and the
+     * {@code update} operator may run more than once. If the update cannot
+     * commit within the bounds of the governing {@link AtomicRetryPolicy}, then
+     * a {@link RetryExhaustedException} is thrown and nothing is changed. Any
+     * other failure propagates without committing.
      * <p>
      * A {@code null} {@code order} requires the match to be unique: when more
      * than one record matches, a {@link DuplicateEntryException} propagates. A
@@ -3037,6 +3044,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
         /**
+         * Set the {@link AtomicRetryPolicy} that governs how atomic
+         * read-modify-write operations respond to persistent contention.
+         * <p>
+         * The default is {@link AtomicRetryPolicy#defaults()}.
+         * </p>
+         *
+         * @param atomicRetryPolicy the {@link AtomicRetryPolicy} to use
+         * @return this builder
+         */
+        public Builder atomicRetryPolicy(AtomicRetryPolicy atomicRetryPolicy) {
+            this.atomicRetryPolicy = Preconditions
+                    .checkNotNull(atomicRetryPolicy);
+            return this;
+        }
+
+        /**
          * Build the configured {@link Runway} and return the instance.
          *
          * @return a {@link Runway} instance
@@ -3102,22 +3125,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
 
             return db;
-        }
-
-        /**
-         * Set the {@link AtomicRetryPolicy} that governs how atomic
-         * read-modify-write operations respond to persistent contention.
-         * <p>
-         * The default is {@link AtomicRetryPolicy#defaults()}.
-         * </p>
-         *
-         * @param atomicRetryPolicy the {@link AtomicRetryPolicy} to use
-         * @return this builder
-         */
-        public Builder atomicRetryPolicy(AtomicRetryPolicy atomicRetryPolicy) {
-            this.atomicRetryPolicy = Preconditions
-                    .checkNotNull(atomicRetryPolicy);
-            return this;
         }
 
         /**
