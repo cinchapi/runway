@@ -3564,38 +3564,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Atomically store {@code value} for {@code key} in this {@link Record} if
-     * and only if the database currently stores no value for {@code key}.
-     *
-     * @param concourse the {@link Concourse} connection to use; must not
-     *            already be in a transaction
-     * @param key the field name
-     * @param value the database-ready value to store
-     * @return {@code true} if the value is stored
-     */
-    private boolean setIfAbsent(Concourse concourse, String key, Object value) {
-        concourse.stage();
-        try {
-            if(concourse.select(key, id).isEmpty()) {
-                concourse.set(key, value, id);
-                return concourse.commit();
-            }
-            else {
-                concourse.abort();
-                return false;
-            }
-        }
-        catch (TransactionException e) {
-            concourse.abort();
-            return false;
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            throw t;
-        }
-    }
-
-    /**
      * Recursively replace all references to a specific {@link Record} with
      * another {@link Record} throughout the object graph.
      *
@@ -3707,6 +3675,38 @@ public abstract class Record implements Comparable<Record> {
             value = get(key);
         }
         return new SimpleEntry<>(key, value);
+    }
+
+    /**
+     * Atomically store {@code value} for {@code key} in this {@link Record} if
+     * and only if the database currently stores no value for {@code key}.
+     *
+     * @param concourse the {@link Concourse} connection to use; must not
+     *            already be in a transaction
+     * @param key the field name
+     * @param value the database-ready value to store
+     * @return {@code true} if the value is stored
+     */
+    private boolean setIfAbsent(Concourse concourse, String key, Object value) {
+        concourse.stage();
+        try {
+            if(concourse.select(key, id).isEmpty()) {
+                concourse.set(key, value, id);
+                return concourse.commit();
+            }
+            else {
+                concourse.abort();
+                return false;
+            }
+        }
+        catch (TransactionException e) {
+            concourse.abort();
+            return false;
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            throw t;
+        }
     }
 
     /**
