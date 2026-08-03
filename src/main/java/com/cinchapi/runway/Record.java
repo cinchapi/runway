@@ -1292,6 +1292,9 @@ public abstract class Record implements Comparable<Record> {
      * verifyAndSwap}, with this {@link Record Record's} in-memory value as the
      * expected operand. A {@code null} in-memory value expects absence: the
      * exchange succeeds only if the database stores no value for {@code key}.
+     * An exchange never succeeds against a {@link Record} that does not exist
+     * in the database, whether it was never saved or its data was since erased;
+     * in that case nothing is written.
      * </p>
      * <p>
      * On success, the in-memory field is updated to {@code replacement} and a
@@ -3679,7 +3682,8 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Atomically store {@code value} for {@code key} in this {@link Record} if
-     * and only if the database currently stores no value for {@code key}.
+     * and only if this {@link Record} exists in the database and currently
+     * stores no value for {@code key}.
      *
      * @param concourse the {@link Concourse} connection to use; must not
      *            already be in a transaction
@@ -3690,7 +3694,15 @@ public abstract class Record implements Comparable<Record> {
     private boolean setIfAbsent(Concourse concourse, String key, Object value) {
         concourse.stage();
         try {
-            if(concourse.select(key, id).isEmpty()) {
+            if(concourse.get(SECTION_KEY, id) == null) {
+                // Without the section metadata this Record does not exist in
+                // the database (it was never saved, or its data was erased),
+                // so a write here would orphan the value in a record that no
+                // load or find can ever return.
+                concourse.abort();
+                return false;
+            }
+            else if(concourse.select(key, id).isEmpty()) {
                 concourse.set(key, value, id);
                 return concourse.commit();
             }

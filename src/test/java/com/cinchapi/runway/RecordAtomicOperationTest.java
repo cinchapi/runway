@@ -24,6 +24,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.runway.validation.Validator;
@@ -558,6 +559,83 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
         Assert.assertFalse(meter.exchange("note", "hello"));
         Assert.assertNull(meter.note);
         Assert.assertEquals("other", runway.load(Meter.class, meter.id()).note);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} that expects
+     * absence fails on a {@link Record} that was never saved, so the exchange
+     * never writes a lone field into a record that does not exist in the
+     * database.
+     * <p>
+     * <strong>Start state:</strong> A {@link Meter} that is pinned to a
+     * {@link Runway} instance but never saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Meter} and {@code assign} it to {@code runway}
+     * without a save.</li>
+     * <li>Call {@code exchange("note", "hello")}.</li>
+     * <li>Describe the {@link Meter Meter's} id through a raw {@link Concourse}
+     * connection.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code false}, the
+     * in-memory {@code note} is still {@code null}, and the database stores no
+     * data at all for the id.
+     */
+    @Test
+    public void testExchangeExpectingAbsenceFailsWhenRecordNeverSaved() {
+        Meter meter = new Meter();
+        meter.assign(runway);
+        Assert.assertFalse(meter.exchange("note", "hello"));
+        Assert.assertNull(meter.note);
+        Concourse concourse = runway.connections.request();
+        try {
+            Assert.assertTrue(concourse.describe(meter.id()).isEmpty());
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} that expects
+     * absence fails when the {@link Record Record's} data was concurrently
+     * erased, so the exchange never resurrects the record as a lone field
+     * without its metadata.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} whose data was erased
+     * through a raw {@link Concourse} connection while the instance still
+     * observes {@code note == null}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Erase every stored value for its id through a raw {@link Concourse}
+     * connection.</li>
+     * <li>Call {@code exchange("note", "hello")}.</li>
+     * <li>Describe the {@link Meter Meter's} id through a raw {@link Concourse}
+     * connection.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code false}, the
+     * in-memory {@code note} is still {@code null}, and the database stores no
+     * data at all for the id.
+     */
+    @Test
+    public void testExchangeExpectingAbsenceFailsWhenRecordConcurrentlyErased() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        Concourse concourse = runway.connections.request();
+        try {
+            concourse.clear(meter.id());
+            Assert.assertFalse(meter.exchange("note", "hello"));
+            Assert.assertNull(meter.note);
+            Assert.assertTrue(concourse.describe(meter.id()).isEmpty());
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
     }
 
     /**
