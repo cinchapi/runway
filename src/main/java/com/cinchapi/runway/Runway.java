@@ -618,7 +618,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * <pre>
      * {@code
-     * try (DatabaseInterface transaction = runway.attach(source)) {
+     * try (DatabaseInterface db = runway.attach(source)) {
      *     db.load(MyAdHocRecord.class); // Uses attached source
      *     runway.load(MyAdHocRecord.class); // Also uses attached source
      * }
@@ -2355,8 +2355,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param order
      * @param page
      * @param realms
-     * @param transaction the active {@link Transaction} view, or {@code null}
-     *            to resolve through the connection pool
+     * @param transaction the {@link Transaction} context through which the
+     *            fetch executes
      * @return the matching records in {@code clazz}
      */
     private <T extends Record> Set<T> filter(Class<T> clazz, Criteria criteria,
@@ -2377,8 +2377,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param order
      * @param page
      * @param realms
-     * @param transaction the active {@link Transaction} view, or {@code null}
-     *            to resolve through the connection pool
+     * @param transaction the {@link Transaction} context through which the
+     *            fetch executes
      * @return the matching records in the {@code clazz} hierarchy
      */
     private <T extends Record> Set<T> filterAny(Class<T> clazz,
@@ -3047,19 +3047,19 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         public Runway build() {
             ConnectionPool connections = ConnectionPool.newCachedConnectionPool(
                     host, port, username, password, environment);
-            Runway transaction = new Runway(connections);
-            transaction.atomicRetryPolicy = atomicRetryPolicy;
-            transaction.dynamicWritePolicy = dynamicWritePolicy;
-            transaction.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
+            Runway db = new Runway(connections);
+            db.atomicRetryPolicy = atomicRetryPolicy;
+            db.dynamicWritePolicy = dynamicWritePolicy;
+            db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
-                transaction.onLoadFailureHandler = onLoadFailureHandler;
+                db.onLoadFailureHandler = onLoadFailureHandler;
             }
 
             // Initialize save notification components if a listener is provided
             if(!saveListeners.isEmpty()) {
                 List<Entry<Class<? extends Record>, Consumer<? extends Record>>> listeners = new ArrayList<>(
                         saveListeners);
-                transaction.saveListener = record -> {
+                db.saveListener = record -> {
                     for (Entry<Class<? extends Record>, Consumer<? extends Record>> entry : listeners) {
                         if(entry.getKey().isAssignableFrom(record.getClass())) {
                             try {
@@ -3074,22 +3074,21 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         }
                     }
                 };
-                transaction.saveNotificationQueue = new LinkedBlockingQueue<>();
+                db.saveNotificationQueue = new LinkedBlockingQueue<>();
                 ThreadFactory threadFactory = r -> {
                     Thread thread = new Thread(r,
                             "runway-save-notification-worker");
                     thread.setDaemon(true);
                     return thread;
                 };
-                transaction.saveNotificationExecutor = Executors
+                db.saveNotificationExecutor = Executors
                         .newSingleThreadExecutor(threadFactory);
-                transaction.saveNotificationExecutor.submit(() -> {
+                db.saveNotificationExecutor.submit(() -> {
                     while (!Thread.currentThread().isInterrupted()) {
                         try {
-                            Record record = transaction.saveNotificationQueue
-                                    .take();
+                            Record record = db.saveNotificationQueue.take();
                             try {
-                                transaction.saveListener.accept(record);
+                                db.saveListener.accept(record);
                             }
                             catch (Exception e) {
                                 // Silently swallow exceptions from the
@@ -3104,7 +3103,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 });
             }
 
-            return transaction;
+            return db;
         }
 
         /**
