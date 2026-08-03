@@ -180,6 +180,44 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} claims a
+     * record whose target field has no value, passing {@code null} to the
+     * operator, so an unset field can be claimed atomically.
+     * <p>
+     * <strong>Start state:</strong> Three {@link Item Items} with distinct
+     * codes whose {@code assignee} fields are all unset.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Item Items} with codes 1, 2, and 3.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code code == 2} and an
+     * operator on {@code assignee} that captures its input and returns
+     * {@code "worker"}.</li>
+     * <li>Re-load the returned {@link Item} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Item} has code 2 and
+     * {@code assignee == "worker"}, the operator received {@code null}, and the
+     * re-loaded {@link Item} persists the claim.
+     */
+    @Test
+    public void testFindUniqueAndUpdateClaimsFieldWithNoValue() {
+        runway.save(new Item(1), new Item(2), new Item(3));
+        AtomicReference<String> observed = new AtomicReference<>("unset");
+        Item item = runway.findUniqueAndUpdate(Item.class, code(2), "assignee",
+                (String assignee) -> {
+                    observed.set(assignee);
+                    return "worker";
+                });
+        Assert.assertNotNull(item);
+        Assert.assertEquals(2, item.code);
+        Assert.assertEquals("worker", item.assignee);
+        Assert.assertNull(observed.get());
+        Assert.assertEquals("worker",
+                runway.load(Item.class, item.id()).assignee);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} throws
      * {@link DuplicateEntryException} when more than one record matches, and
      * that neither an update nor a commit occurs.
@@ -485,6 +523,11 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
          * updates.
          */
         String owner;
+
+        /**
+         * The claim holder; unset until a worker claims this item.
+         */
+        String assignee;
 
         /**
          * Construct a new instance.

@@ -227,6 +227,50 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findFirstAndUpdate} claims a
+     * record whose target field has no value, passing {@code null} to the
+     * operator, so an unset lock field can be claimed atomically.
+     * <p>
+     * <strong>Start state:</strong> Three unclaimed {@link Task Tasks} with
+     * ranks 3, 2, and 1 whose {@code assignee} fields are all unset.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Task Tasks} with ranks 3, 2, and 1.</li>
+     * <li>Call {@code findFirstAndUpdate} ordered by {@code rank} ascending
+     * with an operator on {@code assignee} that captures its input and returns
+     * {@code "worker"}.</li>
+     * <li>Re-load every {@link Task} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Task} has rank 1 and
+     * {@code assignee == "worker"}, the operator received {@code null}, the
+     * re-loaded rank-1 {@link Task} persists the claim, and the other
+     * {@link Task Tasks} still have no {@code assignee}.
+     */
+    @Test
+    public void testFindFirstAndUpdateClaimsFieldWithNoValue() {
+        Task three = new Task(3);
+        Task two = new Task(2);
+        Task one = new Task(1);
+        runway.save(three, two, one);
+        AtomicReference<String> observed = new AtomicReference<>("unset");
+        Task first = runway.findFirstAndUpdate(Task.class, unclaimed(),
+                Order.by("rank").ascending(), "assignee", (String assignee) -> {
+                    observed.set(assignee);
+                    return "worker";
+                });
+        Assert.assertNotNull(first);
+        Assert.assertEquals(1, first.rank);
+        Assert.assertEquals("worker", first.assignee);
+        Assert.assertNull(observed.get());
+        Assert.assertEquals("worker",
+                runway.load(Task.class, one.id()).assignee);
+        Assert.assertNull(runway.load(Task.class, two.id()).assignee);
+        Assert.assertNull(runway.load(Task.class, three.id()).assignee);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findFirstAndUpdate} rejects a
      * {@code null} {@link Order}, since "first" is undefined without one.
      * <p>
@@ -259,13 +303,15 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
      * <li>Save a single unclaimed {@link Task}.</li>
      * <li>Start two threads that, gated by a common latch, each call
      * {@code findFirstAndUpdate} with an operator on {@code claimed} that
-     * returns {@code true}.</li>
-     * <li>{@code join()} both threads, then re-load the {@link Task}.</li>
+     * returns {@code true}, capturing any {@link Throwable} a worker
+     * throws.</li>
+     * <li>{@code join()} both threads, assert both finished without a failure,
+     * then re-load the {@link Task}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> Exactly one thread receives a non-null claim
-     * and the other receives {@code null}; the re-loaded {@link Task} is
-     * claimed.
+     * <strong>Expected:</strong> Neither worker hangs or fails, exactly one
+     * thread receives a non-null claim and the other receives {@code null}, and
+     * the re-loaded {@link Task} is claimed.
      */
     @Test
     public void testFindFirstAndUpdateClaimsExactlyOneUnderConcurrency()
@@ -277,6 +323,8 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
         CountDownLatch go = new CountDownLatch(1);
         AtomicReference<Task> claim1 = new AtomicReference<>();
         AtomicReference<Task> claim2 = new AtomicReference<>();
+        AtomicReference<Throwable> failure1 = new AtomicReference<>();
+        AtomicReference<Throwable> failure2 = new AtomicReference<>();
         Thread t1 = new Thread(() -> {
             ready.countDown();
             try {
@@ -285,8 +333,8 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
                         Order.by("rank").ascending(), "claimed",
                         claimed -> true));
             }
-            catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            catch (Throwable t) {
+                failure1.set(t);
             }
         });
         Thread t2 = new Thread(() -> {
@@ -297,16 +345,20 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
                         Order.by("rank").ascending(), "claimed",
                         claimed -> true));
             }
-            catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            catch (Throwable t) {
+                failure2.set(t);
             }
         });
         t1.start();
         t2.start();
-        ready.await(5, TimeUnit.SECONDS);
+        Assert.assertTrue(ready.await(5, TimeUnit.SECONDS));
         go.countDown();
         t1.join(10000);
         t2.join(10000);
+        Assert.assertFalse("Worker 1 is still running", t1.isAlive());
+        Assert.assertFalse("Worker 2 is still running", t2.isAlive());
+        Assert.assertNull(failure1.get());
+        Assert.assertNull(failure2.get());
         boolean oneWon = claim1.get() != null;
         boolean twoWon = claim2.get() != null;
         Assert.assertTrue("Exactly one thread must claim the task",
@@ -574,6 +626,11 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
          * Whether this task has been claimed.
          */
         boolean claimed;
+
+        /**
+         * The claim holder; unset until a worker claims this task.
+         */
+        String assignee;
 
         /**
          * Construct a new, unclaimed instance.
