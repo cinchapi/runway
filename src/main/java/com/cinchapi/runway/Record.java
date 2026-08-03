@@ -303,7 +303,7 @@ public abstract class Record implements Comparable<Record> {
      * @return the eligible {@link Field}
      * @throws IllegalArgumentException if {@code key} does not name an
      *             intrinsic field, or names one that is transient, multi-value,
-     *             link-typed, or {@link Unique}
+     *             link-typed, non-primitive, or {@link Unique}
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field
@@ -333,6 +333,12 @@ public abstract class Record implements Comparable<Record> {
                 "Cannot atomically operate on {} in {} because it stores a"
                         + " link to another Record whose state cannot be"
                         + " covered by a single-key operation",
+                key, record.__);
+        Verify.thatArgument(field.getType().isPrimitive()
+                || BOXED_PRIMITIVE_TYPES.contains(field.getType())
+                || field.getType().isEnum() || field.getType() == Tag.class,
+                "Cannot atomically operate on {} in {} because its type is"
+                        + " not a primitive, an enum, or a Tag",
                 key, record.__);
         return field;
     }
@@ -1297,21 +1303,26 @@ public abstract class Record implements Comparable<Record> {
      * failure, nothing changes anywhere; the caller may {@link #refresh()
      * refresh} and try again, or use
      * {@link #getAndUpdate(String, UnaryOperator) getAndUpdate} to have the
-     * retry loop managed automatically.
+     * retry loop managed automatically. A {@link Record} that is staged for
+     * deletion is refused, so an exchange never persists a value that the
+     * pending {@link #save() save} immediately deletes.
      * </p>
      * <p>
-     * Only an intrinsic, single-value scalar field with a non-null value on
-     * both sides of the exchange is eligible: {@code null} is represented as
-     * key absence, multi-value fields have no single-exchange semantics,
-     * {@link Unique} fields are refused because uniqueness cannot be enforced
-     * within a single-key operation, and link-typed fields (a {@link Record} or
-     * {@link DeferredReference} value) are refused because the linked
-     * {@link Record Record's} own state cannot be covered by a single-key
-     * operation. A {@link Required} field refuses an empty replacement, a
-     * {@link ValidatedBy} field refuses a replacement that fails validation,
-     * and every field refuses a replacement that is not an instance of its type
-     * (boxed, when the field is primitive); each refusal happens before
-     * anything is written. The write is also subject to the same
+     * Only an intrinsic, single-value field whose type is a Java primitive or
+     * its boxed form, a {@link String}, a {@link Timestamp}, an enum, or a
+     * {@link Tag}, with a non-null value on both sides of the exchange, is
+     * eligible: {@code null} is represented as key absence, multi-value fields
+     * have no single-exchange semantics, {@link Unique} fields are refused
+     * because uniqueness cannot be enforced within a single-key operation,
+     * link-typed fields (a {@link Record} or {@link DeferredReference} value)
+     * are refused because the linked {@link Record Record's} own state cannot
+     * be covered by a single-key operation, and every other type (e.g. a
+     * serialized object) is refused because its equality cannot be trusted to
+     * mirror its stored form. A {@link Required} field refuses an empty
+     * replacement, a {@link ValidatedBy} field refuses a replacement that fails
+     * validation, and every field refuses a replacement that is not an instance
+     * of its type (boxed, when the field is primitive); each refusal happens
+     * before anything is written. The write is also subject to the same
      * {@link DynamicWritePolicy} that governs {@link #set(String, Object) set},
      * so a field the policy refuses cannot be exchanged.
      * </p>
@@ -1331,9 +1342,9 @@ public abstract class Record implements Comparable<Record> {
      *             atomic operations, or {@code replacement} is {@code null} or
      *             is not an instance of the field's type
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has no in-memory value for
-     *             {@code key}, or {@code replacement} violates the field's
-     *             constraints
+     *             {@link Runway} instance, is staged for deletion, has no
+     *             in-memory value for {@code key}, or {@code replacement}
+     *             violates the field's constraints
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
@@ -1341,6 +1352,10 @@ public abstract class Record implements Comparable<Record> {
     public final <T> boolean exchange(String key, T replacement) {
         Verify.that(runway != null, "Cannot perform an atomic exchange"
                 + " because this Record isn't pinned to a Runway instance");
+        Verify.that(!deleted,
+                "Cannot atomically exchange {} in {} because this Record is"
+                        + " staged for deletion",
+                key, __);
         Verify.thatArgument(replacement != null,
                 "The replacement value cannot be null");
         Field field = getAtomicableField(key, this);
@@ -1434,9 +1449,11 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      * <p>
      * A retry touches nothing but {@code key}: staged {@link #realms() realm}
-     * changes and loaded linked {@link Record Records} survive untouched. If
-     * the stored value for {@code key} is concurrently removed, the operation
-     * fails because there is nothing left to update.
+     * changes and loaded linked {@link Record Records} survive untouched. A
+     * retry does invalidate the cached {@link #audit(String...) audit} trail,
+     * so a later audit read includes the concurrent revisions the retry
+     * observed. If the stored value for {@code key} is concurrently removed,
+     * the operation fails because there is nothing left to update.
      * </p>
      * <p>
      * If the {@code update} function returns a value equal to its input,
@@ -3523,8 +3540,8 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Overwrite the in-memory value of {@code field} with the value the
-     * database currently stores for {@code key}, without touching any other
-     * state in this {@link Record}.
+     * database currently stores for {@code key} and invalidate the cached audit
+     * trail, without touching any other state in this {@link Record}.
      * <p>
      * If the database no longer stores a value for {@code key}, there is
      * nothing left to atomically operate on.
@@ -3550,6 +3567,7 @@ public abstract class Record implements Comparable<Record> {
                     key, __);
             Reflection.set(key, fresh, this);
             clearComputeOnceCache();
+            _audit = null;
             __checksum = checksum();
         }
         finally {

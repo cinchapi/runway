@@ -24,6 +24,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.concourse.Tag;
+import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.runway.validation.Validator;
 
 /**
@@ -63,6 +65,148 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(meter.exchange("value", 10L));
         Assert.assertEquals(10, meter.value);
         Assert.assertEquals(10, runway.load(Meter.class, meter.id()).value);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a successful {@code exchange} on a
+     * {@link String} field persists the replacement, locking the symmetry
+     * between the expected operand's serialized form and the form a
+     * {@code save} stores.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} with
+     * {@code label = "meter"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Call {@code exchange("label", "updated")}.</li>
+     * <li>Re-load the {@link Meter} from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code true}, the
+     * re-loaded {@link Meter} has {@code label == "updated"} and the original
+     * instance's in-memory {@code label} is also {@code "updated"}.
+     */
+    @Test
+    public void testExchangePersistsStringReplacement() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        Assert.assertTrue(meter.exchange("label", "updated"));
+        Assert.assertEquals("updated", meter.label);
+        Assert.assertEquals("updated",
+                runway.load(Meter.class, meter.id()).label);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a successful {@code exchange} on a
+     * {@link Timestamp} field persists the replacement, locking the symmetry
+     * between the expected operand's serialized form and the form a
+     * {@code save} stores.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} whose {@code updated}
+     * field holds the construction-time {@link Timestamp}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Call {@code exchange("updated", ...)} with a new
+     * {@link Timestamp}.</li>
+     * <li>Re-load the {@link Meter} from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code true} and both the
+     * in-memory and the re-loaded {@code updated} equal the replacement.
+     */
+    @Test
+    public void testExchangePersistsTimestampReplacement() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        Timestamp replacement = Timestamp.now();
+        Assert.assertTrue(meter.exchange("updated", replacement));
+        Assert.assertEquals(replacement, meter.updated);
+        Assert.assertEquals(replacement,
+                runway.load(Meter.class, meter.id()).updated);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a successful {@code exchange} on an
+     * enum field persists the replacement, locking the symmetry between the
+     * expected operand's serialized form and the form a {@code save} stores.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} with
+     * {@code color = RED}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Call {@code exchange("color", GREEN)}.</li>
+     * <li>Re-load the {@link Meter} from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code true}, the
+     * re-loaded {@link Meter} has {@code color == GREEN} and the original
+     * instance's in-memory {@code color} is also {@code GREEN}.
+     */
+    @Test
+    public void testExchangePersistsEnumReplacement() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        Assert.assertTrue(meter.exchange("color", Color.GREEN));
+        Assert.assertSame(Color.GREEN, meter.color);
+        Assert.assertSame(Color.GREEN,
+                runway.load(Meter.class, meter.id()).color);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a successful {@code exchange} on a
+     * {@link Tag} field persists the replacement, locking the symmetry between
+     * the expected operand's serialized form and the form a {@code save}
+     * stores.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} with
+     * {@code token = "alpha"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Call {@code exchange("token", ...)} with a new {@link Tag}.</li>
+     * <li>Re-load the {@link Meter} from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code true} and both the
+     * in-memory and the re-loaded {@code token} equal the replacement.
+     */
+    @Test
+    public void testExchangePersistsTagReplacement() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        Tag replacement = Tag.create("beta");
+        Assert.assertTrue(meter.exchange("token", replacement));
+        Assert.assertEquals(replacement, meter.token);
+        Assert.assertEquals(replacement,
+                runway.load(Meter.class, meter.id()).token);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
+     * serialized-object field, because its type is not a primitive, an enum, or
+     * a {@link Tag}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Call {@code exchange("spec", ...)} with a new {@link Spec}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
+     */
+    @Test(expected = IllegalArgumentException.class)
+    public void testExchangeRejectsSerializedObjectField() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        meter.exchange("spec", new Spec());
     }
 
     /**
@@ -554,6 +698,37 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code exchange} refuses a record that
+     * is staged for deletion, so an exchange never persists a value that the
+     * pending save immediately deletes.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} that is staged for
+     * deletion.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}, then call {@code deleteOnSave()}.</li>
+     * <li>Call {@code exchange("value", 10L)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown and
+     * the stored {@code value} remains {@code 0}.
+     */
+    @Test
+    public void testExchangeRefusesRecordStagedForDeletion() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        meter.deleteOnSave();
+        try {
+            meter.exchange("value", 10L);
+            Assert.fail("Expected an IllegalStateException");
+        }
+        catch (IllegalStateException e) {
+            Assert.assertEquals(0, runway.load(Meter.class, meter.id()).value);
+        }
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a successful {@code exchange}
      * invalidates the cached audit trail, so a later {@code audit} call on the
      * same instance sees the revision the exchange wrote.
@@ -670,6 +845,42 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(0, result);
         Assert.assertEquals(revisions,
                 runway.load(Meter.class, meter.id()).audit("value").size());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a no-op {@code getAndUpdate} that
+     * retries after a stale read invalidates the cached audit trail, so a later
+     * audit read includes the concurrent revision the retry observed.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} whose audit trail was
+     * already read once on the same instance, and whose stored value was
+     * changed through a second loaded copy.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter} and read {@code audit("value")} to populate the
+     * instance's cached trail.</li>
+     * <li>Load a fresh copy, set {@code value = 5}, and save it.</li>
+     * <li>Call {@code getAndUpdate("value", v -> v)} on the original (now
+     * stale) instance.</li>
+     * <li>Read {@code audit("value")} again on the same instance.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns {@code 5} (the re-read value)
+     * without a write, and the second audit read contains more revisions than
+     * the first.
+     */
+    @Test
+    public void testGetAndUpdateNoOpRetryInvalidatesCachedAudit() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        int revisions = meter.audit("value").size();
+        Meter fresh = runway.load(Meter.class, meter.id());
+        fresh.value = 5;
+        runway.save(fresh);
+        long result = meter.getAndUpdate("value", (Long v) -> v);
+        Assert.assertEquals(5, result);
+        Assert.assertTrue(meter.audit("value").size() > revisions);
     }
 
     /**
@@ -1118,6 +1329,30 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
         public long score = 2;
 
         /**
+         * An enum field; a successful atomic operation must serialize the
+         * expected operand to the same form a save stores.
+         */
+        public Color color = Color.RED;
+
+        /**
+         * A tag field; a successful atomic operation must serialize the
+         * expected operand to the same form a save stores.
+         */
+        public Tag token = Tag.create("alpha");
+
+        /**
+         * A timestamp gauge; a successful atomic operation must serialize the
+         * expected operand to the same form a save stores.
+         */
+        public Timestamp updated = Timestamp.now();
+
+        /**
+         * A serialized-object field; atomic operations must reject a
+         * non-primitive scalar.
+         */
+        public Spec spec = new Spec();
+
+        /**
          * A link field; atomic operations must reject it.
          */
         public Owner owner = null;
@@ -1138,6 +1373,40 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
          * atomic operations on it.
          */
         private long hidden = 1;
+
+    }
+
+    /**
+     * A plain object stored by the {@link Meter Meter's} {@code spec} field in
+     * serialized form.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Spec {
+
+        /**
+         * A placeholder attribute.
+         */
+        public long threshold = 1;
+
+    }
+
+    /**
+     * The enum stored by the {@link Meter Meter's} {@code color} field.
+     *
+     * @author Jeff Nelson
+     */
+    public enum Color {
+
+        /**
+         * The value every {@link Meter} starts with.
+         */
+        RED,
+
+        /**
+         * The value an exchange swaps in.
+         */
+        GREEN;
 
     }
 
