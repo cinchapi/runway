@@ -1102,33 +1102,25 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         // NOTE: A deletion is final within a save. A record
                         // staged before a deletion may reference (or hold
                         // data for) a record that the save has since
-                        // deleted, so reconcile every survivor against the
-                        // deleted ids and re-assert each deletion as the
-                        // last write for its record.
-                        for (Record record : new ArrayList<>(seen.keySet())) {
+                        // deleted, so stage the removal of every survivor's
+                        // references to deleted records and re-assert each
+                        // deletion as the last write for its record. The
+                        // staged removals leave every survivor's in-memory
+                        // state untouched, so a failed transaction has
+                        // nothing to roll back.
+                        for (Record record : seen.keySet()) {
                             if(!deletedIds.contains(record.id())
-                                    && record.removeCaptureDeleteReferences(
-                                            deletedIds)) {
-                                // NOTE: The record already passed the stale
-                                // data check when it first saved within
-                                // this transaction, so it is not
-                                // re-validated.
-                                record.saveWithinTransaction(saver, seen,
-                                        snapshots, deletedIds, false);
-                            }
-                            else {
-                                // The record was itself deleted or holds no
-                                // reference to a deleted record, so there
-                                // is nothing to reconcile.
+                                    && record.reconcileCaptureDeleteReferences(
+                                            saver, deletedIds)) {
+                                // NOTE: The record's stored data changes at
+                                // commit, so it must dispatch a save
+                                // notification.
+                                seen.replace(record, true);
                             }
                         }
                         for (long id : deletedIds) {
                             saver.clear(id);
                         }
-                    }
-                    else {
-                        // Nothing was deleted, so every staged write stands
-                        // as recorded.
                     }
                     if(saver.commit()) {
                         // NOTE: Deletion is tracked by id instead of by

@@ -26,6 +26,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.Link;
+import com.google.common.collect.ImmutableList;
+
 /**
  * Unit tests for delete notifications and their interplay with save
  * notifications in {@link Runway}.
@@ -960,7 +963,9 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The failed save does not consume the parent's
-     * unsaved changes, and the follow-up save persists the updated name.
+     * unsaved changes and does not touch its in-memory or stored reference to
+     * the target; the follow-up save persists the updated name and completes
+     * the deletion.
      */
     @Test
     public void testFailedSaveRestoresCallerInstanceProcessedAlongsideCopy()
@@ -983,9 +988,72 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
 
         Assert.assertTrue("The failed save must not consume unsaved changes",
                 parent.hasUnsavedChanges());
+        Assert.assertSame(
+                "The failed save must not remove the in-memory reference",
+                target, parent.target);
+        Assert.assertFalse(
+                "The failed save must not remove the stored reference",
+                client.select("target", parent.id()).isEmpty());
+
         Assert.assertTrue(runway.save(parent));
         CaptureParent loaded = runway.load(CaptureParent.class, parent.id());
         Assert.assertEquals("Capture Parent (Updated)", loaded.name);
+        Assert.assertNull(loaded.target);
+        Assert.assertNull(runway.load(CaptureTarget.class, target.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link CaptureDelete} cleanup works
+     * for an immutable collection field when the record that holds it is part
+     * of the same save as the deleted target.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CollectionCaptureParent}
+     * whose immutable collection references two saved {@link CaptureTarget
+     * CaptureTargets}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener.</li>
+     * <li>Mark one target with {@link Record#deleteOnSave()}.</li>
+     * <li>Save the parent and both targets in bulk.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save succeeds, the delete listener fires
+     * for the deleted target, and the parent's stored references contain only
+     * the surviving target.
+     */
+    @Test
+    public void testCaptureCleanupOfImmutableCollectionInSameSave()
+            throws Exception {
+        CountDownLatch deleteLatch = new CountDownLatch(1);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        CaptureTarget kept = new CaptureTarget();
+        kept.name = "Kept";
+        CaptureTarget removed = new CaptureTarget();
+        removed.name = "Removed";
+        CollectionCaptureParent parent = new CollectionCaptureParent();
+        parent.name = "Collection Parent";
+        parent.targets = ImmutableList.of(kept, removed);
+        Assert.assertTrue(runway.save(parent, kept, removed));
+
+        removed.deleteOnSave();
+        Assert.assertTrue(runway.save(parent, kept, removed));
+
+        Assert.assertTrue("Delete listener was not called within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(deletedRecords.contains(removed));
+
+        Set<Object> stored = client.select("targets", parent.id());
+        Assert.assertEquals(1, stored.size());
+        Assert.assertTrue(stored.contains(Link.to(kept.id())));
+        Assert.assertNull(runway.load(CaptureTarget.class, removed.id()));
     }
 
     /**
@@ -1115,6 +1183,26 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
          * A name that identifies the record in tests.
          */
         public String name;
+    }
+
+    /**
+     * A test {@link Record} whose immutable collection of {@link CaptureTarget
+     * CaptureTargets} is cleaned when a target is deleted.
+     *
+     * @author Jeff Nelson
+     */
+    public static class CollectionCaptureParent extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        /**
+         * The references that are removed when their targets are deleted.
+         */
+        @CaptureDelete
+        public List<CaptureTarget> targets;
     }
 
     /**

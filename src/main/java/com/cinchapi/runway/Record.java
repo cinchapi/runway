@@ -3202,9 +3202,9 @@ public abstract class Record implements Comparable<Record> {
                     // NOTE: When an id-equal instance of this Record is
                     // part of the active save, its state governs the
                     // record's data and the pre-commit reconciliation in
-                    // Runway#save removes the reference from it; a re-save
-                    // of a freshly loaded copy would overwrite staged
-                    // changes with stale values.
+                    // Runway#save stages the removal of the stored
+                    // reference; a re-save of a freshly loaded copy would
+                    // overwrite staged changes with stale values.
                     if(!live) {
                         String __ = (String) Iterables
                                 .getLast(entry.getValue());
@@ -3273,6 +3273,59 @@ public abstract class Record implements Comparable<Record> {
                 }
                 else if(isDeletedReference(value, ids)) {
                     field.set(this, null);
+                    changed = true;
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Stage the removal of every reference held by one of this {@link Record
+     * Record's} {@link CaptureDelete} fields to a {@link Record} whose id is in
+     * {@code ids}. This method writes through the {@code saver} only; it does
+     * not modify this {@link Record Record's} in-memory state.
+     *
+     * @param saver the {@link Saver} that owns the active transaction
+     * @param ids the ids of {@link Record Records} deleted within the active
+     *            save
+     * @return {@code true} if at least one removal was staged
+     */
+    boolean reconcileCaptureDeleteReferences(Saver saver, Set<Long> ids) {
+        boolean changed = false;
+        Set<Field> fields = StaticAnalysis.instance().getAnnotatedFields(this,
+                CaptureDelete.class);
+        for (Field field : fields) {
+            try {
+                Object value = field.get(this);
+                if(value == null) { // GH-58
+                    continue;
+                }
+                else if(Sequences.isSequence(value)) {
+                    int[] total = new int[1];
+                    ArrayBuilder<Object> remaining = ArrayBuilder.builder();
+                    Sequences.forEach(value, item -> {
+                        total[0]++;
+                        if(!isDeletedReference(item, ids)) {
+                            remaining.add(serializeScalarValue(item));
+                        }
+                    });
+                    if(remaining.length() < total[0]) {
+                        if(remaining.length() > 0) {
+                            saver.reconcile(field.getName(), id,
+                                    remaining.build());
+                        }
+                        else {
+                            saver.clear(field.getName(), id);
+                        }
+                        changed = true;
+                    }
+                }
+                else if(isDeletedReference(value, ids)) {
+                    saver.clear(field.getName(), id);
                     changed = true;
                 }
             }
