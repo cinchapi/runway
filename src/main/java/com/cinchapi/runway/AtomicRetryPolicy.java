@@ -24,19 +24,12 @@ import com.google.common.base.Preconditions;
 
 /**
  * An {@link AtomicRetryPolicy} governs how an atomic read-modify-write
- * operation responds to contention: how many times a lost race may be retried
- * and how long to pause between attempts.
+ * operation (e.g. the {@link Record} single-key atomic operations) responds to
+ * contention: how many times a failed attempt may be retried and how long to
+ * pause between attempts.
  * <p>
- * The policy applies to every operation that retries after losing a race with a
- * concurrent writer (e.g. the {@link Record} single-key atomic operations).
  * When an operation exhausts the retry {@link #limit() limit}, it throws
- * {@link RetryExhaustedException} instead of returning a non-committed result.
- * </p>
- * <p>
- * Between attempts, {@link #backoff(int) backoff} pauses the caller for a
- * randomized interval that grows with the attempt number and is bounded by a
- * ceiling, so contending callers disperse instead of colliding again in
- * lockstep. A backoff interval of {@code 0} disables the pause entirely.
+ * {@link RetryExhaustedException}.
  * </p>
  *
  * @author Jeff Nelson
@@ -85,8 +78,7 @@ public final class AtomicRetryPolicy {
      * @return the {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code limit} or
      *             {@code backoffMillis} is negative, or if
-     *             {@code backoffMillis} is too large for the policy to scale
-     *             without numeric overflow
+     *             {@code backoffMillis} exceeds the largest supported interval
      */
     public static AtomicRetryPolicy create(int limit, long backoffMillis) {
         return new AtomicRetryPolicy(limit, backoffMillis);
@@ -134,14 +126,12 @@ public final class AtomicRetryPolicy {
 
     /**
      * Pause the calling thread before retry {@code attempt} for a randomized
-     * interval that grows with the attempt number, dispersing contending
-     * callers so they do not collide again in lockstep.
+     * interval that grows with the attempt number and never exceeds a fixed
+     * ceiling.
      * <p>
-     * The pause never exceeds the policy's ceiling, no matter how large
-     * {@code attempt} grows. If the calling thread is interrupted while paused,
-     * the interrupt flag is restored and the {@link InterruptedException}
-     * propagates as a {@link RuntimeException} so the caller abandons the retry
-     * loop instead of silently continuing to contend.
+     * If the calling thread is interrupted while paused, the interrupt flag is
+     * restored and the {@link InterruptedException} propagates as a
+     * {@link RuntimeException}.
      * </p>
      *
      * @param attempt the 1-based number of the attempt that just failed

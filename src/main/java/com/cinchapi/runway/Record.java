@@ -1302,29 +1302,20 @@ public abstract class Record implements Comparable<Record> {
      * record with no unsaved changes remains without unsaved changes. On
      * failure, nothing changes anywhere; the caller may {@link #refresh()
      * refresh} and try again, or use
-     * {@link #getAndUpdate(String, UnaryOperator) getAndUpdate} to have the
-     * retry loop managed automatically. A {@link Record} that is staged for
-     * deletion is refused, so an exchange never persists a value that the
-     * pending {@link #save() save} immediately deletes.
+     * {@link #getAndUpdate(String, UnaryOperator) getAndUpdate}. A
+     * {@link Record} that is staged for deletion is refused.
      * </p>
      * <p>
      * Only an intrinsic, single-value field whose type is a Java primitive or
      * its boxed form, a {@link String}, a {@link Timestamp}, an enum, or a
-     * {@link Tag}, with a non-null value on both sides of the exchange, is
-     * eligible: {@code null} is represented as key absence, multi-value fields
-     * have no single-exchange semantics, {@link Unique} fields are refused
-     * because uniqueness cannot be enforced within a single-key operation,
-     * link-typed fields (a {@link Record} or {@link DeferredReference} value)
-     * are refused because the linked {@link Record Record's} own state cannot
-     * be covered by a single-key operation, and every other type (e.g. a
-     * serialized object) is refused because its equality cannot be trusted to
-     * mirror its stored form. A {@link Required} field refuses an empty
-     * replacement, a {@link ValidatedBy} field refuses a replacement that fails
-     * validation, and every field refuses a replacement that is not an instance
-     * of its type (boxed, when the field is primitive); each refusal happens
-     * before anything is written. The write is also subject to the same
-     * {@link DynamicWritePolicy} that governs {@link #set(String, Object) set},
-     * so a field the policy refuses cannot be exchanged.
+     * {@link Tag} is eligible, and only when both the current and replacement
+     * values are non-null. Transient and {@link Unique} fields are not
+     * eligible. The {@code replacement} must be an instance of the field's type
+     * (boxed, when the field is primitive), must not be empty when the field is
+     * {@link Required}, and must pass the field's {@link ValidatedBy}
+     * validation. Each refusal happens before anything is written. The write is
+     * subject to the same {@link DynamicWritePolicy} that governs
+     * {@link #set(String, Object) set}.
      * </p>
      * <p>
      * <strong>NOTE:</strong> This is a targeted write, not a {@link #save()
@@ -1428,43 +1419,28 @@ public abstract class Record implements Comparable<Record> {
      * Atomically apply {@code update} to the value of {@code key} and return
      * the value that was replaced.
      * <p>
-     * The {@code update} function receives the value this {@link Record}
-     * currently holds for {@code key} and returns the value that should take
-     * its place. The replacement is written with
-     * {@link #exchange(String, Object) exchange} semantics, so it only lands if
-     * the database still holds the value the function was applied to. When a
-     * concurrent writer wins the race, the current stored value for {@code key}
-     * is re-read and the {@code update} function is re-applied to it; the
-     * function may therefore run more than once and must be safe to do so.
-     * Retries are governed by the {@link AtomicRetryPolicy} configured on the
-     * {@link Runway} instance this {@link Record} is pinned to.
+     * The {@code update} function receives the current value for {@code key}
+     * and returns the value that should take its place. When this method
+     * returns, the produced value is durably stored and this {@link Record
+     * Record's} in-memory value for {@code key} matches it. If the update
+     * cannot be committed within the bounds of the {@link AtomicRetryPolicy}
+     * configured on the {@link Runway} instance this {@link Record} is pinned
+     * to, a {@link RetryExhaustedException} is thrown and nothing is changed.
+     * </p>
+     * <p>
+     * The {@code update} function may be applied more than once, so it must be
+     * free of side effects. If the function returns a value equal to its input,
+     * nothing is written.
      * </p>
      * <p>
      * This {@link Record} must not have unsaved changes; that includes a
-     * {@link Record} that was never {@link #save() saved}. A retry overwrites
-     * the in-memory value of {@code key} with the current stored value, so the
-     * operation refuses a dirty {@link Record} before anything is read or
-     * written; {@link #save() save} or {@link #refresh() refresh} first. A
-     * {@link Record} that is staged for deletion is also refused.
+     * {@link Record} that was never {@link #save() saved}. {@link #save() save}
+     * or {@link #refresh() refresh} first. A {@link Record} that is staged for
+     * deletion is refused.
      * </p>
      * <p>
-     * A retry touches nothing but {@code key}: staged {@link #realms() realm}
-     * changes and loaded linked {@link Record Records} survive untouched. A
-     * retry does invalidate the cached {@link #audit(String...) audit} trail,
-     * so a later audit read includes the concurrent revisions the retry
-     * observed. If the stored value for {@code key} is concurrently removed,
-     * the operation fails because there is nothing left to update.
-     * </p>
-     * <p>
-     * If the {@code update} function returns a value equal to its input,
-     * nothing is written; the read is instead verified as current against the
-     * database (and retried if it is not), so a no-op decision is never made
-     * against stale data.
-     * </p>
-     * <p>
-     * The eligibility rules, constraint checks, in-memory synchronization, and
-     * save-pipeline caveats of {@link #exchange(String, Object) exchange}
-     * apply.
+     * The eligibility rules, constraint checks, and save-pipeline caveats of
+     * {@link #exchange(String, Object) exchange} apply.
      * </p>
      *
      * @param key the name of the intrinsic field to update
@@ -1472,8 +1448,8 @@ public abstract class Record implements Comparable<Record> {
      *            current one; it must not return {@code null}
      * @return the value that was current immediately before the update took
      *         effect
-     * @throws RetryExhaustedException if contention persists beyond the retries
-     *             permitted by the governing {@link AtomicRetryPolicy}
+     * @throws RetryExhaustedException if the update cannot be committed within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
@@ -2090,8 +2066,8 @@ public abstract class Record implements Comparable<Record> {
      *            current one; it must not return {@code null}
      * @return the value that is current immediately after the update takes
      *         effect
-     * @throws RetryExhaustedException if contention persists beyond the retries
-     *             permitted by the governing {@link AtomicRetryPolicy}
+     * @throws RetryExhaustedException if the update cannot be committed within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a
@@ -3542,10 +3518,6 @@ public abstract class Record implements Comparable<Record> {
      * Overwrite the in-memory value of {@code field} with the value the
      * database currently stores for {@code key} and invalidate the cached audit
      * trail, without touching any other state in this {@link Record}.
-     * <p>
-     * If the database no longer stores a value for {@code key}, there is
-     * nothing left to atomically operate on.
-     * </p>
      *
      * @param field an {@link #getAtomicableField(String, Record) eligible}
      *            {@link Field}
@@ -3774,8 +3746,8 @@ public abstract class Record implements Comparable<Record> {
      * @param update the function that produces the replacement value from the
      *            current one; it must not return {@code null}
      * @return the {@link AtomicUpdate} that took effect
-     * @throws RetryExhaustedException if contention persists beyond the retries
-     *             permitted by the governing {@link AtomicRetryPolicy}
+     * @throws RetryExhaustedException if the update cannot be committed within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations
      * @throws IllegalStateException if this {@link Record} is not pinned to a

@@ -2776,6 +2776,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         /**
          * Set the {@link AtomicRetryPolicy} that governs how atomic
          * read-modify-write operations respond to persistent contention.
+         * <p>
+         * The default is {@link AtomicRetryPolicy#defaults()}.
+         * </p>
          *
          * @param atomicRetryPolicy the {@link AtomicRetryPolicy} to use
          * @return this builder

@@ -17,14 +17,9 @@ package com.cinchapi.runway;
 
 /**
  * A {@link RetryExhaustedException} is thrown by an atomic read-modify-write
- * operation (e.g. the {@link Record} single-key atomic operations) when it
- * cannot commit because it lost the write-conflict race on every attempt
- * permitted by the governing {@link AtomicRetryPolicy}.
- * <p>
- * This is semantically distinct from a {@code null} or empty result, which
- * means no target data existed. A {@link RetryExhaustedException} means the
- * target data existed but persistent contention prevented this caller from
- * committing its update; the caller may back off and retry.
+ * operation (e.g. the {@link Record} single-key atomic operations) that cannot
+ * commit within the bounds of the governing {@link AtomicRetryPolicy}: the
+ * target data exists, but contention prevented the update from committing.
  *
  * @author Javier Lores
  */
