@@ -97,8 +97,9 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code exchange} supports
-     * {@link Record}-typed fields by exchanging one link for another.
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
+     * {@link Record}-typed field, because the linked record's state cannot be
+     * covered by a single-key operation.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} linked to one
      * {@link Owner}, with a second saved {@link Owner} available.
@@ -108,30 +109,32 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <li>Save a {@link Meter} whose {@code owner} is the first
      * {@link Owner}.</li>
      * <li>Call {@code exchange("owner", second)}.</li>
-     * <li>Re-load the {@link Meter} from the database.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The exchange returns {@code true}, the
-     * in-memory {@code owner} is the second {@link Owner} and the re-loaded
-     * {@link Meter} links to the second {@link Owner Owner's} id.
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
+     * and the stored link still targets the first {@link Owner}.
      */
     @Test
-    public void testExchangeSupportsLinkFields() {
+    public void testExchangeRejectsLinkTypedField() {
         Owner first = new Owner();
         Owner second = new Owner();
         Meter meter = new Meter();
         meter.owner = first;
         runway.save(meter, second);
-        Assert.assertTrue(meter.exchange("owner", second));
-        Assert.assertSame(second, meter.owner);
-        Assert.assertEquals(second.id(),
-                runway.load(Meter.class, meter.id()).owner.id());
+        try {
+            meter.exchange("owner", second);
+            Assert.fail("Expected an IllegalArgumentException");
+        }
+        catch (IllegalArgumentException e) {
+            Assert.assertEquals(first.id(),
+                    runway.load(Meter.class, meter.id()).owner.id());
+        }
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code exchange} supports
-     * {@link DeferredReference}-typed fields by exchanging one loaded reference
-     * for another.
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
+     * {@link DeferredReference}-typed field, matching the refusal of every
+     * link-typed field.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} whose {@code ref}
      * wraps one saved {@link Owner}, with a second saved {@link Owner}
@@ -144,60 +147,21 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * {@link Owner}.</li>
      * <li>Call {@code exchange("ref", ...)} with a {@link DeferredReference}
      * that wraps the second {@link Owner}.</li>
-     * <li>Re-load the {@link Meter} from the database.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The exchange returns {@code true}, the
-     * in-memory {@code ref} resolves to the second {@link Owner} and the
-     * re-loaded {@link Meter Meter's} {@code ref} resolves to the second
-     * {@link Owner Owner's} id.
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
+     * and the stored reference still resolves to the first {@link Owner}.
      */
     @Test
-    public void testExchangeSupportsDeferredReferenceFields() {
+    public void testExchangeRejectsDeferredReferenceTypedField() {
         Owner first = new Owner();
         Owner second = new Owner();
         runway.save(first, second);
         Meter meter = new Meter();
         meter.ref = new DeferredReference<>(first);
         runway.save(meter);
-        Assert.assertTrue(
-                meter.exchange("ref", new DeferredReference<>(second)));
-        Assert.assertEquals(second.id(), meter.ref.get().id());
-        Assert.assertEquals(second.id(),
-                runway.load(Meter.class, meter.id()).ref.get().id());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
-     * {@link DeferredReference} replacement that wraps a never-saved
-     * {@link Record}, so a link to a record that does not exist in the database
-     * is never stored.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Meter} whose {@code ref}
-     * wraps a saved {@link Owner}, with a second {@link Owner} that was never
-     * saved.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link Meter} whose {@code ref} wraps a saved
-     * {@link Owner}.</li>
-     * <li>Call {@code exchange("ref", ...)} with a {@link DeferredReference}
-     * that wraps a never-saved {@link Owner}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
-     * and the stored reference still resolves to the original {@link Owner}.
-     */
-    @Test
-    public void testExchangeRejectsDeferredReferenceToUnsavedRecord() {
-        Owner first = new Owner();
-        runway.save(first);
-        Meter meter = new Meter();
-        meter.ref = new DeferredReference<>(first);
-        runway.save(meter);
-        Owner unsaved = new Owner();
         try {
-            meter.exchange("ref", new DeferredReference<>(unsaved));
+            meter.exchange("ref", new DeferredReference<>(second));
             Assert.fail("Expected an IllegalArgumentException");
         }
         catch (IllegalArgumentException e) {
@@ -207,199 +171,27 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code exchange} accepts an unloaded
-     * {@link DeferredReference} replacement, which always originates from a
-     * stored link and therefore needs no staged-state check.
-     * <p>
-     * <strong>Start state:</strong> Two saved {@link Meter Meters} whose
-     * {@code ref} fields wrap different saved {@link Owner Owners}, plus a
-     * freshly loaded copy of the second {@link Meter} whose {@code ref} is
-     * still unloaded.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save two {@link Owner Owners} and two {@link Meter Meters} that wrap
-     * them.</li>
-     * <li>Load a fresh copy of the second {@link Meter} and take its unloaded
-     * {@code ref}.</li>
-     * <li>Call {@code exchange("ref", ...)} on the first {@link Meter} with
-     * that unloaded reference.</li>
-     * <li>Re-load the first {@link Meter} from the database.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The exchange returns {@code true} and the
-     * re-loaded first {@link Meter Meter's} {@code ref} resolves to the second
-     * {@link Owner Owner's} id.
-     */
-    @Test
-    public void testExchangeAcceptsUnloadedDeferredReferenceReplacement() {
-        Owner first = new Owner();
-        Owner second = new Owner();
-        runway.save(first, second);
-        Meter a = new Meter();
-        a.ref = new DeferredReference<>(first);
-        Meter b = new Meter();
-        b.ref = new DeferredReference<>(second);
-        runway.save(a, b);
-        DeferredReference<Owner> unloaded = runway.load(Meter.class,
-                b.id()).ref;
-        Assert.assertTrue(a.exchange("ref", unloaded));
-        Assert.assertEquals(second.id(),
-                runway.load(Meter.class, a.id()).ref.get().id());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
-     * {@link Record} replacement that was never saved, so a link to a record
-     * that does not exist in the database is never stored.
+     * <strong>Goal:</strong> Verify that {@code getAndUpdate} rejects a
+     * {@link Record}-typed field, matching the {@code exchange} contract.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} linked to a saved
-     * {@link Owner}, with a second {@link Owner} that was never saved.
+     * {@link Owner}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Save a {@link Meter} whose {@code owner} is a saved
-     * {@link Owner}.</li>
-     * <li>Call {@code exchange("owner", unsaved)} with a never-saved
-     * {@link Owner}.</li>
+     * <li>Save a {@link Meter} whose {@code owner} is an {@link Owner}.</li>
+     * <li>Call {@code getAndUpdate("owner", o -> o)}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
-     * and the stored link still targets the original {@link Owner}.
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
      */
-    @Test
-    public void testExchangeRejectsNeverSavedLinkReplacement() {
-        Owner first = new Owner();
+    @Test(expected = IllegalArgumentException.class)
+    public void testGetAndUpdateRejectsLinkTypedField() {
+        Owner owner = new Owner();
         Meter meter = new Meter();
-        meter.owner = first;
+        meter.owner = owner;
         runway.save(meter);
-        Owner unsaved = new Owner();
-        try {
-            meter.exchange("owner", unsaved);
-            Assert.fail("Expected an IllegalArgumentException");
-        }
-        catch (IllegalArgumentException e) {
-            Assert.assertEquals(first.id(),
-                    runway.load(Meter.class, meter.id()).owner.id());
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
-     * {@link Record} replacement that has unsaved changes, so a link is never
-     * stored to a record whose persisted state diverges from the state the
-     * caller sees in memory.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Meter} linked to a saved
-     * {@link Owner}, with a second saved {@link Owner} that was modified after
-     * its save.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link Meter} whose {@code owner} is the first {@link Owner}
-     * and save a second {@link Owner}.</li>
-     * <li>Change the second {@link Owner Owner's} {@code name} without a
-     * save.</li>
-     * <li>Call {@code exchange("owner", second)}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
-     * and the stored link still targets the first {@link Owner}.
-     */
-    @Test
-    public void testExchangeRejectsDirtyLinkReplacement() {
-        Owner first = new Owner();
-        Owner second = new Owner();
-        Meter meter = new Meter();
-        meter.owner = first;
-        runway.save(meter, second);
-        second.name = "changed";
-        try {
-            meter.exchange("owner", second);
-            Assert.fail("Expected an IllegalArgumentException");
-        }
-        catch (IllegalArgumentException e) {
-            Assert.assertEquals(first.id(),
-                    runway.load(Meter.class, meter.id()).owner.id());
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
-     * {@link Record} replacement that has unsaved realm changes, so a stored
-     * link never points at a record whose persisted realm membership diverges
-     * from what the caller sees in memory.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Meter} linked to a saved
-     * {@link Owner}, with a second saved {@link Owner} that gained a realm
-     * after its save.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link Meter} whose {@code owner} is the first {@link Owner}
-     * and save a second {@link Owner}.</li>
-     * <li>Call {@code addRealm("vip")} on the second {@link Owner} without a
-     * save.</li>
-     * <li>Call {@code exchange("owner", second)}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
-     * and the stored link still targets the first {@link Owner}.
-     */
-    @Test
-    public void testExchangeRejectsLinkReplacementWithUnsavedRealmChanges() {
-        Owner first = new Owner();
-        Owner second = new Owner();
-        Meter meter = new Meter();
-        meter.owner = first;
-        runway.save(meter, second);
-        second.addRealm("vip");
-        try {
-            meter.exchange("owner", second);
-            Assert.fail("Expected an IllegalArgumentException");
-        }
-        catch (IllegalArgumentException e) {
-            Assert.assertEquals(first.id(),
-                    runway.load(Meter.class, meter.id()).owner.id());
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@code exchange} rejects a
-     * {@link Record} replacement that is staged for deletion, so a stored link
-     * never points at a record whose next save removes it.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Meter} linked to a saved
-     * {@link Owner}, with a second saved {@link Owner} that is staged for
-     * deletion.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link Meter} whose {@code owner} is the first {@link Owner}
-     * and save a second {@link Owner}.</li>
-     * <li>Call {@code deleteOnSave()} on the second {@link Owner}.</li>
-     * <li>Call {@code exchange("owner", second)}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
-     * and the stored link still targets the first {@link Owner}.
-     */
-    @Test
-    public void testExchangeRejectsLinkReplacementStagedForDeletion() {
-        Owner first = new Owner();
-        Owner second = new Owner();
-        Meter meter = new Meter();
-        meter.owner = first;
-        runway.save(meter, second);
-        second.deleteOnSave();
-        try {
-            meter.exchange("owner", second);
-            Assert.fail("Expected an IllegalArgumentException");
-        }
-        catch (IllegalArgumentException e) {
-            Assert.assertEquals(first.id(),
-                    runway.load(Meter.class, meter.id()).owner.id());
-        }
+        meter.getAndUpdate("owner", (Owner o) -> o);
     }
 
     /**
@@ -1006,9 +798,9 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that an uncontended {@code getAndUpdate}
-     * succeeds without touching a dirty linked record, so the linked-record
-     * safeguard costs nothing when no retry is necessary.
+     * <strong>Goal:</strong> Verify that an uncontended {@code getAndUpdate} on
+     * a scalar field succeeds without touching a dirty linked record held by a
+     * different field.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} whose linked
      * {@link Owner} was modified after its save, with no concurrent writer.
@@ -1075,55 +867,6 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
         Assert.assertSame(owner, meter.owner);
         Assert.assertEquals("changed", owner.name);
         Assert.assertEquals(6, runway.load(Meter.class, meter.id()).value);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that a retry fails instead of replacing the
-     * target field's linked record while that record has staged changes, so the
-     * re-read can never silently drop them from the object graph.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Meter} whose stored
-     * {@code owner} link was changed through a second loaded copy, while the
-     * original in-memory {@link Owner} was modified without a save.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link Meter} whose {@code owner} is an {@link Owner}, plus a
-     * rival and a replacement {@link Owner}.</li>
-     * <li>Load a fresh copy, point its {@code owner} at the rival, and save
-     * it.</li>
-     * <li>Change the original {@link Owner Owner's} {@code name} without a
-     * save.</li>
-     * <li>Call {@code getAndUpdate("owner", o -> replacement)} on the original
-     * (now stale) instance.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown,
-     * the in-memory {@code owner} is the same instance with its staged
-     * {@code name} intact and the stored link still targets the rival.
-     */
-    @Test
-    public void testGetAndUpdateRefusesRetryWhenTargetLinkIsDirty() {
-        Owner owner = new Owner();
-        Owner rival = new Owner();
-        Owner replacement = new Owner();
-        Meter meter = new Meter();
-        meter.owner = owner;
-        runway.save(meter, rival, replacement);
-        Meter fresh = runway.load(Meter.class, meter.id());
-        fresh.owner = rival;
-        runway.save(fresh);
-        owner.name = "changed";
-        try {
-            meter.getAndUpdate("owner", (Owner o) -> replacement);
-            Assert.fail("Expected an IllegalStateException");
-        }
-        catch (IllegalStateException e) {
-            Assert.assertSame(owner, meter.owner);
-            Assert.assertEquals("changed", owner.name);
-            Assert.assertEquals(rival.id(),
-                    runway.load(Meter.class, meter.id()).owner.id());
-        }
     }
 
     /**
@@ -1375,13 +1118,12 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
         public long score = 2;
 
         /**
-         * A link field; atomic operations must support exchanging links.
+         * A link field; atomic operations must reject it.
          */
         public Owner owner = null;
 
         /**
-         * A deferred link field; atomic operations must support exchanging
-         * {@link DeferredReference DeferredReferences}.
+         * A deferred link field; atomic operations must reject it.
          */
         public DeferredReference<Owner> ref = null;
 
