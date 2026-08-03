@@ -1553,8 +1553,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param reader the {@link Reader} that records the read when the selection
      *            can be resolved with a single recorded query
      * @param selection the {@link LoadClassSelection} to resolve
-     * @param transaction the active {@link Transaction} view, or {@code null}
-     *            when resolving through the connection pool
+     * @param db the {@link DatabaseInterface} through which nested reads
+     *            execute
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}, whose companion
      *         value (when a filter without pagination is applied) carries the
@@ -1562,7 +1562,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Pending<SelectResult<Set<T>>> $selectClass(
             Reader reader, LoadClassSelection<T> selection,
-            @Nullable Transaction transaction) {
+            DatabaseInterface db) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Order order = selection.order;
@@ -1579,7 +1579,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     any ? $Criteria.forClassHierarchy(clazz)
                             : $Criteria.forClass(clazz));
             if(hasFilter && page != null) {
-                try (Reader sharedReader = syncReader(transaction)) {
+                try (Reader sharedReader = syncReader(db)) {
                     Function<Page, Set<T>> retriever = $page -> {
                         Read read = enqueueRead(sharedReader, any, clazz,
                                 criteria, order, $page);
@@ -1612,7 +1612,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             // Legacy servers lack native sorting/pagination, so results must
             // be fetched and processed client-side.
-            Set<T> records = api(transaction)
+            Set<T> records = db
                     .fetch(Selection.of(clazz).any(any).realms(realms));
             if(order != null) {
                 records = DatabaseInterface.sort(records,
@@ -1638,16 +1638,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param reader the {@link Reader} that records the count when the
      *            selection can be resolved with a single recorded query
      * @param selection the {@link CountSelection} to resolve
-     * @param transaction the active {@link Transaction} view, or {@code null}
-     *            when resolving through the connection pool
+     * @param db the {@link DatabaseInterface} through which nested reads
+     *            execute
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}; no companion value
      *         is carried because the underlying {@link #fetch(Selection)} (when
      *         used) covers the unfiltered set under its own {@link Reservation}
      */
     private <T extends Record> Pending<SelectResult<Integer>> $selectCount(
-            Reader reader, CountSelection<T> selection,
-            @Nullable Transaction transaction) {
+            Reader reader, CountSelection<T> selection, DatabaseInterface db) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Criteria criteria = selection.criteria;
@@ -1657,7 +1656,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         if(hasFilter) {
             // Fetch unfiltered so the inner selection caches reusable data,
             // then count the filtered stream.
-            Set<T> records = api(transaction).fetch(Selection.of(clazz).any(any)
+            Set<T> records = db.fetch(Selection.of(clazz).any(any)
                     .where(criteria).realms(realms));
             return Pending.of(new SelectResult<>(
                     (int) records.stream().filter(filter).count()));
@@ -1683,9 +1682,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             return Pending.of(new SelectResult<>(any
                     ? filterAny(clazz, criteria, NO_ORDER, NO_PAGINATION,
-                            realms, transaction).size()
+                            realms, db).size()
                     : filter(clazz, criteria, NO_ORDER, NO_PAGINATION, realms,
-                            transaction).size()));
+                            db).size()));
         }
     }
 
@@ -1697,16 +1696,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * @param reader the {@link Reader} that records the read when the selection
      *            can be resolved with a single recorded query
      * @param selection the {@link FindSelection} to resolve
-     * @param transaction the active {@link Transaction} view, or {@code null}
-     *            when resolving through the connection pool
+     * @param db the {@link DatabaseInterface} through which nested reads
+     *            execute
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}, whose companion
      *         value (when a filter without pagination is applied) carries the
      *         unfiltered records
      */
     private <T extends Record> Pending<SelectResult<Set<T>>> $selectCriteria(
-            Reader reader, FindSelection<T> selection,
-            @Nullable Transaction transaction) {
+            Reader reader, FindSelection<T> selection, DatabaseInterface db) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Criteria criteria = selection.criteria;
@@ -1726,7 +1724,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     any ? $Criteria.accrossClassHierachy(clazz, criteria)
                             : $Criteria.withinClass(clazz, criteria));
             if(hasFilter && page != null) {
-                try (Reader sharedReader = syncReader(transaction)) {
+                try (Reader sharedReader = syncReader(db)) {
                     Function<Page, Set<T>> retriever = $page -> {
                         if(dbResolvable) {
                             Read read = enqueueRead(sharedReader, any, clazz,
@@ -1744,9 +1742,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         else {
                             return any
                                     ? filterAny(clazz, criteria, order, $page,
-                                            realms, transaction)
+                                            realms, db)
                                     : filter(clazz, criteria, order, $page,
-                                            realms, transaction);
+                                            realms, db);
                         }
                     };
                     return Pending.of(new SelectResult<>(Pagination
@@ -1764,10 +1762,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             }
             else {
                 Set<T> records = any
-                        ? filterAny(clazz, criteria, order, page, realms,
-                                transaction)
-                        : filter(clazz, criteria, order, page, realms,
-                                transaction);
+                        ? filterAny(clazz, criteria, order, page, realms, db)
+                        : filter(clazz, criteria, order, page, realms, db);
                 if(hasFilter) {
                     return Pending
                             .of(new SelectResult<>(
@@ -1784,7 +1780,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         else {
             // Legacy servers lack native sorting/pagination, so results must
             // be fetched and processed client-side.
-            Set<T> records = api(transaction)
+            Set<T> records = db
                     .fetch(Selection.of(clazz).any(any).where(criteria));
             if(order != null) {
                 records = DatabaseInterface.sort(records,
@@ -1810,14 +1806,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param reader the {@link Reader} that records the underlying read
      * @param selection the {@link FirstSelection} to resolve
-     * @param transaction the active {@link Transaction} view, or {@code null}
-     *            when resolving through the connection pool
+     * @param db the {@link DatabaseInterface} through which nested reads
+     *            execute
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}
      */
     private <T extends Record> Pending<SelectResult<T>> $selectFirst(
-            Reader reader, FirstSelection<T> selection,
-            @Nullable Transaction transaction) {
+            Reader reader, FirstSelection<T> selection, DatabaseInterface db) {
         DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
                 selection.clazz, selection.any);
         state.criteria = selection.criteria;
@@ -1826,10 +1821,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         state.filter = selection.filter;
         state.realms = selection.realms;
         Pending<SelectResult<Set<T>>> inner = selection.criteria != null
-                ? $selectCriteria(reader, new FindSelection<>(state),
-                        transaction)
-                : $selectClass(reader, new LoadClassSelection<>(state),
-                        transaction);
+                ? $selectCriteria(reader, new FindSelection<>(state), db)
+                : $selectClass(reader, new LoadClassSelection<>(state), db);
         // NOTE: The inner cacheValue is a pre-filter Set that cannot stand in
         // for a first-typed result in the reservation cache, so it is not
         // propagated.
@@ -1844,39 +1837,33 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param reader the {@link Reader} that records the required reads
      * @param selection the {@link DatabaseSelection} to resolve
-     * @param transaction the {@link Transaction} view on whose behalf the
-     *            resolution runs, or {@code null} when resolving through the
-     *            connection pool; when non-{@code null}, nested reads and
-     *            private readers stay on the view's connection so they join its
-     *            transaction
+     * @param db the {@link DatabaseInterface} through which nested reads
+     *            execute, so they stay in the same resolution context as
+     *            {@code selection}
      * @param <T> the {@link Record} type
      */
     @SuppressWarnings({ "rawtypes" })
     private <T extends Record> void $selectFromDatabase(Reader reader,
-            DatabaseSelection<T> selection, @Nullable Transaction transaction) {
+            DatabaseSelection<T> selection, DatabaseInterface db) {
         Pending<? extends SelectResult<?>> pending;
         if(selection instanceof CountSelection) {
-            pending = $selectCount(reader, (CountSelection<T>) selection,
-                    transaction);
+            pending = $selectCount(reader, (CountSelection<T>) selection, db);
         }
         else if(selection instanceof LoadRecordSelection) {
             pending = $selectRecord(reader, (LoadRecordSelection<T>) selection);
         }
         else if(selection instanceof LoadClassSelection) {
             pending = $selectClass(reader, (LoadClassSelection<T>) selection,
-                    transaction);
+                    db);
         }
         else if(selection instanceof FindSelection) {
-            pending = $selectCriteria(reader, (FindSelection<T>) selection,
-                    transaction);
+            pending = $selectCriteria(reader, (FindSelection<T>) selection, db);
         }
         else if(selection instanceof UniqueSelection) {
-            pending = $selectUnique(reader, (UniqueSelection<T>) selection,
-                    transaction);
+            pending = $selectUnique(reader, (UniqueSelection<T>) selection, db);
         }
         else if(selection instanceof FirstSelection) {
-            pending = $selectFirst(reader, (FirstSelection<T>) selection,
-                    transaction);
+            pending = $selectFirst(reader, (FirstSelection<T>) selection, db);
         }
         else {
             throw new IllegalStateException(
@@ -2080,8 +2067,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *
      * @param reader the {@link Reader} that records the underlying read
      * @param selection the {@link UniqueSelection} to resolve
-     * @param transaction the active {@link Transaction} view, or {@code null}
-     *            when resolving through the connection pool
+     * @param db the {@link DatabaseInterface} through which nested reads
+     *            execute
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}, whose companion
      *         value carries any companion value produced by the inner query
@@ -2089,8 +2076,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      *             more than one {@link Record} matches
      */
     private <T extends Record> Pending<SelectResult<T>> $selectUnique(
-            Reader reader, UniqueSelection<T> selection,
-            @Nullable Transaction transaction) {
+            Reader reader, UniqueSelection<T> selection, DatabaseInterface db) {
         DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
                 selection.clazz, selection.any);
         state.criteria = selection.criteria;
@@ -2098,10 +2084,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         state.filter = selection.filter;
         state.realms = selection.realms;
         Pending<SelectResult<Set<T>>> inner = selection.criteria != null
-                ? $selectCriteria(reader, new FindSelection<>(state),
-                        transaction)
-                : $selectClass(reader, new LoadClassSelection<>(state),
-                        transaction);
+                ? $selectCriteria(reader, new FindSelection<>(state), db)
+                : $selectClass(reader, new LoadClassSelection<>(state), db);
         return inner.map(selected -> {
             Set<T> results = selected.result;
             T result;
@@ -2160,22 +2144,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 selection.setState(Selection.State.FINISHED);
             }
             else {
-                $selectFromDatabase(reader, selection, null);
+                $selectFromDatabase(reader, selection, this);
             }
         }
-    }
-
-    /**
-     * Return the {@link DatabaseInterface} through which a resolver's nested
-     * reads must execute: the transactional view when one is active, and this
-     * {@link Runway} instance otherwise.
-     *
-     * @param transaction the active {@link Transaction} view, or {@code null}
-     *            when resolving through the connection pool
-     * @return the {@link DatabaseInterface} for nested reads
-     */
-    private DatabaseInterface api(@Nullable Transaction transaction) {
-        return transaction != null ? transaction : this;
     }
 
     /**
@@ -2370,9 +2341,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> filter(Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page, @Nonnull Realms realms,
-            @Nullable Transaction transaction) {
-        return api(transaction).fetch(Selection.of(clazz).order(order)
-                .page(page).filter(record -> record
+            DatabaseInterface db) {
+        return db.fetch(Selection.of(clazz).order(order).page(page)
+                .filter(record -> record
                         .matches($Criteria.amongRealms(realms, criteria))));
     }
 
@@ -2392,9 +2363,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private <T extends Record> Set<T> filterAny(Class<T> clazz,
             Criteria criteria, @Nullable Order order, @Nullable Page page,
-            @Nonnull Realms realms, @Nullable Transaction transaction) {
-        return api(transaction).fetch(Selection.ofAny(clazz).order(order)
-                .page(page).filter(record -> record
+            @Nonnull Realms realms, DatabaseInterface db) {
+        return db.fetch(Selection.ofAny(clazz).order(order).page(page)
+                .filter(record -> record
                         .matches($Criteria.amongRealms(realms, criteria))));
     }
 
@@ -2887,17 +2858,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
 
     /**
      * Return a private synchronous {@link Reader} for a resolver that must
-     * drive its own reads: bound to the {@code transaction} view's staged
-     * connection when one is active, and borrowed from the connection pool
-     * otherwise.
+     * drive its own reads, bound to the same resolution context as {@code db}:
+     * the staged connection when {@code db} is a {@link Transaction} view, and
+     * the connection pool otherwise.
      *
-     * @param transaction the active {@link Transaction} view, or {@code null}
-     *            when resolving through the connection pool
+     * @param db the {@link DatabaseInterface} through which nested reads
+     *            execute
      * @return the {@link Reader}
      */
-    private Reader syncReader(@Nullable Transaction transaction) {
-        return transaction != null
-                ? new IncrementalReader(transaction.concourse)
+    private Reader syncReader(DatabaseInterface db) {
+        // NOTE: Only this Runway instance and its Transaction views can flow
+        // through the private resolvers, so matching on the view is
+        // exhaustive.
+        return db instanceof Transaction
+                ? new IncrementalReader(((Transaction) db).concourse)
                 : new IncrementalReader(connections);
     }
 
@@ -2943,19 +2917,22 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // per attempt would churn the pool.
             int attempts = 0;
             for (;;) {
+                Transaction transaction = new Transaction(concourse);
                 try {
-                    DatabaseInterface db = new Transaction(concourse);
                     T record;
                     if(order != null) {
-                        record = any ? db.findAnyFirst(clazz, criteria, order)
-                                : db.findFirst(clazz, criteria, order);
+                        record = any
+                                ? transaction.findAnyFirst(clazz, criteria,
+                                        order)
+                                : transaction.findFirst(clazz, criteria, order);
                     }
                     else {
-                        record = any ? db.findAnyUnique(clazz, criteria)
-                                : db.findUnique(clazz, criteria);
+                        record = any
+                                ? transaction.findAnyUnique(clazz, criteria)
+                                : transaction.findUnique(clazz, criteria);
                     }
                     if(record == null) {
-                        concourse.abort();
+                        transaction.abort();
                         return null;
                     }
                     else {
@@ -2978,11 +2955,11 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         record.checkIsSavable(field, key, next);
                         boolean clean = !record.hasUnsavedChanges();
                         if(!Objects.equals(current, next)) {
-                            concourse.verifyOrSet(key,
+                            transaction.verifyOrSet(key,
                                     Record.serializeScalarValue(next),
                                     record.id());
                         }
-                        if(concourse.commit()) {
+                        if(transaction.commit()) {
                             record.applyAtomicWrite(key, next, clean);
                             return record;
                         }
@@ -2993,7 +2970,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     }
                 }
                 catch (TransactionException e) {
-                    concourse.abort();
+                    transaction.abort();
                     if(++attempts > policy.limit()) {
                         throw new RetryExhaustedException(attempts);
                     }
@@ -3005,7 +2982,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     // A non-transaction failure (e.g. a duplicate-entry or
                     // constraint violation) is terminal: abort and propagate
                     // without retrying so nothing is committed or mutated.
-                    concourse.abort();
+                    transaction.abort();
                     throw t;
                 }
             }
@@ -3631,9 +3608,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * Every read observes the transaction's isolated snapshot, including its
      * own uncommitted writes, and joins its conflict footprint. Only
      * {@link Record Records} persisted in the database are visible; records
-     * supplied by an attached {@link AdHocDataSource} are not. The caller owns
-     * the connection and the transaction's outcome: this view neither commits
-     * nor aborts.
+     * supplied by an attached {@link AdHocDataSource} are not. This view owns
+     * the transaction from start to finish: construction stages it, and
+     * {@link #commit()} or {@link #abort()} ends it. The caller owns the
+     * connection.
      *
      * @author Jeff Nelson
      */
@@ -3655,6 +3633,35 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Transaction(Concourse concourse) {
             this.concourse = concourse;
             concourse.stage();
+        }
+
+        /**
+         * Abort the transaction and discard every staged write.
+         */
+        void abort() {
+            concourse.abort();
+        }
+
+        /**
+         * Attempt to commit the transaction.
+         *
+         * @return {@code true} if the transaction commits
+         */
+        boolean commit() {
+            return concourse.commit();
+        }
+
+        /**
+         * Execute {@link Concourse#verifyOrSet(String, Object, long)
+         * verifyOrSet} within the transaction.
+         *
+         * @param key the field name
+         * @param value the value to store as the only value for {@code key} in
+         *            {@code record}
+         * @param record the record id
+         */
+        void verifyOrSet(String key, Object value, long record) {
+            concourse.verifyOrSet(key, value, record);
         }
 
         @Override
