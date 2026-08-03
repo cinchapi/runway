@@ -13,14 +13,14 @@
     * `findAnyFirst` applies the same contract across the class hierarchy, as `findAny` does for `find`.
     * Overloads accept `Realms` scoping and a client-side `Predicate` filter; with a filter, the result is the first record that both matches the `Criteria` and passes the filter.
     * The `Selection` fluent API expresses the same read: the `first()` terminal becomes available once a sort order is set, and the resulting selection participates in batched `select` calls.
-* **Added the `findAndUpdate`, `findUniqueAndUpdate`, and `findFirstAndUpdate` atomic read-modify-write primitives.** Each method finds the matching record(s), applies a caller-supplied consumer, and persists the result as a single atomic unit, so the read and the write share one transaction and concurrent callers contending for the same record(s) are mutually excluded. ([GH-140](https://github.com/cinchapi/runway/issues/140))
-    * On a write conflict, the whole cycle (re-find, re-apply, re-save) is retried with bounded backoff. The consumer may therefore run more than once and must be safe to do so, and it must mutate the record it is handed.
+* **Added the `findUniqueAndUpdate` and `findFirstAndUpdate` atomic read-modify-write methods, with `findAnyUniqueAndUpdate` and `findAnyFirstAndUpdate` hierarchy variants.** Each method finds at most one matching record and applies a caller-supplied operator to the value of a single key, so the read and the write share one transaction and concurrent callers contending for the same record are mutually excluded. ([GH-140](https://github.com/cinchapi/runway/issues/140))
+    * The key and the operator follow the same field eligibility rules and value constraints as the `Record` single-key atomic operations, and the write is targeted in the same way: the `beforeSave` hook and save listeners do not run.
+    * On a write conflict, the whole cycle (re-find, re-apply, re-write) is retried per the configured `AtomicRetryPolicy`. The operator may therefore run more than once and must be safe to do so.
     * When the retry budget is exhausted, `RetryExhaustedException` is thrown rather than a non-committed result being returned, so persistent contention is never mistaken for "nothing matched."
-    * `findAndUpdate` updates every match and returns the updated set; when nothing matches, the set is empty and the consumer never runs.
-    * `findUniqueAndUpdate` updates the single match or returns `null`, and throws `DuplicateEntryException` when more than one record matches, without mutating or committing.
+    * `findUniqueAndUpdate` updates the single match or returns `null`, and throws `DuplicateEntryException` when more than one record matches, without updating or committing.
     * `findFirstAndUpdate` updates the first match under a required `Order`, or returns `null` when nothing matches.
     * Non-conflict failures propagate without retrying and without committing.
-    * Any `Criteria` is supported, including one that references derived or computed data; a criteria over stored keys contends least under concurrent writes.
+    * Any `Criteria` is supported, including one that references derived or computed data.
 
 ##### Atomic Operations
 This release adds single-key atomic operations to `Record`: `exchange`, `getAndUpdate`, and `updateAndGet`. They give a caller that already holds a record a way to conditionally replace one field's value in a single atomic step, without a raw Concourse connection.

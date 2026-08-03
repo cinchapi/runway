@@ -34,13 +34,14 @@ import com.cinchapi.concourse.thrift.Operator;
 
 /**
  * Tests for
- * {@link Runway#findUniqueAndUpdate(Class, Criteria, java.util.function.Consumer)
- * findUniqueAndUpdate}. Each test runs under both Command-API modes (bulk
- * enabled and disabled), so the matrix drives the atomic update through both of
- * its transaction paths: batched submissions when the server supports bulk
- * commands and the incremental path otherwise.
+ * {@link Runway#findUniqueAndUpdate(Class, Criteria, String, java.util.function.UnaryOperator)
+ * findUniqueAndUpdate} and
+ * {@link Runway#findAnyUniqueAndUpdate(Class, Criteria, String, java.util.function.UnaryOperator)
+ * findAnyUniqueAndUpdate}. Each test runs under both Command-API modes (bulk
+ * enabled and disabled), so the matrix drives the transactional find through
+ * both of its read paths.
  *
- * @author Javier Lores
+ * @author Jeff Nelson
  */
 @RunWith(Parameterized.class)
 public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
@@ -87,8 +88,8 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Item Items} with codes 1, 2, and 3.</li>
-     * <li>Call {@code findUniqueAndUpdate} with {@code code == 2} and a
-     * consumer that sets {@code owner} to {@code "worker"}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code code == 2} and an
+     * operator on {@code owner} that returns {@code "worker"}.</li>
      * <li>Re-load the returned {@link Item} by id from the database.</li>
      * </ul>
      * <p>
@@ -99,18 +100,17 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
     @Test
     public void testFindUniqueAndUpdateUpdatesSoleMatchAndPersists() {
         runway.save(new Item(1), new Item(2), new Item(3));
-        Item item = runway.findUniqueAndUpdate(Item.class, code(2),
-                i -> i.owner = "worker");
+        Item item = runway.findUniqueAndUpdate(Item.class, code(2), "owner",
+                owner -> "worker");
         Assert.assertNotNull(item);
         Assert.assertEquals(2, item.code);
         Assert.assertEquals("worker", item.owner);
-        Item reloaded = runway.load(Item.class, item.id());
-        Assert.assertEquals("worker", reloaded.owner);
+        Assert.assertEquals("worker", runway.load(Item.class, item.id()).owner);
     }
 
     /**
      * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} returns
-     * {@code null} and never invokes the consumer when no record matches.
+     * {@code null} and never invokes the operator when no record matches.
      * <p>
      * <strong>Start state:</strong> Three {@link Item Items} none of which
      * matches the criteria.
@@ -118,27 +118,30 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Item Items} with codes 1, 2, and 3.</li>
-     * <li>Call {@code findUniqueAndUpdate} with {@code code == 99} and a
-     * consumer that flips an {@link AtomicBoolean}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code code == 99} and an
+     * operator that flips an {@link AtomicBoolean}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The result is {@code null} and the consumer
+     * <strong>Expected:</strong> The result is {@code null} and the operator
      * never ran.
      */
     @Test
-    public void testFindUniqueAndUpdateReturnsNullAndSkipsConsumerIfNoMatch() {
+    public void testFindUniqueAndUpdateReturnsNullAndSkipsOperatorIfNoMatch() {
         runway.save(new Item(1), new Item(2), new Item(3));
-        AtomicBoolean consumerRan = new AtomicBoolean(false);
-        Item item = runway.findUniqueAndUpdate(Item.class, code(99),
-                i -> consumerRan.set(true));
+        AtomicBoolean operatorRan = new AtomicBoolean(false);
+        Item item = runway.findUniqueAndUpdate(Item.class, code(99), "owner",
+                owner -> {
+                    operatorRan.set(true);
+                    return owner;
+                });
         Assert.assertNull(item);
-        Assert.assertFalse(consumerRan.get());
+        Assert.assertFalse(operatorRan.get());
     }
 
     /**
      * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} throws
      * {@link DuplicateEntryException} when more than one record matches, and
-     * that neither the mutation nor a commit occurs.
+     * that neither an update nor a commit occurs.
      * <p>
      * <strong>Start state:</strong> Two {@link Item Items} that share the same
      * code.
@@ -146,14 +149,15 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save two {@link Item Items} both with code 7.</li>
-     * <li>Call {@code findUniqueAndUpdate} with {@code code == 7} and a
-     * consumer that sets {@code owner}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code code == 7} and an
+     * operator on {@code owner}.</li>
      * <li>Catch the expected exception, then re-load both {@link Item
      * Items}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown
-     * and neither re-loaded {@link Item} has an {@code owner} set.
+     * and both re-loaded {@link Item Items} still have the initial
+     * {@code owner}.
      */
     @Test
     public void testFindUniqueAndUpdateThrowsOnDuplicateWithoutUpdating() {
@@ -162,15 +166,17 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
         runway.save(one, two);
         boolean threw = false;
         try {
-            runway.findUniqueAndUpdate(Item.class, code(7),
-                    i -> i.owner = "worker");
+            runway.findUniqueAndUpdate(Item.class, code(7), "owner",
+                    owner -> "worker");
         }
         catch (DuplicateEntryException e) {
             threw = true;
         }
         Assert.assertTrue(threw);
-        Assert.assertNull(runway.load(Item.class, one.id()).owner);
-        Assert.assertNull(runway.load(Item.class, two.id()).owner);
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, one.id()).owner);
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, two.id()).owner);
     }
 
     /**
@@ -186,14 +192,15 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Force {@code hasNativeSortingAndPagination} to {@code false}.</li>
      * <li>Save two {@link Item Items} both with code 7.</li>
-     * <li>Call {@code findUniqueAndUpdate} with {@code code == 7} and a
-     * consumer that sets {@code owner}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code code == 7} and an
+     * operator on {@code owner}.</li>
      * <li>Catch the expected exception, then re-load both {@link Item
      * Items}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown
-     * and neither re-loaded {@link Item} has an {@code owner} set.
+     * and both re-loaded {@link Item Items} still have the initial
+     * {@code owner}.
      */
     @Test
     public void testFindUniqueAndUpdateThrowsOnDuplicateOnLegacyServer() {
@@ -203,15 +210,17 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
         runway.save(one, two);
         boolean threw = false;
         try {
-            runway.findUniqueAndUpdate(Item.class, code(7),
-                    i -> i.owner = "worker");
+            runway.findUniqueAndUpdate(Item.class, code(7), "owner",
+                    owner -> "worker");
         }
         catch (DuplicateEntryException e) {
             threw = true;
         }
         Assert.assertTrue(threw);
-        Assert.assertNull(runway.load(Item.class, one.id()).owner);
-        Assert.assertNull(runway.load(Item.class, two.id()).owner);
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, one.id()).owner);
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, two.id()).owner);
     }
 
     /**
@@ -226,8 +235,8 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Item Items} with codes 1, 2, and 3.</li>
-     * <li>Call {@code findUniqueAndUpdate} with {@code parity == "even"} and a
-     * consumer that sets {@code owner} to {@code "worker"}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code parity == "even"} and an
+     * operator on {@code owner} that returns {@code "worker"}.</li>
      * <li>Re-load the returned {@link Item} by id from the database.</li>
      * </ul>
      * <p>
@@ -238,7 +247,7 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
     public void testFindUniqueAndUpdateUpdatesSoleDerivedCriteriaMatch() {
         runway.save(new Item(1), new Item(2), new Item(3));
         Item item = runway.findUniqueAndUpdate(Item.class, parity("even"),
-                i -> i.owner = "worker");
+                "owner", owner -> "worker");
         Assert.assertNotNull(item);
         Assert.assertEquals(2, item.code);
         Assert.assertEquals("worker", runway.load(Item.class, item.id()).owner);
@@ -256,13 +265,13 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save {@link Item Items} with codes 1, 2, and 3.</li>
-     * <li>Call {@code findUniqueAndUpdate} with {@code parity == "odd"} and a
-     * consumer that sets {@code owner}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code parity == "odd"} and an
+     * operator on {@code owner}.</li>
      * <li>Catch the expected exception, then re-load every {@link Item}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown
-     * and no re-loaded {@link Item} has an {@code owner} set.
+     * and every re-loaded {@link Item} still has the initial {@code owner}.
      */
     @Test
     public void testFindUniqueAndUpdateThrowsOnDuplicateDerivedCriteriaMatch() {
@@ -272,16 +281,125 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
         runway.save(one, two, three);
         boolean threw = false;
         try {
-            runway.findUniqueAndUpdate(Item.class, parity("odd"),
-                    i -> i.owner = "worker");
+            runway.findUniqueAndUpdate(Item.class, parity("odd"), "owner",
+                    owner -> "worker");
         }
         catch (DuplicateEntryException e) {
             threw = true;
         }
         Assert.assertTrue(threw);
-        Assert.assertNull(runway.load(Item.class, one.id()).owner);
-        Assert.assertNull(runway.load(Item.class, two.id()).owner);
-        Assert.assertNull(runway.load(Item.class, three.id()).owner);
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, one.id()).owner);
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, two.id()).owner);
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, three.id()).owner);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findAnyUniqueAndUpdate} matches
+     * across the {@link Item} hierarchy and updates the sole match, even when
+     * it is a subclass instance.
+     * <p>
+     * <strong>Start state:</strong> One {@link Item} with code 1 and one
+     * {@link SpecialItem} with code 2.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Item} with code 1 and a {@link SpecialItem} with code
+     * 2.</li>
+     * <li>Call {@code findAnyUniqueAndUpdate} with {@code code == 2} and an
+     * operator on {@code owner} that returns {@code "worker"}.</li>
+     * <li>Re-load the {@link SpecialItem} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned record is the {@link SpecialItem}
+     * and the re-loaded {@link SpecialItem} shows the persisted {@code owner}.
+     */
+    @Test
+    public void testFindAnyUniqueAndUpdateUpdatesSoleMatchAcrossHierarchy() {
+        Item item = new Item(1);
+        SpecialItem special = new SpecialItem(2);
+        runway.save(item, special);
+        Item updated = runway.findAnyUniqueAndUpdate(Item.class, code(2),
+                "owner", owner -> "worker");
+        Assert.assertNotNull(updated);
+        Assert.assertEquals(special.id(), updated.id());
+        Assert.assertEquals("worker",
+                runway.load(SpecialItem.class, special.id()).owner);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findAnyUniqueAndUpdate} throws
+     * {@link DuplicateEntryException} when the match set spans the class
+     * hierarchy, and that no record is updated.
+     * <p>
+     * <strong>Start state:</strong> One {@link Item} and one
+     * {@link SpecialItem} that share the same code.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Item} and a {@link SpecialItem} both with code 7.</li>
+     * <li>Call {@code findAnyUniqueAndUpdate} with {@code code == 7} and an
+     * operator on {@code owner}.</li>
+     * <li>Catch the expected exception, then re-load both records.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown
+     * and both re-loaded records still have the initial {@code owner}.
+     */
+    @Test
+    public void testFindAnyUniqueAndUpdateThrowsOnDuplicateAcrossHierarchy() {
+        Item item = new Item(7);
+        SpecialItem special = new SpecialItem(7);
+        runway.save(item, special);
+        boolean threw = false;
+        try {
+            runway.findAnyUniqueAndUpdate(Item.class, code(7), "owner",
+                    owner -> "worker");
+        }
+        catch (DuplicateEntryException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, item.id()).owner);
+        Assert.assertEquals("unassigned",
+                runway.load(SpecialItem.class, special.id()).owner);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} rejects an
+     * operator that returns {@code null}, without updating anything.
+     * <p>
+     * <strong>Start state:</strong> One {@link Item} that matches the criteria.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Item} with code 2.</li>
+     * <li>Call {@code findUniqueAndUpdate} with an operator that returns
+     * {@code null}.</li>
+     * <li>Catch the expected exception, then re-load the {@link Item}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
+     * and the re-loaded {@link Item} still has the initial {@code owner}.
+     */
+    @Test
+    public void testFindUniqueAndUpdateRejectsNullOperatorResult() {
+        Item item = new Item(2);
+        runway.save(item);
+        boolean threw = false;
+        try {
+            runway.findUniqueAndUpdate(Item.class, code(2), "owner",
+                    owner -> null);
+        }
+        catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, item.id()).owner);
     }
 
     /**
@@ -309,10 +427,10 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * A {@link Record} with a queryable {@code code} and a mutable
+     * A {@link Record} with a queryable {@code code} and an updatable
      * {@code owner}.
      *
-     * @author Javier Lores
+     * @author Jeff Nelson
      */
     public static class Item extends Record {
 
@@ -322,7 +440,8 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
         int code;
 
         /**
-         * The mutable owner, or {@code null} when unset.
+         * The owner; initialized so the field always has a value for atomic
+         * updates.
          */
         String owner;
 
@@ -333,6 +452,7 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
          */
         public Item(int code) {
             this.code = code;
+            this.owner = "unassigned";
         }
 
         @Override
@@ -340,6 +460,24 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
             Map<String, Object> derived = new HashMap<>();
             derived.put("parity", code % 2 == 0 ? "even" : "odd");
             return derived;
+        }
+    }
+
+    /**
+     * An {@link Item} subclass used to verify that the {@code Any} variant
+     * matches across the class hierarchy.
+     *
+     * @author Jeff Nelson
+     */
+    public static class SpecialItem extends Item {
+
+        /**
+         * Construct a new instance.
+         *
+         * @param code the queryable code
+         */
+        public SpecialItem(int code) {
+            super(code);
         }
     }
 

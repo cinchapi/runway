@@ -308,7 +308,7 @@ public abstract class Record implements Comparable<Record> {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field
      */
-    private static Field getAtomicableField(String key, Record record) {
+    static Field getAtomicableField(String key, Record record) {
         Field field = StaticAnalysis.instance().getField(record, key);
         Verify.thatArgument(field != null, "{} is not an intrinsic field of {}",
                 key, record.__);
@@ -354,7 +354,7 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalStateException if the field has no value
      */
     @SuppressWarnings("unchecked")
-    private static <T> T getAtomicableFieldValue(Field field, Record record) {
+    static <T> T getAtomicableFieldValue(Field field, Record record) {
         T value = (T) getFieldValue(field, record);
         Verify.that(value != null,
                 "Cannot atomically operate on {} in {} because it has no"
@@ -645,7 +645,7 @@ public abstract class Record implements Comparable<Record> {
      * @return the serialized value
      */
     @SuppressWarnings("rawtypes")
-    private static Object serializeScalarValue(@Nonnull Object value) {
+    static Object serializeScalarValue(@Nonnull Object value) {
         Preconditions.checkArgument(!Sequences.isSequence(value));
         Preconditions.checkNotNull(value);
         if(value instanceof Record) {
@@ -1363,16 +1363,7 @@ public abstract class Record implements Comparable<Record> {
             boolean clean = !hasUnsavedChanges();
             if(concourse.verifyAndSwap(key, serializeScalarValue(expected), id,
                     serializeScalarValue(replacement))) {
-                Reflection.set(key, replacement, this);
-                clearComputeOnceCache();
-                _audit = null;
-                if(clean) {
-                    // The record and the database were in sync before the
-                    // exchange and the exchange kept them in sync, so refresh
-                    // the checksum to prevent a later save from re-writing
-                    // every field.
-                    __checksum = checksum();
-                }
+                applyAtomicWrite(key, replacement, clean);
                 return true;
             }
             else {
@@ -1381,6 +1372,26 @@ public abstract class Record implements Comparable<Record> {
         }
         finally {
             connections.release(concourse);
+        }
+    }
+
+    /**
+     * Apply the in-memory effects of a successfully committed single-key atomic
+     * write of {@code replacement} to {@code key}.
+     *
+     * @param key the name of the field that was written
+     * @param replacement the value that now holds in the database
+     * @param clean {@code true} if this {@link Record} had no unsaved changes
+     *            when the write began; the record and the database were in sync
+     *            and the write kept them in sync, so the checksum is refreshed
+     *            to prevent a later save from re-writing every field
+     */
+    void applyAtomicWrite(String key, Object replacement, boolean clean) {
+        Reflection.set(key, replacement, this);
+        clearComputeOnceCache();
+        _audit = null;
+        if(clean) {
+            __checksum = checksum();
         }
     }
 
@@ -2795,7 +2806,7 @@ public abstract class Record implements Comparable<Record> {
      * @param value the value to check; may be {@code null} or a sequence
      * @throws IllegalStateException if {@code value} violates a constraint
      */
-    private void checkIsSavable(Field field, String key, Object value) {
+    void checkIsSavable(Field field, String key, Object value) {
         boolean isSequence = Sequences.isSequence(value);
         if(field.isAnnotationPresent(Required.class) && (isSequence
                 ? Sequences.stream(value).allMatch(Empty.ness()::describes)
