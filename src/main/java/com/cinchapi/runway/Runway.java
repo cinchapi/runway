@@ -1046,13 +1046,12 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         : new IncrementalSaver(concourse);
                 try {
                     context.begin(saver);
-                    saver.stage();
                     for (Record record : records) {
                         Supplier<Boolean> override = record.overrideSave();
                         if(override != null && !override.get()) {
                             // Early exit the entire transaction because an
                             // overriden save has failed.
-                            saver.abort();
+                            context.abort();
                             return false;
                         }
                         else if(override != null) {
@@ -1064,32 +1063,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             record.saveWithinTransaction(context);
                         }
                     }
-                    if(context.hasDeletions()) {
-                        // NOTE: A deletion is final within a save. A record
-                        // staged before a deletion may reference (or hold
-                        // data for) a record that the save has since
-                        // deleted, so stage the removal of every survivor's
-                        // references to deleted records and re-assert each
-                        // deletion as the last write for its record. The
-                        // staged removals leave every survivor's in-memory
-                        // state untouched, so a failed transaction has
-                        // nothing to roll back.
-                        Set<Long> deletions = context.deletions();
-                        context.each((record, outcome) -> {
-                            if(outcome != SaveContext.Outcome.DELETED
-                                    && record.reconcileCaptureDeleteReferences(
-                                            saver, deletions)) {
-                                // The record's stored data changes at
-                                // commit, so it must dispatch a save
-                                // notification.
-                                context.markChanged(record);
-                            }
-                        });
-                        for (long id : deletions) {
-                            saver.clear(id);
-                        }
-                    }
-                    if(saver.commit()) {
+                    if(context.commit()) {
                         context.each((record, outcome) -> {
                             if(outcome == SaveContext.Outcome.DELETED) {
                                 enqueueDeleteNotification(record);
@@ -1117,7 +1091,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     }
                 }
                 catch (Throwable t) {
-                    saver.abort();
+                    context.abort();
                     if(t instanceof TransactionException
                             && retrySpuriousSaveFailure
                             && ++attempts <= MAX_SPURIOUS_SAVE_RETRIES

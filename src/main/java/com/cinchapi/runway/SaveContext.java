@@ -55,6 +55,14 @@ import com.cinchapi.runway.db.Saver;
  * and they survive {@link #begin(Saver) retry attempts}; all other state is
  * per-attempt.
  * </p>
+ * <p>
+ * The context also owns the attempt lifecycle: {@link #begin(Saver) begin}
+ * stages an attempt's transaction, {@link #commit() commit} enforces deletion
+ * finality before committing it, and {@link #abort() abort} discards it. The
+ * driver of a save reaches the transaction only through those methods, while
+ * each participating {@link Record} stages its reads and writes through the
+ * {@link #saver() Saver} that the context carries.
+ * </p>
  *
  * @author Jeff Nelson
  */
@@ -102,10 +110,18 @@ final class SaveContext {
     }
 
     /**
-     * Begin a save attempt against {@code saver}. The per-attempt state is
-     * forgotten and the {@link Record.Snapshot snapshots} are kept, so a retry
-     * can still {@link #restore() restore} instances that participated in an
-     * earlier attempt.
+     * Abort the active attempt's staged transaction. Instance metadata is not
+     * affected; a save that terminally fails must also {@link #restore()} it.
+     */
+    void abort() {
+        saver.abort();
+    }
+
+    /**
+     * Begin a save attempt against {@code saver}: stage the attempt's
+     * transaction and forget the per-attempt state. The {@link Record.Snapshot
+     * snapshots} are kept, so a retry can still {@link #restore() restore}
+     * instances that participated in an earlier attempt.
      *
      * @param saver the {@link Saver} that owns the attempt's transaction
      */
@@ -113,6 +129,7 @@ final class SaveContext {
         this.saver = saver;
         entries.clear();
         pendingDeletions.clear();
+        saver.stage();
     }
 
     /**
@@ -126,18 +143,39 @@ final class SaveContext {
     }
 
     /**
-     * Return the ids of every record that the active attempt deleted.
+     * Commit the active attempt.
+     * <p>
+     * A deletion is final within a save. Before the transaction commits, every
+     * reference that a surviving record holds to a deleted record is removed
+     * and each deletion is re-asserted as the last write for its record. A
+     * survivor whose stored data changes as a result is marked
+     * {@link Outcome#CHANGED CHANGED} so that it reports the save.
+     * </p>
      *
-     * @return the deleted ids
+     * @return {@code true} if the attempt's staged transaction committed;
+     *         {@code false} if the database rejected the commit (e.g., a
+     *         spurious failure that the caller may retry)
      */
-    Set<Long> deletions() {
-        Set<Long> ids = new LinkedHashSet<>();
-        entries.forEach((id, entry) -> {
-            if(entry.outcome == Outcome.DELETED) {
-                ids.add(id);
+    boolean commit() {
+        Set<Long> deletions = deletions();
+        if(!deletions.isEmpty()) {
+            // NOTE: A record staged before a deletion may reference (or hold
+            // data for) a record that the save has since deleted, so stage the
+            // removal of every survivor's references to deleted records and
+            // re-assert each deletion as the last write for its record. The
+            // staged removals leave every survivor's in-memory state
+            // untouched, so a failed transaction has nothing to roll back.
+            for (Entry entry : entries.values()) {
+                if(entry.outcome != Outcome.DELETED && entry.instance
+                        .reconcileCaptureDeleteReferences(saver, deletions)) {
+                    markChanged(entry.instance);
+                }
             }
-        });
-        return ids;
+            for (long id : deletions) {
+                saver.clear(id);
+            }
+        }
+        return saver.commit();
     }
 
     /**
@@ -151,22 +189,6 @@ final class SaveContext {
         for (Entry entry : entries.values()) {
             consumer.accept(entry.instance, entry.outcome);
         }
-    }
-
-    /**
-     * Return {@code true} if the active attempt deleted at least one record.
-     *
-     * @return {@code true} if the attempt performed a deletion
-     */
-    boolean hasDeletions() {
-        boolean deletions = false;
-        for (Entry entry : entries.values()) {
-            if(entry.outcome == Outcome.DELETED) {
-                deletions = true;
-                break;
-            }
-        }
-        return deletions;
     }
 
     /**
@@ -255,7 +277,8 @@ final class SaveContext {
     }
 
     /**
-     * Return the {@link Saver} that owns the active attempt's transaction.
+     * Return the {@link Saver} through which a participating {@link Record}
+     * stages its reads and writes against the active attempt's transaction.
      *
      * @return the {@link Saver}
      */
@@ -283,6 +306,21 @@ final class SaveContext {
         if(!snapshots.containsKey(record)) {
             snapshots.put(record, record.snapshot());
         }
+    }
+
+    /**
+     * Return the ids of every record that the active attempt deleted.
+     *
+     * @return the deleted ids
+     */
+    private Set<Long> deletions() {
+        Set<Long> ids = new LinkedHashSet<>();
+        entries.forEach((id, entry) -> {
+            if(entry.outcome == Outcome.DELETED) {
+                ids.add(id);
+            }
+        });
+        return ids;
     }
 
     /**
