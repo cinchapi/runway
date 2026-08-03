@@ -3190,22 +3190,20 @@ public abstract class Record implements Comparable<Record> {
                 .getCaptureDeleteLookupCondition(this);
         if(potentialCaptureDeletes != null) {
             saver.select(SECTION_KEY, potentialCaptureDeletes, result -> {
+                Set<Long> seenIds = Sets
+                        .newHashSetWithExpectedSize(seen.size());
+                for (Record member : seen.keySet()) {
+                    seenIds.add(member.id);
+                }
                 for (Entry<Long, Set<Object>> entry : result.entrySet()) {
                     long id = entry.getKey();
-                    boolean live = false;
-                    for (Record member : seen.keySet()) {
-                        if(member.id == id) {
-                            live = true;
-                            break;
-                        }
-                    }
                     // NOTE: When an id-equal instance of this Record is
                     // part of the active save, its state governs the
                     // record's data and the pre-commit reconciliation in
                     // Runway#save stages the removal of the stored
                     // reference; a re-save of a freshly loaded copy would
                     // overwrite staged changes with stale values.
-                    if(!live) {
+                    if(!seenIds.contains(id)) {
                         String __ = (String) Iterables
                                 .getLast(entry.getValue());
                         Class<? extends Record> clazz = Reflection
