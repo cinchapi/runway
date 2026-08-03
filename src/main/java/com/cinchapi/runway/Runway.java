@@ -1068,12 +1068,14 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // the record's fields.
             Map<Record, Snapshot> snapshots = new HashMap<>();
             Map<Record, Boolean> seen = new HashMap<>();
+            Set<Long> deletedIds = new HashSet<>();
             int attempts = 0;
             while (true) {
                 Saver saver = supportsBulkCommands ? new BatchSaver(concourse)
                         : new IncrementalSaver(concourse);
                 try {
                     seen.clear();
+                    deletedIds.clear();
                     saver.stage();
                     for (Record record : records) {
                         Supplier<Boolean> override = record.overrideSave();
@@ -1090,20 +1092,30 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             current = record;
                             record.assign(this);
                             record.saveWithinTransaction(saver, seen, snapshots,
-                                    preventStaleWrites);
+                                    deletedIds, preventStaleWrites);
                         }
                     }
                     if(saver.commit()) {
-                        seen.entrySet().stream().filter(e -> e.getValue())
-                                .map(e -> e.getKey()).forEach(record -> {
-                                    if(record.isDeleted()) {
-                                        enqueueDeleteNotification(record);
-                                    }
-                                    else {
-                                        enqueueSaveNotification(record);
-                                    }
-                                    record.checkpoint();
-                                });
+                        // NOTE: Deletion is tracked by id instead of by
+                        // instance state because a save can process multiple
+                        // id-equal instances of the same record (e.g., a
+                        // copy loaded for @JoinDelete or @CaptureDelete
+                        // processing alongside the caller's instance).
+                        seen.forEach((record, changed) -> {
+                            if(deletedIds.contains(record.id())) {
+                                enqueueDeleteNotification(record);
+                                record.checkpoint();
+                            }
+                            else if(changed) {
+                                enqueueSaveNotification(record);
+                                record.checkpoint();
+                            }
+                            else {
+                                // The record was neither written nor deleted
+                                // by this save, so there is no lifecycle
+                                // event to report.
+                            }
+                        });
                         return true;
                     }
                     else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {

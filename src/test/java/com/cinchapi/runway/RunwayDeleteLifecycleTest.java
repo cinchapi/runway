@@ -15,8 +15,10 @@
  */
 package com.cinchapi.runway;
 
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -518,6 +520,346 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
                 "Target reference should be null after the capture cleanup",
                 loaded.target);
         Assert.assertNull(runway.load(CaptureTarget.class, target.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save which deletes both a
+     * {@link CaptureTarget} and the {@link CaptureParent} that references it
+     * fires the delete listener for both records and the save listener for
+     * neither.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CaptureParent} whose
+     * {@link CaptureDelete} field links to a saved {@link CaptureTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener and a delete listener.</li>
+     * <li>Save the parent and target and await the two initial save
+     * notifications.</li>
+     * <li>Mark both records with {@link Record#deleteOnSave()}.</li>
+     * <li>Save both records in bulk, with the target ordered first so its
+     * {@link CaptureDelete} cleanup runs before the parent.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires for both records,
+     * the save listener fires no additional time, and neither record loads
+     * afterwards.
+     */
+    @Test
+    public void testDeleteListenerFiredWhenCaptureCleanedRecordDeletedInSameSave()
+            throws Exception {
+        CountDownLatch saveLatch = new CountDownLatch(2);
+        CountDownLatch deleteLatch = new CountDownLatch(2);
+        AtomicInteger saveCount = new AtomicInteger(0);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            saveCount.incrementAndGet();
+            saveLatch.countDown();
+        }).onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        CaptureTarget target = new CaptureTarget();
+        target.name = "Capture Target";
+        CaptureParent parent = new CaptureParent();
+        parent.name = "Capture Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+        Assert.assertTrue(
+                "Initial save notifications did not arrive within timeout",
+                saveLatch.await(5, TimeUnit.SECONDS));
+
+        target.deleteOnSave();
+        parent.deleteOnSave();
+        Assert.assertTrue(runway.save(target, parent));
+
+        Assert.assertTrue(
+                "Delete listener did not fire for both records within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+
+        // Give some time to catch any extra, misrouted notifications
+        Thread.sleep(1000);
+
+        Assert.assertEquals(2, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertEquals(
+                "Save listener should not fire for records that the save deleted",
+                2, saveCount.get());
+        Assert.assertNull(runway.load(CaptureParent.class, parent.id()));
+        Assert.assertNull(runway.load(CaptureTarget.class, target.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save which deletes both a
+     * {@link CaptureParent} and its referenced {@link CaptureTarget} fires the
+     * delete listener for both records when the parent is ordered first.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CaptureParent} whose
+     * {@link CaptureDelete} field links to a saved {@link CaptureTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener and a delete listener.</li>
+     * <li>Save the parent and target and await the two initial save
+     * notifications.</li>
+     * <li>Mark both records with {@link Record#deleteOnSave()}.</li>
+     * <li>Save both records in bulk, with the parent ordered first.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires for both records,
+     * the save listener fires no additional time, and neither record loads
+     * afterwards.
+     */
+    @Test
+    public void testDeleteListenerFiredWhenCaptureParentOrderedFirstInSameSave()
+            throws Exception {
+        CountDownLatch saveLatch = new CountDownLatch(2);
+        CountDownLatch deleteLatch = new CountDownLatch(2);
+        AtomicInteger saveCount = new AtomicInteger(0);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            saveCount.incrementAndGet();
+            saveLatch.countDown();
+        }).onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        CaptureTarget target = new CaptureTarget();
+        target.name = "Capture Target";
+        CaptureParent parent = new CaptureParent();
+        parent.name = "Capture Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+        Assert.assertTrue(
+                "Initial save notifications did not arrive within timeout",
+                saveLatch.await(5, TimeUnit.SECONDS));
+
+        target.deleteOnSave();
+        parent.deleteOnSave();
+        Assert.assertTrue(runway.save(parent, target));
+
+        Assert.assertTrue(
+                "Delete listener did not fire for both records within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+
+        // Give some time to catch any extra, misrouted notifications
+        Thread.sleep(1000);
+
+        Assert.assertEquals(2, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertEquals(
+                "Save listener should not fire for records that the save deleted",
+                2, saveCount.get());
+        Assert.assertNull(runway.load(CaptureParent.class, parent.id()));
+        Assert.assertNull(runway.load(CaptureTarget.class, target.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that when a save deletes a
+     * {@link CaptureTarget} and also contains the modified
+     * {@link CaptureParent} that references it, the save notification delivers
+     * the caller's parent instance and checkpoints it.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CaptureParent} whose
+     * {@link CaptureDelete} field links to a saved {@link CaptureTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener that records each notified instance and a
+     * delete listener.</li>
+     * <li>Modify the parent's name and mark the target with
+     * {@link Record#deleteOnSave()}.</li>
+     * <li>Save both records in bulk, with the target ordered first so its
+     * {@link CaptureDelete} cleanup runs before the parent.</li>
+     * <li>Modify the parent again and save it with {@code preventStaleWrites}
+     * enabled.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save notification for the parent delivers
+     * the same instance that was saved, and the follow-up save with
+     * {@code preventStaleWrites} succeeds without a {@link StaleDataException}.
+     */
+    @Test
+    public void testCallerInstanceNotifiedWhenCaptureCleanedRecordInSameSave()
+            throws Exception {
+        CountDownLatch saveLatch = new CountDownLatch(3);
+        CountDownLatch deleteLatch = new CountDownLatch(1);
+        List<Record> savedRecords = new CopyOnWriteArrayList<>();
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            savedRecords.add(record);
+            saveLatch.countDown();
+        }).onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        CaptureTarget target = new CaptureTarget();
+        target.name = "Capture Target";
+        CaptureParent parent = new CaptureParent();
+        parent.name = "Capture Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+
+        parent.name = "Capture Parent (Updated)";
+        target.deleteOnSave();
+        Assert.assertTrue(runway.save(target, parent));
+
+        Assert.assertTrue("Save notifications did not arrive within timeout",
+                saveLatch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue("Delete listener was not called within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(1, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(target));
+
+        Record notified = null;
+        for (Record record : savedRecords) {
+            if(record.id() == parent.id()) {
+                notified = record;
+            }
+        }
+        Assert.assertSame(
+                "The save notification must deliver the caller's instance",
+                parent, notified);
+
+        parent.name = "Capture Parent (Updated Again)";
+        Assert.assertTrue(runway.save(true, parent));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@link CaptureDelete} cleanup for
+     * a deleted {@link CaptureTarget} does not revert the unsaved changes of a
+     * {@link CaptureParent} that is part of the same save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CaptureParent} whose
+     * {@link CaptureDelete} field links to a saved {@link CaptureTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener.</li>
+     * <li>Modify the parent's name and mark the target with
+     * {@link Record#deleteOnSave()}.</li>
+     * <li>Save both records in bulk, with the parent ordered first so its
+     * changes stage before the cleanup for the target runs.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires for the target, the
+     * parent's updated name persists in the database, and the parent's
+     * reference to the target resolves to {@code null}.
+     */
+    @Test
+    public void testCaptureCleanupDoesNotRevertChangesOfRecordInSameSave()
+            throws Exception {
+        CountDownLatch deleteLatch = new CountDownLatch(1);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        CaptureTarget target = new CaptureTarget();
+        target.name = "Capture Target";
+        CaptureParent parent = new CaptureParent();
+        parent.name = "Capture Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+
+        parent.name = "Capture Parent (Updated)";
+        target.deleteOnSave();
+        Assert.assertTrue(runway.save(parent, target));
+
+        Assert.assertTrue("Delete listener was not called within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(deletedRecords.contains(target));
+
+        CaptureParent loaded = runway.load(CaptureParent.class, parent.id());
+        Assert.assertEquals(
+                "The parent's unsaved changes must survive the capture cleanup",
+                "Capture Parent (Updated)", loaded.name);
+        Assert.assertNull(loaded.target);
+        Assert.assertNull(runway.load(CaptureTarget.class, target.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link JoinParent} which joins a
+     * deletion through {@link JoinDelete} fires the delete listener even when
+     * an unchanged instance of it is part of the same save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link JoinParent} whose
+     * {@link JoinDelete} field links to a saved {@link JoinTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener and a delete listener.</li>
+     * <li>Save the parent and target and await the two initial save
+     * notifications.</li>
+     * <li>Mark only the target with {@link Record#deleteOnSave()}.</li>
+     * <li>Save both records in bulk, with the target ordered first so the join
+     * deletion processes a freshly loaded copy of the parent before the
+     * caller's unchanged instance.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires for both the target
+     * and the joined parent, the save listener fires no additional time, and
+     * neither record loads afterwards.
+     */
+    @Test
+    public void testDeleteListenerFiredWhenJoinDeletedRecordAlsoInSameSave()
+            throws Exception {
+        CountDownLatch saveLatch = new CountDownLatch(2);
+        CountDownLatch deleteLatch = new CountDownLatch(2);
+        AtomicInteger saveCount = new AtomicInteger(0);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            saveCount.incrementAndGet();
+            saveLatch.countDown();
+        }).onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        JoinTarget target = new JoinTarget();
+        target.name = "Join Target";
+        JoinParent parent = new JoinParent();
+        parent.name = "Join Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+        Assert.assertTrue(
+                "Initial save notifications did not arrive within timeout",
+                saveLatch.await(5, TimeUnit.SECONDS));
+
+        target.deleteOnSave();
+        Assert.assertTrue(runway.save(target, parent));
+
+        Assert.assertTrue(
+                "Delete listener did not fire for both records within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+
+        // Give some time to catch any extra, misrouted notifications
+        Thread.sleep(1000);
+
+        Assert.assertEquals(2, deletedRecords.size());
+        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertEquals(
+                "Save listener should not fire for records that the save deleted",
+                2, saveCount.get());
+        Assert.assertNull(runway.load(JoinTarget.class, target.id()));
+        Assert.assertNull(runway.load(JoinParent.class, parent.id()));
     }
 
     /**

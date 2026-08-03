@@ -29,7 +29,7 @@ import com.cinchapi.concourse.lang.Criteria;
  * A {@link Saver} encapsulates the database interaction for one save &mdash;
  * the staged transaction, the save-time validation reads, the persisted writes,
  * and the terminal commit or abort &mdash; behind a single type that
- * {@link com.cinchapi.runway.Record#saveWithinTransaction(Saver, java.util.Map, java.util.Map, boolean)}
+ * {@link com.cinchapi.runway.Record#saveWithinTransaction(Saver, java.util.Map, java.util.Map, java.util.Set, boolean)}
  * can target without knowing the underlying database transport.
  * <p>
  * <h2>Reads</h2> Validation reads ({@link #audit(long, Consumer) audit},
