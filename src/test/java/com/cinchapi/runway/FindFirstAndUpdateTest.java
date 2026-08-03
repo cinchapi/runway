@@ -184,6 +184,49 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findFirstAndUpdate} returns the
+     * first matching record unchanged when the operator returns the current
+     * value, so a no-op update still reports which record matched without
+     * writing anything.
+     * <p>
+     * <strong>Start state:</strong> Three unclaimed {@link Task Tasks} with
+     * ranks 3, 2, and 1 saved in non-sorted insertion order.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Task Tasks} with ranks 3, 2, and 1.</li>
+     * <li>Call {@code findFirstAndUpdate} ordered by {@code rank} ascending
+     * with an operator on {@code claimed} that captures its input and returns
+     * it unchanged.</li>
+     * <li>Re-load every {@link Task} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Task} has rank 1 and is
+     * still unclaimed, the operator received the stored {@code false}, and
+     * every re-loaded {@link Task} is still unclaimed.
+     */
+    @Test
+    public void testFindFirstAndUpdateReturnsFirstMatchWhenOperatorIsNoOp() {
+        Task three = new Task(3);
+        Task two = new Task(2);
+        Task one = new Task(1);
+        runway.save(three, two, one);
+        AtomicReference<Boolean> observed = new AtomicReference<>();
+        Task first = runway.findFirstAndUpdate(Task.class, unclaimed(),
+                Order.by("rank").ascending(), "claimed", (Boolean claimed) -> {
+                    observed.set(claimed);
+                    return claimed;
+                });
+        Assert.assertNotNull(first);
+        Assert.assertEquals(1, first.rank);
+        Assert.assertFalse(first.claimed);
+        Assert.assertFalse(observed.get());
+        Assert.assertFalse(runway.load(Task.class, one.id()).claimed);
+        Assert.assertFalse(runway.load(Task.class, two.id()).claimed);
+        Assert.assertFalse(runway.load(Task.class, three.id()).claimed);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findFirstAndUpdate} rejects a
      * {@code null} {@link Order}, since "first" is undefined without one.
      * <p>

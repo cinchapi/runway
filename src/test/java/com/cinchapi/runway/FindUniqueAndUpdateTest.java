@@ -20,6 +20,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -136,6 +137,46 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
                 });
         Assert.assertNull(item);
         Assert.assertFalse(operatorRan.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} returns
+     * the sole matching record unchanged when the operator returns the current
+     * value, so a no-op update still reports which record matched without
+     * writing anything.
+     * <p>
+     * <strong>Start state:</strong> Three {@link Item Items} with distinct
+     * codes, exactly one of which matches the criteria.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save {@link Item Items} with codes 1, 2, and 3.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code code == 2} and an
+     * operator on {@code owner} that captures its input and returns it
+     * unchanged.</li>
+     * <li>Re-load the returned {@link Item} by id from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Item} has code 2 and the
+     * initial {@code owner}, the operator received the stored
+     * {@code "unassigned"}, and the re-loaded {@link Item} still has the
+     * initial {@code owner}.
+     */
+    @Test
+    public void testFindUniqueAndUpdateReturnsSoleMatchWhenOperatorIsNoOp() {
+        runway.save(new Item(1), new Item(2), new Item(3));
+        AtomicReference<String> observed = new AtomicReference<>();
+        Item item = runway.findUniqueAndUpdate(Item.class, code(2), "owner",
+                (String owner) -> {
+                    observed.set(owner);
+                    return owner;
+                });
+        Assert.assertNotNull(item);
+        Assert.assertEquals(2, item.code);
+        Assert.assertEquals("unassigned", item.owner);
+        Assert.assertEquals("unassigned", observed.get());
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, item.id()).owner);
     }
 
     /**
