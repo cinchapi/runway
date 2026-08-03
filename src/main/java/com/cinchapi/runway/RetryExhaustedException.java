@@ -18,8 +18,8 @@ package com.cinchapi.runway;
 /**
  * A {@link RetryExhaustedException} is thrown by an atomic read-modify-write
  * operation (e.g. the {@link Record} single-key atomic operations) that cannot
- * commit within the bounds of the governing {@link AtomicRetryPolicy}: the
- * target data exists, but contention prevented the update from committing.
+ * commit within the bounds of the governing {@link AtomicRetryPolicy}:
+ * concurrent writes to the target data prevented the update from committing.
  *
  * @author Javier Lores
  */

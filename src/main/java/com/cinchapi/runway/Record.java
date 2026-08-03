@@ -1425,7 +1425,9 @@ public abstract class Record implements Comparable<Record> {
      * Record's} in-memory value for {@code key} matches it. If the update
      * cannot be committed within the bounds of the {@link AtomicRetryPolicy}
      * configured on the {@link Runway} instance this {@link Record} is pinned
-     * to, a {@link RetryExhaustedException} is thrown and nothing is changed.
+     * to, a {@link RetryExhaustedException} is thrown and nothing is written;
+     * this {@link Record Record's} in-memory value for {@code key} may reflect
+     * a value that a concurrent writer stored.
      * </p>
      * <p>
      * The {@code update} function may be applied more than once, so it must be
