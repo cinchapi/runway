@@ -378,12 +378,14 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save two unclaimed {@link Task Tasks}.</li>
      * <li>Start two threads that, gated by a common latch, each claim the first
-     * unclaimed {@link Task}.</li>
+     * unclaimed {@link Task}, capturing any {@link Throwable} a worker
+     * throws.</li>
      * <li>{@code join()} both threads.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> Both threads receive a non-null claim and the
-     * two claims are distinct {@link Task Tasks} (different ids).
+     * <strong>Expected:</strong> Neither worker hangs or fails, both threads
+     * receive a non-null claim, and the two claims are distinct {@link Task
+     * Tasks} (different ids).
      */
     @Test
     public void testFindFirstAndUpdateConcurrentClaimsTakeDistinctRecords()
@@ -393,6 +395,8 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
         CountDownLatch go = new CountDownLatch(1);
         AtomicReference<Task> claim1 = new AtomicReference<>();
         AtomicReference<Task> claim2 = new AtomicReference<>();
+        AtomicReference<Throwable> failure1 = new AtomicReference<>();
+        AtomicReference<Throwable> failure2 = new AtomicReference<>();
         Thread t1 = new Thread(() -> {
             ready.countDown();
             try {
@@ -401,8 +405,8 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
                         Order.by("rank").ascending(), "claimed",
                         claimed -> true));
             }
-            catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            catch (Throwable t) {
+                failure1.set(t);
             }
         });
         Thread t2 = new Thread(() -> {
@@ -413,16 +417,20 @@ public class FindFirstAndUpdateTest extends RunwayBaseClientServerTest {
                         Order.by("rank").ascending(), "claimed",
                         claimed -> true));
             }
-            catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            catch (Throwable t) {
+                failure2.set(t);
             }
         });
         t1.start();
         t2.start();
-        ready.await(5, TimeUnit.SECONDS);
+        Assert.assertTrue(ready.await(5, TimeUnit.SECONDS));
         go.countDown();
         t1.join(10000);
         t2.join(10000);
+        Assert.assertFalse("Worker 1 is still running", t1.isAlive());
+        Assert.assertFalse("Worker 2 is still running", t2.isAlive());
+        Assert.assertNull(failure1.get());
+        Assert.assertNull(failure2.get());
         Assert.assertNotNull(claim1.get());
         Assert.assertNotNull(claim2.get());
         Assert.assertNotEquals(claim1.get().id(), claim2.get().id());
