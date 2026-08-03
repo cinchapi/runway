@@ -698,6 +698,36 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code exchange} uses the staged
+     * in-memory value for the target key as the expected operand, so a staged
+     * change that the database never stored makes the exchange fail.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} with an unsaved
+     * modification to {@code value}, the target key.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}, then set {@code value = 7} without saving.</li>
+     * <li>Call {@code exchange("value", 10L)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code false}, the staged
+     * {@code 7} survives in memory, the record still reports unsaved changes
+     * and the stored {@code value} remains {@code 0}.
+     */
+    @Test
+    public void testExchangeFailsWhenTargetKeyHasStagedChange() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        meter.value = 7;
+        Assert.assertTrue(meter.hasUnsavedChanges());
+        Assert.assertFalse(meter.exchange("value", 10L));
+        Assert.assertEquals(7, meter.value);
+        Assert.assertTrue(meter.hasUnsavedChanges());
+        Assert.assertEquals(0, runway.load(Meter.class, meter.id()).value);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code exchange} refuses a record that
      * is staged for deletion, so an exchange never persists a value that the
      * pending save immediately deletes.
