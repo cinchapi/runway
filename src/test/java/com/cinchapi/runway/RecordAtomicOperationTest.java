@@ -24,6 +24,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.runway.validation.Validator;
@@ -501,11 +502,12 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code exchange} rejects the operation
-     * when the field has no in-memory value to use as the expected operand.
+     * <strong>Goal:</strong> Verify that {@code exchange} treats a {@code null}
+     * in-memory value as an expectation of absence and stores the replacement
+     * when the field has no stored value.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} whose {@code note}
-     * field is {@code null}.
+     * field is {@code null} and has no stored value.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -513,13 +515,127 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <li>Call {@code exchange("note", "hello")}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown.
+     * <strong>Expected:</strong> The exchange returns {@code true}, the
+     * in-memory {@code note} is {@code "hello"}, and the re-loaded
+     * {@link Meter} stores the same value.
      */
-    @Test(expected = IllegalStateException.class)
-    public void testExchangeRejectsNullCurrentValue() {
+    @Test
+    public void testExchangeSetsValueWhenFieldHasNoValue() {
         Meter meter = new Meter();
         runway.save(meter);
-        meter.exchange("note", "hello");
+        Assert.assertTrue(meter.exchange("note", "hello"));
+        Assert.assertEquals("hello", meter.note);
+        Assert.assertEquals("hello", runway.load(Meter.class, meter.id()).note);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} that expects
+     * absence fails when a concurrent writer stored a value first, so a stale
+     * observation of absence never overwrites real data.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} whose {@code note}
+     * was set through a second loaded copy while the original instance still
+     * observes {@code null}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Load a fresh copy, set {@code note = "other"}, and save it.</li>
+     * <li>Call {@code exchange("note", "hello")} on the original (now stale)
+     * instance.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code false}, the
+     * original in-memory {@code note} is still {@code null}, and the stored
+     * {@code note} remains {@code "other"}.
+     */
+    @Test
+    public void testExchangeExpectingAbsenceFailsWhenValueConcurrentlyAppears() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        Meter fresh = runway.load(Meter.class, meter.id());
+        fresh.note = "other";
+        runway.save(fresh);
+        Assert.assertFalse(meter.exchange("note", "hello"));
+        Assert.assertNull(meter.note);
+        Assert.assertEquals("other", runway.load(Meter.class, meter.id()).note);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} that expects
+     * absence fails on a {@link Record} that was never saved, so the exchange
+     * never writes a lone field into a record that does not exist in the
+     * database.
+     * <p>
+     * <strong>Start state:</strong> A {@link Meter} that is pinned to a
+     * {@link Runway} instance but never saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Meter} and {@code assign} it to {@code runway}
+     * without a save.</li>
+     * <li>Call {@code exchange("note", "hello")}.</li>
+     * <li>Describe the {@link Meter Meter's} id through a raw {@link Concourse}
+     * connection.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code false}, the
+     * in-memory {@code note} is still {@code null}, and the database stores no
+     * data at all for the id.
+     */
+    @Test
+    public void testExchangeExpectingAbsenceFailsWhenRecordNeverSaved() {
+        Meter meter = new Meter();
+        meter.assign(runway);
+        Assert.assertFalse(meter.exchange("note", "hello"));
+        Assert.assertNull(meter.note);
+        Concourse concourse = runway.connections.request();
+        try {
+            Assert.assertTrue(concourse.describe(meter.id()).isEmpty());
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} that expects
+     * absence fails when the {@link Record Record's} data was concurrently
+     * erased, so the exchange never resurrects the record as a lone field
+     * without its metadata.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} whose data was erased
+     * through a raw {@link Concourse} connection while the instance still
+     * observes {@code note == null}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Erase every stored value for its id through a raw {@link Concourse}
+     * connection.</li>
+     * <li>Call {@code exchange("note", "hello")}.</li>
+     * <li>Describe the {@link Meter Meter's} id through a raw {@link Concourse}
+     * connection.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code false}, the
+     * in-memory {@code note} is still {@code null}, and the database stores no
+     * data at all for the id.
+     */
+    @Test
+    public void testExchangeExpectingAbsenceFailsWhenRecordConcurrentlyErased() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        Concourse concourse = runway.connections.request();
+        try {
+            concourse.clear(meter.id());
+            Assert.assertFalse(meter.exchange("note", "hello"));
+            Assert.assertNull(meter.note);
+            Assert.assertTrue(concourse.describe(meter.id()).isEmpty());
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
     }
 
     /**
@@ -1111,9 +1227,9 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code getAndUpdate} fails when the
-     * stored value is concurrently removed, instead of burning every retry
-     * against a value that no longer exists.
+     * <strong>Goal:</strong> Verify that {@code getAndUpdate} retries against
+     * {@code null} when the stored value is concurrently removed, so the
+     * function decides how to fill the now-empty field.
      * <p>
      * <strong>Start state:</strong> A saved {@link Meter} whose stored
      * {@code note} was cleared through a second loaded copy.
@@ -1122,28 +1238,85 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save a {@link Meter} with {@code note = "hello"}.</li>
      * <li>Load a fresh copy, set {@code note = null}, and save it.</li>
-     * <li>Call {@code getAndUpdate("note", s -> s + "!")} on the original (now
-     * stale) instance.</li>
+     * <li>Call {@code getAndUpdate("note", s -> s == null ? "reset" : s + "!")}
+     * on the original (now stale) instance.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown and
-     * the stored {@code note} remains absent.
+     * <strong>Expected:</strong> The call returns {@code null} (the value the
+     * settled attempt replaced) and the stored {@code note} is {@code "reset"}.
      */
     @Test
-    public void testGetAndUpdateThrowsWhenValueConcurrentlyCleared() {
+    public void testGetAndUpdateRetriesAgainstNullWhenValueConcurrentlyCleared() {
         Meter meter = new Meter();
         meter.note = "hello";
         runway.save(meter);
         Meter fresh = runway.load(Meter.class, meter.id());
         fresh.note = null;
         runway.save(fresh);
+        String before = meter.getAndUpdate("note",
+                (String s) -> s == null ? "reset" : s + "!");
+        Assert.assertNull(before);
+        Assert.assertEquals("reset", runway.load(Meter.class, meter.id()).note);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code getAndUpdate} applies the
+     * function to {@code null} when the field has no value and fills the field
+     * with the produced value.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} whose {@code note}
+     * field has no value.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Call {@code getAndUpdate("note", s -> s == null ? "first" : s)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns {@code null} and the
+     * re-loaded {@link Meter} stores {@code note == "first"}.
+     */
+    @Test
+    public void testGetAndUpdateAppliesFunctionToNullWhenFieldHasNoValue() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        String before = meter.getAndUpdate("note",
+                (String s) -> s == null ? "first" : s);
+        Assert.assertNull(before);
+        Assert.assertEquals("first", runway.load(Meter.class, meter.id()).note);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code getAndUpdate} rejects a
+     * function that returns {@code null}, even when the current value is also
+     * {@code null}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} whose {@code note}
+     * field has no value.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Call {@code getAndUpdate("note", s -> null)}.</li>
+     * <li>Catch the expected exception, then re-load the {@link Meter}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
+     * and the re-loaded {@link Meter} still has no {@code note}.
+     */
+    @Test
+    public void testGetAndUpdateRejectsNullFunctionResult() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        boolean threw = false;
         try {
-            meter.getAndUpdate("note", (String s) -> s + "!");
-            Assert.fail("Expected an IllegalStateException");
+            meter.getAndUpdate("note", (String s) -> null);
         }
-        catch (IllegalStateException e) {
-            Assert.assertNull(runway.load(Meter.class, meter.id()).note);
+        catch (IllegalArgumentException e) {
+            threw = true;
         }
+        Assert.assertTrue(threw);
+        Assert.assertNull(runway.load(Meter.class, meter.id()).note);
     }
 
     /**
@@ -1393,8 +1566,8 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
         public DeferredReference<Owner> ref = null;
 
         /**
-         * A nullable field; atomic operations must reject an absent expected
-         * value.
+         * A nullable field; atomic operations treat its absent value as the
+         * expected operand.
          */
         public String note = null;
 

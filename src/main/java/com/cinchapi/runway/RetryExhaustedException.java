@@ -20,6 +20,11 @@ package com.cinchapi.runway;
  * operation (e.g. the {@link Record} single-key atomic operations) that cannot
  * commit within the bounds of the governing {@link AtomicRetryPolicy}:
  * concurrent writes to the target data prevented the update from committing.
+ * <p>
+ * This is semantically distinct from a {@code null} or empty result, which
+ * means no target existed. A {@link RetryExhaustedException} means the target
+ * data existed but persistent contention prevented this caller from committing
+ * its update; the caller may back off and retry.
  *
  * @author Javier Lores
  */
