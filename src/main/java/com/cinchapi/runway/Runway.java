@@ -720,7 +720,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             UnaryOperator<V> update) {
         Preconditions.checkNotNull(order,
                 "findAnyFirstAndUpdate requires an Order");
-        return updateWithinTransaction(clazz, criteria, order, true, key,
+        return updateWithinTransaction(true, clazz, criteria, order, key,
                 update);
     }
 
@@ -749,7 +749,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
-        return updateWithinTransaction(clazz, criteria, null, true, key,
+        return updateWithinTransaction(true, clazz, criteria, null, key,
                 update);
     }
 
@@ -790,7 +790,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             UnaryOperator<V> update) {
         Preconditions.checkNotNull(order,
                 "findFirstAndUpdate requires an Order");
-        return updateWithinTransaction(clazz, criteria, order, false, key,
+        return updateWithinTransaction(false, clazz, criteria, order, key,
                 update);
     }
 
@@ -861,7 +861,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
-        return updateWithinTransaction(clazz, criteria, null, false, key,
+        return updateWithinTransaction(false, clazz, criteria, null, key,
                 update);
     }
 
@@ -2892,23 +2892,23 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * A {@code null} {@code order} requires the match to be unique: when more
      * than one record matches, a {@link DuplicateEntryException} propagates. A
      * non-{@code null} {@code order} selects the first match it defines.
-     *
+     * @param any {@code true} to match across the {@code clazz} hierarchy
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the record must match
      * @param order the {@link Order} that defines "first", or {@code null} to
      *            require a unique match
-     * @param any {@code true} to match across the {@code clazz} hierarchy
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
      *            current one; it may run once per attempt
+     *
      * @return the updated {@link Record}, or {@code null} if nothing matches
      * @throws DuplicateEntryException if {@code order} is {@code null} and more
      *             than one record matches
      * @throws RetryExhaustedException if the update cannot commit within the
      *             bounds of the governing {@link AtomicRetryPolicy}
      */
-    private <T extends Record, V> T updateWithinTransaction(Class<T> clazz,
-            Criteria criteria, @Nullable Order order, boolean any, String key,
+    private <T extends Record, V> T updateWithinTransaction(boolean any,
+            Class<T> clazz, Criteria criteria, @Nullable Order order, String key,
             UnaryOperator<V> update) {
         AtomicRetryPolicy policy = properties().atomicRetryPolicy();
         Concourse concourse = connections.request();
