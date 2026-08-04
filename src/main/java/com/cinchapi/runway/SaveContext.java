@@ -88,13 +88,35 @@ final class SaveContext {
     }
 
     /**
-     * Make {@code record} the instance that speaks for its id. The record's
+     * Add {@code record} as the instance that speaks for its id. The record's
      * {@link Outcome} is not affected.
      *
      * @param record the instance that is currently processed by the save
      */
-    void claim(Record record) {
+    void add(Record record) {
         entry(record).instance = record;
+    }
+
+    /**
+     * Return {@code true} if any in-memory instance of the record with
+     * {@code id} was processed within the active attempt.
+     *
+     * @param id the record id to test
+     * @return {@code true} if the record was processed
+     */
+    boolean contains(long id) {
+        return entries.containsKey(id);
+    }
+
+    /**
+     * Return {@code true} if any in-memory instance that shares the id of
+     * {@code record} was processed within the active attempt.
+     *
+     * @param record the {@link Record} to test
+     * @return {@code true} if the record was processed
+     */
+    boolean contains(Record record) {
+        return contains(record.id());
     }
 
     /**
@@ -217,28 +239,6 @@ final class SaveContext {
         if(!snapshots.containsKey(record)) {
             snapshots.put(record, record.snapshot());
         }
-    }
-
-    /**
-     * Return {@code true} if the active attempt touched any in-memory instance
-     * of the record with {@code id}.
-     *
-     * @param id the record id to test
-     * @return {@code true} if the record was touched
-     */
-    boolean touches(long id) {
-        return entries.containsKey(id);
-    }
-
-    /**
-     * Return {@code true} if the active attempt touched any in-memory instance
-     * that shares the id of {@code record}.
-     *
-     * @param record the {@link Record} to test
-     * @return {@code true} if the record was touched
-     */
-    boolean touches(Record record) {
-        return touches(record.id());
     }
 
     /**

@@ -677,7 +677,7 @@ public abstract class Record implements Comparable<Record> {
                 record = deferred.$ref();
             }
 
-            if(record != null && !context.touches(record)) {
+            if(record != null && !context.contains(record)) {
                 record.saveWithinTransaction(saver, context);
             }
         }
@@ -2708,7 +2708,7 @@ public abstract class Record implements Comparable<Record> {
             });
         }
         errors.clear();
-        context.claim(this);
+        context.add(this);
         if(_hasModifiedRealms) {
             saver.reconcile(REALMS_KEY, id, _realms);
             _hasModifiedRealms = false;
@@ -3275,7 +3275,7 @@ public abstract class Record implements Comparable<Record> {
                     // Runway#save stages the removal of the stored
                     // reference; a re-save of a freshly loaded copy would
                     // overwrite staged changes with stale values.
-                    if(!context.touches(id)) {
+                    if(!context.contains(id)) {
                         String __ = (String) Iterables
                                 .getLast(entry.getValue());
                         Class<? extends Record> clazz = Reflection
@@ -3868,7 +3868,7 @@ public abstract class Record implements Comparable<Record> {
 
             // Ensure that Record references are saved within the current
             // transaction
-            if(record != null && !context.touches(record)) {
+            if(record != null && !context.contains(record)) {
                 record.saveWithinTransaction(saver, context);
             }
 
