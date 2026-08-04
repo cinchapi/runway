@@ -2680,6 +2680,7 @@ public abstract class Record implements Comparable<Record> {
         _hasModifiedRealms = snapshot.hasModifiedRealms;
         __checksum = snapshot.checksum;
         _author = snapshot.author;
+        deleted = snapshot.deleted;
     }
 
     /**
@@ -3414,6 +3415,9 @@ public abstract class Record implements Comparable<Record> {
      */
     private void ensureDeletion(Record record, SaveContext context) {
         if(!record.deleted) {
+            // NOTE: The snapshot must precede the mark so a failed save
+            // restores the record to its unmarked state.
+            context.snapshot(record);
             record.deleted = true;
             context.scheduleDeletion(record);
         }
@@ -5469,17 +5473,18 @@ public abstract class Record implements Comparable<Record> {
         final Record author;
 
         /**
+         * The snapshotted value of {@link Record#deleted}.
+         */
+        final boolean deleted;
+
+        /**
          * Construct a new instance.
-         *
-         * @param hasModifiedRealms the current value of
-         *            {@link Record#_hasModifiedRealms}
-         * @param checksum the current value of {@link Record#__checksum}
-         * @param author the current value of {@link Record#_author}
          */
         Snapshot() {
             this.hasModifiedRealms = Record.this._hasModifiedRealms;
             this.checksum = Record.this.__checksum;
             this.author = Record.this._author;
+            this.deleted = Record.this.deleted;
         }
 
     }

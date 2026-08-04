@@ -1057,6 +1057,96 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a record pulled into a deletion
+     * through {@link CascadeDelete} is still deleted when the save that deletes
+     * its parent is repeated after a failure.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CascadeParent} linked to a
+     * saved {@link CascadeChild}, and a saved {@link UniqueRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Mark the parent with {@link Record#deleteOnSave()}.</li>
+     * <li>Save the parent alongside a {@link UniqueRecord} that violates its
+     * unique constraint, so the save fails after the cascade is staged.</li>
+     * <li>Save the parent again, alone.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second save deletes both the parent and
+     * the cascaded child, and neither record loads afterwards.
+     */
+    @Test
+    public void testCascadeCompanionDeletedWhenDeleteIsRepeatedAfterFailedSave()
+            throws Exception {
+        CascadeChild child = new CascadeChild();
+        child.name = "Cascade Child";
+        CascadeParent parent = new CascadeParent();
+        parent.name = "Cascade Parent";
+        parent.child = child;
+        UniqueRecord original = new UniqueRecord();
+        original.token = "GH-65-cascade-repeat";
+        Assert.assertTrue(runway.save(parent, child, original));
+
+        parent.deleteOnSave();
+        UniqueRecord duplicate = new UniqueRecord();
+        duplicate.token = "GH-65-cascade-repeat";
+        Assert.assertFalse("The save must fail on the unique violation",
+                runway.save(parent, duplicate));
+
+        Assert.assertTrue(runway.save(parent));
+
+        Assert.assertNull(runway.load(CascadeParent.class, parent.id()));
+        Assert.assertNull(runway.load(CascadeChild.class, child.id()));
+        Assert.assertTrue("The cascaded child must not survive the deletion",
+                client.describe(child.id()).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a failed save clears the deletion mark
+     * that {@link CascadeDelete} placed on a linked record, so a later save of
+     * that record persists its data instead of deleting it.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CascadeParent} linked to a
+     * saved {@link CascadeChild}, and a saved {@link UniqueRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Mark the parent with {@link Record#deleteOnSave()}.</li>
+     * <li>Save the parent alongside a {@link UniqueRecord} that violates its
+     * unique constraint, so the save fails after the cascade is staged.</li>
+     * <li>Modify the child's name and save the child alone.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The child's save persists the updated name,
+     * and the child still loads from the database.
+     */
+    @Test
+    public void testFailedSaveDoesNotLeaveCascadeCompanionMarkedForDeletion()
+            throws Exception {
+        CascadeChild child = new CascadeChild();
+        child.name = "Cascade Child";
+        CascadeParent parent = new CascadeParent();
+        parent.name = "Cascade Parent";
+        parent.child = child;
+        UniqueRecord original = new UniqueRecord();
+        original.token = "GH-65-cascade-mark";
+        Assert.assertTrue(runway.save(parent, child, original));
+
+        parent.deleteOnSave();
+        UniqueRecord duplicate = new UniqueRecord();
+        duplicate.token = "GH-65-cascade-mark";
+        Assert.assertFalse("The save must fail on the unique violation",
+                runway.save(parent, duplicate));
+
+        child.name = "Cascade Child (Updated)";
+        Assert.assertTrue(child.save());
+
+        CascadeChild loaded = runway.load(CascadeChild.class, child.id());
+        Assert.assertNotNull("The child must survive its own save", loaded);
+        Assert.assertEquals("Cascade Child (Updated)", loaded.name);
+    }
+
+    /**
      * A test {@link Record} whose lifecycle events are tracked by listeners.
      *
      * @author Jeff Nelson
