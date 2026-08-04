@@ -1039,19 +1039,20 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Record current = null;
         try {
             boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
-            SaveOperation operation = new SaveOperation(preventStaleWrites);
+            SaveContext context = new SaveContext(preventStaleWrites);
             int attempts = 0;
             while (true) {
                 Saver saver = supportsBulkCommands ? new BatchSaver(concourse)
                         : new IncrementalSaver(concourse);
                 try {
-                    operation.stage(saver);
+                    context.reset();
+                    saver.stage();
                     for (Record record : records) {
                         Supplier<Boolean> override = record.overrideSave();
                         if(override != null && !override.get()) {
                             // Early exit the entire transaction because an
                             // overriden save has failed.
-                            operation.abort();
+                            saver.abort();
                             return false;
                         }
                         else if(override != null) {
@@ -1060,16 +1061,39 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         else {
                             current = record;
                             record.assign(this);
-                            record.saveWithinTransaction(operation);
+                            record.saveWithinTransaction(saver, context);
                         }
                     }
-                    if(operation.commit()) {
-                        operation.forEach((record, outcome) -> {
-                            if(outcome == SaveOperation.Outcome.DELETED) {
+                    Set<Long> deletions = context.deletions();
+                    if(!deletions.isEmpty()) {
+                        // NOTE: A deletion is final within a save. A record
+                        // staged before a deletion may reference (or hold data
+                        // for) a record that the save has since deleted, so
+                        // stage the removal of every survivor's references to
+                        // deleted records and re-assert each deletion as the
+                        // last write for its record. The staged removals leave
+                        // every survivor's in-memory state untouched, so a
+                        // failed transaction has nothing to roll back.
+                        context.forEach((record, outcome) -> {
+                            if(outcome != SaveContext.Outcome.DELETED
+                                    && record.reconcileCaptureDeleteReferences(
+                                            saver, deletions)) {
+                                // The record's stored data changes at commit,
+                                // so it must dispatch a save notification.
+                                context.markChanged(record);
+                            }
+                        });
+                        for (long id : deletions) {
+                            saver.clear(id);
+                        }
+                    }
+                    if(saver.commit()) {
+                        context.forEach((record, outcome) -> {
+                            if(outcome == SaveContext.Outcome.DELETED) {
                                 enqueueDeleteNotification(record);
                                 record.checkpoint();
                             }
-                            else if(outcome == SaveOperation.Outcome.CHANGED) {
+                            else if(outcome == SaveContext.Outcome.CHANGED) {
                                 enqueueSaveNotification(record);
                                 record.checkpoint();
                             }
@@ -1082,7 +1106,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         return true;
                     }
                     else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {
-                        operation.restore();
+                        context.restore();
                         return false;
                     }
                     else {
@@ -1091,7 +1115,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     }
                 }
                 catch (Throwable t) {
-                    operation.abort();
+                    saver.abort();
                     if(t instanceof TransactionException
                             && retrySpuriousSaveFailure
                             && ++attempts <= MAX_SPURIOUS_SAVE_RETRIES
@@ -1102,15 +1126,15 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         // because linked records that are recursively saved may
                         // show false positives when concurrent saves share the
                         // same linked record.
-                        operation.restore();
+                        context.restore();
                         continue;
                     }
                     else if(t instanceof StaleDataException) {
-                        operation.restore();
+                        context.restore();
                         throw (StaleDataException) t;
                     }
                     else {
-                        for (Record record : operation.records()) {
+                        for (Record record : context.records()) {
                             if(record.inZombieState(concourse)) {
                                 // TODO: this is currently disabled because
                                 // zombie detection throughout the codebase is
@@ -1119,7 +1143,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 // concourse.clear(record.id());
                             }
                         }
-                        operation.restore();
+                        context.restore();
                         // A deferred Unique check throws from commit() after
                         // the loop advances #current, so blame the Record
                         // the violation names rather than the last one.
