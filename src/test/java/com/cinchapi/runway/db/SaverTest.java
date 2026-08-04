@@ -299,6 +299,37 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Saver#remove(String, Object, long)} removes only the named value
+     * and that a removal of an absent value is a no-op.
+     * <p>
+     * <strong>Start state:</strong> A record with two values under one key.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@code remove} of one stored value.</li>
+     * <li>Record a {@code remove} of a value the key does not hold.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The key holds only the other stored value.
+     */
+    @Test
+    public void testRemoveDeletesOnlyNamedValueAfterCommit() {
+        long id = client.add("tag", "alpha");
+        client.add("tag", "beta", id);
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.remove("tag", "alpha", id);
+        saver.remove("tag", "missing", id);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertEquals(ImmutableSet.of("beta"), client.select("tag", id));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@link Saver#commit()} returns
      * {@code true} when the staged transaction commits cleanly with no recorded
      * operations beyond stage.

@@ -62,6 +62,12 @@ public interface DatabaseInterface {
     static final Page UNIQUE_PAGINATION = Page.limit(2);
 
     /**
+     * A {@link Page} that retrieves at most one result, used by first-result
+     * queries to fetch a single sorted row without the rest of the match set.
+     */
+    static final Page FIRST_PAGINATION = Page.limit(1);
+
+    /**
      * Return the {@code records} in sorted {@code order}.
      *
      * @param records
@@ -1066,6 +1072,77 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Execute the {@link #findFirst(Class, Criteria, Order)} query for
+     * {@code clazz} and all of its descendants.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
+     */
+    public default <T extends Record> T findAnyFirst(Class<T> clazz,
+            Criteria criteria, Order order) {
+        return fetch(
+                Selection.ofAny(clazz).where(criteria).order(order).first());
+    }
+
+    /**
+     * Execute the {@link #findFirst(Class, Criteria, Order, Realms)} query for
+     * {@code clazz} and all of its descendants among the provided
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param realms
+     * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
+     */
+    public default <T extends Record> T findAnyFirst(Class<T> clazz,
+            Criteria criteria, Order order, Realms realms) {
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order).first()
+                .realms(realms));
+    }
+
+    /**
+     * Execute the {@link #findFirst(Class, Criteria, Order, Predicate)} query
+     * for {@code clazz} and all of its descendants.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param filter
+     * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
+     */
+    public default <T extends Record> T findAnyFirst(Class<T> clazz,
+            Criteria criteria, Order order, Predicate<T> filter) {
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .order(order).first());
+    }
+
+    /**
+     * Execute the {@link #findFirst(Class, Criteria, Order, Predicate, Realms)}
+     * query for {@code clazz} and all of its descendants among the provided
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param filter
+     * @param realms
+     * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
+     */
+    public default <T extends Record> T findAnyFirst(Class<T> clazz,
+            Criteria criteria, Order order, Predicate<T> filter,
+            Realms realms) {
+        return fetch(Selection.ofAny(clazz).where(criteria).filter(filter)
+                .order(order).first().realms(realms));
+    }
+
+    /**
      * Execute the {@link #findUnique(Class, Criteria)} query for {@code clazz}
      * and all of its descendants.
      *
@@ -1091,6 +1168,97 @@ public interface DatabaseInterface {
             Criteria criteria, Realms realms) {
         return fetch(
                 Selection.ofAnyUnique(clazz).where(criteria).realms(realms));
+    }
+
+    /**
+     * Find and return the first record of type {@code clazz} that matches the
+     * {@code criteria} under the supplied {@code order}, or {@code null} if no
+     * record matches.
+     * <p>
+     * "First" is defined entirely by {@code order}. Unlike
+     * {@link #findUnique(Class, Criteria) findUnique}, this performs no
+     * duplicate detection and never throws when more than one record matches.
+     * The pick among records that tie under {@code order} is unspecified, so
+     * callers that need a fully deterministic result should include a unique
+     * tiebreaker key (for example, the record id) in the {@code order}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
+     */
+    public default <T extends Record> T findFirst(Class<T> clazz,
+            Criteria criteria, Order order) {
+        return fetch(Selection.of(clazz).where(criteria).order(order).first());
+    }
+
+    /**
+     * Find and return the first record of type {@code clazz} that matches the
+     * {@code criteria} under the supplied {@code order} among the provided
+     * {@code realms}, or {@code null} if no record matches.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param realms
+     * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
+     */
+    public default <T extends Record> T findFirst(Class<T> clazz,
+            Criteria criteria, Order order, Realms realms) {
+        return fetch(Selection.of(clazz).where(criteria).order(order).first()
+                .realms(realms));
+    }
+
+    /**
+     * Find and return the first record of type {@code clazz} that matches the
+     * {@code criteria} and passes the {@code filter} under the supplied
+     * {@code order}, or {@code null} if no record matches.
+     * <p>
+     * The result is the first record under {@code order} that both matches the
+     * {@code criteria} and passes the {@code filter}; a record that the
+     * {@code filter} rejects does not mask a later match. Prefer expressing
+     * conditions in the {@code criteria}, which the database evaluates
+     * directly; the {@code filter} is a convenience for conditions that a
+     * {@link Criteria} cannot express.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param filter
+     * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
+     */
+    public default <T extends Record> T findFirst(Class<T> clazz,
+            Criteria criteria, Order order, Predicate<T> filter) {
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .order(order).first());
+    }
+
+    /**
+     * Find and return the first record of type {@code clazz} that matches the
+     * {@code criteria} and passes the {@code filter} under the supplied
+     * {@code order} among the provided {@code realms}, or {@code null} if no
+     * record matches.
+     * <p>
+     * The result is the first record under {@code order} that both matches the
+     * {@code criteria} and passes the {@code filter}; a record that the
+     * {@code filter} rejects does not mask a later match.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param filter
+     * @param realms
+     * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
+     */
+    public default <T extends Record> T findFirst(Class<T> clazz,
+            Criteria criteria, Order order, Predicate<T> filter,
+            Realms realms) {
+        return fetch(Selection.of(clazz).where(criteria).filter(filter)
+                .order(order).first().realms(realms));
     }
 
     /**

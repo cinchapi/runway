@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -173,6 +174,112 @@ public class AdHocDataSourceTest {
         Criteria criteria = Criteria.where().key("name")
                 .operator(Operator.EQUALS).value("Alice").build();
         db.findUnique(MockAdHocRecord.class, criteria);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findFirst} against an
+     * {@link AdHocDataSource} returns the record that sorts first under the
+     * {@link Order} among the records that match the {@link Criteria}.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * three {@link MockAdHocRecord MockAdHocRecords} in non-sorted order.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findFirst} with {@code age > 0} ordered by {@code age}
+     * ascending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned record is Bob, whose age of 25 is
+     * the lowest.
+     */
+    @Test
+    public void testFindFirstReturnsOrderFirstMatch() {
+        Collection<MockAdHocRecord> data = Arrays.asList(
+                new MockAdHocRecord("Alice", 30),
+                new MockAdHocRecord("Bob", 25),
+                new MockAdHocRecord("Charlie", 35));
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
+                MockAdHocRecord.class, () -> data);
+
+        Criteria criteria = Criteria.where().key("age")
+                .operator(Operator.GREATER_THAN).value(0).build();
+        MockAdHocRecord result = db.findFirst(MockAdHocRecord.class, criteria,
+                Order.by("age").ascending());
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals("Bob", result.name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findFirst} against an
+     * {@link AdHocDataSource} returns {@code null} when no record matches the
+     * {@link Criteria}.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link MockAdHocRecord MockAdHocRecords} whose ages are below the
+     * criteria threshold.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findFirst} with {@code age > 100} ordered by {@code age}
+     * ascending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code null}.
+     */
+    @Test
+    public void testFindFirstReturnsNullWhenNoMatch() {
+        Collection<MockAdHocRecord> data = Arrays.asList(
+                new MockAdHocRecord("Alice", 30),
+                new MockAdHocRecord("Bob", 25));
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
+                MockAdHocRecord.class, () -> data);
+
+        Criteria criteria = Criteria.where().key("age")
+                .operator(Operator.GREATER_THAN).value(100).build();
+        MockAdHocRecord result = db.findFirst(MockAdHocRecord.class, criteria,
+                Order.by("age").ascending());
+
+        Assert.assertNull(result);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@link AdHocDataSource} applies a
+     * client-side {@link Predicate} before the one-row limit, so a rejected
+     * order-first row yields the next row that passes instead of {@code null}.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * three {@link MockAdHocRecord MockAdHocRecords}, of which the youngest is
+     * rejected by the filter.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findFirst} with {@code age > 0} ordered by {@code age}
+     * ascending and a filter that rejects Bob, the order-first row.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned record is Alice, the next row
+     * under the order that passes the filter.
+     */
+    @Test
+    public void testFindFirstWithFilterSkipsRejectedHeadRow() {
+        Collection<MockAdHocRecord> data = Arrays.asList(
+                new MockAdHocRecord("Alice", 30),
+                new MockAdHocRecord("Bob", 25),
+                new MockAdHocRecord("Charlie", 35));
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
+                MockAdHocRecord.class, () -> data);
+
+        Criteria criteria = Criteria.where().key("age")
+                .operator(Operator.GREATER_THAN).value(0).build();
+        Predicate<MockAdHocRecord> notBob = record -> !record.name
+                .equals("Bob");
+        MockAdHocRecord result = db.findFirst(MockAdHocRecord.class, criteria,
+                Order.by("age").ascending(), notBob);
+
+        Assert.assertNotNull(result);
+        Assert.assertEquals("Alice", result.name);
     }
 
     @Test

@@ -1095,6 +1095,51 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a linked {@link Record} fires its save
+     * notification when it is also passed as a top-level argument of the same
+     * bulk save.
+     * <p>
+     * <strong>Start state:</strong> A freshly created {@link ParentRecord} with
+     * a linked, freshly created {@link ChildRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a save listener.</li>
+     * <li>Call {@code runway.save(parent, child)} so the save processes the
+     * child once as a linked reference and once as a top-level argument.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save listener fires for both {@link Record
+     * Records}.
+     */
+    @Test
+    public void testSaveListenerFiredForLinkedRecordAlsoPassedToBulkSave()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> savedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            savedRecords.add(record);
+            latch.countDown();
+        }).build();
+
+        ChildRecord child = new ChildRecord();
+        child.label = "Child";
+        ParentRecord parent = new ParentRecord();
+        parent.name = "Parent";
+        parent.child = child;
+
+        Assert.assertTrue(runway.save(parent, child));
+
+        Assert.assertTrue("Save listener should fire for both records",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertEquals(2, savedRecords.size());
+        Assert.assertTrue(savedRecords.contains(parent));
+        Assert.assertTrue(savedRecords.contains(child));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a linked {@link Record} with no
      * unsaved changes does not trigger a save notification when the parent is
      * saved.
@@ -1182,6 +1227,92 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a save which fails because a
+     * {@link Record Record's} overridden save refuses it restores the unsaved
+     * changes of the other records in the call.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link ChildRecord} with a staged
+     * modification, and an unsaved {@link VetoedRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Modify the child's label.</li>
+     * <li>Save the child alongside a {@link VetoedRecord} whose overridden save
+     * returns {@code false}, with the child ordered first.</li>
+     * <li>Save the child alone.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The failed save leaves the child with unsaved
+     * changes, and the follow-up save persists the modified label.
+     */
+    @Test
+    public void testFailedOverrideSaveRestoresOtherRecordsInCall() {
+        ChildRecord child = new ChildRecord();
+        child.label = "Child";
+        Assert.assertTrue(runway.save(child));
+
+        child.label = "Child (Updated)";
+        VetoedRecord veto = new VetoedRecord();
+        veto.name = "Veto";
+        Assert.assertFalse("The save must fail on the vetoed record",
+                runway.save(child, veto));
+
+        Assert.assertTrue("The failed save must not consume unsaved changes",
+                child.hasUnsavedChanges());
+
+        Assert.assertTrue(child.save());
+        ChildRecord loaded = runway.load(ChildRecord.class, child.id());
+        Assert.assertEquals("Child (Updated)", loaded.label);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a listener which throws an
+     * {@link Error} does not stop notification dispatch for other listeners or
+     * for later saves.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register two save listeners; the first throws an
+     * {@link AssertionError} for every record.</li>
+     * <li>Save one {@link ChildRecord}.</li>
+     * <li>Save a second {@link ChildRecord}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second listener fires for both saves.
+     */
+    @Test
+    public void testListenerErrorDoesNotStopNotificationDispatch()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> notified = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            throw new AssertionError(
+                    "Intentional error from the first listener");
+        }).onSave(record -> {
+            notified.add(record);
+            latch.countDown();
+        }).build();
+
+        ChildRecord first = new ChildRecord();
+        first.label = "First";
+        Assert.assertTrue(first.save());
+
+        ChildRecord second = new ChildRecord();
+        second.label = "Second";
+        Assert.assertTrue(second.save());
+
+        Assert.assertTrue(
+                "Notifications stopped after a listener threw an Error",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(notified.contains(first));
+        Assert.assertTrue(notified.contains(second));
+    }
+
+    /**
      * A test {@link Record} that holds a link to a {@link ChildRecord}.
      *
      * @author Jeff Nelson
@@ -1200,6 +1331,24 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     public static class ChildRecord extends Record {
 
         public String label;
+    }
+
+    /**
+     * A test {@link Record} whose overridden save always refuses the save.
+     *
+     * @author Jeff Nelson
+     */
+    public static class VetoedRecord extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        @Override
+        protected Supplier<Boolean> overrideSave() {
+            return () -> false;
+        }
     }
 
     /**

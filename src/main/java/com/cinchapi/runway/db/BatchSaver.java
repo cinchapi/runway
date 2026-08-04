@@ -176,6 +176,11 @@ public final class BatchSaver implements Saver {
     }
 
     @Override
+    public void remove(String key, Object value, long record) {
+        deferredWriteOps.add(group -> group.remove(key, value, record));
+    }
+
+    @Override
     public void clear(String key, long record) {
         deferredWriteOps.add(group -> group.clear(key, record));
     }

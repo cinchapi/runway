@@ -323,6 +323,33 @@ public class RunwayLoadTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a record with an array field loads
+     * when the field holds no stored values.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Inventory} whose array field
+     * was never set.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Inventory} with a {@code null} array field.</li>
+     * <li>Load the record by id.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The load succeeds, the scalar field round
+     * trips, and the array field is empty.
+     */
+    @Test
+    public void testLoadSucceedsWhenArrayFieldHasNoStoredValues() {
+        Inventory inventory = new Inventory();
+        inventory.name = "Empty Inventory";
+        Assert.assertTrue(inventory.save());
+
+        Inventory loaded = runway.load(Inventory.class, inventory.id());
+        Assert.assertEquals("Empty Inventory", loaded.name);
+        Assert.assertEquals(0, loaded.tags.length);
+    }
+
     class A extends Record {
         String name;
         B b;
@@ -411,5 +438,23 @@ public class RunwayLoadTest extends RunwayBaseClientServerTest {
         public Task(String name) {
             this.name = name;
         }
+    }
+
+    /**
+     * A test {@link Record} with an array field that may hold no stored values.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Inventory extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        /**
+         * An array field that may be empty in storage.
+         */
+        public String[] tags;
     }
 }

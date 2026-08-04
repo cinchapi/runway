@@ -35,10 +35,10 @@ import com.google.common.base.MoreObjects.ToStringHelper;
  * state of a database operation.
  * <p>
  * Concrete subclasses ({@link FindSelection}, {@link LoadClassSelection},
- * {@link LoadRecordSelection}, {@link CountSelection}) are constructed from a
- * {@link BuilderState} and are immutable with respect to their configuration
- * fields. The {@link #state} and {@link #result} fields are mutable for use by
- * the dispatch machinery.
+ * {@link LoadRecordSelection}, {@link CountSelection}, {@link UniqueSelection},
+ * {@link FirstSelection}) are constructed from a {@link BuilderState} and are
+ * immutable with respect to their configuration fields. The {@link #state} and
+ * {@link #result} fields are mutable for use by the dispatch machinery.
  *
  * @param <T> the {@link Record} type
  * @author Jeff Nelson
@@ -382,6 +382,11 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
          * Whether this is a unique-result operation.
          */
         boolean unique;
+
+        /**
+         * Whether this is a first-result operation.
+         */
+        boolean first;
 
         /**
          * The {@link Realms} filter.
