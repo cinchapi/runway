@@ -2528,7 +2528,12 @@ public abstract class Record implements Comparable<Record> {
                             }
                         });
                         if(type.isArray()) {
-                            value = collector.build();
+                            // NOTE: ArrayBuilder cannot build an empty
+                            // array, so an empty typed array is created
+                            // directly when no values are stored.
+                            value = collector.length() > 0 ? collector.build()
+                                    : java.lang.reflect.Array.newInstance(
+                                            type.getComponentType(), 0);
                         }
                         else {
                             value = newCollectionFor(type);
