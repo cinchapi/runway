@@ -75,16 +75,16 @@ final class SaveContext {
      * Whether the save rejects any {@link Record} that has been externally
      * modified.
      */
-    private final boolean preventStaleWrite;
+    private final boolean shouldPreventStaleWrite;
 
     /**
      * Construct a new instance.
      *
-     * @param preventStaleWrite whether the save rejects any {@link Record} that
-     *            has been externally modified
+     * @param shouldPreventStaleWrite whether the save rejects any
+     *            {@link Record} that has been externally modified
      */
-    SaveContext(boolean preventStaleWrite) {
-        this.preventStaleWrite = preventStaleWrite;
+    SaveContext(boolean shouldPreventStaleWrite) {
+        this.shouldPreventStaleWrite = shouldPreventStaleWrite;
     }
 
     /**
@@ -179,16 +179,6 @@ final class SaveContext {
     }
 
     /**
-     * Return whether the save rejects any {@link Record} that has been
-     * externally modified.
-     *
-     * @return {@code true} if stale writes are rejected
-     */
-    boolean preventStaleWrite() {
-        return preventStaleWrite;
-    }
-
-    /**
      * Return the instance that speaks for each record processed within the
      * active attempt.
      *
@@ -227,6 +217,16 @@ final class SaveContext {
      */
     void scheduleDeletion(Record record) {
         pendingDeletions.add(record);
+    }
+
+    /**
+     * Return whether the save rejects any {@link Record} that has been
+     * externally modified.
+     *
+     * @return {@code true} if stale writes are rejected
+     */
+    boolean shouldPreventStaleWrite() {
+        return shouldPreventStaleWrite;
     }
 
     /**

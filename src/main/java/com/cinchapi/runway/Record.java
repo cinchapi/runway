@@ -2690,8 +2690,8 @@ public abstract class Record implements Comparable<Record> {
      * @param saver the {@link Saver} for the attempt's transaction
      * @param context the active {@link SaveContext}
      * @throws StaleDataException if the {@code context}
-     *             {@link SaveContext#preventStaleWrite() prevents} stale writes
-     *             and this {@link Record} has stale data
+     *             {@link SaveContext#shouldPreventStaleWrite() prevents} stale
+     *             writes and this {@link Record} has stale data
      * @throws IllegalStateException if a {@link Required} or
      *             {@link ValidatedBy} field constraint is violated
      * @throws ConstraintViolationException if a {@link Unique} field constraint
@@ -2700,7 +2700,7 @@ public abstract class Record implements Comparable<Record> {
     void saveWithinTransaction(Saver saver, SaveContext context) {
         context.snapshot(this);
         Preconditions.checkState(!inViolation);
-        if(context.preventStaleWrite() && checkpointTs != 0) {
+        if(context.shouldPreventStaleWrite() && checkpointTs != 0) {
             saver.audit(id, audit -> {
                 if(isStaleAudit(audit, checkpointTs)) {
                     throw new StaleDataException(id);
