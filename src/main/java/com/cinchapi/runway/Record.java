@@ -617,6 +617,28 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Instantiate an empty {@link Collection} that can be assigned to a field
+     * whose declared type is {@code type}.
+     *
+     * @param type the field's declared {@link Collection} type
+     * @return the empty {@link Collection}
+     */
+    @SuppressWarnings("unchecked")
+    private static Collection<Object> newCollectionFor(Class<?> type) {
+        if(!Modifier.isAbstract(type.getModifiers())
+                && !Modifier.isInterface(type.getModifiers())) {
+            // This is a concrete Collection type that can be instantiated
+            return (Collection<Object>) Reflection.newInstance(type);
+        }
+        else if(type == Set.class) {
+            return Sets.newLinkedHashSet();
+        }
+        else { // assume List
+            return Lists.newArrayList();
+        }
+    }
+
+    /**
      * Get a new instance of {@code clazz} by calling the default (zero-arg)
      * constructor, if it exists. This method attempts to correctly invoke
      * constructors for nested inner classes.
@@ -2284,6 +2306,23 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Apply the in-memory effects of a committed save that deleted the
+     * {@link Record Records} with {@code ids}: remove every reference that one
+     * of this {@link Record Record's} {@link CaptureDelete} fields holds to a
+     * deleted record and re-align this {@link Record Record's} unsaved-changes
+     * status with its current state.
+     *
+     * @param ids the ids of {@link Record Records} the save deleted
+     */
+    void applyCaptureDeleteCleanup(Set<Long> ids) {
+        if(removeCaptureDeleteReferences(ids)) {
+            clearComputeOnceCache();
+            _audit = null;
+            __checksum = checksum();
+        }
+    }
+
+    /**
      * Apply the in-memory effects of a successfully committed single-key atomic
      * write of {@code replacement} to {@code key}.
      *
@@ -2492,19 +2531,7 @@ public abstract class Record implements Comparable<Record> {
                             value = collector.build();
                         }
                         else {
-                            if(!Modifier.isAbstract(type.getModifiers())
-                                    && !Modifier
-                                            .isInterface(type.getModifiers())) {
-                                // This is a concrete Collection type that
-                                // can be instantiated
-                                value = Reflection.newInstance(type);
-                            }
-                            else if(type == Set.class) {
-                                value = Sets.newLinkedHashSet();
-                            }
-                            else { // assume List
-                                value = Lists.newArrayList();
-                            }
+                            value = newCollectionFor(type);
                             Collections.addAll((Collection) value,
                                     collector.length() > 0 ? collector.build()
                                             : Array.containing());
@@ -2641,8 +2668,22 @@ public abstract class Record implements Comparable<Record> {
                     continue;
                 }
                 else if(value instanceof Collection) {
-                    changed |= ((Collection<?>) value)
-                            .removeIf(item -> isDeletedReference(item, ids));
+                    Collection<?> collection = (Collection<?>) value;
+                    // NOTE: The collection is replaced instead of mutated in
+                    // place because the caller may supply an unmodifiable
+                    // implementation.
+                    if(collection.stream()
+                            .anyMatch(item -> isDeletedReference(item, ids))) {
+                        Collection<Object> replacement = newCollectionFor(
+                                field.getType());
+                        for (Object item : collection) {
+                            if(!isDeletedReference(item, ids)) {
+                                replacement.add(item);
+                            }
+                        }
+                        field.set(this, replacement);
+                        changed = true;
+                    }
                 }
                 else if(value.getClass().isArray()) {
                     int[] length = new int[1];

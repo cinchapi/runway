@@ -1095,6 +1095,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 record.checkpoint();
                             }
                             else if(outcome == SaveContext.Outcome.CHANGED) {
+                                if(!deletions.isEmpty()) {
+                                    // The commit removed every stored
+                                    // reference to a deleted record, so the
+                                    // record's in-memory state must match.
+                                    record.applyCaptureDeleteCleanup(
+                                            deletions);
+                                }
                                 enqueueSaveNotification(record);
                                 record.checkpoint();
                             }

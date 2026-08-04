@@ -1186,6 +1186,100 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a committed save which deletes a
+     * record removes a surviving {@link Record Record's} in-memory reference to
+     * it, so a later save cannot re-create the stored link.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CaptureParent} whose
+     * {@link CaptureDelete} field links to a saved {@link CaptureTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Modify the parent's name and mark the target with
+     * {@link Record#deleteOnSave()}.</li>
+     * <li>Save the parent and the target in one call.</li>
+     * <li>Modify the parent's name again and save the parent alone.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the first save, the parent's in-memory
+     * reference is {@code null} and the parent reports no unsaved changes.
+     * After the second save, the parent's stored reference remains absent.
+     */
+    @Test
+    public void testSurvivorInMemoryReferenceClearedWhenTargetDeletedInSameSave()
+            throws Exception {
+        CaptureTarget target = new CaptureTarget();
+        target.name = "Capture Target";
+        CaptureParent parent = new CaptureParent();
+        parent.name = "Capture Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+
+        parent.name = "Capture Parent (Updated)";
+        target.deleteOnSave();
+        Assert.assertTrue(runway.save(parent, target));
+
+        Assert.assertNull("The in-memory reference must be removed",
+                parent.target);
+        Assert.assertFalse(parent.hasUnsavedChanges());
+
+        parent.name = "Capture Parent (Updated Again)";
+        Assert.assertTrue(parent.save());
+
+        Assert.assertTrue("The stored link must not be re-created",
+                client.select("target", parent.id()).isEmpty());
+        Assert.assertNull(runway.load(CaptureTarget.class, target.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a committed save which deletes a
+     * record removes it from a surviving {@link Record Record's} in-memory
+     * immutable collection of {@link CaptureDelete} references.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CollectionCaptureParent}
+     * whose immutable collection references two saved {@link CaptureTarget
+     * CaptureTargets}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Mark one target with {@link Record#deleteOnSave()}.</li>
+     * <li>Save the parent and both targets in one call.</li>
+     * <li>Modify the parent's name and save the parent alone.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the first save, the parent's in-memory
+     * collection holds only the surviving target and the parent reports no
+     * unsaved changes. After the second save, the stored references still hold
+     * only the surviving target.
+     */
+    @Test
+    public void testSurvivorInMemoryCollectionCleanedWhenTargetDeletedInSameSave()
+            throws Exception {
+        CaptureTarget kept = new CaptureTarget();
+        kept.name = "Kept";
+        CaptureTarget removed = new CaptureTarget();
+        removed.name = "Removed";
+        CollectionCaptureParent parent = new CollectionCaptureParent();
+        parent.name = "Collection Parent";
+        parent.targets = ImmutableList.of(kept, removed);
+        Assert.assertTrue(runway.save(parent, kept, removed));
+
+        removed.deleteOnSave();
+        Assert.assertTrue(runway.save(parent, kept, removed));
+
+        Assert.assertEquals("The in-memory reference must be removed",
+                ImmutableList.of(kept), ImmutableList.copyOf(parent.targets));
+        Assert.assertFalse(parent.hasUnsavedChanges());
+
+        parent.name = "Collection Parent (Updated)";
+        Assert.assertTrue(parent.save());
+
+        Set<Object> stored = client.select("targets", parent.id());
+        Assert.assertEquals(1, stored.size());
+        Assert.assertTrue(stored.contains(Link.to(kept.id())));
+    }
+
+    /**
      * A test {@link Record} whose lifecycle events are tracked by listeners.
      *
      * @author Jeff Nelson
