@@ -1147,6 +1147,45 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@link CaptureDelete} cleanup succeeds
+     * when the deleted record is the only element of a referencing record's
+     * array field.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link ArrayCaptureParent} whose
+     * array holds one saved {@link CaptureTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Mark the target with {@link Record#deleteOnSave()}.</li>
+     * <li>Save the target alone, so the cleanup loads a copy of the
+     * parent.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save succeeds, the target no longer loads,
+     * and the parent's stored references are empty.
+     */
+    @Test
+    public void testCaptureCleanupSucceedsWhenArrayHoldsOnlyDeletedReference()
+            throws Exception {
+        CaptureTarget target = new CaptureTarget();
+        target.name = "Only Target";
+        ArrayCaptureParent parent = new ArrayCaptureParent();
+        parent.name = "Array Parent";
+        parent.targets = new CaptureTarget[] { target };
+        Assert.assertTrue(runway.save(parent, target));
+
+        target.deleteOnSave();
+        Assert.assertTrue("The delete must not fail on the emptied array",
+                target.save());
+
+        Assert.assertNull(runway.load(CaptureTarget.class, target.id()));
+        Assert.assertTrue(client.select("targets", parent.id()).isEmpty());
+        ArrayCaptureParent loaded = runway.load(ArrayCaptureParent.class,
+                parent.id());
+        Assert.assertEquals("Array Parent", loaded.name);
+    }
+
+    /**
      * A test {@link Record} whose lifecycle events are tracked by listeners.
      *
      * @author Jeff Nelson
@@ -1293,6 +1332,26 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
          */
         @CaptureDelete
         public List<CaptureTarget> targets;
+    }
+
+    /**
+     * A test {@link Record} whose array of {@link CaptureTarget CaptureTargets}
+     * is cleaned when a target is deleted.
+     *
+     * @author Jeff Nelson
+     */
+    public static class ArrayCaptureParent extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        /**
+         * The references that are removed when their targets are deleted.
+         */
+        @CaptureDelete
+        public CaptureTarget[] targets;
     }
 
     /**

@@ -2654,7 +2654,15 @@ public abstract class Record implements Comparable<Record> {
                         }
                     });
                     if(ab.length() < length[0]) {
-                        field.set(this, ab.build());
+                        if(ab.length() > 0) {
+                            field.set(this, ab.build());
+                        }
+                        else {
+                            Class<?> component = field.getType()
+                                    .getComponentType();
+                            field.set(this, java.lang.reflect.Array
+                                    .newInstance(component, 0));
+                        }
                         changed = true;
                     }
                 }
