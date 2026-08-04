@@ -1422,17 +1422,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Queue up a record for save notification processing.
-     *
-     * @param record the record that was saved
-     */
-    /* package */ final void enqueueSaveNotification(Record record) {
-        if(saveListener != null) {
-            saveNotificationQueue.offer(() -> saveListener.accept(record));
-        }
-    }
-
-    /**
      * Queue up a record for delete notification processing.
      *
      * @param record the record that was deleted
@@ -1440,6 +1429,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /* package */ final void enqueueDeleteNotification(Record record) {
         if(deleteListener != null) {
             saveNotificationQueue.offer(() -> deleteListener.accept(record));
+        }
+    }
+
+    /**
+     * Queue up a record for save notification processing.
+     *
+     * @param record the record that was saved
+     */
+    /* package */ final void enqueueSaveNotification(Record record) {
+        if(saveListener != null) {
+            saveNotificationQueue.offer(() -> saveListener.accept(record));
         }
     }
 
@@ -2786,6 +2786,124 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Atomically find at most one {@link Record} of type {@code clazz} (or in
+     * its hierarchy when {@code any}) that matches {@code criteria}, apply
+     * {@code update} to the value of {@code key}, and commit the find and the
+     * write as one transaction.
+     * <p>
+     * The find and the write share one transaction, so concurrent callers
+     * contending for the same {@link Record} are mutually excluded and the
+     * {@code update} operator may run more than once. If the update cannot
+     * commit within the bounds of the governing {@link AtomicRetryPolicy}, then
+     * a {@link RetryExhaustedException} is thrown and nothing is changed. Any
+     * other failure propagates without committing.
+     * <p>
+     * A {@code null} {@code order} requires the match to be unique: when more
+     * than one record matches, a {@link DuplicateEntryException} propagates. A
+     * non-{@code null} {@code order} selects the first match it defines.
+     *
+     * @param any {@code true} to match across the {@code clazz} hierarchy
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first", or {@code null} to
+     *            require a unique match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it may run once per attempt
+     *
+     * @return the updated {@link Record}, or {@code null} if nothing matches
+     * @throws DuplicateEntryException if {@code order} is {@code null} and more
+     *             than one record matches
+     * @throws RetryExhaustedException if the update cannot commit within the
+     *             bounds of the governing {@link AtomicRetryPolicy}
+     */
+    private <T extends Record, V> T readAndUpdateAtomically(boolean any,
+            Class<T> clazz, Criteria criteria, @Nullable Order order,
+            String key, UnaryOperator<V> update) {
+        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
+        Concourse concourse = connections.request();
+        try {
+            // NOTE: The connection is held across the policy's backoff sleeps
+            // rather than released between attempts, because re-requesting
+            // per attempt would churn the pool.
+            int attempts = 0;
+            for (;;) {
+                Transaction transaction = new Transaction(concourse);
+                try {
+                    T record;
+                    if(order != null) {
+                        record = any
+                                ? transaction.findAnyFirst(clazz, criteria,
+                                        order)
+                                : transaction.findFirst(clazz, criteria, order);
+                    }
+                    else {
+                        record = any
+                                ? transaction.findAnyUnique(clazz, criteria)
+                                : transaction.findUnique(clazz, criteria);
+                    }
+                    if(record == null) {
+                        transaction.abort();
+                        return null;
+                    }
+                    else {
+                        record.assign(this);
+                        Field field = Record.getAtomicableField(key, record);
+                        V current = Record.getAtomicableFieldValue(field,
+                                record);
+                        V next = update.apply(current);
+                        Verify.thatArgument(next != null,
+                                "The update operator cannot return null");
+                        Verify.thatArgument(
+                                Primitives.wrap(field.getType())
+                                        .isInstance(next),
+                                "Cannot atomically operate on {} in {} because"
+                                        + " the replacement is a {} and the"
+                                        + " field stores a {}",
+                                key, clazz.getSimpleName(),
+                                next.getClass().getSimpleName(),
+                                field.getType().getSimpleName());
+                        record.checkIsSavable(field, key, next);
+                        boolean clean = !record.hasUnsavedChanges();
+                        if(!Objects.equals(current, next)) {
+                            transaction.verifyOrSet(key,
+                                    Record.serializeScalarValue(next),
+                                    record.id());
+                        }
+                        if(transaction.commit()) {
+                            record.applyValueChange(key, next, clean);
+                            return record;
+                        }
+                        else {
+                            // Trigger the retry path below.
+                            throw new TransactionException();
+                        }
+                    }
+                }
+                catch (TransactionException e) {
+                    transaction.abort();
+                    if(++attempts > policy.limit()) {
+                        throw new RetryExhaustedException(attempts);
+                    }
+                    else {
+                        policy.backoff(attempts);
+                    }
+                }
+                catch (Throwable t) {
+                    // A non-transaction failure (e.g. a duplicate-entry or
+                    // constraint violation) is terminal: abort and propagate
+                    // without retrying so nothing is committed or mutated.
+                    transaction.abort();
+                    throw t;
+                }
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Look up a previously reserved result by query signature.
      *
      * @param reservation the query signature
@@ -2913,124 +3031,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * Atomically find at most one {@link Record} of type {@code clazz} (or in
-     * its hierarchy when {@code any}) that matches {@code criteria}, apply
-     * {@code update} to the value of {@code key}, and commit the find and the
-     * write as one transaction.
-     * <p>
-     * The find and the write share one transaction, so concurrent callers
-     * contending for the same {@link Record} are mutually excluded and the
-     * {@code update} operator may run more than once. If the update cannot
-     * commit within the bounds of the governing {@link AtomicRetryPolicy}, then
-     * a {@link RetryExhaustedException} is thrown and nothing is changed. Any
-     * other failure propagates without committing.
-     * <p>
-     * A {@code null} {@code order} requires the match to be unique: when more
-     * than one record matches, a {@link DuplicateEntryException} propagates. A
-     * non-{@code null} {@code order} selects the first match it defines.
-     *
-     * @param any {@code true} to match across the {@code clazz} hierarchy
-     * @param clazz the {@link Record} type to find
-     * @param criteria the {@link Criteria} the record must match
-     * @param order the {@link Order} that defines "first", or {@code null} to
-     *            require a unique match
-     * @param key the name of the intrinsic field to update
-     * @param update the operator that produces the replacement value from the
-     *            current one; it may run once per attempt
-     *
-     * @return the updated {@link Record}, or {@code null} if nothing matches
-     * @throws DuplicateEntryException if {@code order} is {@code null} and more
-     *             than one record matches
-     * @throws RetryExhaustedException if the update cannot commit within the
-     *             bounds of the governing {@link AtomicRetryPolicy}
-     */
-    private <T extends Record, V> T readAndUpdateAtomically(boolean any,
-            Class<T> clazz, Criteria criteria, @Nullable Order order,
-            String key, UnaryOperator<V> update) {
-        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
-        Concourse concourse = connections.request();
-        try {
-            // NOTE: The connection is held across the policy's backoff sleeps
-            // rather than released between attempts, because re-requesting
-            // per attempt would churn the pool.
-            int attempts = 0;
-            for (;;) {
-                Transaction transaction = new Transaction(concourse);
-                try {
-                    T record;
-                    if(order != null) {
-                        record = any
-                                ? transaction.findAnyFirst(clazz, criteria,
-                                        order)
-                                : transaction.findFirst(clazz, criteria, order);
-                    }
-                    else {
-                        record = any
-                                ? transaction.findAnyUnique(clazz, criteria)
-                                : transaction.findUnique(clazz, criteria);
-                    }
-                    if(record == null) {
-                        transaction.abort();
-                        return null;
-                    }
-                    else {
-                        record.assign(this);
-                        Field field = Record.getAtomicableField(key, record);
-                        V current = Record.getAtomicableFieldValue(field,
-                                record);
-                        V next = update.apply(current);
-                        Verify.thatArgument(next != null,
-                                "The update operator cannot return null");
-                        Verify.thatArgument(
-                                Primitives.wrap(field.getType())
-                                        .isInstance(next),
-                                "Cannot atomically operate on {} in {} because"
-                                        + " the replacement is a {} and the"
-                                        + " field stores a {}",
-                                key, clazz.getSimpleName(),
-                                next.getClass().getSimpleName(),
-                                field.getType().getSimpleName());
-                        record.checkIsSavable(field, key, next);
-                        boolean clean = !record.hasUnsavedChanges();
-                        if(!Objects.equals(current, next)) {
-                            transaction.verifyOrSet(key,
-                                    Record.serializeScalarValue(next),
-                                    record.id());
-                        }
-                        if(transaction.commit()) {
-                            record.applyValueChange(key, next, clean);
-                            return record;
-                        }
-                        else {
-                            // Trigger the retry path below.
-                            throw new TransactionException();
-                        }
-                    }
-                }
-                catch (TransactionException e) {
-                    transaction.abort();
-                    if(++attempts > policy.limit()) {
-                        throw new RetryExhaustedException(attempts);
-                    }
-                    else {
-                        policy.backoff(attempts);
-                    }
-                }
-                catch (Throwable t) {
-                    // A non-transaction failure (e.g. a duplicate-entry or
-                    // constraint violation) is terminal: abort and propagate
-                    // without retrying so nothing is committed or mutated.
-                    transaction.abort();
-                    throw t;
-                }
-            }
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
      * Builder for {@link Runway} connections. This is returned from
      * {@link #builder()}.
      *
@@ -3039,11 +3039,48 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public static class Builder {
 
         /**
+         * Return a single {@link Consumer} that dispatches a {@link Record} to
+         * every one of the {@code listeners} whose registered type the record
+         * is an instance of. An exception thrown by a listener is suppressed,
+         * and dispatch continues with the remaining listeners.
+         *
+         * @param listeners the type-filtered listeners, in registration order
+         * @return the composed {@link Consumer}, or {@code null} if
+         *         {@code listeners} is empty
+         */
+        @SuppressWarnings("unchecked")
+        @Nullable
+        private static Consumer<Record> compose(
+                List<Entry<Class<? extends Record>, Consumer<? extends Record>>> listeners) {
+            if(listeners.isEmpty()) {
+                return null;
+            }
+            else {
+                List<Entry<Class<? extends Record>, Consumer<? extends Record>>> snapshot = new ArrayList<>(
+                        listeners);
+                return record -> {
+                    for (Entry<Class<? extends Record>, Consumer<? extends Record>> entry : snapshot) {
+                        if(entry.getKey().isAssignableFrom(record.getClass())) {
+                            try {
+                                Consumer<Record> consumer = (Consumer<Record>) entry
+                                        .getValue();
+                                consumer.accept(record);
+                            }
+                            catch (Exception e) {
+                                // Swallow and continue to next matching
+                                // listener
+                            }
+                        }
+                    }
+                };
+            }
+        }
+
+        /**
          * The {@link AtomicRetryPolicy} for the built {@link Runway} instance.
          */
         private AtomicRetryPolicy atomicRetryPolicy = AtomicRetryPolicy
                 .defaults();
-
         /**
          * The {@link DynamicWritePolicy} for the built {@link Runway} instance.
          */
@@ -3057,6 +3094,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private String username = "admin";
         private List<Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
         private List<Entry<Class<? extends Record>, Consumer<? extends Record>>> deleteListeners = new ArrayList<>();
+
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
         /**
@@ -3355,44 +3393,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             return this;
         }
 
-        /**
-         * Return a single {@link Consumer} that dispatches a {@link Record} to
-         * every one of the {@code listeners} whose registered type the record
-         * is an instance of. An exception thrown by a listener is suppressed,
-         * and dispatch continues with the remaining listeners.
-         *
-         * @param listeners the type-filtered listeners, in registration order
-         * @return the composed {@link Consumer}, or {@code null} if
-         *         {@code listeners} is empty
-         */
-        @SuppressWarnings("unchecked")
-        @Nullable
-        private static Consumer<Record> compose(
-                List<Entry<Class<? extends Record>, Consumer<? extends Record>>> listeners) {
-            if(listeners.isEmpty()) {
-                return null;
-            }
-            else {
-                List<Entry<Class<? extends Record>, Consumer<? extends Record>>> snapshot = new ArrayList<>(
-                        listeners);
-                return record -> {
-                    for (Entry<Class<? extends Record>, Consumer<? extends Record>> entry : snapshot) {
-                        if(entry.getKey().isAssignableFrom(record.getClass())) {
-                            try {
-                                Consumer<Record> consumer = (Consumer<Record>) entry
-                                        .getValue();
-                                consumer.accept(record);
-                            }
-                            catch (Exception e) {
-                                // Swallow and continue to next matching
-                                // listener
-                            }
-                        }
-                    }
-                };
-            }
-        }
-
     }
 
     /**
@@ -3664,6 +3664,27 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * The null {@link Transaction}: it represents the absence of a transaction,
+     * so every operation behaves exactly as it does on the enclosing
+     * {@link Runway} instance, and the transaction verbs must never be invoked.
+     *
+     * @author Jeff Nelson
+     */
+    private class NullTransaction extends Transaction {
+
+        @Override
+        public Selections select(Selection<?>... options) {
+            return Runway.this.select(options);
+        }
+
+        @Override
+        Reader syncReader() {
+            return new IncrementalReader(connections);
+        }
+
+    }
+
+    /**
      * The pair of reads recorded for a class or criteria query: the matching
      * {@link Record Records'} own data, and the {@code navigate()} pre-fetch of
      * the {@link Link} targets reachable from them.
@@ -3778,14 +3799,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private final Concourse concourse;
 
         /**
-         * Construct the {@link NullTransaction} instance, which has no
-         * connection and stages nothing.
-         */
-        private Transaction() {
-            this.concourse = null;
-        }
-
-        /**
          * Construct a new instance and {@link Concourse#stage() stage} a
          * transaction on {@code concourse}.
          *
@@ -3795,6 +3808,41 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         Transaction(Concourse concourse) {
             this.concourse = concourse;
             concourse.stage();
+        }
+
+        /**
+         * Construct the {@link NullTransaction} instance, which has no
+         * connection and stages nothing.
+         */
+        private Transaction() {
+            this.concourse = null;
+        }
+
+        @Override
+        public Selections select(Selection<?>... options) {
+            Preconditions.checkArgument(options.length > 0);
+            DatabaseSelection<?>[] selections = Arrays.stream(options)
+                    .peek(option -> Preconditions.checkState(
+                            option.state() == Selection.State.PENDING || option
+                                    .state() == Selection.State.RESOLVED,
+                            "Selection has already been submitted"))
+                    .map(DatabaseSelection::resolve)
+                    .toArray(DatabaseSelection[]::new);
+            try (Reader reader = supportsBulkCommands
+                    ? new BatchReader(concourse)
+                    : new IncrementalReader(concourse)) {
+                for (DatabaseSelection<?> selection : selections) {
+                    if(selection.state == Selection.State.RESOLVED) {
+                        selection.setState(Selection.State.FINISHED);
+                    }
+                    else {
+                        selection.setState(Selection.State.SUBMITTED);
+                        $selectFromDatabase(reader, selection, this);
+                    }
+                }
+                reader.drain();
+            }
+            return new Selections(selections);
         }
 
         /**
@@ -3834,54 +3882,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         void verifyOrSet(String key, Object value, long record) {
             concourse.verifyOrSet(key, value, record);
-        }
-
-        @Override
-        public Selections select(Selection<?>... options) {
-            Preconditions.checkArgument(options.length > 0);
-            DatabaseSelection<?>[] selections = Arrays.stream(options)
-                    .peek(option -> Preconditions.checkState(
-                            option.state() == Selection.State.PENDING || option
-                                    .state() == Selection.State.RESOLVED,
-                            "Selection has already been submitted"))
-                    .map(DatabaseSelection::resolve)
-                    .toArray(DatabaseSelection[]::new);
-            try (Reader reader = supportsBulkCommands
-                    ? new BatchReader(concourse)
-                    : new IncrementalReader(concourse)) {
-                for (DatabaseSelection<?> selection : selections) {
-                    if(selection.state == Selection.State.RESOLVED) {
-                        selection.setState(Selection.State.FINISHED);
-                    }
-                    else {
-                        selection.setState(Selection.State.SUBMITTED);
-                        $selectFromDatabase(reader, selection, this);
-                    }
-                }
-                reader.drain();
-            }
-            return new Selections(selections);
-        }
-
-    }
-
-    /**
-     * The null {@link Transaction}: it represents the absence of a transaction,
-     * so every operation behaves exactly as it does on the enclosing
-     * {@link Runway} instance, and the transaction verbs must never be invoked.
-     *
-     * @author Jeff Nelson
-     */
-    private class NullTransaction extends Transaction {
-
-        @Override
-        public Selections select(Selection<?>... options) {
-            return Runway.this.select(options);
-        }
-
-        @Override
-        Reader syncReader() {
-            return new IncrementalReader(connections);
         }
 
     }

@@ -532,6 +532,27 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if {@code value} references a {@link Record} whose id
+     * is in {@code ids}.
+     *
+     * @param value a field value that may be a {@link Record} or a
+     *            {@link DeferredReference}
+     * @param ids the ids to test against
+     * @return {@code true} if {@code value} references one of the {@code ids}
+     */
+    private static boolean isDeletedReference(Object value, Set<Long> ids) {
+        if(value instanceof Record) {
+            return ids.contains(((Record) value).id);
+        }
+        else if(value instanceof DeferredReference) {
+            return ids.contains(((DeferredReference<?>) value).$id());
+        }
+        else {
+            return false;
+        }
+    }
+
+    /**
      * Return {@code true} if the {@code field} is considered readable.
      *
      * @param field
@@ -2547,6 +2568,108 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Stage the removal of every reference held by one of this {@link Record
+     * Record's} {@link CaptureDelete} fields to a {@link Record} whose id is in
+     * {@code ids}. This method writes through the {@code saver} only; it does
+     * not modify this {@link Record Record's} in-memory state.
+     *
+     * @param saver the {@link Saver} that owns the active transaction
+     * @param ids the ids of {@link Record Records} deleted within the active
+     *            save
+     * @return {@code true} if at least one removal was staged
+     */
+    boolean reconcileCaptureDeleteReferences(Saver saver, Set<Long> ids) {
+        boolean changed = false;
+        Set<Field> fields = StaticAnalysis.instance().getAnnotatedFields(this,
+                CaptureDelete.class);
+        for (Field field : fields) {
+            try {
+                Object value = field.get(this);
+                if(value == null) { // GH-58
+                    continue;
+                }
+                else if(Sequences.isSequence(value)) {
+                    int[] total = new int[1];
+                    ArrayBuilder<Object> remaining = ArrayBuilder.builder();
+                    Sequences.forEach(value, item -> {
+                        total[0]++;
+                        if(!isDeletedReference(item, ids)) {
+                            remaining.add(serializeScalarValue(item));
+                        }
+                    });
+                    if(remaining.length() < total[0]) {
+                        if(remaining.length() > 0) {
+                            saver.reconcile(field.getName(), id,
+                                    remaining.build());
+                        }
+                        else {
+                            saver.clear(field.getName(), id);
+                        }
+                        changed = true;
+                    }
+                }
+                else if(isDeletedReference(value, ids)) {
+                    saver.clear(field.getName(), id);
+                    changed = true;
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Remove every reference held by one of this {@link Record Record's}
+     * {@link CaptureDelete} fields to a {@link Record} whose id is in
+     * {@code ids}.
+     *
+     * @param ids the ids of {@link Record Records} deleted within the active
+     *            save
+     * @return {@code true} if at least one reference was removed
+     */
+    boolean removeCaptureDeleteReferences(Set<Long> ids) {
+        boolean changed = false;
+        Set<Field> fields = StaticAnalysis.instance().getAnnotatedFields(this,
+                CaptureDelete.class);
+        for (Field field : fields) {
+            try {
+                Object value = field.get(this);
+                if(value == null) { // GH-58
+                    continue;
+                }
+                else if(value instanceof Collection) {
+                    changed |= ((Collection<?>) value)
+                            .removeIf(item -> isDeletedReference(item, ids));
+                }
+                else if(value.getClass().isArray()) {
+                    int[] length = new int[1];
+                    ArrayBuilder<Object> ab = ArrayBuilder.builder();
+                    Sequences.forEach(value, item -> {
+                        length[0]++;
+                        if(!isDeletedReference(item, ids)) {
+                            ab.add(item);
+                        }
+                    });
+                    if(ab.length() < length[0]) {
+                        field.set(this, ab.build());
+                        changed = true;
+                    }
+                }
+                else if(isDeletedReference(value, ids)) {
+                    field.set(this, null);
+                    changed = true;
+                }
+            }
+            catch (ReflectiveOperationException e) {
+                throw CheckedExceptions.wrapAsRuntimeException(e);
+            }
+        }
+        return changed;
+    }
+
+    /**
      * Restore this {@link Record Record's} state from a previously captured
      * {@link Snapshot}.
      *
@@ -2904,15 +3027,13 @@ public abstract class Record implements Comparable<Record> {
             }
             else if(mine == null && theirs != null) {
                 // NULL value is considered "greater" so that it is always
-                // at
-                // the end.
+                // at the end.
                 comparison = 1;
                 coefficient = 1;
             }
             else if(mine != null && theirs == null) {
                 // NULL value is considered "greater" so that it is always
-                // at
-                // the end.
+                // at the end.
                 comparison = -1;
                 coefficient = 1;
             }
@@ -3177,129 +3298,6 @@ public abstract class Record implements Comparable<Record> {
         // when the #saveWithinTransaction that initiated the deletion
         // drains the operation's queue.
         saver.clear(id);
-    }
-
-    /**
-     * Remove every reference held by one of this {@link Record Record's}
-     * {@link CaptureDelete} fields to a {@link Record} whose id is in
-     * {@code ids}.
-     *
-     * @param ids the ids of {@link Record Records} deleted within the active
-     *            save
-     * @return {@code true} if at least one reference was removed
-     */
-    boolean removeCaptureDeleteReferences(Set<Long> ids) {
-        boolean changed = false;
-        Set<Field> fields = StaticAnalysis.instance().getAnnotatedFields(this,
-                CaptureDelete.class);
-        for (Field field : fields) {
-            try {
-                Object value = field.get(this);
-                if(value == null) { // GH-58
-                    continue;
-                }
-                else if(value instanceof Collection) {
-                    changed |= ((Collection<?>) value)
-                            .removeIf(item -> isDeletedReference(item, ids));
-                }
-                else if(value.getClass().isArray()) {
-                    int[] length = new int[1];
-                    ArrayBuilder<Object> ab = ArrayBuilder.builder();
-                    Sequences.forEach(value, item -> {
-                        length[0]++;
-                        if(!isDeletedReference(item, ids)) {
-                            ab.add(item);
-                        }
-                    });
-                    if(ab.length() < length[0]) {
-                        field.set(this, ab.build());
-                        changed = true;
-                    }
-                }
-                else if(isDeletedReference(value, ids)) {
-                    field.set(this, null);
-                    changed = true;
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.wrapAsRuntimeException(e);
-            }
-        }
-        return changed;
-    }
-
-    /**
-     * Stage the removal of every reference held by one of this {@link Record
-     * Record's} {@link CaptureDelete} fields to a {@link Record} whose id is in
-     * {@code ids}. This method writes through the {@code saver} only; it does
-     * not modify this {@link Record Record's} in-memory state.
-     *
-     * @param saver the {@link Saver} that owns the active transaction
-     * @param ids the ids of {@link Record Records} deleted within the active
-     *            save
-     * @return {@code true} if at least one removal was staged
-     */
-    boolean reconcileCaptureDeleteReferences(Saver saver, Set<Long> ids) {
-        boolean changed = false;
-        Set<Field> fields = StaticAnalysis.instance().getAnnotatedFields(this,
-                CaptureDelete.class);
-        for (Field field : fields) {
-            try {
-                Object value = field.get(this);
-                if(value == null) { // GH-58
-                    continue;
-                }
-                else if(Sequences.isSequence(value)) {
-                    int[] total = new int[1];
-                    ArrayBuilder<Object> remaining = ArrayBuilder.builder();
-                    Sequences.forEach(value, item -> {
-                        total[0]++;
-                        if(!isDeletedReference(item, ids)) {
-                            remaining.add(serializeScalarValue(item));
-                        }
-                    });
-                    if(remaining.length() < total[0]) {
-                        if(remaining.length() > 0) {
-                            saver.reconcile(field.getName(), id,
-                                    remaining.build());
-                        }
-                        else {
-                            saver.clear(field.getName(), id);
-                        }
-                        changed = true;
-                    }
-                }
-                else if(isDeletedReference(value, ids)) {
-                    saver.clear(field.getName(), id);
-                    changed = true;
-                }
-            }
-            catch (ReflectiveOperationException e) {
-                throw CheckedExceptions.wrapAsRuntimeException(e);
-            }
-        }
-        return changed;
-    }
-
-    /**
-     * Return {@code true} if {@code value} references a {@link Record} whose id
-     * is in {@code ids}.
-     *
-     * @param value a field value that may be a {@link Record} or a
-     *            {@link DeferredReference}
-     * @param ids the ids to test against
-     * @return {@code true} if {@code value} references one of the {@code ids}
-     */
-    private static boolean isDeletedReference(Object value, Set<Long> ids) {
-        if(value instanceof Record) {
-            return ids.contains(((Record) value).id);
-        }
-        else if(value instanceof DeferredReference) {
-            return ids.contains(((DeferredReference<?>) value).$id());
-        }
-        else {
-            return false;
-        }
     }
 
     /**
