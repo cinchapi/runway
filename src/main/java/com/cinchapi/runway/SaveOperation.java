@@ -31,7 +31,7 @@ import javax.annotation.Nullable;
 import com.cinchapi.runway.db.Saver;
 
 /**
- * A {@link Save} is one logical save operation in motion.
+ * A {@link SaveOperation} is one logical save in motion.
  * <p>
  * A save can process multiple in-memory instances of the same logical record
  * (e.g., the caller's instance alongside a copy loaded for
@@ -66,7 +66,7 @@ import com.cinchapi.runway.db.Saver;
  *
  * @author Jeff Nelson
  */
-final class Save {
+final class SaveOperation {
 
     /**
      * One {@link Entry} per record id processed within the active attempt.
@@ -105,7 +105,7 @@ final class Save {
      * @param preventStaleWrite whether the save rejects any {@link Record} that
      *            has been externally modified
      */
-    Save(boolean preventStaleWrite) {
+    SaveOperation(boolean preventStaleWrite) {
         this.preventStaleWrite = preventStaleWrite;
     }
 
@@ -174,28 +174,6 @@ final class Save {
         for (Entry entry : entries.values()) {
             consumer.accept(entry.instance, entry.outcome);
         }
-    }
-
-    /**
-     * Return {@code true} if any instance of the record with {@code id} was
-     * processed within the active attempt.
-     *
-     * @param id the record id to test
-     * @return {@code true} if the id was processed
-     */
-    boolean isSeen(long id) {
-        return entries.containsKey(id);
-    }
-
-    /**
-     * Return {@code true} if any instance of {@code record} was processed
-     * within the active attempt.
-     *
-     * @param record the {@link Record} to test
-     * @return {@code true} if the record's id was processed
-     */
-    boolean isSeen(Record record) {
-        return isSeen(record.id());
     }
 
     /**
@@ -306,6 +284,28 @@ final class Save {
         entries.clear();
         pendingDeletions.clear();
         saver.stage();
+    }
+
+    /**
+     * Return {@code true} if the active attempt touched any in-memory instance
+     * of the record with {@code id}.
+     *
+     * @param id the record id to test
+     * @return {@code true} if the record was touched
+     */
+    boolean touches(long id) {
+        return entries.containsKey(id);
+    }
+
+    /**
+     * Return {@code true} if the active attempt touched any in-memory instance
+     * that shares the id of {@code record}.
+     *
+     * @param record the {@link Record} to test
+     * @return {@code true} if the record was touched
+     */
+    boolean touches(Record record) {
+        return touches(record.id());
     }
 
     /**
