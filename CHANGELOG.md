@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 2.2.0 (TBD)
+#### Version 2.2.0 (August 4, 2026)
 * **Added `DynamicWritePolicy` to govern which fields `Record#set` can write.** By default, a dynamic write can reach any field, including final, private, package-private and protected ones, which preserves the historical behavior. Configure a policy per `Runway` instance with `Runway.builder().dynamicWritePolicy(...)`. ([GH-147](https://github.com/cinchapi/runway/issues/147))
     * `DynamicWritePolicy.javaDefaults()` returns a policy that respects Java modifiers, so only public non-final fields accept dynamic writes. `DynamicWritePolicy.builder()` composes a policy that selectively allows final, private, package-private or protected fields.
     * When the governing policy refuses a write, `Record#set` throws `NonWritableFieldException` instead of writing the field or storing the value as a dynamic attribute. The policy governs every field a key can name, including the internal framework state that tracks a record's identity and metadata.
