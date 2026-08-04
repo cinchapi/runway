@@ -2596,48 +2596,37 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Stage the removal of every reference held by one of this {@link Record
+     * Stage the removal of every stored link from one of this {@link Record
      * Record's} {@link CaptureDelete} fields to a {@link Record} whose id is in
-     * {@code ids}. This method writes through the {@code saver} only; it does
-     * not modify this {@link Record Record's} in-memory state.
+     * {@code ids}. A removal is staged for every field and id pair, so a stored
+     * link that this instance never observed is removed as well. This method
+     * writes through the {@code saver} only; it does not modify this
+     * {@link Record Record's} in-memory state.
      *
      * @param saver the {@link Saver} that owns the active transaction
      * @param ids the ids of {@link Record Records} deleted within the active
      *            save
-     * @return {@code true} if at least one removal was staged
+     * @return {@code true} if this {@link Record} holds an in-memory reference
+     *         to one of the {@code ids}
      */
     boolean reconcileCaptureDeleteReferences(Saver saver, Set<Long> ids) {
         boolean changed = false;
         Set<Field> fields = StaticAnalysis.instance().getAnnotatedFields(this,
                 CaptureDelete.class);
         for (Field field : fields) {
+            for (long deleted : ids) {
+                saver.remove(field.getName(), Link.to(deleted), id);
+            }
             try {
                 Object value = field.get(this);
                 if(value == null) { // GH-58
                     continue;
                 }
                 else if(Sequences.isSequence(value)) {
-                    int[] total = new int[1];
-                    ArrayBuilder<Object> remaining = ArrayBuilder.builder();
-                    Sequences.forEach(value, item -> {
-                        total[0]++;
-                        if(!isDeletedReference(item, ids)) {
-                            remaining.add(serializeScalarValue(item));
-                        }
-                    });
-                    if(remaining.length() < total[0]) {
-                        if(remaining.length() > 0) {
-                            saver.reconcile(field.getName(), id,
-                                    remaining.build());
-                        }
-                        else {
-                            saver.clear(field.getName(), id);
-                        }
-                        changed = true;
-                    }
+                    changed |= Sequences.stream(value)
+                            .anyMatch(item -> isDeletedReference(item, ids));
                 }
                 else if(isDeletedReference(value, ids)) {
-                    saver.clear(field.getName(), id);
                     changed = true;
                 }
             }

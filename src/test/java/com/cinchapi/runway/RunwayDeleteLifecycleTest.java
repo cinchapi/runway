@@ -1280,6 +1280,95 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@link CaptureDelete} cleanup removes
+     * a stored link to the deleted record even when the referencing
+     * {@link Record Record's} in-memory instance in the same save never
+     * observed the link.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CaptureParent} with no
+     * reference to a saved {@link CaptureTarget}, and a stored link from the
+     * parent to the target that another client added after the parent was
+     * created in memory.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Add the stored link through a raw connection.</li>
+     * <li>Mark the target with {@link Record#deleteOnSave()}.</li>
+     * <li>Save the parent and the target in one call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The target no longer loads and the parent's
+     * stored reference is empty.
+     */
+    @Test
+    public void testCaptureCleanupRemovesStoredLinkWhenInMemoryCopyIsStale()
+            throws Exception {
+        CaptureTarget target = new CaptureTarget();
+        target.name = "Capture Target";
+        CaptureParent parent = new CaptureParent();
+        parent.name = "Capture Parent";
+        Assert.assertTrue(runway.save(parent, target));
+
+        client.link("target", target.id(), parent.id());
+
+        target.deleteOnSave();
+        Assert.assertTrue(runway.save(parent, target));
+
+        Assert.assertTrue("The stored link must not survive the deletion",
+                client.select("target", parent.id()).isEmpty());
+        Assert.assertNull(runway.load(CaptureTarget.class, target.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link CaptureDelete} cleanup keeps a
+     * stored collection member that the referencing {@link Record Record's}
+     * in-memory instance in the same save never observed.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CollectionCaptureParent}
+     * whose collection references two saved {@link CaptureTarget
+     * CaptureTargets}, plus a stored link to a third saved target that another
+     * client added after the parent was created in memory.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Add the third stored link through a raw connection.</li>
+     * <li>Mark one of the two original targets with
+     * {@link Record#deleteOnSave()}.</li>
+     * <li>Save the parent and the two original targets in one call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The stored references hold the surviving
+     * original target and the third target; only the deleted {@link Record
+     * Record's} link is removed.
+     */
+    @Test
+    public void testCaptureCleanupPreservesStoredMemberUnseenByInMemoryCopy()
+            throws Exception {
+        CaptureTarget kept = new CaptureTarget();
+        kept.name = "Kept";
+        CaptureTarget removed = new CaptureTarget();
+        removed.name = "Removed";
+        CaptureTarget extra = new CaptureTarget();
+        extra.name = "Extra";
+        CollectionCaptureParent parent = new CollectionCaptureParent();
+        parent.name = "Collection Parent";
+        parent.targets = ImmutableList.of(kept, removed);
+        Assert.assertTrue(runway.save(parent, kept, removed, extra));
+
+        client.link("targets", extra.id(), parent.id());
+
+        removed.deleteOnSave();
+        Assert.assertTrue(runway.save(parent, kept, removed));
+
+        Set<Object> stored = client.select("targets", parent.id());
+        Assert.assertEquals(2, stored.size());
+        Assert.assertTrue(stored.contains(Link.to(kept.id())));
+        Assert.assertTrue("The unseen member must survive the cleanup",
+                stored.contains(Link.to(extra.id())));
+        Assert.assertNull(runway.load(CaptureTarget.class, removed.id()));
+    }
+
+    /**
      * A test {@link Record} whose lifecycle events are tracked by listeners.
      *
      * @author Jeff Nelson
