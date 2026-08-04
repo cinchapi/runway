@@ -2617,6 +2617,12 @@ public abstract class Record implements Comparable<Record> {
             for (long deleted : ids) {
                 saver.remove(field.getName(), Link.to(deleted), id);
             }
+            // NOTE: A staged removal may delete a stored link that this
+            // instance never observed (e.g., a concurrent writer added it
+            // after this instance loaded). Such a change is invisible to
+            // #changed, so the record fires no save notification for it;
+            // detection would require a read of the stored values for every
+            // field, which is not worth the round trips.
             try {
                 Object value = field.get(this);
                 if(value == null) { // GH-58
