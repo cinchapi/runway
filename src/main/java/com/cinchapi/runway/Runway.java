@@ -1071,9 +1071,10 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         // for) a record that the save has since deleted, so
                         // stage the removal of every survivor's references to
                         // deleted records and re-assert each deletion as the
-                        // last write for its record. The staged removals leave
-                        // every survivor's in-memory state untouched, so a
-                        // failed transaction has nothing to roll back.
+                        // last write for its record. The removals must stay
+                        // staged-only: mutating a survivor's in-memory state
+                        // here would leave it inconsistent when the
+                        // transaction aborts.
                         context.forEach((record, outcome) -> {
                             if(outcome != SaveContext.Outcome.DELETED
                                     && record.reconcileCaptureDeleteReferences(
@@ -2337,9 +2338,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     /**
      * Ensure that this {@link Runway} instance is able to dispatch save and
      * delete notifications to registered listeners. This method is safe to call
-     * multiple times, so {@link Properties#onSave} and
-     * {@link Properties#onDelete} listeners can be registered after the
-     * {@link Runway} instance is built.
+     * multiple times.
      */
     private synchronized void ensureSaveNotificationInfrastructure() {
         if(saveNotificationQueue == null) {
@@ -3091,8 +3090,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 consumer.accept(record);
                             }
                             catch (Exception e) {
-                                // Swallow and continue to next matching
-                                // listener
+                                // A listener failure must not block the
+                                // remaining listeners.
                             }
                         }
                     }
@@ -3153,7 +3152,6 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 db.onLoadFailureHandler = onLoadFailureHandler;
             }
 
-            // Initialize notification components if any listener is provided
             db.saveListener = compose(saveListeners);
             db.deleteListener = compose(deleteListeners);
             if(db.saveListener != null || db.deleteListener != null) {
@@ -3228,8 +3226,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * matching listeners still fire.
          * </p>
          * <p>
-         * The listener is executed asynchronously in a dedicated thread to
-         * prevent blocking the main application flow.
+         * The listener is executed asynchronously in a dedicated thread.
          * </p>
          *
          * @param type the {@link Record} type (or superclass) to listen for
@@ -3319,8 +3316,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          * matching listeners still fire.
          * </p>
          * <p>
-         * The listener is executed asynchronously in a dedicated thread to
-         * prevent blocking the main application flow.
+         * The listener is executed asynchronously in a dedicated thread.
          * </p>
          * <p>
          * <strong>Important:</strong> Save listeners should not modify the
@@ -3474,7 +3470,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 .accept(record);
                     }
                     catch (Exception e) {
-                        // Swallow to match builder behavior
+                        // A listener failure must not block the remaining
+                        // listeners.
                     }
                 }
                 if(previous != null) {
@@ -3527,7 +3524,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                 .accept(record);
                     }
                     catch (Exception e) {
-                        // Swallow to match builder behavior
+                        // A listener failure must not block the remaining
+                        // listeners.
                     }
                 }
                 if(previous != null) {

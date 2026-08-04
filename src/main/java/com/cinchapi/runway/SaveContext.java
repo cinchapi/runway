@@ -35,23 +35,19 @@ import javax.annotation.Nullable;
  * (e.g., the caller's instance alongside a copy loaded for
  * {@link CaptureDelete} or {@link JoinDelete} handling). The context keeps one
  * entry per record id that pairs the instance that currently speaks for the
- * record with the record's {@link Outcome}, so every question asked about a
- * record during the save has exactly one answer.
+ * record with the record's {@link Outcome}.
  * </p>
  * <p>
  * An {@link Outcome} is monotonic: it only ever rises from {@link Outcome#CLEAN
  * CLEAN} to {@link Outcome#CHANGED CHANGED} to {@link Outcome#DELETED DELETED}
- * and never falls, so a fact recorded by one instance cannot be erased by a
- * later instance of the same record.
+ * and never falls.
  * </p>
  * <p>
- * The context also holds the metadata {@link Record.Snapshot snapshots} needed
- * to {@link #restore() restore} every participating instance if the save fails,
- * and the queue of companion deletions that annotations like
- * {@link CascadeDelete} and {@link JoinDelete} schedule. Snapshots are
- * identity-keyed, because id-equal copies must each restore their own metadata,
- * and they survive {@link #reset() retry attempts}; all other state is
- * per-attempt.
+ * The context also holds the identity-keyed metadata {@link Record.Snapshot
+ * snapshots} needed to {@link #restore() restore} every participating instance
+ * if the save fails, and the queue of companion deletions that annotations like
+ * {@link CascadeDelete} and {@link JoinDelete} schedule. Snapshots survive
+ * {@link #reset() retry attempts}; all other state is per-attempt.
  * </p>
  *
  * @author Jeff Nelson
@@ -65,10 +61,7 @@ final class SaveContext {
 
     /**
      * A metadata {@link Record.Snapshot snapshot} for every instance that
-     * participated in any attempt of this save. A save mutates record metadata
-     * (e.g., the change checksum) before the transaction commits, so a failed
-     * save must {@link #restore() restore} that metadata for a later save to
-     * still observe the record's unsaved changes.
+     * participated in any attempt of this save.
      */
     private final Map<Record, Record.Snapshot> snapshots = new IdentityHashMap<>();
 
@@ -189,9 +182,7 @@ final class SaveContext {
 
     /**
      * Reset the per-attempt state for a new save attempt. The
-     * {@link Record.Snapshot snapshots} are kept, so a retry can still
-     * {@link #restore() restore} instances that participated in an earlier
-     * attempt.
+     * {@link Record.Snapshot snapshots} are kept.
      */
     void reset() {
         entries.clear();
@@ -279,9 +270,7 @@ final class SaveContext {
 
     /**
      * The save's outcome for one record. The constants form a ladder in
-     * declaration order and a record's {@link Outcome} only ever rises, so a
-     * fact recorded by one instance survives every later instance of the same
-     * record.
+     * declaration order and a record's {@link Outcome} only ever rises.
      */
     enum Outcome {
 

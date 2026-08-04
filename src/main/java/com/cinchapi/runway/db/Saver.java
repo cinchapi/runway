@@ -26,11 +26,9 @@ import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 
 /**
- * A {@link Saver} encapsulates the database interaction for one save &mdash;
- * the staged transaction, the save-time validation reads, the persisted writes,
- * and the terminal commit or abort &mdash; behind a single type that the
- * {@link com.cinchapi.runway.Record} save pipeline can target without knowing
- * the underlying database transport.
+ * A {@link Saver} encapsulates the database interaction for one save: the
+ * staged transaction, the save-time validation reads, the persisted writes, and
+ * the terminal commit or abort.
  * <p>
  * <h2>Reads</h2> Validation reads ({@link #audit(long, Consumer) audit},
  * {@link #find(Criteria, Consumer) find}) accept a {@link Consumer} that may
