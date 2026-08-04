@@ -24,6 +24,7 @@
 * Fixed a bug where a delete failed when the deleted record was the only element of another record's `@CaptureDelete` array field.
 * Fixed a bug where a deletion hook annotation on an array field was ignored. A record that linked to the deleted record only through an array `@JoinDelete` field did not join the deletion. A record that linked only through an array `@CaptureDelete` field kept its stored reference unless it was part of the same save.
 * Fixed a bug where a record failed to load when one of its array fields held no stored values.
+* Fixed a bug where a listener that threw an `Error` stopped all later save and delete notifications. A listener failure of any kind is now suppressed, and the remaining listeners and later notifications still fire.
 * Fixed a bug where a save that deleted a record did not remove a surviving record's in-memory reference to it. A later save of the survivor re-created the stored `@CaptureDelete` link to the deleted record. After a committed save, a surviving record's in-memory references and its unsaved-changes status now match its stored data.
 * Fixed a bug where a later save of a record that joined a deletion re-created the deleted record. When an instance of the record was part of the save that performed the deletion, a later save of that instance now repeats the deletion instead of persisting its data.
 * Fixed a bug where a save that failed because a record's overridden save refused it left the other records in the call reporting no unsaved changes, so a later save skipped their fields.

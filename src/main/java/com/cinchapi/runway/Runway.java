@@ -2365,8 +2365,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         try {
                             notification.run();
                         }
-                        catch (Exception e) {
-                            // Silently swallow exceptions
+                        catch (Throwable t) {
+                            // A listener failure of any kind must never
+                            // stop notification dispatch.
                         }
                     }
                     catch (InterruptedException e) {
@@ -3096,7 +3097,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                         .getValue();
                                 consumer.accept(record);
                             }
-                            catch (Exception e) {
+                            catch (Throwable t) {
                                 // A listener failure must not block the
                                 // remaining listeners.
                             }
@@ -3476,7 +3477,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         ((Consumer<Record>) (Consumer<?>) listener)
                                 .accept(record);
                     }
-                    catch (Exception e) {
+                    catch (Throwable t) {
                         // A listener failure must not block the remaining
                         // listeners.
                     }
@@ -3530,7 +3531,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                         ((Consumer<Record>) (Consumer<?>) listener)
                                 .accept(record);
                     }
-                    catch (Exception e) {
+                    catch (Throwable t) {
                         // A listener failure must not block the remaining
                         // listeners.
                     }

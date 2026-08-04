@@ -1266,6 +1266,53 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a listener which throws an
+     * {@link Error} does not stop notification dispatch for other listeners or
+     * for later saves.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register two save listeners; the first throws an
+     * {@link AssertionError} for every record.</li>
+     * <li>Save one {@link ChildRecord}.</li>
+     * <li>Save a second {@link ChildRecord}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second listener fires for both saves.
+     */
+    @Test
+    public void testListenerErrorDoesNotStopNotificationDispatch()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(2);
+        Set<Record> notified = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            throw new AssertionError(
+                    "Intentional error from the first listener");
+        }).onSave(record -> {
+            notified.add(record);
+            latch.countDown();
+        }).build();
+
+        ChildRecord first = new ChildRecord();
+        first.label = "First";
+        Assert.assertTrue(first.save());
+
+        ChildRecord second = new ChildRecord();
+        second.label = "Second";
+        Assert.assertTrue(second.save());
+
+        Assert.assertTrue(
+                "Notifications stopped after a listener threw an Error",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(notified.contains(first));
+        Assert.assertTrue(notified.contains(second));
+    }
+
+    /**
      * A test {@link Record} that holds a link to a {@link ChildRecord}.
      *
      * @author Jeff Nelson
