@@ -26,11 +26,9 @@ import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 
 /**
- * A {@link Saver} encapsulates the database interaction for one save &mdash;
- * the staged transaction, the save-time validation reads, the persisted writes,
- * and the terminal commit or abort &mdash; behind a single type that
- * {@link com.cinchapi.runway.Record#saveWithinTransaction(Saver, java.util.Map, java.util.Map, boolean)}
- * can target without knowing the underlying database transport.
+ * A {@link Saver} encapsulates the database interaction for one save: the
+ * staged transaction, the save-time validation reads, the persisted writes, and
+ * the terminal commit or abort.
  * <p>
  * <h2>Reads</h2> Validation reads ({@link #audit(long, Consumer) audit},
  * {@link #find(Criteria, Consumer) find}) accept a {@link Consumer} that may
@@ -39,10 +37,11 @@ import com.cinchapi.concourse.lang.Criteria;
  * {@link #commit()}; the throw propagates from whichever site invokes the
  * {@link Consumer}.
  * </p>
- * <h2>Writes</h2> Writes ({@link #set set}, {@link #clear(String, long) clear},
- * {@link #verifyOrSet verifyOrSet}, {@link #reconcile reconcile}) are recorded
- * against the active staged transaction, which is the unit of atomicity: a
- * failure anywhere before {@link #commit()} succeeds aborts the entire save.
+ * <h2>Writes</h2> Writes ({@link #set set}, {@link #remove remove},
+ * {@link #clear(String, long) clear}, {@link #verifyOrSet verifyOrSet},
+ * {@link #reconcile reconcile}) are recorded against the active staged
+ * transaction, which is the unit of atomicity: a failure anywhere before
+ * {@link #commit()} succeeds aborts the entire save.
  *
  * <h2>Lifecycle</h2> The caller drives the lifecycle: {@link #stage()} once,
  * any number of recording calls, then exactly one of {@link #commit()} or
@@ -166,6 +165,17 @@ public interface Saver {
      * @param record the record id to set into
      */
     void set(String key, Object value, long record);
+
+    /**
+     * Record a {@link Concourse#remove(String, Object, long) remove} of
+     * {@code value} from {@code key} in {@code record}. The removal is a no-op
+     * when {@code key} does not hold {@code value}.
+     *
+     * @param key the field name to remove from
+     * @param value the value to remove
+     * @param record the record id to remove from
+     */
+    void remove(String key, Object value, long record);
 
     /**
      * Record a {@link Concourse#clear(String, long) clear} of all values for
