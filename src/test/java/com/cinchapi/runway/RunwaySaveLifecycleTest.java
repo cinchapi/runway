@@ -1227,6 +1227,45 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a save which fails because a
+     * {@link Record Record's} overridden save refuses it restores the unsaved
+     * changes of the other records in the call.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link ChildRecord} with a staged
+     * modification, and an unsaved {@link VetoedRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Modify the child's label.</li>
+     * <li>Save the child alongside a {@link VetoedRecord} whose overridden save
+     * returns {@code false}, with the child ordered first.</li>
+     * <li>Save the child alone.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The failed save leaves the child with unsaved
+     * changes, and the follow-up save persists the modified label.
+     */
+    @Test
+    public void testFailedOverrideSaveRestoresOtherRecordsInCall() {
+        ChildRecord child = new ChildRecord();
+        child.label = "Child";
+        Assert.assertTrue(runway.save(child));
+
+        child.label = "Child (Updated)";
+        VetoedRecord veto = new VetoedRecord();
+        veto.name = "Veto";
+        Assert.assertFalse("The save must fail on the vetoed record",
+                runway.save(child, veto));
+
+        Assert.assertTrue("The failed save must not consume unsaved changes",
+                child.hasUnsavedChanges());
+
+        Assert.assertTrue(child.save());
+        ChildRecord loaded = runway.load(ChildRecord.class, child.id());
+        Assert.assertEquals("Child (Updated)", loaded.label);
+    }
+
+    /**
      * A test {@link Record} that holds a link to a {@link ChildRecord}.
      *
      * @author Jeff Nelson
@@ -1245,6 +1284,24 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     public static class ChildRecord extends Record {
 
         public String label;
+    }
+
+    /**
+     * A test {@link Record} whose overridden save always refuses the save.
+     *
+     * @author Jeff Nelson
+     */
+    public static class VetoedRecord extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        @Override
+        protected Supplier<Boolean> overrideSave() {
+            return () -> false;
+        }
     }
 
     /**

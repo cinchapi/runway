@@ -23,6 +23,7 @@
 * Fixed a bug where a failed save left a deletion mark on every record that annotations like `@CascadeDelete` and `@JoinDelete` pulled into the attempted deletion. A later save that reached such a record deleted it instead of persisting its data.
 * Fixed a bug where a delete failed when the deleted record was the only element of another record's `@CaptureDelete` array field.
 * Fixed a bug where a save that deleted a record did not remove a surviving record's in-memory reference to it. A later save of the survivor re-created the stored `@CaptureDelete` link to the deleted record. After a committed save, a surviving record's in-memory references and its unsaved-changes status now match its stored data.
+* Fixed a bug where a save that failed because a record's overridden save refused it left the other records in the call reporting no unsaved changes, so a later save skipped their fields.
 ##### Atomic Operations
 This release adds atomic read-modify-write operations that conditionally replace one field's value in a single atomic step, without a raw Concourse connection. They come in two forms: single-key operations on `Record` for a record the caller already holds (`exchange`, `getAndUpdate`, and `updateAndGet`), and find-and-update methods on `Runway` that atomically select the record and update it (`findUniqueAndUpdate` and `findFirstAndUpdate`, with `findAnyUniqueAndUpdate` and `findAnyFirstAndUpdate` hierarchy variants).
 

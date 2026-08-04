@@ -1053,6 +1053,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             // Early exit the entire transaction because an
                             // overriden save has failed.
                             saver.abort();
+                            context.restore();
                             return false;
                         }
                         else if(override != null) {
@@ -1099,8 +1100,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                                     // The commit removed every stored
                                     // reference to a deleted record, so the
                                     // record's in-memory state must match.
-                                    record.applyCaptureDeleteCleanup(
-                                            deletions);
+                                    record.applyCaptureDeleteCleanup(deletions);
                                 }
                                 enqueueSaveNotification(record);
                                 record.checkpoint();
