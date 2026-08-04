@@ -1224,6 +1224,75 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a cascade deletion marks the caller's
+     * in-save instance of the child, so the delete notification delivers it and
+     * a later save cannot re-create the child.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link CascadeParent} linked to a
+     * saved {@link CascadeChild}, reloaded so the caller holds a child instance
+     * distinct from the parent's linked copy.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener that records each notified instance.</li>
+     * <li>Load the child and the parent in separate calls.</li>
+     * <li>Mark the parent with {@link Record#deleteOnSave()}.</li>
+     * <li>Save the child and the parent in one call, with the child ordered
+     * first.</li>
+     * <li>Modify the caller's child instance and save it alone.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete notification for the child delivers
+     * the caller's instance, and the later save repeats the deletion instead of
+     * re-creating the child.
+     */
+    @Test
+    public void testCallerInstanceAuthoritativeWhenCascadeChildAlsoInSameSave()
+            throws Exception {
+        CountDownLatch deleteLatch = new CountDownLatch(2);
+        List<Record> deletedRecords = new CopyOnWriteArrayList<>();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        CascadeChild child = new CascadeChild();
+        child.name = "Cascade Child";
+        CascadeParent parent = new CascadeParent();
+        parent.name = "Cascade Parent";
+        parent.child = child;
+        Assert.assertTrue(runway.save(parent, child));
+
+        CascadeChild c1 = runway.load(CascadeChild.class, child.id());
+        CascadeParent p1 = runway.load(CascadeParent.class, parent.id());
+        Assert.assertNotSame(c1, p1.child);
+
+        p1.deleteOnSave();
+        Assert.assertTrue(runway.save(c1, p1));
+
+        Assert.assertTrue(
+                "Delete listener did not fire for both records within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+        Record notified = null;
+        for (Record record : deletedRecords) {
+            if(record.id() == c1.id()) {
+                notified = record;
+            }
+        }
+        Assert.assertSame(
+                "The delete notification must deliver the caller's instance",
+                c1, notified);
+
+        c1.name = "Cascade Child (Updated)";
+        Assert.assertTrue(c1.save());
+        Assert.assertTrue("The later save must not re-create the deleted child",
+                client.describe(c1.id()).isEmpty());
+        Assert.assertNull(runway.load(CascadeChild.class, c1.id()));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a record pulled into a deletion
      * through {@link CascadeDelete} is still deleted when the save that deletes
      * its parent is repeated after a failure.

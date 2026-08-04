@@ -3477,12 +3477,19 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Ensure that {@code record} is scheduled for
      * {@link #deleteWithinTransaction(Saver, SaveContext) deletion} alongside
-     * this {@link Record}.
+     * this {@link Record}. If the active save already processed an id-equal
+     * instance, then that instance joins the deletion in its place.
      *
      * @param record the {@link Record} that joins the deletion
      * @param context the active {@link SaveContext}
      */
     private void ensureDeletion(Record record, SaveContext context) {
+        if(context.contains(record.id())) {
+            // NOTE: The in-save instance speaks for the record, so it
+            // joins the deletion in place of a linked or loaded copy and
+            // the delete notification delivers it.
+            record = context.instance(record.id());
+        }
         if(!record.deleted) {
             // NOTE: The snapshot must precede the mark so a failed save
             // restores the record to its unmarked state.
