@@ -2754,6 +2754,14 @@ public abstract class Record implements Comparable<Record> {
         }
         errors.clear();
         context.add(this);
+        if(!deleted && context.isDeleted(id)) {
+            // NOTE: A deletion is final within a save, so an id-equal
+            // instance processed after the save deleted its record adopts
+            // the deletion instead of staging data that the deletion
+            // erases. The adoption keeps the instance's deleted state
+            // aligned with the notification it receives.
+            deleted = true;
+        }
         if(_hasModifiedRealms) {
             saver.reconcile(REALMS_KEY, id, _realms);
             _hasModifiedRealms = false;
@@ -3291,15 +3299,27 @@ public abstract class Record implements Comparable<Record> {
         if(potentialJoinDeletes != null) {
             saver.select(SECTION_KEY, potentialJoinDeletes, result -> {
                 for (Entry<Long, Set<Object>> entry : result.entrySet()) {
-                    // It's necessary to load each of the Records (instead of
-                    // directly clearing it in the database) in case any of them
-                    // also have deletion hook annotations.
                     long id = entry.getKey();
-                    String __ = (String) Iterables.getLast(entry.getValue());
-                    Class<? extends Record> clazz = Reflection
-                            .getClassCasted(__);
-                    Record record = db.load(clazz, id);
-                    ensureDeletion(record, context);
+                    // NOTE: When an id-equal instance of the linked Record
+                    // is part of the active save, that instance joins the
+                    // deletion itself so the delete notification delivers
+                    // it; a freshly loaded copy would replace it as the
+                    // instance that speaks for the record.
+                    if(context.contains(id)) {
+                        ensureDeletion(context.instance(id), context);
+                    }
+                    else {
+                        // It's necessary to load each of the Records
+                        // (instead of directly clearing it in the
+                        // database) in case any of them also have deletion
+                        // hook annotations.
+                        String __ = (String) Iterables
+                                .getLast(entry.getValue());
+                        Class<? extends Record> clazz = Reflection
+                                .getClassCasted(__);
+                        Record record = db.load(clazz, id);
+                        ensureDeletion(record, context);
+                    }
                 }
             });
         }

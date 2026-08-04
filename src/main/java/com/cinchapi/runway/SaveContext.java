@@ -148,6 +148,31 @@ final class SaveContext {
     }
 
     /**
+     * Return the instance that speaks for the record with {@code id}, or
+     * {@code null} if the active attempt has not processed the id.
+     *
+     * @param id the record id
+     * @return the speaking instance, or {@code null}
+     */
+    @Nullable
+    Record instance(long id) {
+        Entry entry = entries.get(id);
+        return entry != null ? entry.instance : null;
+    }
+
+    /**
+     * Return {@code true} if the active attempt deleted the record with
+     * {@code id}.
+     *
+     * @param id the record id to test
+     * @return {@code true} if the record was deleted
+     */
+    boolean isDeleted(long id) {
+        Entry entry = entries.get(id);
+        return entry != null && entry.outcome == Outcome.DELETED;
+    }
+
+    /**
      * Record that the active attempt stages data changes for {@code record} and
      * make it the instance that speaks for its id.
      *

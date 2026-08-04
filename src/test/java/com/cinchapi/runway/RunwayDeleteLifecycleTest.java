@@ -888,11 +888,129 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link JoinDelete} pulls a record
-     * into a deletion when the annotated field is an array.
+     * <strong>Goal:</strong> Verify that the delete notification for a
+     * {@link JoinParent} delivers the caller's instance when the parent is
+     * ordered before the deleted {@link JoinTarget} in the same save.
      * <p>
-     * <strong>Start state:</strong> A saved {@link ArrayJoinParent} whose
-     * array holds one saved {@link JoinTarget}.
+     * <strong>Start state:</strong> A saved {@link JoinParent} whose
+     * {@link JoinDelete} field links to a saved {@link JoinTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener that records each notified instance.</li>
+     * <li>Mark only the target with {@link Record#deleteOnSave()}.</li>
+     * <li>Save both records in bulk, with the parent ordered first so the join
+     * deletion finds the caller's instance already in the save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires for both records,
+     * the notification for the parent delivers the caller's instance, and
+     * neither record holds any stored data afterwards.
+     */
+    @Test
+    public void testCallerInstanceNotifiedWhenJoinParentOrderedFirstInSameSave()
+            throws Exception {
+        CountDownLatch deleteLatch = new CountDownLatch(2);
+        List<Record> deletedRecords = new CopyOnWriteArrayList<>();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        JoinTarget target = new JoinTarget();
+        target.name = "Join Target";
+        JoinParent parent = new JoinParent();
+        parent.name = "Join Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+
+        target.deleteOnSave();
+        Assert.assertTrue(runway.save(parent, target));
+
+        Assert.assertTrue(
+                "Delete listener did not fire for both records within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+
+        Record notified = null;
+        for (Record record : deletedRecords) {
+            if(record.id() == parent.id()) {
+                notified = record;
+            }
+        }
+        Assert.assertSame(
+                "The delete notification must deliver the caller's instance",
+                parent, notified);
+        Assert.assertTrue("The join deleted record must not survive the save",
+                client.describe(parent.id()).isEmpty());
+        Assert.assertNull(runway.load(JoinParent.class, parent.id()));
+        Assert.assertNull(runway.load(JoinTarget.class, target.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a caller-held {@link JoinParent} that
+     * joined a deletion cannot re-create the deleted record through a later
+     * save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link JoinParent} whose
+     * {@link JoinDelete} field links to a saved {@link JoinTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener.</li>
+     * <li>Mark only the target with {@link Record#deleteOnSave()}.</li>
+     * <li>Save both records in bulk, with the target ordered first so the join
+     * deletion processes a loaded copy of the parent before the caller's
+     * instance.</li>
+     * <li>Modify the caller's parent instance and save it alone.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The later save repeats the deletion instead of
+     * re-creating the record, so the parent holds no stored data and does not
+     * load.
+     */
+    @Test
+    public void testJoinDeletedRecordNotRecreatedByLaterSaveOfCallerInstance()
+            throws Exception {
+        CountDownLatch deleteLatch = new CountDownLatch(2);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        JoinTarget target = new JoinTarget();
+        target.name = "Join Target";
+        JoinParent parent = new JoinParent();
+        parent.name = "Join Parent";
+        parent.target = target;
+        Assert.assertTrue(runway.save(parent, target));
+
+        target.deleteOnSave();
+        Assert.assertTrue(runway.save(target, parent));
+        Assert.assertTrue(
+                "Delete listener did not fire for both records within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(deletedRecords.contains(parent));
+
+        parent.name = "Join Parent (Updated)";
+        Assert.assertTrue(parent.save());
+
+        Assert.assertTrue(
+                "The later save must not re-create the deleted record",
+                client.describe(parent.id()).isEmpty());
+        Assert.assertNull(runway.load(JoinParent.class, parent.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link JoinDelete} pulls a record into
+     * a deletion when the annotated field is an array.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link ArrayJoinParent} whose array
+     * holds one saved {@link JoinTarget}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -902,8 +1020,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * through the array field.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The delete listener fires for both the
-     * target and the parent, and neither record loads afterwards.
+     * <strong>Expected:</strong> The delete listener fires for both the target
+     * and the parent, and neither record loads afterwards.
      */
     @Test
     public void testJoinDeleteAppliesWhenAnnotatedFieldIsArray()
@@ -1513,8 +1631,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * A test {@link Record} whose array of {@link JoinTarget JoinTargets}
-     * pulls it into the deletion of any of them via {@link JoinDelete}.
+     * A test {@link Record} whose array of {@link JoinTarget JoinTargets} pulls
+     * it into the deletion of any of them via {@link JoinDelete}.
      *
      * @author Jeff Nelson
      */
