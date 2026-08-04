@@ -5370,8 +5370,8 @@ public abstract class Record implements Comparable<Record> {
         /**
          * Determine whether the specified {@code type} is compatible with or
          * assignable to the given {@code field} within {@code clazz}. This
-         * check includes both direct assignment compatibility as well as
-         * compatibility with the field's type arguments.
+         * check includes direct assignment compatibility, the component type of
+         * an array field, and compatibility with the field's type arguments.
          *
          * @param type the {@link Record} type to check for compatibility with
          *            the field
@@ -5386,6 +5386,10 @@ public abstract class Record implements Comparable<Record> {
             if(field.getType().isAssignableFrom(type)) {
                 return true;
             }
+            else if(field.getType().isArray()) {
+                return field.getType().getComponentType()
+                        .isAssignableFrom(type);
+            }
             else {
                 for (Class<?> typeArg : getTypeArguments(clazz,
                         field.getName())) {
@@ -5393,8 +5397,8 @@ public abstract class Record implements Comparable<Record> {
                         return true;
                     }
                 }
+                return false;
             }
-            return false;
         }
 
     }

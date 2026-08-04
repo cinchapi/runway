@@ -888,6 +888,55 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@link JoinDelete} pulls a record
+     * into a deletion when the annotated field is an array.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link ArrayJoinParent} whose
+     * array holds one saved {@link JoinTarget}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener.</li>
+     * <li>Mark the target with {@link Record#deleteOnSave()}.</li>
+     * <li>Save the target alone, so the join deletion must find the parent
+     * through the array field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires for both the
+     * target and the parent, and neither record loads afterwards.
+     */
+    @Test
+    public void testJoinDeleteAppliesWhenAnnotatedFieldIsArray()
+            throws Exception {
+        CountDownLatch deleteLatch = new CountDownLatch(2);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(record -> {
+            deletedRecords.add(record);
+            deleteLatch.countDown();
+        }).build();
+
+        JoinTarget target = new JoinTarget();
+        target.name = "Join Target";
+        ArrayJoinParent parent = new ArrayJoinParent();
+        parent.name = "Array Join Parent";
+        parent.targets = new JoinTarget[] { target };
+        Assert.assertTrue(runway.save(parent, target));
+
+        target.deleteOnSave();
+        Assert.assertTrue(target.save());
+
+        Assert.assertTrue(
+                "Delete listener did not fire for both records within timeout",
+                deleteLatch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(deletedRecords.contains(target));
+        Assert.assertTrue(deletedRecords.contains(parent));
+        Assert.assertNull(runway.load(JoinTarget.class, target.id()));
+        Assert.assertNull(runway.load(ArrayJoinParent.class, parent.id()));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a {@link JoinParent} with unsaved
      * changes cannot be re-created by its own staged writes when it joins a
      * deletion in the same save (GH-157).
@@ -1461,6 +1510,26 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
          * A name that identifies the record in tests.
          */
         public String name;
+    }
+
+    /**
+     * A test {@link Record} whose array of {@link JoinTarget JoinTargets}
+     * pulls it into the deletion of any of them via {@link JoinDelete}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class ArrayJoinParent extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        /**
+         * The targets whose deletion this record joins.
+         */
+        @JoinDelete
+        public JoinTarget[] targets;
     }
 
     /**
