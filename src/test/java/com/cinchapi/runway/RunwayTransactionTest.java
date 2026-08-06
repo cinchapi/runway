@@ -654,6 +654,155 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@link DeferredReference} first
+     * accessed within a {@link Transaction} resolves within its snapshot.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Crate} with a lazy link to a
+     * saved {@link Item} that has a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, set the score to
+     * 2 and {@code save()}.</li>
+     * <li>Load the {@link Crate} through the transaction and access its lazy
+     * {@link Item}.</li>
+     * <li>Load the {@link Crate} outside the transaction and access its lazy
+     * {@link Item}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The transactional access observes 2; the
+     * outside access observes 1.
+     */
+    @Test
+    public void testDeferredReferenceResolvesWithinTransaction() {
+        Item item = new Item("widget", 1);
+        Crate crate = new Crate("bin", item);
+        crate.assign(runway);
+        Assert.assertTrue(runway.save(crate, item));
+        try (Transaction transaction = runway.transaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            Crate txCrate = transaction.load(Crate.class, crate.id());
+            Assert.assertEquals(2, txCrate.item.get().score);
+            Crate outside = runway.load(Crate.class, crate.id());
+            Assert.assertEquals(1, outside.item.get().score);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link DeferredReference} accessed
+     * within a {@link Transaction} joins the conflict footprint and binds its
+     * {@link Record} to the transaction.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Crate} with a lazy link to a
+     * saved {@link Item} that has a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Crate} through a {@link Transaction} and access its
+     * lazy {@link Item}.</li>
+     * <li>Write a score of 99 through a separate client connection.</li>
+     * <li>Set the score to 50 on the lazily loaded copy, {@code save()}, and
+     * attempt to {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save or the commit fails with a conflict,
+     * and the stored score is 99.
+     */
+    @Test
+    public void testDeferredReferenceJoinsConflictFootprint() {
+        Item item = new Item("widget", 1);
+        Crate crate = new Crate("bin", item);
+        crate.assign(runway);
+        Assert.assertTrue(runway.save(crate, item));
+        Transaction transaction = runway.transaction();
+        boolean conflicted;
+        try {
+            Crate txCrate = transaction.load(Crate.class, crate.id());
+            Item txItem = txCrate.item.get();
+            client.set("score", 99, item.id());
+            txItem.score = 50;
+            txItem.save();
+            conflicted = !transaction.commit();
+        }
+        catch (TransactionException e) {
+            conflicted = true;
+        }
+        finally {
+            transaction.close();
+        }
+        Assert.assertTrue(conflicted);
+        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link DeferredReference} first
+     * accessed after its {@link Transaction} ends resolves through the
+     * enclosing {@link Runway}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Crate} with a lazy link to a
+     * saved {@link Item} that has a score of 1, and a {@link Transaction} that
+     * loaded the {@link Crate} and committed without an access.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Crate} through a {@link Transaction} and commit
+     * without an access of the lazy {@link Item}.</li>
+     * <li>Access the lazy {@link Item}, set the score to 5 and
+     * {@code save()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The access observes the committed score of 1,
+     * and the save persists 5 directly to the database.
+     */
+    @Test
+    public void testDeferredReferenceResolvesThroughRunwayAfterCommit() {
+        Item item = new Item("widget", 1);
+        Crate crate = new Crate("bin", item);
+        crate.assign(runway);
+        Assert.assertTrue(runway.save(crate, item));
+        try (Transaction transaction = runway.transaction()) {
+            Crate txCrate = transaction.load(Crate.class, crate.id());
+            Assert.assertTrue(transaction.commit());
+            Item lazy = txCrate.item.get();
+            Assert.assertEquals(1, lazy.score);
+            lazy.score = 5;
+            Assert.assertTrue(lazy.save());
+            Assert.assertEquals(5, runway.load(Item.class, item.id()).score);
+        }
+    }
+
+    /**
+     * A container with a lazy link to an {@link Item}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Crate extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The lazy link to the contained {@link Item}.
+         */
+        DeferredReference<Item> item;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param item the contained {@link Item}
+         */
+        public Crate(String name, Item item) {
+            this.name = name;
+            this.item = new DeferredReference<>(item);
+        }
+    }
+
+    /**
      * A named {@link Audience} that can perform database operations.
      *
      * @author Jeff Nelson

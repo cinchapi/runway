@@ -1114,8 +1114,8 @@ public abstract class Record implements Comparable<Record> {
      * its fields, to {@code database}.
      * <p>
      * A {@link DeferredReference} that was never {@link DeferredReference#get()
-     * accessed} holds no loaded {@link Record}, so there is nothing of it to
-     * bind.
+     * accessed} holds no loaded {@link Record} to bind; when it is accessed, it
+     * resolves through its owner's binding at that moment.
      * </p>
      *
      * @param database the {@link PersistentDatabaseInterface} to bind
@@ -1166,6 +1166,18 @@ public abstract class Record implements Comparable<Record> {
         else {
             return null;
         }
+    }
+
+    /**
+     * Return the persistent view of this {@link Record Record's} current
+     * {@link #database} binding: a stable handle that re-resolves the binding
+     * on every operation, so it remains correct across {@link #assign(Runway)
+     * re-assignment} and the end of a {@link Runway.Transaction}.
+     *
+     * @return the reactive {@link PersistentDatabaseInterface}
+     */
+    /* package */ PersistentDatabaseInterface reactive() {
+        return (PersistentDatabaseInterface) db;
     }
 
     /**
@@ -1257,7 +1269,7 @@ public abstract class Record implements Comparable<Record> {
                     else {
                         author = authors.computeIfAbsent(target,
                                 $ -> new DeferredReference<Record>(target,
-                                        environment()));
+                                        reactive()));
                     }
                 }
                 else {
@@ -3237,7 +3249,7 @@ public abstract class Record implements Comparable<Record> {
             converted = alreadyLoaded.get(target);
             if(converted == null) {
                 if(type == DeferredReference.class) {
-                    converted = new DeferredReference(target, environment());
+                    converted = new DeferredReference(target, reactive());
                 }
                 else {
                     Map<String, Set<Object>> data = null;
@@ -5670,7 +5682,7 @@ public abstract class Record implements Comparable<Record> {
      * @author Jeff Nelson
      */
     private static class ReactiveDatabaseInterface implements
-            DatabaseInterface {
+            PersistentDatabaseInterface {
 
         /**
          * A reference to the enclosing {@link Record} whose state is watched
@@ -5689,8 +5701,30 @@ public abstract class Record implements Comparable<Record> {
 
         @Override
         public Selections select(Selection<?>... selections) {
+            return delegate().select(selections);
+        }
+
+        @Override
+        public <T extends Record> T load(long id) {
+            return delegate().load(id);
+        }
+
+        @Override
+        public boolean save(boolean preventStaleWrites, Record... records) {
+            return delegate().save(preventStaleWrites, records);
+        }
+
+        /**
+         * Return the {@link PersistentDatabaseInterface} that the
+         * {@link #tracked} {@link Record} is currently bound to.
+         *
+         * @return the delegate {@link PersistentDatabaseInterface}
+         * @throws UnsupportedOperationException if the {@link #tracked}
+         *             {@link Record} is unbound
+         */
+        private PersistentDatabaseInterface delegate() {
             if(tracked.database != null) {
-                return tracked.database.select(selections);
+                return tracked.database;
             }
             else {
                 throw new UnsupportedOperationException(

@@ -1625,7 +1625,8 @@ public final class Runway implements
      * @param id
      * @return the loaded record
      */
-    <T extends Record> T load(long id) {
+    @Override
+    public <T extends Record> T load(long id) {
         return instantiate(id, null, null);
     }
 
@@ -3970,10 +3971,10 @@ public final class Runway implements
      * view routes the operations it performs through the transaction as well,
      * so access-controlled reads and writes stay within the snapshot. Writes
      * become durable when {@link #commit()} succeeds; until then no reader
-     * outside the transaction can observe them. Only {@link Record Records}
-     * persisted in the database are visible; records supplied by an attached
-     * {@link AdHocDataSource} are not, and a {@link DeferredReference} that is
-     * first accessed within the transaction resolves outside of its snapshot.
+     * outside the transaction can observe them. A {@link DeferredReference}
+     * that is first accessed within the transaction resolves within it as well.
+     * Only {@link Record Records} persisted in the database are visible;
+     * records supplied by an attached {@link AdHocDataSource} are not.
      * </p>
      * <p>
      * A {@link Transaction} is confined to the thread that starts it and must
@@ -4111,6 +4112,26 @@ public final class Runway implements
                 bind(selection.get(), seen);
             }
             return new Selections(selections);
+        }
+
+        /**
+         * Load a record by {@code id} without knowing its class.
+         *
+         * @param id
+         * @return the loaded record
+         */
+        @Override
+        public <T extends Record> T load(long id) {
+            if(open) {
+                verifyOwner();
+                Set<Object> sections = concourse.select(Record.SECTION_KEY, id);
+                Class<T> clazz = Reflection
+                        .getClassCasted((String) Iterables.getLast(sections));
+                return load(clazz, id);
+            }
+            else {
+                return Runway.this.load(id);
+            }
         }
 
         /**

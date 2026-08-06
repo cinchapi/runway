@@ -29,6 +29,15 @@ package com.cinchapi.runway;
 /* package */ interface PersistentDatabaseInterface extends DatabaseInterface {
 
     /**
+     * Load the {@link Record} that is identified by {@code id} without knowing
+     * its {@link Class} in advance.
+     *
+     * @param id the record id
+     * @return the loaded {@link Record}
+     */
+    public <T extends Record> T load(long id);
+
+    /**
      * Save all changes in the provided {@code records}.
      *
      * @param records one or more {@link Record Records} to save
