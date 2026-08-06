@@ -76,16 +76,12 @@ import com.cinchapi.common.collect.Sequences;
 import com.cinchapi.common.describe.Empty;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
-import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
-import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.lang.paginate.Page;
-import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
@@ -95,6 +91,7 @@ import com.cinchapi.concourse.util.Numbers;
 import com.cinchapi.concourse.util.Parsers;
 import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.concourse.validate.Keys;
+import com.cinchapi.runway.db.ConcourseProvider;
 import com.cinchapi.runway.db.Saver;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
@@ -201,7 +198,7 @@ public abstract class Record implements Comparable<Record> {
      * @return the loaded Record
      */
     protected static <T extends Record> T load(Class<?> clazz, long id,
-            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
+            ConcurrentMap<Long, Record> existing, ConcourseProvider connections,
             Runway runway, @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Concourse concourse = connections.request();
@@ -590,7 +587,7 @@ public abstract class Record implements Comparable<Record> {
      * @param id the record ID
      * @param existing previously loaded {@link Record Records} used to break
      *            cycles
-     * @param connections the {@link ConnectionPool} to use
+     * @param connections the {@link ConcourseProvider} to use
      * @param concourse the active {@link Concourse} connection
      * @param runway the owning {@link Runway} instance
      * @param data pre-loaded data for this record, or {@code null} to fetch
@@ -604,7 +601,7 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
-            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
+            ConcurrentMap<Long, Record> existing, ConcourseProvider connections,
             Concourse concourse, Runway runway,
             @Nullable Map<String, Set<Object>> data, String prefix,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
@@ -649,7 +646,7 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("unchecked")
     private static <T> T newDefaultInstance(Class<T> clazz,
-            ConnectionPool connections) {
+            ConcourseProvider connections) {
         try {
             // Use Unsafe to allocate the instance and reflectively set all the
             // default fields defined herewithin so there's no requirement for
@@ -957,9 +954,10 @@ public abstract class Record implements Comparable<Record> {
     private transient Set<String> _realms = ImmutableSet.of();
 
     /**
-     * The {@link Concourse} database in which this {@link Record} is stored.
+     * The {@link ConcourseProvider} that supplies the connection for each of
+     * this {@link Record Record's} database operations.
      */
-    private transient ConnectionPool connections = null;
+    private transient ConcourseProvider connections = null;
 
     /**
      * A flag that indicates if the record has been deleted using the
@@ -985,10 +983,11 @@ public abstract class Record implements Comparable<Record> {
     private transient boolean inViolation = false;
 
     /**
-     * The {@link Runway} instance that has been {@link #assign(Runway)
-     * assigned} to this {@link Record}.
+     * The {@link PersistentDatabaseInterface} that this {@link Record} is bound
+     * to: the {@link Runway} instance it is {@link #assign(Runway) assigned}
+     * to, or the {@link Runway.Transaction} it was loaded through.
      */
-    private transient Runway runway = null;
+    private transient PersistentDatabaseInterface database = null;
 
     /**
      * A cache of the {@link #$computed() properties}.
@@ -1057,8 +1056,8 @@ public abstract class Record implements Comparable<Record> {
     public Record() {
         this.id = Time.now();
         if(PINNED_RUNWAY_INSTANCE != null) {
-            this.connections = PINNED_RUNWAY_INSTANCE.connections;
-            this.runway = PINNED_RUNWAY_INSTANCE;
+            this.connections = PINNED_RUNWAY_INSTANCE.provider;
+            this.database = PINNED_RUNWAY_INSTANCE;
         }
         checkpoint();
     }
@@ -1091,8 +1090,82 @@ public abstract class Record implements Comparable<Record> {
      *            stored.
      */
     public void assign(Runway runway) {
-        this.runway = runway;
-        this.connections = runway.connections;
+        this.database = runway;
+        this.connections = runway.provider;
+    }
+
+    /**
+     * Bind this {@link Record} to {@code database} so that every operation,
+     * including each {@link #save() save}, is scoped to it.
+     *
+     * @param database the {@link PersistentDatabaseInterface} to bind
+     * @param connections the {@link ConcourseProvider} that supplies
+     *            connections within the scope of the binding
+     */
+    /* package */ void bind(PersistentDatabaseInterface database,
+            ConcourseProvider connections) {
+        this.database = database;
+        this.connections = connections;
+    }
+
+    /**
+     * {@link #bind(PersistentDatabaseInterface, ConcourseProvider) Bind} this
+     * {@link Record}, and every loaded {@link Record} that is reachable from
+     * its fields, to {@code database}.
+     * <p>
+     * A {@link DeferredReference} that was never {@link DeferredReference#get()
+     * accessed} holds no loaded {@link Record}, so there is nothing of it to
+     * bind.
+     * </p>
+     *
+     * @param database the {@link PersistentDatabaseInterface} to bind
+     * @param connections the {@link ConcourseProvider} that supplies
+     *            connections within the scope of the binding
+     * @param seen the identity set of {@link Record Records} that are already
+     *            bound
+     */
+    /* package */ void bindGraph(PersistentDatabaseInterface database,
+            ConcourseProvider connections, Set<Record> seen) {
+        if(seen.add(this)) {
+            bind(database, connections);
+            fields().stream().filter(
+                    field -> !Modifier.isTransient(field.getModifiers()))
+                    .map(field -> Reflection.get(field.getName(), this))
+                    .forEach(value -> {
+                        if(value instanceof Record) {
+                            ((Record) value).bindGraph(database, connections,
+                                    seen);
+                        }
+                        else if(value != null && Sequences.isSequence(value)) {
+                            Sequences.forEach(value, item -> {
+                                if(item instanceof Record) {
+                                    ((Record) item).bindGraph(database,
+                                            connections, seen);
+                                }
+                            });
+                        }
+                    });
+        }
+    }
+
+    /**
+     * Return the {@link Runway} engine behind this {@link Record Record's}
+     * {@link #database} binding, or {@code null} if this {@link Record} is
+     * unbound.
+     *
+     * @return the {@link Runway} environment
+     */
+    @Nullable
+    private Runway environment() {
+        if(database instanceof Runway) {
+            return (Runway) database;
+        }
+        else if(database instanceof Runway.Transaction) {
+            return ((Runway.Transaction) database).database();
+        }
+        else {
+            return null;
+        }
     }
 
     /**
@@ -1184,7 +1257,7 @@ public abstract class Record implements Comparable<Record> {
                     else {
                         author = authors.computeIfAbsent(target,
                                 $ -> new DeferredReference<Record>(target,
-                                        runway));
+                                        environment()));
                     }
                 }
                 else {
@@ -1358,15 +1431,18 @@ public abstract class Record implements Comparable<Record> {
      *             atomic operations, or {@code replacement} is {@code null} or
      *             is not an instance of the field's type
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, is staged for deletion, or
-     *             {@code replacement} violates the field's constraints
+     *             {@link Runway} instance, is staged for deletion, is bound to
+     *             a {@link Runway.Transaction}, or {@code replacement} violates
+     *             the field's constraints
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
     public final <T> boolean exchange(String key, T replacement) {
-        Verify.that(runway != null, "Cannot perform an atomic exchange"
-                + " because this Record isn't pinned to a Runway instance");
+        Verify.that(database instanceof Runway,
+                "Cannot atomically exchange {} in {} because single-key"
+                        + " atomic operations require a direct Runway binding",
+                key, __);
         Verify.that(!deleted,
                 "Cannot atomically exchange {} in {} because this Record is"
                         + " staged for deletion",
@@ -1387,8 +1463,8 @@ public abstract class Record implements Comparable<Record> {
             boolean clean = !hasUnsavedChanges();
             boolean swapped;
             if(expected == null) {
-                swapped = setIfAbsent(concourse, key,
-                        serializeScalarValue(replacement));
+                swapped = Runway.setIfAbsent(concourse, key,
+                        serializeScalarValue(replacement), id);
             }
             else {
                 swapped = concourse.verifyAndSwap(key,
@@ -1480,8 +1556,8 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has unsaved changes, or is staged
-     *             for deletion
+     *             {@link Runway} instance, has unsaved changes, is staged for
+     *             deletion, or is bound to a {@link Runway.Transaction}
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
@@ -1874,8 +1950,8 @@ public abstract class Record implements Comparable<Record> {
      *             {@link Runway} instance
      */
     public final void refresh() {
-        Verify.that(runway != null, "Cannot refresh because this Record isn't"
-                + " pinned to a Runway instance");
+        Verify.that(database != null, "Cannot refresh because this Record"
+                + " isn't bound to a database");
         Concourse concourse = connections.request();
         try {
             ConcurrentMap<Long, Record> existing = new ConcurrentHashMap<>();
@@ -1959,6 +2035,12 @@ public abstract class Record implements Comparable<Record> {
      * {@link Record Records}.
      * </p>
      *
+     * <p>
+     * When this {@link Record} is bound to a {@link Runway.Transaction}, the
+     * save stages within that transaction and the changes become durable when
+     * the transaction commits.
+     * </p>
+     *
      * @param preventStaleWrite if {@code true}, reject the save when this
      *            {@link Record} (or any linked {@link Record}) has been
      *            externally modified since it was last loaded or saved
@@ -1969,9 +2051,9 @@ public abstract class Record implements Comparable<Record> {
      *             {@link Runway} instance
      */
     public final boolean save(boolean preventStaleWrite) {
-        Verify.that(runway != null, "Cannot perform an implicit save because"
-                + " this Record isn't pinned to a Runway instance");
-        return runway.save(preventStaleWrite, this);
+        Verify.that(database != null, "Cannot perform an implicit save because"
+                + " this Record isn't bound to a database");
+        return database.save(preventStaleWrite, this);
     }
 
     /**
@@ -2098,8 +2180,8 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has unsaved changes, or is staged
-     *             for deletion
+     *             {@link Runway} instance, has unsaved changes, is staged for
+     *             deletion, or is bound to a {@link Runway.Transaction}
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
@@ -2474,7 +2556,7 @@ public abstract class Record implements Comparable<Record> {
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
         if(data == null) {
-            Set<String> paths = runway
+            Set<String> paths = environment()
                     .getPathsForClassIfSupported(this.getClass());
             // @formatter:off
             data = paths != null
@@ -2482,8 +2564,8 @@ public abstract class Record implements Comparable<Record> {
                     : concourse.select(id);
             // @formatter:on
         }
-        if(prefix == null
-                || !runway.properties().supportsPreSelectLinkedRecords()) {
+        if(prefix == null || !environment().properties()
+                .supportsPreSelectLinkedRecords()) {
             prefix = "";
         }
         checkConstraints(concourse, data, prefix);
@@ -2567,7 +2649,7 @@ public abstract class Record implements Comparable<Record> {
                                 value = existing.get(id);
                                 value = value == null
                                         ? load(type, id, existing, connections,
-                                                concourse, runway, data,
+                                                concourse, environment(), data,
                                                 prepend, targets)
                                         : value;
                             }
@@ -3155,7 +3237,7 @@ public abstract class Record implements Comparable<Record> {
             converted = alreadyLoaded.get(target);
             if(converted == null) {
                 if(type == DeferredReference.class) {
-                    converted = new DeferredReference(target, runway);
+                    converted = new DeferredReference(target, environment());
                 }
                 else {
                     Map<String, Set<Object>> data = null;
@@ -3176,8 +3258,8 @@ public abstract class Record implements Comparable<Record> {
                         Class<? extends Record> targetClass = Reflection
                                 .getClassCasted(section);
                         converted = load(targetClass, target, alreadyLoaded,
-                                connections, concourse, runway, data, null,
-                                targets);
+                                connections, concourse, environment(), data,
+                                null, targets);
                     }
                 }
             }
@@ -3412,7 +3494,9 @@ public abstract class Record implements Comparable<Record> {
      * @return the governing {@link DynamicWritePolicy}
      */
     private DynamicWritePolicy dynamicWritePolicy() {
-        return runway != null ? runway.properties().dynamicWritePolicy()
+        Runway environment = environment();
+        return environment != null
+                ? environment.properties().dynamicWritePolicy()
                 : DynamicWritePolicy.permissive();
     }
 
@@ -3852,49 +3936,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Atomically store {@code value} for {@code key} in this {@link Record} if
-     * and only if this {@link Record} exists in the database and currently
-     * stores no value for {@code key}.
-     *
-     * @param concourse the {@link Concourse} connection to use; must not
-     *            already be in a transaction
-     * @param key the field name
-     * @param value the database-ready value to store
-     * @return {@code true} if the value is stored
-     */
-    private boolean setIfAbsent(Concourse concourse, String key, Object value) {
-        concourse.stage();
-        try {
-            Map<String, Set<Object>> stored = concourse
-                    .select(ImmutableList.of(SECTION_KEY, key), id);
-            if(stored.getOrDefault(SECTION_KEY, ImmutableSet.of()).isEmpty()) {
-                // Without the section metadata this Record does not exist in
-                // the database (it was never saved, or its data was erased),
-                // so a write here would orphan the value in a record that no
-                // load or find can ever return.
-                concourse.abort();
-                return false;
-            }
-            else if(stored.getOrDefault(key, ImmutableSet.of()).isEmpty()) {
-                concourse.set(key, value, id);
-                return concourse.commit();
-            }
-            else {
-                concourse.abort();
-                return false;
-            }
-        }
-        catch (TransactionException e) {
-            concourse.abort();
-            return false;
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            throw t;
-        }
-    }
-
-    /**
      * Transforms the provided {@code value} into a primitive form that can be
      * stored within {@link Concourse concourse}. The transformation is
      * recursive, handling nested {@link Record records} and
@@ -3975,16 +4016,18 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has unsaved changes, or is staged
-     *             for deletion
+     *             {@link Runway} instance, has unsaved changes, is staged for
+     *             deletion, or is bound to a {@link Runway.Transaction}
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
     private <T> AtomicUpdate<T> updateAtomically(String key,
             UnaryOperator<T> update) {
-        Verify.that(runway != null, "Cannot perform an atomic update because"
-                + " this Record isn't pinned to a Runway instance");
+        Verify.that(database instanceof Runway,
+                "Cannot atomically update {} in {} because single-key atomic"
+                        + " operations require a direct Runway binding",
+                key, __);
         Verify.that(!hasUnsavedChanges(),
                 "Cannot atomically update {} in {} because this Record has"
                         + " unsaved changes",
@@ -3993,7 +4036,8 @@ public abstract class Record implements Comparable<Record> {
                 "Cannot atomically update {} in {} because this Record is"
                         + " staged for deletion",
                 key, __);
-        AtomicRetryPolicy policy = runway.properties().atomicRetryPolicy();
+        AtomicRetryPolicy policy = environment().properties()
+                .atomicRetryPolicy();
         int attempts = 0;
         for (;;) {
             Field field = getAtomicableField(key, this);
@@ -5619,9 +5663,9 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * A {@link DatabaseInterface} that reacts to the state of the
-     * {@link #runway} variable and delegates to it or throws an
-     * {@link UnsupportedOperationException} if it is {@code null}.
+     * A {@link DatabaseInterface} that reacts to the state of the tracked
+     * {@link Record} and delegates every operation to the
+     * {@link PersistentDatabaseInterface} it is bound to.
      *
      * @author Jeff Nelson
      */
@@ -5644,459 +5688,9 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
-        public <T extends Record> Set<T> find(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Order order, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Order order, Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, order, page,
-                        realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Order order, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, order, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> find(Class<T> clazz, Criteria criteria,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.find(clazz, criteria, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Order order, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Order order, Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, order, page,
-                        realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Order order, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, order, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> findAny(Class<T> clazz,
-                Criteria criteria, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAny(clazz, criteria, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findAnyUnique(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAnyUnique(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findAnyUnique(Class<T> clazz,
-                Criteria criteria, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findAnyUnique(clazz, criteria, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findUnique(Class<T> clazz,
-                Criteria criteria) {
-            if(tracked.runway != null) {
-                return tracked.runway.findUnique(clazz, criteria);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T findUnique(Class<T> clazz,
-                Criteria criteria, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.findUnique(clazz, criteria, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T load(Class<T> clazz, long id) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, id);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> T load(Class<T> clazz, long id,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, id, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-                Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-                Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, order, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Order order,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, order, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Page page,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> load(Class<T> clazz, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.load(clazz, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, order);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-                Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, order, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-                Page page, Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, order, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Order order,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, order, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, page);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz, Page page,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, page, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
-        public <T extends Record> Set<T> loadAny(Class<T> clazz,
-                Realms realms) {
-            if(tracked.runway != null) {
-                return tracked.runway.loadAny(clazz, realms);
-            }
-            else {
-                throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
-            }
-        }
-
-        @Override
         public Selections select(Selection<?>... selections) {
-            if(tracked.runway != null) {
-                return tracked.runway.select(selections);
+            if(tracked.database != null) {
+                return tracked.database.select(selections);
             }
             else {
                 throw new UnsupportedOperationException(

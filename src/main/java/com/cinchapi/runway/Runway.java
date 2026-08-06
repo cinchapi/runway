@@ -76,6 +76,7 @@ import com.cinchapi.runway.Record.InvalidRecordException;
 import com.cinchapi.runway.Record.StaticAnalysis;
 import com.cinchapi.runway.db.BatchReader;
 import com.cinchapi.runway.db.BatchSaver;
+import com.cinchapi.runway.db.ConcourseProvider;
 import com.cinchapi.runway.db.IncrementalReader;
 import com.cinchapi.runway.db.IncrementalSaver;
 import com.cinchapi.runway.db.Pending;
@@ -85,6 +86,7 @@ import com.cinchapi.runway.util.Obligations;
 import com.cinchapi.runway.util.Pagination;
 import com.github.zafarkhaja.semver.Version;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -131,7 +133,9 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  *
  * @author Jeff Nelson
  */
-public final class Runway implements AutoCloseable, DatabaseInterface {
+public final class Runway implements
+        AutoCloseable,
+        PersistentDatabaseInterface {
 
     // NOTE: Internal methods within a $ prefix are ones that return raw
     // database results and are intended to be consumed by other methods in this
@@ -323,7 +327,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private static <T extends Record> T loadWithErrorHandling(Class<T> clazz,
             long id, ConcurrentMap<Long, Record> loaded,
-            ConnectionPool connections, Runway runway,
+            ConcourseProvider connections, Runway runway,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         try {
@@ -397,6 +401,13 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      * A connection pool to the underlying Concourse database.
      */
     /* package */ final ConnectionPool connections;
+
+    /**
+     * A {@link ConcourseProvider} view of {@link #connections} that is handed
+     * to each {@link Record} that is {@link Record#assign(Runway) assigned} to
+     * this instance.
+     */
+    /* package */ final ConcourseProvider provider;
 
     /**
      * The {@link DynamicWritePolicy} that governs
@@ -554,6 +565,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
      */
     private Runway(ConnectionPool connections) {
         this.connections = connections;
+        this.provider = ConcourseProvider.from(connections);
         instances.add(this);
         if(instances.size() > 1) {
             Record.PINNED_RUNWAY_INSTANCE = null;
@@ -892,7 +904,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     @Override
     public Gateway gateway() {
         if(gateway == null) {
-            gateway = DatabaseInterface.super.gateway();
+            gateway = PersistentDatabaseInterface.super.gateway();
         }
         return gateway;
     }
@@ -901,7 +913,8 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     public <T extends Record> T loadNullSafe(Class<T> clazz, long id,
             Realms realms) {
         try {
-            return DatabaseInterface.super.loadNullSafe(clazz, id, realms);
+            return PersistentDatabaseInterface.super.loadNullSafe(clazz, id,
+                    realms);
         }
         catch (Exception e) {
             onLoadFailureHandler.accept(clazz, id, e);
@@ -1002,6 +1015,115 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
+     * Stage the cleanup that the {@code context} deletions require on
+     * {@code saver}: the removal of every surviving {@link Record Record's}
+     * references to deleted records, and the re-assertion of each deletion as
+     * the last write for its record.
+     *
+     * @param saver the {@link Saver} for the active staged transaction
+     * @param context the {@link SaveContext} for the save
+     */
+    private void stageDeletions(Saver saver, SaveContext context) {
+        Set<Long> deletions = context.deletions();
+        if(!deletions.isEmpty()) {
+            // NOTE: A deletion is final within a save. A record staged before
+            // a deletion may reference (or hold data for) a record that the
+            // save has since deleted, so stage the removal of every survivor's
+            // references to deleted records and re-assert each deletion as
+            // the last write for its record. The removals must stay
+            // staged-only: mutating a survivor's in-memory state here would
+            // leave it inconsistent when the transaction aborts.
+            context.forEach((record, outcome) -> {
+                if(outcome != SaveContext.Outcome.DELETED && record
+                        .reconcileCaptureDeleteReferences(saver, deletions)) {
+                    // The record's stored data changes at commit, so it must
+                    // dispatch a save notification.
+                    context.markChanged(record);
+                }
+            });
+            for (long id : deletions) {
+                saver.clear(id);
+            }
+        }
+    }
+
+    /**
+     * Dispatch the lifecycle consequences of a committed save that was staged
+     * under {@code context}: a notification and a checkpoint for every
+     * {@link Record} that the commit changed or deleted.
+     *
+     * @param context the {@link SaveContext} whose staged save committed
+     */
+    private void dispatchSaveOutcomes(SaveContext context) {
+        Set<Long> deletions = context.deletions();
+        context.forEach((record, outcome) -> {
+            if(outcome == SaveContext.Outcome.DELETED) {
+                enqueueDeleteNotification(record);
+                record.checkpoint();
+            }
+            else if(outcome == SaveContext.Outcome.CHANGED) {
+                if(!deletions.isEmpty()) {
+                    // The commit removed every stored reference to a deleted
+                    // record, so the record's in-memory state must match.
+                    record.applyCaptureDeleteCleanup(deletions);
+                }
+                enqueueSaveNotification(record);
+                record.checkpoint();
+            }
+            else {
+                // The record was neither written nor deleted by this save, so
+                // there is no lifecycle event to report.
+            }
+        });
+    }
+
+    /**
+     * Atomically store {@code value} for {@code key} in {@code record} if and
+     * only if the record exists in the database and currently stores no value
+     * for {@code key}.
+     *
+     * @param concourse the {@link Concourse} connection to use; must not
+     *            already be in a transaction
+     * @param key the field name
+     * @param value the database-ready value to store
+     * @param record the record id
+     * @return {@code true} if the value is stored
+     */
+    /* package */ static boolean setIfAbsent(Concourse concourse, String key,
+            Object value, long record) {
+        concourse.stage();
+        try {
+            Map<String, Set<Object>> stored = concourse
+                    .select(ImmutableList.of(Record.SECTION_KEY, key), record);
+            if(stored.getOrDefault(Record.SECTION_KEY, ImmutableSet.of())
+                    .isEmpty()) {
+                // Without the section metadata the record does not exist in
+                // the database (it was never saved, or its data was erased),
+                // so a write here would orphan the value in a record that no
+                // load or find can ever return.
+                concourse.abort();
+                return false;
+            }
+            else if(stored.getOrDefault(key, ImmutableSet.of()).isEmpty()) {
+                concourse.set(key, value, record);
+                return concourse.commit();
+            }
+            else {
+                concourse.abort();
+                return false;
+            }
+        }
+        catch (TransactionException e) {
+            concourse.abort();
+            return false;
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            throw t;
+        }
+    }
+
+    /**
      * Save all changes in the provided {@code records} using a single ACID
      * transaction.
      * <p>
@@ -1065,52 +1187,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                             record.saveWithinTransaction(saver, context);
                         }
                     }
-                    Set<Long> deletions = context.deletions();
-                    if(!deletions.isEmpty()) {
-                        // NOTE: A deletion is final within a save. A record
-                        // staged before a deletion may reference (or hold data
-                        // for) a record that the save has since deleted, so
-                        // stage the removal of every survivor's references to
-                        // deleted records and re-assert each deletion as the
-                        // last write for its record. The removals must stay
-                        // staged-only: mutating a survivor's in-memory state
-                        // here would leave it inconsistent when the
-                        // transaction aborts.
-                        context.forEach((record, outcome) -> {
-                            if(outcome != SaveContext.Outcome.DELETED
-                                    && record.reconcileCaptureDeleteReferences(
-                                            saver, deletions)) {
-                                // The record's stored data changes at commit,
-                                // so it must dispatch a save notification.
-                                context.markChanged(record);
-                            }
-                        });
-                        for (long id : deletions) {
-                            saver.clear(id);
-                        }
-                    }
+                    stageDeletions(saver, context);
                     if(saver.commit()) {
-                        context.forEach((record, outcome) -> {
-                            if(outcome == SaveContext.Outcome.DELETED) {
-                                enqueueDeleteNotification(record);
-                                record.checkpoint();
-                            }
-                            else if(outcome == SaveContext.Outcome.CHANGED) {
-                                if(!deletions.isEmpty()) {
-                                    // The commit removed every stored
-                                    // reference to a deleted record, so the
-                                    // record's in-memory state must match.
-                                    record.applyCaptureDeleteCleanup(deletions);
-                                }
-                                enqueueSaveNotification(record);
-                                record.checkpoint();
-                            }
-                            else {
-                                // The record was neither written nor deleted
-                                // by this save, so there is no lifecycle
-                                // event to report.
-                            }
-                        });
+                        dispatchSaveOutcomes(context);
                         return true;
                     }
                     else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {
@@ -2554,7 +2633,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         return loadWithErrorHandling(clazz, id, new ConcurrentHashMap<>(),
-                connections, this, data, targets);
+                provider, this, data, targets);
     }
 
     /**
@@ -2592,7 +2671,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         String section = (String) Iterables
                 .getLast(data.get(Record.SECTION_KEY));
         Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
+        return loadWithErrorHandling(clazz, id, loaded, provider, this, data,
                 targets);
     }
 
@@ -2653,7 +2732,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         return LazyTransformSet.of(data.entrySet(),
                 entry -> loadWithErrorHandling(clazz, entry.getKey(), loaded,
-                        connections, this, entry.getValue(), targets));
+                        provider, this, entry.getValue(), targets));
     }
 
     /**
@@ -2859,7 +2938,7 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
             // per attempt would churn the pool.
             int attempts = 0;
             for (;;) {
-                Transaction transaction = new Transaction(concourse);
+                Transaction transaction = new Transaction(concourse, false);
                 try {
                     T record;
                     if(order != null) {
@@ -2926,6 +3005,9 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                     // without retrying so nothing is committed or mutated.
                     transaction.abort();
                     throw t;
+                }
+                finally {
+                    transaction.close();
                 }
             }
         }
@@ -3806,21 +3888,108 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
     }
 
     /**
-     * A {@link DatabaseInterface} that scopes every operation to a single
-     * transaction, staged on the view's {@link Concourse} connection at
-     * construction.
+     * Start a {@link Transaction} that scopes reads and writes to a single ACID
+     * transaction.
+     * <p>
+     * The caller owns the {@link Transaction Transaction's} lifecycle: end it
+     * with exactly one of {@link Transaction#commit() commit} or
+     * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
+     * close} to abort whatever was not committed. Use a try-with-resources
+     * block so the connection that hosts the transaction always returns to the
+     * pool.
+     * </p>
+     *
+     * @return an open {@link Transaction}
+     */
+    public Transaction transaction() {
+        return new Transaction(connections.request(), true);
+    }
+
+    /**
+     * Execute {@code work} within a {@link Transaction} and commit it after the
+     * work completes.
+     * <p>
+     * If the commit fails because of a conflict, then the transaction is
+     * discarded and {@code work} runs again against a fresh one, within the
+     * bounds of the governing {@link AtomicRetryPolicy}. The {@code work} must
+     * therefore be free of side effects outside of the transaction. Any other
+     * exception thrown by {@code work} aborts the transaction and propagates to
+     * the caller.
+     * </p>
+     *
+     * @param work the work to execute against the open {@link Transaction}
+     * @return the result of {@code work}
+     * @throws RetryExhaustedException if the transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    public <T> T transaction(Function<? super Transaction, T> work) {
+        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
+        Concourse concourse = connections.request();
+        try {
+            // NOTE: The connection is held across the policy's backoff sleeps
+            // rather than released between attempts, because re-requesting
+            // per attempt would churn the pool.
+            int attempts = 0;
+            for (;;) {
+                Transaction transaction = new Transaction(concourse, false);
+                try {
+                    T result = work.apply(transaction);
+                    if(transaction.commit()) {
+                        return result;
+                    }
+                }
+                catch (TransactionException e) {
+                    transaction.abort();
+                }
+                finally {
+                    transaction.close();
+                }
+                if(++attempts > policy.limit()) {
+                    throw new RetryExhaustedException(attempts);
+                }
+                else {
+                    policy.backoff(attempts);
+                }
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
+     * A {@link DatabaseInterface} that scopes every operation to a single ACID
+     * transaction.
      * <p>
      * Every read observes the transaction's isolated snapshot, including its
-     * own uncommitted writes, and joins its conflict footprint. Only
-     * {@link Record Records} persisted in the database are visible; records
-     * supplied by an attached {@link AdHocDataSource} are not. This view owns
-     * the transaction from start to finish: construction stages it, and
-     * {@link #commit()} or {@link #abort()} ends it. The caller owns the
-     * connection.
+     * own uncommitted writes, and joins its conflict footprint. Results resolve
+     * eagerly, and every loaded {@link Record}, including the records reachable
+     * from its fields, is bound to this view, so each {@link Record#save()
+     * save} stages within the transaction. An
+     * {@link com.cinchapi.runway.access.Audience Audience} loaded through the
+     * view routes the operations it performs through the transaction as well,
+     * so access-controlled reads and writes stay within the snapshot. Writes
+     * become durable when {@link #commit()} succeeds; until then no reader
+     * outside the transaction can observe them. Only {@link Record Records}
+     * persisted in the database are visible; records supplied by an attached
+     * {@link AdHocDataSource} are not, and a {@link DeferredReference} that is
+     * first accessed within the transaction resolves outside of its snapshot.
+     * </p>
+     * <p>
+     * A {@link Transaction} is confined to the thread that starts it and must
+     * be ended by exactly one of {@link #commit()} or {@link #abort()};
+     * {@link #close()} aborts whatever was not committed, so a
+     * try-with-resources block guarantees a clean end. After the transaction
+     * ends, it forwards reads and saves to the enclosing {@link Runway}, so a
+     * {@link Record} bound to it unwinds to the database scope; only another
+     * {@link #commit()} is refused.
+     * </p>
      *
      * @author Jeff Nelson
      */
-    private class Transaction implements DatabaseInterface {
+    public class Transaction implements
+            PersistentDatabaseInterface,
+            AutoCloseable {
 
         /**
          * The connection that hosts the staged transaction and services every
@@ -3829,14 +3998,72 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
         private final Concourse concourse;
 
         /**
+         * Whether this view owns {@link #concourse} and must release it back to
+         * the {@link #connections pool} when the transaction ends.
+         */
+        private final boolean owned;
+
+        /**
+         * The only {@link Thread} that may operate on this view.
+         */
+        private final Thread owner;
+
+        /**
+         * Whether the transaction is still active.
+         */
+        private boolean open;
+
+        /**
+         * The {@link SaveContext} for every save staged within the transaction,
+         * in staging order, so the lifecycle consequences can be dispatched at
+         * {@link #commit()} or unwound at {@link #abort()}.
+         */
+        private final List<SaveContext> saves = new ArrayList<>();
+
+        /**
+         * The {@link ConcourseProvider} that scopes a bound {@link Record
+         * Record's} operations to this transaction.
+         */
+        private final ConcourseProvider provider = new ConcourseProvider() {
+
+            @Override
+            public Concourse request() {
+                if(open) {
+                    verifyOwner();
+                    return concourse;
+                }
+                else {
+                    return connections.request();
+                }
+            }
+
+            @Override
+            public void release(Concourse connection) {
+                if(!open) {
+                    connections.release(connection);
+                }
+                else {
+                    // no-op: the Transaction owns the connection until the
+                    // transaction ends
+                }
+            }
+
+        };
+
+        /**
          * Construct a new instance and {@link Concourse#stage() stage} a
          * transaction on {@code concourse}.
          *
          * @param concourse the {@link Concourse} connection that services every
          *            operation; must not already be in a transaction
+         * @param owned {@code true} if this view must release {@code concourse}
+         *            back to the pool when the transaction ends
          */
-        Transaction(Concourse concourse) {
+        Transaction(Concourse concourse, boolean owned) {
             this.concourse = concourse;
+            this.owned = owned;
+            this.owner = Thread.currentThread();
+            this.open = true;
             concourse.stage();
         }
 
@@ -3846,10 +4073,17 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         private Transaction() {
             this.concourse = null;
+            this.owned = false;
+            this.owner = Thread.currentThread();
+            this.open = false;
         }
 
         @Override
         public Selections select(Selection<?>... options) {
+            if(!open) {
+                return Runway.this.select(options);
+            }
+            verifyOwner();
             Preconditions.checkArgument(options.length > 0);
             DatabaseSelection<?>[] selections = Arrays.stream(options)
                     .peek(option -> Preconditions.checkState(
@@ -3872,23 +4106,125 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
                 }
                 reader.drain();
             }
+            Set<Record> seen = Sets.newIdentityHashSet();
+            for (DatabaseSelection<?> selection : selections) {
+                bind(selection.get(), seen);
+            }
             return new Selections(selections);
         }
 
         /**
-         * Abort the transaction and discard every staged write.
+         * Save all changes in the provided {@code records} within this
+         * transaction.
+         * <p>
+         * The records, and every {@link Record} linked from them, are bound to
+         * this transaction, and the staged changes become durable when
+         * {@link #commit()} succeeds. Until then, no reader outside the
+         * transaction can observe them.
+         * </p>
+         *
+         * @param records one or more {@link Record Records} to save
+         * @return {@code true} when the changes are staged
          */
-        void abort() {
-            concourse.abort();
+        @Override
+        public boolean save(Record... records) {
+            return save(false, records);
         }
 
         /**
-         * Attempt to commit the transaction.
+         * Save all changes in the provided {@code records} within this
+         * transaction.
+         * <p>
+         * The records, and every {@link Record} linked from them, are bound to
+         * this transaction, and the staged changes become durable when
+         * {@link #commit()} succeeds. Until then, no reader outside the
+         * transaction can observe them.
+         * </p>
+         *
+         * @param preventStaleWrites if {@code true}, reject the save when any
+         *            {@link Record} in the object graph has stale data
+         * @param records one or more {@link Record Records} to save
+         * @return {@code true} when the changes are staged
+         * @throws StaleDataException if {@code preventStaleWrites} is
+         *             {@code true} and any {@link Record} has been externally
+         *             modified
+         */
+        @Override
+        public boolean save(boolean preventStaleWrites, Record... records) {
+            if(!open) {
+                return Runway.this.save(preventStaleWrites, records);
+            }
+            verifyOwner();
+            Saver saver = new IncrementalSaver(concourse);
+            SaveContext context = new SaveContext(preventStaleWrites);
+            try {
+                // NOTE: The saver is never staged or committed here because
+                // the connection is already within this transaction, whose
+                // commit is the terminal operation.
+                for (Record record : records) {
+                    Verify.that(record.overrideSave() == null,
+                            "Cannot save a Record that overrides the save"
+                                    + " pipeline within a Transaction");
+                    record.bind(this, provider);
+                    record.saveWithinTransaction(saver, context);
+                }
+                stageDeletions(saver, context);
+            }
+            catch (Throwable t) {
+                context.restore();
+                throw t;
+            }
+            saves.add(context);
+            return true;
+        }
+
+        /**
+         * Attempt to commit the transaction and make every staged write
+         * durable.
+         * <p>
+         * On success, the lifecycle consequences of each staged save (e.g.,
+         * save and delete notifications) are dispatched. On failure, every
+         * staged write is discarded; a {@link Record Record's} in-memory edits
+         * remain, the same as after a failed save. Either way, the transaction
+         * ends.
+         * </p>
          *
          * @return {@code true} if the transaction commits
          */
-        boolean commit() {
-            return concourse.commit();
+        public boolean commit() {
+            verify();
+            boolean committed = false;
+            try {
+                committed = concourse.commit();
+            }
+            finally {
+                end(committed);
+            }
+            return committed;
+        }
+
+        /**
+         * Abort the transaction and discard every staged write; a {@link Record
+         * Record's} in-memory edits remain, the same as after a failed save.
+         * <p>
+         * This method has no effect if the transaction already ended.
+         * </p>
+         */
+        public void abort() {
+            if(open) {
+                verifyOwner();
+                try {
+                    concourse.abort();
+                }
+                finally {
+                    end(false);
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            abort();
         }
 
         /**
@@ -3912,6 +4248,77 @@ public final class Runway implements AutoCloseable, DatabaseInterface {
          */
         void verifyOrSet(String key, Object value, long record) {
             concourse.verifyOrSet(key, value, record);
+        }
+
+        /**
+         * Return the {@link Runway} instance that this {@link Transaction}
+         * operates against.
+         *
+         * @return the enclosing {@link Runway}
+         */
+        Runway database() {
+            return Runway.this;
+        }
+
+        /**
+         * Bind {@code result} to this {@link Transaction}: a {@link Record} is
+         * bound along with its loaded graph, an {@link Iterable} is bound
+         * element-wise, and any other result is left alone.
+         *
+         * @param result a resolved {@link Selection} result
+         * @param seen the identity set of {@link Record Records} that are
+         *            already bound
+         */
+        private void bind(Object result, Set<Record> seen) {
+            if(result instanceof Record) {
+                ((Record) result).bindGraph(this, provider, seen);
+            }
+            else if(result instanceof Iterable) {
+                for (Object item : (Iterable<?>) result) {
+                    bind(item, seen);
+                }
+            }
+        }
+
+        /**
+         * End the transaction: dispatch or unwind the lifecycle consequences of
+         * every staged save and, if this view {@link #owned owns} the
+         * connection, release it back to the pool.
+         *
+         * @param committed {@code true} if the transaction committed
+         */
+        private void end(boolean committed) {
+            open = false;
+            if(committed) {
+                for (SaveContext context : saves) {
+                    dispatchSaveOutcomes(context);
+                }
+            }
+            else {
+                for (int i = saves.size() - 1; i >= 0; --i) {
+                    saves.get(i).restore();
+                }
+            }
+            if(owned) {
+                connections.release(concourse);
+            }
+        }
+
+        /**
+         * Verify that the transaction is still {@link #open} and that the
+         * caller is the {@link #owner} thread.
+         */
+        private void verify() {
+            verifyOwner();
+            Verify.that(open, "The Transaction has ended");
+        }
+
+        /**
+         * Verify that the caller is the {@link #owner} thread.
+         */
+        private void verifyOwner() {
+            Verify.that(Thread.currentThread() == owner,
+                    "A Transaction is confined to the thread that started it");
         }
 
     }
