@@ -3173,7 +3173,6 @@ public final class Runway extends Binding implements AutoCloseable {
                                 next.getClass().getSimpleName(),
                                 field.getType().getSimpleName());
                         record.checkIsSavable(field, key, next);
-                        boolean clean = !record.hasUnsavedChanges();
                         if(!Objects.equals(current, next)) {
                             transaction.verifyOrSet(key,
                                     Record.serializeScalarValue(next),
@@ -3184,7 +3183,7 @@ public final class Runway extends Binding implements AutoCloseable {
                             // after its internal transaction ends, so the
                             // assignment follows the commit.
                             record.assign(this);
-                            record.applyValueChange(key, next, clean);
+                            record.applyValueChange(key, next);
                             return record;
                         }
                         else {

@@ -120,6 +120,11 @@ public final class BatchSaver implements Saver {
         concourse.abort();
     }
 
+    @Override
+    public void add(String key, Object value, long record) {
+        deferredWriteOps.add(group -> group.add(key, value, record));
+    }
+
     @SuppressWarnings("unchecked")
     @Override
     public void audit(long record,

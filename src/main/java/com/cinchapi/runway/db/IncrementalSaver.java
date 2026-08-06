@@ -97,6 +97,11 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
+    public void add(String key, Object value, long record) {
+        concourse.add(key, value, record);
+    }
+
+    @Override
     public void remove(String key, Object value, long record) {
         concourse.remove(key, value, record);
     }
