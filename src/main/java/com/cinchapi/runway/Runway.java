@@ -554,6 +554,14 @@ public final class Runway implements
     private final ThreadLocal<Map<Reservation, Object>> reservations = new ThreadLocal<>();
 
     /**
+     * The open {@link Transaction} that {@link #run(Consumer) run} is executing
+     * on the current thread, if any. While one is present, every
+     * {@link #save(boolean, Record...) save} on the thread routes into it, so
+     * records saved during the work, including new ones, join the transaction.
+     */
+    private final ThreadLocal<Transaction> ambient = new ThreadLocal<>();
+
+    /**
      * The executor for running isolated selections concurrently.
      */
     private final JoinableExecutorService selector;
@@ -1157,6 +1165,10 @@ public final class Runway implements
      *             and any {@link Record} has been externally modified
      */
     public boolean save(boolean preventStaleWrites, Record... records) {
+        Transaction transaction = ambient.get();
+        if(transaction != null) {
+            return transaction.save(preventStaleWrites, records);
+        }
         Concourse concourse = connections.request();
         Record current = null;
         try {
@@ -3907,8 +3919,15 @@ public final class Runway implements
     }
 
     /**
-     * Execute {@code work} within a {@link Transaction} and commit it after the
+     * Run {@code work} within a {@link Transaction} and commit it after the
      * work completes.
+     * <p>
+     * The work reads through the provided {@link DatabaseInterface}, so it
+     * observes the transaction's isolated snapshot. Every {@link Record#save()
+     * save} that happens during the work, including a save of a new
+     * {@link Record}, joins the transaction, and everything becomes durable
+     * together when the commit succeeds.
+     * </p>
      * <p>
      * If the commit fails because of a conflict, then the transaction is
      * discarded and {@code work} runs again against a fresh one, within the
@@ -3918,12 +3937,11 @@ public final class Runway implements
      * the caller.
      * </p>
      *
-     * @param work the work to execute against the open {@link Transaction}
-     * @return the result of {@code work}
+     * @param work the work to run
      * @throws RetryExhaustedException if the transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    public <T> T transaction(Function<? super Transaction, T> work) {
+    public void run(Consumer<DatabaseInterface> work) {
         AtomicRetryPolicy policy = properties().atomicRetryPolicy();
         Concourse concourse = connections.request();
         try {
@@ -3933,16 +3951,24 @@ public final class Runway implements
             int attempts = 0;
             for (;;) {
                 Transaction transaction = new Transaction(concourse, false);
+                Transaction previous = ambient.get();
+                ambient.set(transaction);
                 try {
-                    T result = work.apply(transaction);
+                    work.accept(transaction);
                     if(transaction.commit()) {
-                        return result;
+                        return;
                     }
                 }
                 catch (TransactionException e) {
                     transaction.abort();
                 }
                 finally {
+                    if(previous != null) {
+                        ambient.set(previous);
+                    }
+                    else {
+                        ambient.remove();
+                    }
                     transaction.close();
                 }
                 if(++attempts > policy.limit()) {

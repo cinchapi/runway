@@ -33,9 +33,8 @@ import com.cinchapi.runway.access.Audience;
 
 /**
  * Tests for {@link Runway#transaction()} and
- * {@link Runway#transaction(java.util.function.Function) the closure form}: the
- * {@link Transaction} view that scopes reads and writes to a single ACID
- * transaction.
+ * {@link Runway#run(java.util.function.Consumer) run}: the {@link Transaction}
+ * view that scopes reads and writes to a single ACID transaction.
  *
  * @author Jeff Nelson
  */
@@ -354,39 +353,67 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the closure form commits the
-     * transaction after the work completes and returns the work's result.
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#run(java.util.function.Consumer) run} commits the
+     * transaction after the work completes.
      * <p>
      * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Run {@code runway.transaction(work)} where the work loads the
-     * {@link Item}, sets the score to 2, saves and returns the record's
-     * id.</li>
+     * <li>Call {@code runway.run(work)} where the work loads the {@link Item}
+     * through the provided database, sets the score to 2 and saves.</li>
      * <li>Load the {@link Item} through the enclosing {@link Runway}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The closure returns the id and the stored
-     * score is 2.
+     * <strong>Expected:</strong> The stored score is 2.
      */
     @Test
-    public void testTransactionClosureCommitsAndReturnsResult() {
+    public void testRunCommitsWorkAtomically() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        long id = runway.transaction(transaction -> {
-            Item txItem = transaction.load(Item.class, item.id());
+        runway.run(db -> {
+            Item txItem = db.load(Item.class, item.id());
             txItem.score = 2;
-            txItem.save();
-            return txItem.id();
+            Assert.assertTrue(txItem.save());
         });
-        Assert.assertEquals(item.id(), id);
         Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the closure form aborts the
+     * <strong>Goal:</strong> Verify that a new {@link Record} saved with
+     * {@code record.save()} during
+     * {@link Runway#run(java.util.function.Consumer) run} joins the
+     * transaction.
+     * <p>
+     * <strong>Start state:</strong> No stored {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code runway.run(work)} where the work constructs a new
+     * {@link Item} and calls {@code save()} on it directly.</li>
+     * <li>Count the {@link Item Items} through the provided database inside the
+     * work, and through the enclosing {@link Runway} after the run.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count inside the work is 1, because the
+     * save joined the transaction, and the count after the run is 1, because
+     * the commit made it durable.
+     */
+    @Test
+    public void testNewRecordSavedDuringRunJoinsTheTransaction() {
+        runway.run(db -> {
+            Item item = new Item("widget", 1);
+            Assert.assertTrue(item.save());
+            Assert.assertEquals(1, db.count(Item.class));
+        });
+        Assert.assertEquals(1, runway.count(Item.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#run(java.util.function.Consumer) run} aborts the
      * transaction and propagates the exception when the work throws.
      * <p>
      * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
@@ -402,13 +429,13 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * remains 1.
      */
     @Test
-    public void testTransactionClosureAbortsWhenWorkThrows() {
+    public void testRunAbortsWhenWorkThrows() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
         try {
-            runway.transaction(transaction -> {
-                Item txItem = transaction.load(Item.class, item.id());
+            runway.run(db -> {
+                Item txItem = db.load(Item.class, item.id());
                 txItem.score = 2;
                 txItem.save();
                 throw new RuntimeException("boom");
