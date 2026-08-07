@@ -45,19 +45,7 @@ public interface ConcourseProvider {
      * @return the pooled {@link ConcourseProvider}
      */
     static ConcourseProvider from(ConnectionPool connections) {
-        return new ConcourseProvider() {
-
-            @Override
-            public Concourse request() {
-                return connections.request();
-            }
-
-            @Override
-            public void release(Concourse concourse) {
-                connections.release(concourse);
-            }
-
-        };
+        return new PooledConcourseProvider(connections);
     }
 
     /**
@@ -74,5 +62,15 @@ public interface ConcourseProvider {
      * @param concourse the connection to return
      */
     void release(Concourse concourse);
+
+    /**
+     * Release every resource that this {@link ConcourseProvider} owns.
+     * <p>
+     * A provider that does not own its connection source does nothing.
+     * </p>
+     *
+     * @throws Exception if the provider cannot close cleanly
+     */
+    default void close() throws Exception {}
 
 }

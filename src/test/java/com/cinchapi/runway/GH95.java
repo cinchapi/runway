@@ -94,7 +94,7 @@ public class GH95 extends RunwayBaseClientServerTest {
         targets.put(p3.id(), client.select(p3.id()));
 
         Stone loaded = Record.load(Stone.class, stone.id(),
-                new ConcurrentHashMap<>(), runway.provider, runway, null,
+                new ConcurrentHashMap<>(), runway.connections, runway, null,
                 targets);
 
         Assert.assertNotNull(loaded);
@@ -151,7 +151,7 @@ public class GH95 extends RunwayBaseClientServerTest {
         targets.put(p1.id(), overridden);
 
         Stone loaded = Record.load(Stone.class, stone.id(),
-                new ConcurrentHashMap<>(), runway.provider, runway, null,
+                new ConcurrentHashMap<>(), runway.connections, runway, null,
                 targets);
 
         Assert.assertNotNull(loaded);

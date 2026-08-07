@@ -117,14 +117,14 @@ public class Transaction implements PersistentDatabaseInterface, AutoCloseable {
                 return concourse;
             }
             else {
-                return database.provider.request();
+                return database.connections.request();
             }
         }
 
         @Override
         public void release(Concourse connection) {
             if(!open) {
-                database.provider.release(connection);
+                database.connections.release(connection);
             }
             else {
                 // no-op: the Transaction owns the connection until the
@@ -427,7 +427,7 @@ public class Transaction implements PersistentDatabaseInterface, AutoCloseable {
             }
         }
         if(owned) {
-            database.provider.release(concourse);
+            database.connections.release(concourse);
         }
     }
 

@@ -398,16 +398,10 @@ public final class Runway implements
     }
 
     /**
-     * A connection pool to the underlying Concourse database.
+     * The {@link ConcourseProvider} that supplies a connection to the
+     * underlying Concourse database for each operation.
      */
-    /* package */ final ConnectionPool connections;
-
-    /**
-     * A {@link ConcourseProvider} view of {@link #connections} that is handed
-     * to each {@link Record} that is {@link Record#assign(Runway) assigned} to
-     * this instance.
-     */
-    /* package */ final ConcourseProvider provider;
+    final ConcourseProvider connections;
 
     /**
      * The {@link DynamicWritePolicy} that governs
@@ -564,8 +558,7 @@ public final class Runway implements
      * @param connections a Concourse {@link ConnectionPool}
      */
     private Runway(ConnectionPool connections) {
-        this.connections = connections;
-        this.provider = ConcourseProvider.from(connections);
+        this.connections = ConcourseProvider.from(connections);
         instances.add(this);
         if(instances.size() > 1) {
             Record.PINNED_RUNWAY_INSTANCE = null;
@@ -643,9 +636,7 @@ public final class Runway implements
     @Override
     public void close() throws Exception {
         Obligations.runAll(() -> {
-            if(!connections.isClosed()) {
-                connections.close();
-            }
+            connections.close();
         }, () -> {
             instances.remove(this);
             if(instances.size() == 1) {
@@ -2627,7 +2618,7 @@ public final class Runway implements
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         return loadWithErrorHandling(clazz, id, new ConcurrentHashMap<>(),
-                provider, this, data, targets);
+                connections, this, data, targets);
     }
 
     /**
@@ -2665,7 +2656,7 @@ public final class Runway implements
         String section = (String) Iterables
                 .getLast(data.get(Record.SECTION_KEY));
         Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, loaded, provider, this, data,
+        return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
                 targets);
     }
 
@@ -2726,7 +2717,7 @@ public final class Runway implements
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         return LazyTransformSet.of(data.entrySet(),
                 entry -> loadWithErrorHandling(clazz, entry.getKey(), loaded,
-                        provider, this, entry.getValue(), targets));
+                        connections, this, entry.getValue(), targets));
     }
 
     /**

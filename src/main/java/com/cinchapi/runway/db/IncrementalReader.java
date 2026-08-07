@@ -22,7 +22,6 @@ import java.util.Set;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.concourse.Concourse;
-import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -38,14 +37,13 @@ public class IncrementalReader extends AbstractReader {
 
     /**
      * Construct an {@link IncrementalReader} that borrows a {@link Concourse}
-     * connection from {@code pool} and returns it to {@code pool} on
-     * {@link #close()}.
+     * connection from {@code connections} and returns it on {@link #close()}.
      *
-     * @param pool the {@link ConnectionPool} that owns the {@link Concourse}
-     *            connection; must not be {@code null}
+     * @param connections the {@link ConcourseProvider} that owns the
+     *            {@link Concourse} connection; must not be {@code null}
      */
-    public IncrementalReader(ConnectionPool pool) {
-        super(pool);
+    public IncrementalReader(ConcourseProvider connections) {
+        super(connections);
     }
 
     /**

@@ -1067,7 +1067,7 @@ public abstract class Record implements Comparable<Record> {
     public Record() {
         this.id = Time.now();
         if(PINNED_RUNWAY_INSTANCE != null) {
-            this.connections = PINNED_RUNWAY_INSTANCE.provider;
+            this.connections = PINNED_RUNWAY_INSTANCE.connections;
             this.binding = PINNED_RUNWAY_INSTANCE;
         }
         checkpoint();
@@ -1102,7 +1102,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public void assign(Runway runway) {
         this.binding = runway;
-        this.connections = runway.provider;
+        this.connections = runway.connections;
     }
 
     /**
