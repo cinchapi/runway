@@ -924,9 +924,7 @@ public abstract class Record implements Comparable<Record> {
      * The {@link DatabaseInterface} that can be used to make queries within the
      * database from which this {@link Record} is sourced.
      * <p>
-     * Every operation resolves against this {@link Record Record's} current
-     * binding, so this handle remains correct across {@link #assign(Runway)
-     * re-assignment} and the end of a {@link Transaction}.
+     * Every operation resolves against the current {@link #binding}.
      * </p>
      */
     protected final transient DatabaseInterface db = new ReactiveBinding(this);
@@ -1000,8 +998,13 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * The {@link Binding} that this {@link Record} is bound to: the
-     * {@link Runway} instance it is {@link #assign(Runway) assigned} to, or the
-     * {@link Transaction} it joined.
+     * {@link Runway} instance to which it is {@link #assign(Runway) assigned},
+     * or the {@link Transaction} it joined.
+     * <p>
+     * This field holds the scope itself and changes as the {@link Record} is
+     * re-bound; {@link #db} is the stable handle that delegates to this field
+     * at call time.
+     * </p>
      */
     private transient Binding binding = null;
 
@@ -1893,7 +1896,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public final void refresh() {
         Verify.that(binding != null,
-                "Cannot refresh because this Record" + " has no binding");
+                "Cannot refresh because this Record has no binding");
         Concourse concourse = connections.request();
         try {
             ConcurrentMap<Long, Record> existing = new ConcurrentHashMap<>();
@@ -2476,6 +2479,16 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@link #db} under its {@link Binding} type, so the caller can also
+     * save and {@link Binding#load(long) load} through it.
+     *
+     * @return {@link #db} as a {@link Binding}
+     */
+    Binding binding() {
+        return (Binding) db;
+    }
+
+    /**
      * Ensure that {@code value} is savable for the {@code field} named
      * {@code key} by enforcing the constraints that can be checked without a
      * database query: a {@link Required} field refuses an empty value and a
@@ -2732,16 +2745,6 @@ public abstract class Record implements Comparable<Record> {
         }
         __checksum = checksum();
         checkpoint();
-    }
-
-    /**
-     * Return {@link #db} under its {@link Binding} type, so the caller can also
-     * save and {@link Binding#load(long) load} through it.
-     *
-     * @return {@link #db} as a {@link Binding}
-     */
-    Binding binding() {
-        return (Binding) db;
     }
 
     /**
@@ -3645,47 +3648,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the {@link Runway} harness that ultimately backs this
-     * {@link Record Record's} {@link #binding}, or {@code null} if this
-     * {@link Record} is unbound.
-     *
-     * @return the {@link Runway} harness
-     */
-    @Nullable
-    private Runway harness() {
-        if(binding instanceof Runway) {
-            return (Runway) binding;
-        }
-        else if(binding instanceof Transaction) {
-            return ((Transaction) binding).database();
-        }
-        else {
-            return null;
-        }
-    }
-
-    /**
-     * Return {@code true} if this {@link Record Record's} operations resolve
-     * directly against a {@link Runway}: either the {@link #binding} is a
-     * {@link Runway}, or it is a {@link Transaction} that has ended and now
-     * forwards to the enclosing {@link Runway}.
-     *
-     * @return {@code true} if this {@link Record} has a direct {@link Runway}
-     *         scope
-     */
-    private boolean hasDirectRunwayScope() {
-        if(binding instanceof Runway) {
-            return true;
-        }
-        else if(binding instanceof Transaction) {
-            return !((Transaction) binding).open();
-        }
-        else {
-            return false;
-        }
-    }
-
-    /**
      * Return all the non-internal {@link Field fields} in this class.
      *
      * @return the non-internal {@link Field fields}
@@ -3786,6 +3748,47 @@ public abstract class Record implements Comparable<Record> {
                     return null;
                 }
             }
+        }
+    }
+
+    /**
+     * Return the {@link Runway} harness that ultimately backs this
+     * {@link Record Record's} {@link #binding}, or {@code null} if this
+     * {@link Record} is unbound.
+     *
+     * @return the {@link Runway} harness
+     */
+    @Nullable
+    private Runway harness() {
+        if(binding instanceof Runway) {
+            return (Runway) binding;
+        }
+        else if(binding instanceof Transaction) {
+            return ((Transaction) binding).database();
+        }
+        else {
+            return null;
+        }
+    }
+
+    /**
+     * Return {@code true} if this {@link Record Record's} operations resolve
+     * directly against a {@link Runway}: either the {@link #binding} is a
+     * {@link Runway}, or it is a {@link Transaction} that has ended and now
+     * forwards to the enclosing {@link Runway}.
+     *
+     * @return {@code true} if this {@link Record} has a direct {@link Runway}
+     *         scope
+     */
+    private boolean hasDirectRunwayScope() {
+        if(binding instanceof Runway) {
+            return true;
+        }
+        else if(binding instanceof Transaction) {
+            return !((Transaction) binding).open();
+        }
+        else {
+            return false;
         }
     }
 
@@ -5788,11 +5791,6 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
-        <T extends Record> T load(long id) {
-            return delegate().load(id);
-        }
-
-        @Override
         public boolean save(boolean preventStaleWrites, Record... records) {
             return delegate().save(preventStaleWrites, records);
         }
@@ -5800,6 +5798,11 @@ public abstract class Record implements Comparable<Record> {
         @Override
         public Selections select(Selection<?>... selections) {
             return delegate().select(selections);
+        }
+
+        @Override
+        <T extends Record> T load(long id) {
+            return delegate().load(id);
         }
 
         /**
