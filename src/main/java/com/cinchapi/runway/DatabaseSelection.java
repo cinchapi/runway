@@ -15,8 +15,10 @@
  */
 package com.cinchapi.runway;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 
+import java.util.Arrays;
 import java.util.function.Predicate;
 
 import javax.annotation.Nullable;
@@ -99,6 +101,28 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
             throw new IllegalArgumentException("Unsupported Selection type: "
                     + selection.getClass().getName());
         }
+    }
+
+    /**
+     * {@link #resolve(Selection) Resolve} each of the {@code selections} to a
+     * {@link DatabaseSelection}, verifying that each one can still be
+     * submitted.
+     *
+     * @param selections the {@link Selection Selections} to resolve
+     * @return the resolved {@link DatabaseSelection DatabaseSelections}
+     * @throws IllegalArgumentException if {@code selections} is empty or
+     *             contains an unrecognized type
+     * @throws IllegalStateException if any of the {@code selections} has
+     *             already been submitted
+     */
+    static DatabaseSelection<?>[] resolve(Selection<?>[] selections) {
+        checkArgument(selections.length > 0);
+        return Arrays.stream(selections).peek(selection -> checkState(
+                selection.state() == Selection.State.PENDING
+                        || selection.state() == Selection.State.RESOLVED,
+                "Selection has already been submitted"))
+                .map(DatabaseSelection::resolve)
+                .toArray(DatabaseSelection[]::new);
     }
 
     /**

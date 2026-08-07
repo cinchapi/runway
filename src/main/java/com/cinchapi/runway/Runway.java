@@ -1346,14 +1346,7 @@ public final class Runway implements
 
     @Override
     public Selections select(Selection<?>... options) {
-        Preconditions.checkArgument(options.length > 0);
-        DatabaseSelection<?>[] selections = Arrays.stream(options)
-                .peek(option -> Preconditions.checkState(
-                        option.state() == Selection.State.PENDING
-                                || option.state() == Selection.State.RESOLVED,
-                        "Selection has already been submitted"))
-                .map(DatabaseSelection::resolve)
-                .toArray(DatabaseSelection[]::new);
+        DatabaseSelection<?>[] selections = DatabaseSelection.resolve(options);
         if(selections.length == 1) {
             DatabaseSelection<?> selection = selections[0];
             if(selection.state == Selection.State.RESOLVED) {

@@ -16,7 +16,6 @@
 package com.cinchapi.runway;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
@@ -31,7 +30,6 @@ import com.cinchapi.runway.db.IncrementalReader;
 import com.cinchapi.runway.db.IncrementalSaver;
 import com.cinchapi.runway.db.Reader;
 import com.cinchapi.runway.db.Saver;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
 
@@ -176,14 +174,8 @@ public class Transaction implements PersistentDatabaseInterface, AutoCloseable {
     public Selections select(Selection<?>... options) {
         if(open) {
             verifyOwner();
-            Preconditions.checkArgument(options.length > 0);
-            DatabaseSelection<?>[] selections = Arrays.stream(options)
-                    .peek(option -> Preconditions.checkState(
-                            option.state() == Selection.State.PENDING || option
-                                    .state() == Selection.State.RESOLVED,
-                            "Selection has already been submitted"))
-                    .map(DatabaseSelection::resolve)
-                    .toArray(DatabaseSelection[]::new);
+            DatabaseSelection<?>[] selections = DatabaseSelection
+                    .resolve(options);
             try (Reader reader = database.supportsBulkCommands
                     ? new BatchReader(concourse)
                     : new IncrementalReader(concourse)) {
