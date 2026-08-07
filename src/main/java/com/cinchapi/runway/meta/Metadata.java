@@ -25,10 +25,10 @@ import javax.annotation.Nullable;
 import com.cinchapi.common.base.Array;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
-import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.runway.Computed;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.db.ConcourseProvider;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 
@@ -66,7 +66,7 @@ public interface Metadata {
             Map<Timestamp, List<String>> _audit = Reflection.get("_audit",
                     record);
             if(_audit == null) {
-                ConnectionPool connections = Reflection.get("connections",
+                ConcourseProvider connections = Reflection.get("connections",
                         record);
                 Concourse concourse = connections.request();
                 try {
@@ -119,7 +119,8 @@ public interface Metadata {
     public default Timestamp lastUpdatedAt(String... keys) {
         if(this instanceof Record) {
             Record record = (Record) this;
-            ConnectionPool connections = Reflection.get("connections", record);
+            ConcourseProvider connections = Reflection.get("connections",
+                    record);
             if(keys.length == 1) {
                 Concourse concourse = connections.request();
                 String key = keys[0];
