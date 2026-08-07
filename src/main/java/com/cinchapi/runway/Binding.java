@@ -26,7 +26,7 @@ package com.cinchapi.runway;
  *
  * @author Jeff Nelson
  */
-/* package */ interface Binding extends DatabaseInterface {
+interface Binding extends DatabaseInterface {
 
     /**
      * Load the {@link Record} that is identified by {@code id} without knowing

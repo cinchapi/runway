@@ -217,8 +217,8 @@ public final class Runway implements AutoCloseable, Binding {
      * @param record the record id
      * @return {@code true} if the value is stored
      */
-    /* package */ static boolean setIfAbsent(Concourse concourse, String key,
-            Object value, long record) {
+    static boolean setIfAbsent(Concourse concourse, String key, Object value,
+            long record) {
         concourse.stage();
         try {
             Map<String, Set<Object>> stored = concourse
@@ -1589,7 +1589,7 @@ public final class Runway implements AutoCloseable, Binding {
      * @param <T> the {@link Record} type
      */
     @SuppressWarnings({ "rawtypes" })
-    /* package */ <T extends Record> void $selectFromDatabase(Reader reader,
+    <T extends Record> void $selectFromDatabase(Reader reader,
             DatabaseSelection<T> selection, Transaction transaction) {
         Pending<? extends SelectResult<?>> pending;
         if(selection instanceof CountSelection) {
@@ -1633,7 +1633,7 @@ public final class Runway implements AutoCloseable, Binding {
      *
      * @param context the {@link SaveContext} whose staged save committed
      */
-    /* package */ void dispatchSaveOutcomes(SaveContext context) {
+    void dispatchSaveOutcomes(SaveContext context) {
         Set<Long> deletions = context.deletions();
         context.forEach((record, outcome) -> {
             if(outcome == SaveContext.Outcome.DELETED) {
@@ -1661,7 +1661,7 @@ public final class Runway implements AutoCloseable, Binding {
      *
      * @param record the record that was deleted
      */
-    /* package */ final void enqueueDeleteNotification(Record record) {
+    final void enqueueDeleteNotification(Record record) {
         if(deleteListener != null) {
             saveNotificationQueue.offer(() -> deleteListener.accept(record));
         }
@@ -1672,7 +1672,7 @@ public final class Runway implements AutoCloseable, Binding {
      *
      * @param record the record that was saved
      */
-    /* package */ final void enqueueSaveNotification(Record record) {
+    final void enqueueSaveNotification(Record record) {
         if(saveListener != null) {
             saveNotificationQueue.offer(() -> saveListener.accept(record));
         }
@@ -1752,7 +1752,7 @@ public final class Runway implements AutoCloseable, Binding {
      * @param saver the {@link Saver} for the active staged transaction
      * @param context the {@link SaveContext} for the save
      */
-    /* package */ void stageDeletions(Saver saver, SaveContext context) {
+    void stageDeletions(Saver saver, SaveContext context) {
         Set<Long> deletions = context.deletions();
         if(!deletions.isEmpty()) {
             // NOTE: A deletion is final within a save. A record staged before

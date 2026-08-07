@@ -843,7 +843,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * The key that references a records id in Concourse.
      */
-    /* package */ static final String IDENTIFIER_KEY = "$id$";
+    static final String IDENTIFIER_KEY = "$id$";
 
     /**
      * The prefix applied to a key provided to the
