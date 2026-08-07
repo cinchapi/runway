@@ -133,7 +133,7 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  *
  * @author Jeff Nelson
  */
-public final class Runway implements AutoCloseable, Binding {
+public final class Runway extends Binding implements AutoCloseable {
 
     // NOTE: Internal methods within a $ prefix are ones that return raw
     // database results and are intended to be consumed by other methods in this
@@ -1004,19 +1004,13 @@ public final class Runway implements AutoCloseable, Binding {
     @Override
     public Gateway gateway() {
         if(gateway == null) {
-            gateway = Binding.super.gateway();
+            gateway = super.gateway();
         }
         return gateway;
     }
 
-    /**
-     * Load a record by {@code id} without knowing its class.
-     *
-     * @param id
-     * @return the loaded record
-     */
     @Override
-    public <T extends Record> T load(long id) {
+    <T extends Record> T load(long id) {
         return instantiate(id, null, null);
     }
 
@@ -1024,7 +1018,7 @@ public final class Runway implements AutoCloseable, Binding {
     public <T extends Record> T loadNullSafe(Class<T> clazz, long id,
             Realms realms) {
         try {
-            return Binding.super.loadNullSafe(clazz, id, realms);
+            return super.loadNullSafe(clazz, id, realms);
         }
         catch (Exception e) {
             onLoadFailureHandler.accept(clazz, id, e);
@@ -1549,7 +1543,14 @@ public final class Runway implements AutoCloseable, Binding {
      * @return an open {@link Transaction}
      */
     public Transaction stage() {
-        return new Transaction(this, connections.request(), true);
+        Concourse concourse = connections.request();
+        try {
+            return new Transaction(this, concourse, true);
+        }
+        catch (Throwable t) {
+            connections.release(concourse);
+            throw t;
+        }
     }
 
     /**

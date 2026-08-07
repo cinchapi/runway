@@ -376,6 +376,140 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that single-key atomic operations resume
+     * against the enclosing {@link Runway} after the {@link Transaction} that a
+     * {@link Record} is bound to ends.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and commit.</li>
+     * <li>Call {@code getAndUpdate} on the transactional copy to increment the
+     * score.</li>
+     * <li>Call {@code exchange} on the transactional copy to swap the score to
+     * 100.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both operations succeed and a load through the
+     * enclosing {@link Runway} observes a score of 100.
+     */
+    @Test
+    public void testAtomicOperationsResumeAfterTransactionEnds() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertTrue(transaction.commit());
+            Assert.assertEquals(1, (int) txItem.getAndUpdate("score",
+                    (Integer score) -> score + 1));
+            Assert.assertTrue(txItem.exchange("score", 100));
+        }
+        Assert.assertEquals(100, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save that fails within a
+     * {@link Transaction} cannot commit the writes that were staged before the
+     * failure.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and change the
+     * score to 2.</li>
+     * <li>Save the {@link Item} together with a {@link Registration} whose
+     * {@link Required} name is empty, so the save throws after the {@link Item
+     * Item's} writes are staged.</li>
+     * <li>Catch the exception and attempt to {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The commit is refused with an
+     * {@link IllegalStateException} and the partial save does not persist: a
+     * load through the enclosing {@link Runway} still observes a score of 1.
+     */
+    @Test
+    public void testFailedSaveWithinTransactionCannotCommitPartialWrites() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Registration invalid = new Registration(null);
+            try {
+                transaction.save(txItem, invalid);
+                Assert.fail("Expected the save to throw");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.commit();
+                Assert.fail("Expected the commit to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+        }
+        Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a failed save poisons a
+     * {@link Transaction}, so every subsequent operation is refused except
+     * {@code abort()}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and change the
+     * score to 2.</li>
+     * <li>Save the {@link Item} together with a {@link Registration} whose
+     * {@link Required} name is empty, so the save throws.</li>
+     * <li>Attempt a load, a save and a {@code create()} through the poisoned
+     * transaction.</li>
+     * <li>Call {@code abort()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Each attempted operation throws an
+     * {@link IllegalStateException}, the abort succeeds and a load through the
+     * enclosing {@link Runway} still observes a score of 1.
+     */
+    @Test
+    public void testFailedSaveWithinTransactionRefusesFurtherOperations() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Registration invalid = new Registration(null);
+            try {
+                transaction.save(txItem, invalid);
+                Assert.fail("Expected the save to throw");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.load(Item.class, item.id());
+                Assert.fail("Expected the load to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.save(txItem);
+                Assert.fail("Expected the save to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.create(Item.class, "gadget", 3);
+                Assert.fail("Expected the create to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            transaction.abort();
+        }
+        Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that save notifications for records saved
      * within a {@link Transaction} fire only after the commit succeeds.
      * <p>
@@ -1144,6 +1278,30 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         public Basket(String name, Item item) {
             this.name = name;
             this.item = item;
+        }
+    }
+
+    /**
+     * A {@link Record} whose {@code name} is {@link Required}, so a save with
+     * an empty name throws.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Registration extends Record {
+
+        /**
+         * The required display name.
+         */
+        @Required
+        String name;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         */
+        public Registration(String name) {
+            this.name = name;
         }
     }
 

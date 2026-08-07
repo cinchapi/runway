@@ -22,7 +22,7 @@ package com.cinchapi.runway;
  *
  * @author Jeff Nelson
  */
-interface Binding extends DatabaseInterface {
+abstract class Binding implements DatabaseInterface {
 
     /**
      * Load the {@link Record} that is identified by {@code id} without knowing
@@ -31,7 +31,7 @@ interface Binding extends DatabaseInterface {
      * @param id the record id
      * @return the loaded {@link Record}
      */
-    public <T extends Record> T load(long id);
+    abstract <T extends Record> T load(long id);
 
     /**
      * Save all changes in the provided {@code records}.
@@ -39,7 +39,7 @@ interface Binding extends DatabaseInterface {
      * @param records one or more {@link Record Records} to save
      * @return {@code true} if the changes are accepted
      */
-    public default boolean save(Record... records) {
+    public boolean save(Record... records) {
         return save(false, records);
     }
 
@@ -53,6 +53,6 @@ interface Binding extends DatabaseInterface {
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and any {@link Record} has been externally modified
      */
-    public boolean save(boolean preventStaleWrites, Record... records);
+    public abstract boolean save(boolean preventStaleWrites, Record... records);
 
 }

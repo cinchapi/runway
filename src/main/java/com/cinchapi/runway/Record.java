@@ -1373,14 +1373,14 @@ public abstract class Record implements Comparable<Record> {
      *             is not an instance of the field's type
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, is staged for deletion, is bound to
-     *             a {@link Transaction}, or {@code replacement} violates the
-     *             field's constraints
+     *             an open {@link Transaction}, or {@code replacement} violates
+     *             the field's constraints
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
     public final <T> boolean exchange(String key, T replacement) {
-        Verify.that(binding instanceof Runway,
+        Verify.that(hasDirectRunwayScope(),
                 "Cannot atomically exchange {} in {} because single-key"
                         + " atomic operations require a direct Runway binding",
                 key, __);
@@ -1498,7 +1498,7 @@ public abstract class Record implements Comparable<Record> {
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, has unsaved changes, is staged for
-     *             deletion, or is bound to a {@link Transaction}
+     *             deletion, or is bound to an open {@link Transaction}
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
@@ -2128,7 +2128,7 @@ public abstract class Record implements Comparable<Record> {
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, has unsaved changes, is staged for
-     *             deletion, or is bound to a {@link Transaction}
+     *             deletion, or is bound to an open {@link Transaction}
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
@@ -3613,6 +3613,27 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if this {@link Record Record's} operations resolve
+     * directly against a {@link Runway}: either the {@link #binding} is a
+     * {@link Runway}, or it is a {@link Transaction} that has ended and now
+     * forwards to the enclosing {@link Runway}.
+     *
+     * @return {@code true} if this {@link Record} has a direct {@link Runway}
+     *         scope
+     */
+    private boolean hasDirectRunwayScope() {
+        if(binding instanceof Runway) {
+            return true;
+        }
+        else if(binding instanceof Transaction) {
+            return !((Transaction) binding).open();
+        }
+        else {
+            return false;
+        }
+    }
+
+    /**
      * Return all the non-internal {@link Field fields} in this class.
      *
      * @return the non-internal {@link Field fields}
@@ -4046,14 +4067,14 @@ public abstract class Record implements Comparable<Record> {
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, has unsaved changes, is staged for
-     *             deletion, or is bound to a {@link Transaction}
+     *             deletion, or is bound to an open {@link Transaction}
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
     private <T> AtomicUpdate<T> updateAtomically(String key,
             UnaryOperator<T> update) {
-        Verify.that(binding instanceof Runway,
+        Verify.that(hasDirectRunwayScope(),
                 "Cannot atomically update {} in {} because single-key atomic"
                         + " operations require a direct Runway binding",
                 key, __);
@@ -5697,7 +5718,7 @@ public abstract class Record implements Comparable<Record> {
      *
      * @author Jeff Nelson
      */
-    private static class ReactiveBinding implements Binding {
+    private static class ReactiveBinding extends Binding {
 
         /**
          * A reference to the enclosing {@link Record} whose state is watched
@@ -5715,7 +5736,7 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
-        public <T extends Record> T load(long id) {
+        <T extends Record> T load(long id) {
             return delegate().load(id);
         }
 

@@ -67,11 +67,16 @@ import com.google.common.collect.Sets;
  * and saves to the enclosing {@link Runway}, so a {@link Record} bound to it
  * unwinds to the database scope; only another {@link #commit()} is refused.
  * </p>
+ * <p>
+ * A save that fails within an open transaction poisons it: the writes that were
+ * staged before the failure can never commit, so every subsequent operation is
+ * refused except {@link #abort()} (or {@link #close()}).
+ * </p>
  *
  * @author Jeff Nelson
  */
 @NotThreadSafe
-public class Transaction implements Binding, AutoCloseable {
+public class Transaction extends Binding implements AutoCloseable {
 
     /**
      * The {@link Runway} instance that this {@link Transaction} operates
@@ -100,6 +105,13 @@ public class Transaction implements Binding, AutoCloseable {
      * Whether the transaction is still active.
      */
     private boolean open;
+
+    /**
+     * Whether a failed save poisoned the transaction. A poisoned transaction
+     * refuses every operation except {@link #abort()}, so the writes that were
+     * staged before the failure can never {@link #commit()}.
+     */
+    private boolean poisoned = false;
 
     /**
      * The {@link SaveContext} for every save staged within the transaction, in
@@ -178,6 +190,7 @@ public class Transaction implements Binding, AutoCloseable {
     public Selections select(Selection<?>... options) {
         if(open) {
             verifyOwner();
+            verifyNotPoisoned();
             DatabaseSelection<?>[] selections = DatabaseSelection
                     .resolve(options);
             try (Reader reader = database.supportsBulkCommands
@@ -223,22 +236,18 @@ public class Transaction implements Binding, AutoCloseable {
     public <T extends Record> T create(Class<T> clazz, Object... args) {
         if(open) {
             verifyOwner();
+            verifyNotPoisoned();
         }
         T record = Reflection.newInstance(clazz, args);
         record.bind(this, provider);
         return record;
     }
 
-    /**
-     * Load a record by {@code id} without knowing its class.
-     *
-     * @param id
-     * @return the loaded record
-     */
     @Override
-    public <T extends Record> T load(long id) {
+    <T extends Record> T load(long id) {
         if(open) {
             verifyOwner();
+            verifyNotPoisoned();
             Set<Object> sections = concourse.select(Record.SECTION_KEY, id);
             Class<T> clazz = Reflection
                     .getClassCasted((String) Iterables.getLast(sections));
@@ -256,9 +265,16 @@ public class Transaction implements Binding, AutoCloseable {
      * transaction, and the staged changes become durable when {@link #commit()}
      * succeeds. Until then, no reader outside the transaction can observe them.
      * </p>
+     * <p>
+     * If this method throws, then the transaction is poisoned: the writes that
+     * were staged before the failure can never commit, and every subsequent
+     * operation is refused except {@link #abort()}.
+     * </p>
      *
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
+     * @throws IllegalStateException if a prior save failed within the
+     *             transaction
      */
     @Override
     public boolean save(Record... records) {
@@ -273,17 +289,26 @@ public class Transaction implements Binding, AutoCloseable {
      * succeeds. Until then, no reader outside the transaction can observe them.
      * </p>
      *
+     * <p>
+     * If this method throws, then the transaction is poisoned: the writes that
+     * were staged before the failure can never commit, and every subsequent
+     * operation is refused except {@link #abort()}.
+     * </p>
+     *
      * @param preventStaleWrites if {@code true}, reject the save when any
      *            {@link Record} in the object graph has stale data
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and any {@link Record} has been externally modified
+     * @throws IllegalStateException if a prior save failed within the
+     *             transaction
      */
     @Override
     public boolean save(boolean preventStaleWrites, Record... records) {
         if(open) {
             verifyOwner();
+            verifyNotPoisoned();
             Saver saver = new IncrementalSaver(concourse);
             SaveContext context = new SaveContext(preventStaleWrites);
             try {
@@ -300,6 +325,9 @@ public class Transaction implements Binding, AutoCloseable {
                 database.stageDeletions(saver, context);
             }
             catch (Throwable t) {
+                // The writes that were staged before the failure cannot be
+                // surgically undone, so the transaction must never commit.
+                poisoned = true;
                 context.restore();
                 throw t;
             }
@@ -321,6 +349,8 @@ public class Transaction implements Binding, AutoCloseable {
      * </p>
      *
      * @return {@code true} if the transaction commits
+     * @throws IllegalStateException if the transaction already ended, or if a
+     *             save failed within it
      */
     public boolean commit() {
         verify();
@@ -392,6 +422,15 @@ public class Transaction implements Binding, AutoCloseable {
     }
 
     /**
+     * Return {@code true} if the transaction is still active.
+     *
+     * @return {@code true} if the transaction is {@link #open}
+     */
+    boolean open() {
+        return open;
+    }
+
+    /**
      * Bind {@code result} to this {@link Transaction}: a {@link Record} is
      * bound along with its loaded graph, an {@link Iterable} is bound
      * element-wise, and any other result is left alone.
@@ -436,12 +475,23 @@ public class Transaction implements Binding, AutoCloseable {
     }
 
     /**
-     * Verify that the transaction is still {@link #open} and that the caller is
-     * the {@link #owner} thread.
+     * Verify that the transaction is still {@link #open}, is not
+     * {@link #poisoned} and that the caller is the {@link #owner} thread.
      */
     private void verify() {
         verifyOwner();
         Verify.that(open, "The Transaction has ended");
+        verifyNotPoisoned();
+    }
+
+    /**
+     * Verify that the transaction is not {@link #poisoned}.
+     */
+    private void verifyNotPoisoned() {
+        Verify.that(!poisoned,
+                "The Transaction cannot continue because a save failed"
+                        + " within it; abort and retry the work in a new"
+                        + " Transaction");
     }
 
     /**
