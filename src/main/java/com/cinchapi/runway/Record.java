@@ -1106,91 +1106,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Bind this {@link Record} to {@code binding} so that every operation,
-     * including each {@link #save() save}, is scoped to it.
-     *
-     * @param binding the {@link PersistentDatabaseInterface} to bind
-     * @param connections the {@link ConcourseProvider} that supplies
-     *            connections within the scope of the binding
-     */
-    /* package */ void bind(PersistentDatabaseInterface binding,
-            ConcourseProvider connections) {
-        this.binding = binding;
-        this.connections = connections;
-    }
-
-    /**
-     * {@link #bind(PersistentDatabaseInterface, ConcourseProvider) Bind} this
-     * {@link Record}, and every loaded {@link Record} that is reachable from
-     * its fields, to {@code binding}.
-     * <p>
-     * A {@link DeferredReference} that was never {@link DeferredReference#get()
-     * accessed} holds no loaded {@link Record} to bind; when it is accessed, it
-     * resolves through its owner's binding at that moment.
-     * </p>
-     *
-     * @param binding the {@link PersistentDatabaseInterface} to bind
-     * @param connections the {@link ConcourseProvider} that supplies
-     *            connections within the scope of the binding
-     * @param seen the identity set of {@link Record Records} that are already
-     *            bound
-     */
-    /* package */ void bindGraph(PersistentDatabaseInterface binding,
-            ConcourseProvider connections, Set<Record> seen) {
-        if(seen.add(this)) {
-            bind(binding, connections);
-            fields().stream().filter(
-                    field -> !Modifier.isTransient(field.getModifiers()))
-                    .map(field -> Reflection.get(field.getName(), this))
-                    .forEach(value -> {
-                        if(value instanceof Record) {
-                            ((Record) value).bindGraph(binding, connections,
-                                    seen);
-                        }
-                        else if(value != null && Sequences.isSequence(value)) {
-                            Sequences.forEach(value, item -> {
-                                if(item instanceof Record) {
-                                    ((Record) item).bindGraph(binding,
-                                            connections, seen);
-                                }
-                            });
-                        }
-                    });
-        }
-    }
-
-    /**
-     * Return the {@link Runway} engine behind this {@link Record Record's}
-     * {@link #binding}, or {@code null} if this {@link Record} is unbound.
-     *
-     * @return the {@link Runway} environment
-     */
-    @Nullable
-    private Runway environment() {
-        if(binding instanceof Runway) {
-            return (Runway) binding;
-        }
-        else if(binding instanceof Transaction) {
-            return ((Transaction) binding).database();
-        }
-        else {
-            return null;
-        }
-    }
-
-    /**
-     * Return the persistent view of this {@link Record Record's} current
-     * {@link #binding}: a stable handle that re-resolves the binding on every
-     * operation, so it remains correct across {@link #assign(Runway)
-     * re-assignment} and the end of a {@link Transaction}.
-     *
-     * @return the reactive {@link PersistentDatabaseInterface}
-     */
-    /* package */ PersistentDatabaseInterface reactive() {
-        return (PersistentDatabaseInterface) db;
-    }
-
-    /**
      * Return a complete audit trail of changes made to this {@link Record} over
      * time.
      * <p>
@@ -2452,6 +2367,60 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Bind this {@link Record} to {@code binding} so that every operation,
+     * including each {@link #save() save}, is scoped to it.
+     *
+     * @param binding the {@link PersistentDatabaseInterface} to bind
+     * @param connections the {@link ConcourseProvider} that supplies
+     *            connections within the scope of the binding
+     */
+    void bind(PersistentDatabaseInterface binding,
+            ConcourseProvider connections) {
+        this.binding = binding;
+        this.connections = connections;
+    }
+
+    /**
+     * {@link #bind(PersistentDatabaseInterface, ConcourseProvider) Bind} this
+     * {@link Record}, and every loaded {@link Record} that is reachable from
+     * its fields, to {@code binding}.
+     * <p>
+     * A {@link DeferredReference} that was never {@link DeferredReference#get()
+     * accessed} holds no loaded {@link Record} to bind; when it is accessed, it
+     * resolves through its owner's binding at that moment.
+     * </p>
+     *
+     * @param binding the {@link PersistentDatabaseInterface} to bind
+     * @param connections the {@link ConcourseProvider} that supplies
+     *            connections within the scope of the binding
+     * @param seen the identity set of {@link Record Records} that are already
+     *            bound
+     */
+    void bindGraph(PersistentDatabaseInterface binding,
+            ConcourseProvider connections, Set<Record> seen) {
+        if(seen.add(this)) {
+            bind(binding, connections);
+            fields().stream().filter(
+                    field -> !Modifier.isTransient(field.getModifiers()))
+                    .map(field -> Reflection.get(field.getName(), this))
+                    .forEach(value -> {
+                        if(value instanceof Record) {
+                            ((Record) value).bindGraph(binding, connections,
+                                    seen);
+                        }
+                        else if(value != null && Sequences.isSequence(value)) {
+                            Sequences.forEach(value, item -> {
+                                if(item instanceof Record) {
+                                    ((Record) item).bindGraph(binding,
+                                            connections, seen);
+                                }
+                            });
+                        }
+                    });
+        }
+    }
+
+    /**
      * Ensure that {@code value} is savable for the {@code field} named
      * {@code key} by enforcing the constraints that can be checked without a
      * database query: a {@link Required} field refuses an empty value and a
@@ -2708,6 +2677,18 @@ public abstract class Record implements Comparable<Record> {
         }
         __checksum = checksum();
         checkpoint();
+    }
+
+    /**
+     * Return the persistent view of this {@link Record Record's} current
+     * {@link #binding}: a stable handle that re-resolves the binding on every
+     * operation, so it remains correct across {@link #assign(Runway)
+     * re-assignment} and the end of a {@link Transaction}.
+     *
+     * @return the reactive {@link PersistentDatabaseInterface}
+     */
+    /* package */ PersistentDatabaseInterface reactive() {
+        return (PersistentDatabaseInterface) db;
     }
 
     /**
@@ -3608,6 +3589,25 @@ public abstract class Record implements Comparable<Record> {
             context.snapshot(record);
             record.deleted = true;
             context.scheduleDeletion(record);
+        }
+    }
+
+    /**
+     * Return the {@link Runway} engine behind this {@link Record Record's}
+     * {@link #binding}, or {@code null} if this {@link Record} is unbound.
+     *
+     * @return the {@link Runway} environment
+     */
+    @Nullable
+    private Runway environment() {
+        if(binding instanceof Runway) {
+            return (Runway) binding;
+        }
+        else if(binding instanceof Transaction) {
+            return ((Transaction) binding).database();
+        }
+        else {
+            return null;
         }
     }
 
@@ -5716,11 +5716,6 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
-        public Selections select(Selection<?>... selections) {
-            return delegate().select(selections);
-        }
-
-        @Override
         public <T extends Record> T load(long id) {
             return delegate().load(id);
         }
@@ -5728,6 +5723,11 @@ public abstract class Record implements Comparable<Record> {
         @Override
         public boolean save(boolean preventStaleWrites, Record... records) {
             return delegate().save(preventStaleWrites, records);
+        }
+
+        @Override
+        public Selections select(Selection<?>... selections) {
+            return delegate().select(selections);
         }
 
         /**

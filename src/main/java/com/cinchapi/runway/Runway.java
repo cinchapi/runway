@@ -208,6 +208,52 @@ public final class Runway implements
     }
 
     /**
+     * Atomically store {@code value} for {@code key} in {@code record} if and
+     * only if the record exists in the database and currently stores no value
+     * for {@code key}.
+     *
+     * @param concourse the {@link Concourse} connection to use; must not
+     *            already be in a transaction
+     * @param key the field name
+     * @param value the database-ready value to store
+     * @param record the record id
+     * @return {@code true} if the value is stored
+     */
+    /* package */ static boolean setIfAbsent(Concourse concourse, String key,
+            Object value, long record) {
+        concourse.stage();
+        try {
+            Map<String, Set<Object>> stored = concourse
+                    .select(ImmutableList.of(Record.SECTION_KEY, key), record);
+            if(stored.getOrDefault(Record.SECTION_KEY, ImmutableSet.of())
+                    .isEmpty()) {
+                // Without the section metadata the record does not exist in
+                // the database (it was never saved, or its data was erased),
+                // so a write here would orphan the value in a record that no
+                // load or find can ever return.
+                concourse.abort();
+                return false;
+            }
+            else if(stored.getOrDefault(key, ImmutableSet.of()).isEmpty()) {
+                concourse.set(key, value, record);
+                return concourse.commit();
+            }
+            else {
+                concourse.abort();
+                return false;
+            }
+        }
+        catch (TransactionException e) {
+            concourse.abort();
+            return false;
+        }
+        catch (Throwable t) {
+            concourse.abort();
+            throw t;
+        }
+    }
+
+    /**
      * Return a {@link List} based order specification.
      *
      * @param order
@@ -484,7 +530,7 @@ public final class Runway implements
      * This functionality is supported in Concourse 1.0.0+
      * </p>
      */
-    /* package */ final boolean supportsBulkCommands;
+    final boolean supportsBulkCommands;
 
     /**
      * A flag that indicates if the connected server supports the {@code *}
@@ -631,6 +677,71 @@ public final class Runway implements
             set.add(source);
         }
         return new AttachmentScope(this, sources);
+    }
+
+    /**
+     * Run {@code work} within a {@link Transaction} and commit it after the
+     * work completes.
+     * <p>
+     * The work receives the open {@link Transaction}: reads through it observe
+     * the transaction's isolated snapshot, and a {@link Record} loaded through
+     * it, saved through it, or {@link Transaction#create(Class, Object...)
+     * created} by it saves within it, so everything becomes durable together
+     * when the commit succeeds. A {@link Record} bound elsewhere saves against
+     * its own binding, outside of the transaction.
+     * </p>
+     * <p>
+     * If the commit fails because of a conflict, then the transaction is
+     * discarded and {@code work} runs again against a fresh one, within the
+     * bounds of the governing {@link AtomicRetryPolicy}. The {@code work} must
+     * therefore be free of side effects outside of the transaction. Any other
+     * exception thrown by {@code work} aborts the transaction and propagates to
+     * the caller.
+     * </p>
+     *
+     * @param work the work to run
+     * @return the result of {@code work}
+     * @throws RetryExhaustedException if the transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    public <T> T call(Function<Transaction, T> work) {
+        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
+        Concourse concourse = connections.request();
+        try {
+            // NOTE: The connection is held across the policy's backoff sleeps
+            // rather than released between attempts, because re-requesting
+            // per attempt would churn the pool.
+            int attempts = 0;
+            for (;;) {
+                Transaction transaction = new Transaction(this, concourse,
+                        false);
+                try {
+                    T result = work.apply(transaction);
+                    if(transaction.commit()) {
+                        return result;
+                    }
+                    else {
+                        // The commit did not succeed, so fall through to the
+                        // governing retry policy.
+                    }
+                }
+                catch (TransactionException e) {
+                    transaction.abort();
+                }
+                finally {
+                    transaction.close();
+                }
+                if(++attempts > policy.limit()) {
+                    throw new RetryExhaustedException(attempts);
+                }
+                else {
+                    policy.backoff(attempts);
+                }
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
     }
 
     @Override
@@ -900,6 +1011,17 @@ public final class Runway implements
         return gateway;
     }
 
+    /**
+     * Load a record by {@code id} without knowing its class.
+     *
+     * @param id
+     * @return the loaded record
+     */
+    @Override
+    public <T extends Record> T load(long id) {
+        return instantiate(id, null, null);
+    }
+
     @Override
     public <T extends Record> T loadNullSafe(Class<T> clazz, long id,
             Realms realms) {
@@ -1006,112 +1128,22 @@ public final class Runway implements
     }
 
     /**
-     * Stage the cleanup that the {@code context} deletions require on
-     * {@code saver}: the removal of every surviving {@link Record Record's}
-     * references to deleted records, and the re-assertion of each deletion as
-     * the last write for its record.
+     * Run {@code work} within a {@link Transaction} and commit it after the
+     * work completes.
+     * <p>
+     * This method behaves exactly like {@link #call(Function)} for work that
+     * does not produce a result.
+     * </p>
      *
-     * @param saver the {@link Saver} for the active staged transaction
-     * @param context the {@link SaveContext} for the save
+     * @param work the work to run
+     * @throws RetryExhaustedException if the transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    /* package */ void stageDeletions(Saver saver, SaveContext context) {
-        Set<Long> deletions = context.deletions();
-        if(!deletions.isEmpty()) {
-            // NOTE: A deletion is final within a save. A record staged before
-            // a deletion may reference (or hold data for) a record that the
-            // save has since deleted, so stage the removal of every survivor's
-            // references to deleted records and re-assert each deletion as
-            // the last write for its record. The removals must stay
-            // staged-only: mutating a survivor's in-memory state here would
-            // leave it inconsistent when the transaction aborts.
-            context.forEach((record, outcome) -> {
-                if(outcome != SaveContext.Outcome.DELETED && record
-                        .reconcileCaptureDeleteReferences(saver, deletions)) {
-                    // The record's stored data changes at commit, so it must
-                    // dispatch a save notification.
-                    context.markChanged(record);
-                }
-            });
-            for (long id : deletions) {
-                saver.clear(id);
-            }
-        }
-    }
-
-    /**
-     * Dispatch the lifecycle consequences of a committed save that was staged
-     * under {@code context}: a notification and a checkpoint for every
-     * {@link Record} that the commit changed or deleted.
-     *
-     * @param context the {@link SaveContext} whose staged save committed
-     */
-    /* package */ void dispatchSaveOutcomes(SaveContext context) {
-        Set<Long> deletions = context.deletions();
-        context.forEach((record, outcome) -> {
-            if(outcome == SaveContext.Outcome.DELETED) {
-                enqueueDeleteNotification(record);
-                record.checkpoint();
-            }
-            else if(outcome == SaveContext.Outcome.CHANGED) {
-                if(!deletions.isEmpty()) {
-                    // The commit removed every stored reference to a deleted
-                    // record, so the record's in-memory state must match.
-                    record.applyCaptureDeleteCleanup(deletions);
-                }
-                enqueueSaveNotification(record);
-                record.checkpoint();
-            }
-            else {
-                // The record was neither written nor deleted by this save, so
-                // there is no lifecycle event to report.
-            }
+    public void run(Consumer<Transaction> work) {
+        call(transaction -> {
+            work.accept(transaction);
+            return null;
         });
-    }
-
-    /**
-     * Atomically store {@code value} for {@code key} in {@code record} if and
-     * only if the record exists in the database and currently stores no value
-     * for {@code key}.
-     *
-     * @param concourse the {@link Concourse} connection to use; must not
-     *            already be in a transaction
-     * @param key the field name
-     * @param value the database-ready value to store
-     * @param record the record id
-     * @return {@code true} if the value is stored
-     */
-    /* package */ static boolean setIfAbsent(Concourse concourse, String key,
-            Object value, long record) {
-        concourse.stage();
-        try {
-            Map<String, Set<Object>> stored = concourse
-                    .select(ImmutableList.of(Record.SECTION_KEY, key), record);
-            if(stored.getOrDefault(Record.SECTION_KEY, ImmutableSet.of())
-                    .isEmpty()) {
-                // Without the section metadata the record does not exist in
-                // the database (it was never saved, or its data was erased),
-                // so a write here would orphan the value in a record that no
-                // load or find can ever return.
-                concourse.abort();
-                return false;
-            }
-            else if(stored.getOrDefault(key, ImmutableSet.of()).isEmpty()) {
-                concourse.set(key, value, record);
-                return concourse.commit();
-            }
-            else {
-                concourse.abort();
-                return false;
-            }
-        }
-        catch (TransactionException e) {
-            concourse.abort();
-            return false;
-        }
-        catch (Throwable t) {
-            concourse.abort();
-            throw t;
-        }
     }
 
     /**
@@ -1507,6 +1539,37 @@ public final class Runway implements
     }
 
     /**
+     * Start a {@link Transaction} that scopes reads and writes to a single ACID
+     * transaction.
+     * <p>
+     * The caller owns the {@link Transaction Transaction's} lifecycle: end it
+     * with exactly one of {@link Transaction#commit() commit} or
+     * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
+     * close} to abort whatever was not committed. Use a try-with-resources
+     * block so the connection that hosts the transaction always returns to the
+     * pool.
+     * </p>
+     *
+     * @return an open {@link Transaction}
+     */
+    public Transaction stage() {
+        return new Transaction(this, connections.request(), true);
+    }
+
+    /**
+     * Start a {@link Transaction} that scopes reads and writes to a single ACID
+     * transaction.
+     * <p>
+     * This method is an alias for {@link #stage()}.
+     * </p>
+     *
+     * @return an open {@link Transaction}
+     */
+    public Transaction startTransaction() {
+        return stage();
+    }
+
+    /**
      * Deactivate the thread-local reservation cache and release all cached
      * results. After this call, {@link #find}, {@link #count}, and
      * {@link #load} will query the database directly until {@link #reserve()}
@@ -1514,6 +1577,86 @@ public final class Runway implements
      */
     public void unreserve() {
         reservations.remove();
+    }
+
+    /**
+     * Resolve {@code selection} against the database by dispatching to the
+     * type-appropriate resolver, recording any required reads on {@code reader}
+     * and mutating {@code selection} with its result when the reads resolve.
+     *
+     * @param reader the {@link Reader} that records the required reads
+     * @param selection the {@link DatabaseSelection} to resolve
+     * @param transaction the {@link Transaction} context through which nested
+     *            reads execute, so they stay in the same resolution context as
+     *            {@code selection}
+     * @param <T> the {@link Record} type
+     */
+    @SuppressWarnings({ "rawtypes" })
+    /* package */ <T extends Record> void $selectFromDatabase(Reader reader,
+            DatabaseSelection<T> selection, Transaction transaction) {
+        Pending<? extends SelectResult<?>> pending;
+        if(selection instanceof CountSelection) {
+            pending = $selectCount(reader, (CountSelection<T>) selection,
+                    transaction);
+        }
+        else if(selection instanceof LoadRecordSelection) {
+            pending = $selectRecord(reader, (LoadRecordSelection<T>) selection);
+        }
+        else if(selection instanceof LoadClassSelection) {
+            pending = $selectClass(reader, (LoadClassSelection<T>) selection,
+                    transaction);
+        }
+        else if(selection instanceof FindSelection) {
+            pending = $selectCriteria(reader, (FindSelection<T>) selection,
+                    transaction);
+        }
+        else if(selection instanceof UniqueSelection) {
+            pending = $selectUnique(reader, (UniqueSelection<T>) selection,
+                    transaction);
+        }
+        else if(selection instanceof FirstSelection) {
+            pending = $selectFirst(reader, (FirstSelection<T>) selection,
+                    transaction);
+        }
+        else {
+            throw new IllegalStateException(
+                    "Unsupported Selection type " + selection.getClass());
+        }
+        pending.onResolve(res -> {
+            ((DatabaseSelection) selection).setResult(res.result);
+            selection.cacheValue = res.cacheValue;
+            selection.setState(Selection.State.FINISHED);
+        });
+    }
+
+    /**
+     * Dispatch the lifecycle consequences of a committed save that was staged
+     * under {@code context}: a notification and a checkpoint for every
+     * {@link Record} that the commit changed or deleted.
+     *
+     * @param context the {@link SaveContext} whose staged save committed
+     */
+    /* package */ void dispatchSaveOutcomes(SaveContext context) {
+        Set<Long> deletions = context.deletions();
+        context.forEach((record, outcome) -> {
+            if(outcome == SaveContext.Outcome.DELETED) {
+                enqueueDeleteNotification(record);
+                record.checkpoint();
+            }
+            else if(outcome == SaveContext.Outcome.CHANGED) {
+                if(!deletions.isEmpty()) {
+                    // The commit removed every stored reference to a deleted
+                    // record, so the record's in-memory state must match.
+                    record.applyCaptureDeleteCleanup(deletions);
+                }
+                enqueueSaveNotification(record);
+                record.checkpoint();
+            }
+            else {
+                // The record was neither written nor deleted by this save, so
+                // there is no lifecycle event to report.
+            }
+        });
     }
 
     /**
@@ -1604,14 +1747,36 @@ public final class Runway implements
     }
 
     /**
-     * Load a record by {@code id} without knowing its class.
+     * Stage the cleanup that the {@code context} deletions require on
+     * {@code saver}: the removal of every surviving {@link Record Record's}
+     * references to deleted records, and the re-assertion of each deletion as
+     * the last write for its record.
      *
-     * @param id
-     * @return the loaded record
+     * @param saver the {@link Saver} for the active staged transaction
+     * @param context the {@link SaveContext} for the save
      */
-    @Override
-    public <T extends Record> T load(long id) {
-        return instantiate(id, null, null);
+    /* package */ void stageDeletions(Saver saver, SaveContext context) {
+        Set<Long> deletions = context.deletions();
+        if(!deletions.isEmpty()) {
+            // NOTE: A deletion is final within a save. A record staged before
+            // a deletion may reference (or hold data for) a record that the
+            // save has since deleted, so stage the removal of every survivor's
+            // references to deleted records and re-assert each deletion as
+            // the last write for its record. The removals must stay
+            // staged-only: mutating a survivor's in-memory state here would
+            // leave it inconsistent when the transaction aborts.
+            context.forEach((record, outcome) -> {
+                if(outcome != SaveContext.Outcome.DELETED && record
+                        .reconcileCaptureDeleteReferences(saver, deletions)) {
+                    // The record's stored data changes at commit, so it must
+                    // dispatch a save notification.
+                    context.markChanged(record);
+                }
+            });
+            for (long id : deletions) {
+                saver.clear(id);
+            }
+        }
     }
 
     /**
@@ -1971,56 +2136,6 @@ public final class Runway implements
         // propagated.
         return inner.map(selected -> new SelectResult<>(
                 Iterables.getFirst(selected.result, null)));
-    }
-
-    /**
-     * Resolve {@code selection} against the database by dispatching to the
-     * type-appropriate resolver, recording any required reads on {@code reader}
-     * and mutating {@code selection} with its result when the reads resolve.
-     *
-     * @param reader the {@link Reader} that records the required reads
-     * @param selection the {@link DatabaseSelection} to resolve
-     * @param transaction the {@link Transaction} context through which nested
-     *            reads execute, so they stay in the same resolution context as
-     *            {@code selection}
-     * @param <T> the {@link Record} type
-     */
-    @SuppressWarnings({ "rawtypes" })
-    /* package */ <T extends Record> void $selectFromDatabase(Reader reader,
-            DatabaseSelection<T> selection, Transaction transaction) {
-        Pending<? extends SelectResult<?>> pending;
-        if(selection instanceof CountSelection) {
-            pending = $selectCount(reader, (CountSelection<T>) selection,
-                    transaction);
-        }
-        else if(selection instanceof LoadRecordSelection) {
-            pending = $selectRecord(reader, (LoadRecordSelection<T>) selection);
-        }
-        else if(selection instanceof LoadClassSelection) {
-            pending = $selectClass(reader, (LoadClassSelection<T>) selection,
-                    transaction);
-        }
-        else if(selection instanceof FindSelection) {
-            pending = $selectCriteria(reader, (FindSelection<T>) selection,
-                    transaction);
-        }
-        else if(selection instanceof UniqueSelection) {
-            pending = $selectUnique(reader, (UniqueSelection<T>) selection,
-                    transaction);
-        }
-        else if(selection instanceof FirstSelection) {
-            pending = $selectFirst(reader, (FirstSelection<T>) selection,
-                    transaction);
-        }
-        else {
-            throw new IllegalStateException(
-                    "Unsupported Selection type " + selection.getClass());
-        }
-        pending.onResolve(res -> {
-            ((DatabaseSelection) selection).setResult(res.result);
-            selection.cacheValue = res.cacheValue;
-            selection.setState(Selection.State.FINISHED);
-        });
     }
 
     /**
@@ -3878,121 +3993,6 @@ public final class Runway implements
             return Objects.hash(reservation, System.identityHashCode(filter));
         }
 
-    }
-
-    /**
-     * Start a {@link Transaction} that scopes reads and writes to a single ACID
-     * transaction.
-     * <p>
-     * The caller owns the {@link Transaction Transaction's} lifecycle: end it
-     * with exactly one of {@link Transaction#commit() commit} or
-     * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
-     * close} to abort whatever was not committed. Use a try-with-resources
-     * block so the connection that hosts the transaction always returns to the
-     * pool.
-     * </p>
-     *
-     * @return an open {@link Transaction}
-     */
-    public Transaction stage() {
-        return new Transaction(this, connections.request(), true);
-    }
-
-    /**
-     * Start a {@link Transaction} that scopes reads and writes to a single ACID
-     * transaction.
-     * <p>
-     * This method is an alias for {@link #stage()}.
-     * </p>
-     *
-     * @return an open {@link Transaction}
-     */
-    public Transaction startTransaction() {
-        return stage();
-    }
-
-    /**
-     * Run {@code work} within a {@link Transaction} and commit it after the
-     * work completes.
-     * <p>
-     * The work receives the open {@link Transaction}: reads through it observe
-     * the transaction's isolated snapshot, and a {@link Record} loaded through
-     * it, saved through it, or {@link Transaction#create(Class, Object...)
-     * created} by it saves within it, so everything becomes durable together
-     * when the commit succeeds. A {@link Record} bound elsewhere saves against
-     * its own binding, outside of the transaction.
-     * </p>
-     * <p>
-     * If the commit fails because of a conflict, then the transaction is
-     * discarded and {@code work} runs again against a fresh one, within the
-     * bounds of the governing {@link AtomicRetryPolicy}. The {@code work} must
-     * therefore be free of side effects outside of the transaction. Any other
-     * exception thrown by {@code work} aborts the transaction and propagates to
-     * the caller.
-     * </p>
-     *
-     * @param work the work to run
-     * @return the result of {@code work}
-     * @throws RetryExhaustedException if the transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
-    public <T> T call(Function<Transaction, T> work) {
-        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
-        Concourse concourse = connections.request();
-        try {
-            // NOTE: The connection is held across the policy's backoff sleeps
-            // rather than released between attempts, because re-requesting
-            // per attempt would churn the pool.
-            int attempts = 0;
-            for (;;) {
-                Transaction transaction = new Transaction(this, concourse,
-                        false);
-                try {
-                    T result = work.apply(transaction);
-                    if(transaction.commit()) {
-                        return result;
-                    }
-                    else {
-                        // The commit did not succeed, so fall through to the
-                        // governing retry policy.
-                    }
-                }
-                catch (TransactionException e) {
-                    transaction.abort();
-                }
-                finally {
-                    transaction.close();
-                }
-                if(++attempts > policy.limit()) {
-                    throw new RetryExhaustedException(attempts);
-                }
-                else {
-                    policy.backoff(attempts);
-                }
-            }
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
-     * Run {@code work} within a {@link Transaction} and commit it after the
-     * work completes.
-     * <p>
-     * This method behaves exactly like {@link #call(Function)} for work that
-     * does not produce a result.
-     * </p>
-     *
-     * @param work the work to run
-     * @throws RetryExhaustedException if the transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
-    public void run(Consumer<Transaction> work) {
-        call(transaction -> {
-            work.accept(transaction);
-            return null;
-        });
     }
 
 }
