@@ -3968,6 +3968,10 @@ public final class Runway implements
                     if(transaction.commit()) {
                         return result;
                     }
+                    else {
+                        // The commit did not succeed, so fall through to the
+                        // governing retry policy.
+                    }
                 }
                 catch (TransactionException e) {
                     transaction.abort();

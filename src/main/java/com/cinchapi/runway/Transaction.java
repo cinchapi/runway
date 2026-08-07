@@ -174,37 +174,39 @@ public class Transaction implements PersistentDatabaseInterface, AutoCloseable {
 
     @Override
     public Selections select(Selection<?>... options) {
-        if(!open) {
+        if(open) {
+            verifyOwner();
+            Preconditions.checkArgument(options.length > 0);
+            DatabaseSelection<?>[] selections = Arrays.stream(options)
+                    .peek(option -> Preconditions.checkState(
+                            option.state() == Selection.State.PENDING || option
+                                    .state() == Selection.State.RESOLVED,
+                            "Selection has already been submitted"))
+                    .map(DatabaseSelection::resolve)
+                    .toArray(DatabaseSelection[]::new);
+            try (Reader reader = database.supportsBulkCommands
+                    ? new BatchReader(concourse)
+                    : new IncrementalReader(concourse)) {
+                for (DatabaseSelection<?> selection : selections) {
+                    if(selection.state == Selection.State.RESOLVED) {
+                        selection.setState(Selection.State.FINISHED);
+                    }
+                    else {
+                        selection.setState(Selection.State.SUBMITTED);
+                        database.$selectFromDatabase(reader, selection, this);
+                    }
+                }
+                reader.drain();
+            }
+            Set<Record> seen = Sets.newIdentityHashSet();
+            for (DatabaseSelection<?> selection : selections) {
+                bind(selection.get(), seen);
+            }
+            return new Selections(selections);
+        }
+        else {
             return database.select(options);
         }
-        verifyOwner();
-        Preconditions.checkArgument(options.length > 0);
-        DatabaseSelection<?>[] selections = Arrays.stream(options)
-                .peek(option -> Preconditions.checkState(
-                        option.state() == Selection.State.PENDING
-                                || option.state() == Selection.State.RESOLVED,
-                        "Selection has already been submitted"))
-                .map(DatabaseSelection::resolve)
-                .toArray(DatabaseSelection[]::new);
-        try (Reader reader = database.supportsBulkCommands
-                ? new BatchReader(concourse)
-                : new IncrementalReader(concourse)) {
-            for (DatabaseSelection<?> selection : selections) {
-                if(selection.state == Selection.State.RESOLVED) {
-                    selection.setState(Selection.State.FINISHED);
-                }
-                else {
-                    selection.setState(Selection.State.SUBMITTED);
-                    database.$selectFromDatabase(reader, selection, this);
-                }
-            }
-            reader.drain();
-        }
-        Set<Record> seen = Sets.newIdentityHashSet();
-        for (DatabaseSelection<?> selection : selections) {
-            bind(selection.get(), seen);
-        }
-        return new Selections(selections);
     }
 
     /**
@@ -284,31 +286,33 @@ public class Transaction implements PersistentDatabaseInterface, AutoCloseable {
      */
     @Override
     public boolean save(boolean preventStaleWrites, Record... records) {
-        if(!open) {
+        if(open) {
+            verifyOwner();
+            Saver saver = new IncrementalSaver(concourse);
+            SaveContext context = new SaveContext(preventStaleWrites);
+            try {
+                // NOTE: The saver is never staged or committed here because
+                // the connection is already within this transaction, whose
+                // commit is the terminal operation.
+                for (Record record : records) {
+                    Verify.that(record.overrideSave() == null,
+                            "Cannot save a Record that overrides the save"
+                                    + " pipeline within a Transaction");
+                    record.bind(this, provider);
+                    record.saveWithinTransaction(saver, context);
+                }
+                database.stageDeletions(saver, context);
+            }
+            catch (Throwable t) {
+                context.restore();
+                throw t;
+            }
+            saves.add(context);
+            return true;
+        }
+        else {
             return database.save(preventStaleWrites, records);
         }
-        verifyOwner();
-        Saver saver = new IncrementalSaver(concourse);
-        SaveContext context = new SaveContext(preventStaleWrites);
-        try {
-            // NOTE: The saver is never staged or committed here because
-            // the connection is already within this transaction, whose
-            // commit is the terminal operation.
-            for (Record record : records) {
-                Verify.that(record.overrideSave() == null,
-                        "Cannot save a Record that overrides the save"
-                                + " pipeline within a Transaction");
-                record.bind(this, provider);
-                record.saveWithinTransaction(saver, context);
-            }
-            database.stageDeletions(saver, context);
-        }
-        catch (Throwable t) {
-            context.restore();
-            throw t;
-        }
-        saves.add(context);
-        return true;
     }
 
     /**
