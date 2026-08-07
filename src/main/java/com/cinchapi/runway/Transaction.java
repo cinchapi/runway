@@ -66,6 +66,8 @@ import com.google.common.collect.Sets;
  * block guarantees a clean end. After the transaction ends, it forwards reads
  * and saves to the enclosing {@link Runway}, so a {@link Record} bound to it
  * unwinds to the database scope; only another {@link #commit()} is refused.
+ * Side effects that depend on the outcome can be registered with
+ * {@link #afterCommit(Runnable)} and {@link #afterAbort(Runnable)}.
  * </p>
  * <p>
  * A save that fails within an open transaction poisons it: the writes that were
@@ -119,6 +121,18 @@ public class Transaction extends Binding implements AutoCloseable {
      * {@link #commit()} or unwound at {@link #abort()}.
      */
     private final List<SaveContext> saves = new ArrayList<>();
+
+    /**
+     * The hooks to run, in registration order, after a successful
+     * {@link #commit()}.
+     */
+    private final List<Runnable> afterCommitHooks = new ArrayList<>();
+
+    /**
+     * The hooks to run, in registration order, after the transaction ends
+     * without a successful commit.
+     */
+    private final List<Runnable> afterAbortHooks = new ArrayList<>();
 
     /**
      * The {@link ConcourseProvider} that scopes a bound {@link Record Record's}
@@ -340,12 +354,72 @@ public class Transaction extends Binding implements AutoCloseable {
     }
 
     /**
+     * Register a {@code hook} to run once, after this {@link Transaction}
+     * successfully commits.
+     * <p>
+     * Use this for side effects that must not happen unless the staged writes
+     * become durable (e.g., a notification about a created {@link Record}).
+     * Hooks run synchronously on the owner thread, in registration order, after
+     * the commit succeeds. If the transaction ends without a successful commit,
+     * then the hooks registered on it never run; within
+     * {@link Runway#run(java.util.function.Consumer) run} and
+     * {@link Runway#supply(java.util.function.Function) supply}, each attempt
+     * is a distinct {@link Transaction}, so a hook registered by the work never
+     * runs for an attempt that a conflict retry discards.
+     * </p>
+     * <p>
+     * A hook that throws does not affect the outcome: the transaction remains
+     * committed, the exception propagates to the caller and any remaining hooks
+     * are skipped.
+     * </p>
+     *
+     * @param hook the side effect to run after a successful commit
+     * @throws IllegalStateException if the transaction already ended, or if a
+     *             save failed within it
+     */
+    public void afterCommit(Runnable hook) {
+        verify();
+        afterCommitHooks.add(hook);
+    }
+
+    /**
+     * Register a {@code hook} to run once, after this {@link Transaction} ends
+     * without a successful commit: an explicit {@link #abort()}, a
+     * {@link #close()} that aborts, or a {@link #commit()} that fails.
+     * <p>
+     * Use this for side effects that must happen only when the staged writes
+     * are discarded (e.g., compensating cleanup or telemetry). Hooks run
+     * synchronously on the owner thread, in registration order, after the
+     * transaction ends. If the transaction commits, then the hooks never run;
+     * within {@link Runway#run(java.util.function.Consumer) run} and
+     * {@link Runway#supply(java.util.function.Function) supply}, each attempt
+     * is a distinct {@link Transaction}, so a hook registered by the work runs
+     * for its own attempt, including an attempt that a conflict retry discards.
+     * </p>
+     * <p>
+     * A hook that throws does not affect the outcome: the exception propagates
+     * to the caller and any remaining hooks are skipped.
+     * </p>
+     *
+     * @param hook the side effect to run after the transaction ends without a
+     *            successful commit
+     * @throws IllegalStateException if the transaction already ended, or if a
+     *             save failed within it
+     */
+    public void afterAbort(Runnable hook) {
+        verify();
+        afterAbortHooks.add(hook);
+    }
+
+    /**
      * Attempt to commit the transaction and make every staged write durable.
      * <p>
      * On success, the lifecycle consequences of each staged save (e.g., save
-     * and delete notifications) are dispatched. On failure, every staged write
-     * is discarded; a {@link Record Record's} in-memory edits remain, the same
-     * as after a failed save. Either way, the transaction ends.
+     * and delete notifications) are dispatched and every
+     * {@link #afterCommit(Runnable) afterCommit} hook runs. On failure, every
+     * staged write is discarded and every {@link #afterAbort(Runnable)
+     * afterAbort} hook runs; a {@link Record Record's} in-memory edits remain,
+     * the same as after a failed save. Either way, the transaction ends.
      * </p>
      *
      * @return {@code true} if the transaction commits
@@ -366,7 +440,8 @@ public class Transaction extends Binding implements AutoCloseable {
 
     /**
      * Abort the transaction and discard every staged write; a {@link Record
-     * Record's} in-memory edits remain, the same as after a failed save.
+     * Record's} in-memory edits remain, the same as after a failed save. Every
+     * {@link #afterAbort(Runnable) afterAbort} hook runs.
      * <p>
      * This method has no effect if the transaction already ended.
      * </p>
@@ -452,25 +527,37 @@ public class Transaction extends Binding implements AutoCloseable {
 
     /**
      * End the transaction: dispatch or unwind the lifecycle consequences of
-     * every staged save and, if this view {@link #owned owns} the connection,
-     * release it back to the pool.
+     * every staged save, run the hooks registered for the outcome and, if this
+     * view {@link #owned owns} the connection, release it back to the pool.
      *
      * @param committed {@code true} if the transaction committed
      */
     private void end(boolean committed) {
         open = false;
-        if(committed) {
-            for (SaveContext context : saves) {
-                database.dispatchSaveOutcomes(context);
+        try {
+            if(committed) {
+                for (SaveContext context : saves) {
+                    database.dispatchSaveOutcomes(context);
+                }
+                for (Runnable hook : afterCommitHooks) {
+                    hook.run();
+                }
+            }
+            else {
+                for (int i = saves.size() - 1; i >= 0; --i) {
+                    saves.get(i).restore();
+                }
+                for (Runnable hook : afterAbortHooks) {
+                    hook.run();
+                }
             }
         }
-        else {
-            for (int i = saves.size() - 1; i >= 0; --i) {
-                saves.get(i).restore();
+        finally {
+            // A hook that throws must not prevent the connection from being
+            // released.
+            if(owned) {
+                database.connections.release(concourse);
             }
-        }
-        if(owned) {
-            database.connections.release(concourse);
         }
     }
 

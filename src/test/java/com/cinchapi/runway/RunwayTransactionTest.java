@@ -466,8 +466,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * score to 2.</li>
      * <li>Save the {@link Item} together with a {@link Registration} whose
      * {@link Required} name is empty, so the save throws.</li>
-     * <li>Attempt a load, a save and a {@code create()} through the poisoned
-     * transaction.</li>
+     * <li>Attempt a load, a save, a {@code create()} and an {@code afterCommit}
+     * registration through the poisoned transaction.</li>
      * <li>Call {@code abort()}.</li>
      * </ul>
      * <p>
@@ -502,6 +502,11 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             try {
                 transaction.create(Item.class, "gadget", 3);
                 Assert.fail("Expected the create to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.afterCommit(() -> {});
+                Assert.fail("Expected the hook registration to be refused");
             }
             catch (IllegalStateException e) {/* expected */}
             transaction.abort();
@@ -609,6 +614,118 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(txItem.save());
         });
         Assert.assertEquals(9, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an
+     * {@link Transaction#afterCommit(Runnable) afterCommit} hook runs exactly
+     * once, only after the commit succeeds.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, change it and
+     * {@code save()}.</li>
+     * <li>Register an {@code afterCommit} hook that increments a counter.</li>
+     * <li>Check the counter, then {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The counter is 0 before the commit and 1 after
+     * it.
+     */
+    @Test
+    public void testAfterCommitHookRunsOnceAfterCommit() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicInteger effects = new AtomicInteger(0);
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            transaction.afterCommit(effects::incrementAndGet);
+            Assert.assertEquals(0, effects.get());
+            Assert.assertTrue(transaction.commit());
+            Assert.assertEquals(1, effects.get());
+        }
+        Assert.assertEquals(1, effects.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an
+     * {@link Transaction#afterAbort(Runnable) afterAbort} hook runs when the
+     * transaction ends without a successful commit, while an
+     * {@link Transaction#afterCommit(Runnable) afterCommit} hook never runs.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} and register an {@code afterCommit} hook
+     * and an {@code afterAbort} hook.</li>
+     * <li>Exit the try-with-resources block without a commit, so
+     * {@code close()} aborts.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@code afterAbort} counter is 1 and the
+     * {@code afterCommit} counter is 0.
+     */
+    @Test
+    public void testAfterAbortHookRunsWhenTransactionEndsWithoutCommit() {
+        AtomicInteger commits = new AtomicInteger(0);
+        AtomicInteger aborts = new AtomicInteger(0);
+        try (Transaction transaction = runway.stage()) {
+            transaction.afterCommit(commits::incrementAndGet);
+            transaction.afterAbort(aborts::incrementAndGet);
+        }
+        Assert.assertEquals(0, commits.get());
+        Assert.assertEquals(1, aborts.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an
+     * {@link Transaction#afterCommit(Runnable) afterCommit} hook registered by
+     * work within {@link Runway#run(java.util.function.Consumer) run} fires
+     * exactly once, even when a conflict forces the work to retry.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code runway.run(work)} where the work loads the {@link Item},
+     * saves a change and registers an {@code afterCommit} hook.</li>
+     * <li>On the first attempt only, modify the {@link Item} outside of the
+     * transaction after the transactional read, so the first commit attempt
+     * fails and the work retries.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The work runs more than once, the hook counter
+     * is exactly 1 and the stored score is 2.
+     */
+    @Test
+    public void testAfterCommitHookRunsOnceDespiteConflictRetry() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicInteger attempts = new AtomicInteger(0);
+        AtomicInteger effects = new AtomicInteger(0);
+        runway.run(transaction -> {
+            Item txItem = transaction.load(Item.class, item.id());
+            if(attempts.getAndIncrement() == 0) {
+                // Invalidate the transaction's snapshot so the first commit
+                // attempt fails and the work retries.
+                Item outside = runway.load(Item.class, item.id());
+                outside.name = "conflict";
+                Assert.assertTrue(outside.save());
+            }
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            transaction.afterCommit(effects::incrementAndGet);
+        });
+        Assert.assertTrue(attempts.get() > 1);
+        Assert.assertEquals(1, effects.get());
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
     }
 
     /**
