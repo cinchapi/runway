@@ -20,6 +20,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -515,6 +516,49 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction#save(Record...)}
+     * call that is rejected because a {@link Record} overrides the save
+     * pipeline stages nothing and does not poison the transaction.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and set the score
+     * to 2.</li>
+     * <li>Save the {@link Item} and a {@link Bypass} together through the
+     * transaction.</li>
+     * <li>After the rejection, load the {@link Item} through the transaction,
+     * save the transactional copy again and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The rejected save throws an
+     * {@link IllegalStateException} and stages nothing, the transaction remains
+     * usable and the commit makes the score of 2 durable.
+     */
+    @Test
+    public void testRejectedSaveOfOverrideSaveRecordDoesNotPoisonTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Bypass bypass = new Bypass("shortcut");
+            try {
+                transaction.save(txItem, bypass);
+                Assert.fail("Expected the save to be rejected");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            Assert.assertEquals(1,
+                    transaction.load(Item.class, item.id()).score);
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that
      * {@link Record#supply(java.util.function.Function) supply} on a
      * {@link Runway}-bound {@link Record} runs the work in a new transaction
@@ -726,6 +770,47 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(attempts.get() > 1);
         Assert.assertEquals(1, effects.get());
         Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#run(java.util.function.Consumer) run} does not re-run the
+     * work when an {@code afterCommit} hook throws a
+     * {@link TransactionException} after a successful commit.
+     * <p>
+     * <strong>Start state:</strong> No stored {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code runway.run(work)} where the work creates and saves an
+     * {@link Item} and registers an {@code afterCommit} hook that throws a
+     * {@link TransactionException}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The hook's exception propagates, the work runs
+     * exactly once and the {@link Item} is durable.
+     */
+    @Test
+    public void testRunDoesNotRetryWhenAfterCommitHookThrowsTransactionException() {
+        AtomicInteger runs = new AtomicInteger(0);
+        try {
+            runway.run(transaction -> {
+                runs.incrementAndGet();
+                Item item = transaction.create(Item.class, "widget", 1);
+                Assert.assertTrue(item.save());
+                transaction.afterCommit(() -> {
+                    throw new TransactionException();
+                });
+            });
+            Assert.fail("Expected the afterCommit hook's exception to"
+                    + " propagate");
+        }
+        catch (TransactionException e) {
+            // Expected: the writes are durable and the exception propagates
+            // without a retry.
+        }
+        Assert.assertEquals(1, runs.get());
+        Assert.assertEquals(1, runway.count(Item.class));
     }
 
     /**
@@ -996,6 +1081,45 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Basket txBasket = transaction.load(Basket.class, basket.id());
             txBasket.item.score = 2;
             Assert.assertTrue(txBasket.item.save());
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Transaction#save(Record...)}
+     * binds the linked {@link Record Records} that are reachable from the saved
+     * roots, so a linked {@link Record Record's} direct {@code save()} stages
+     * within the transaction.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Basket} that links to an
+     * {@link Item} with a score of 1, both bound to the enclosing
+     * {@link Runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} and save the {@link Basket} through
+     * it.</li>
+     * <li>Set the linked {@link Item Item's} score to 2 and call {@code save()}
+     * on the {@link Item} directly.</li>
+     * <li>Load the {@link Item} through the enclosing {@link Runway} before the
+     * commit, then commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Before the commit the non-transactional load
+     * observes 1; after the commit it observes 2.
+     */
+    @Test
+    public void testLinkedRecordSavedThroughTransactionIsBoundToIt() {
+        Item item = new Item("widget", 1);
+        Basket basket = new Basket("bin", item);
+        basket.assign(runway);
+        Assert.assertTrue(basket.save());
+        try (Transaction transaction = runway.stage()) {
+            Assert.assertTrue(transaction.save(basket));
+            item.score = 2;
+            Assert.assertTrue(item.save());
             Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
             Assert.assertTrue(transaction.commit());
         }
@@ -1544,6 +1668,34 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
          */
         public Registration(String name) {
             this.name = name;
+        }
+    }
+
+    /**
+     * A {@link Record} that {@link #overrideSave() overrides} the save
+     * pipeline, so it cannot save within a {@link Transaction}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Bypass extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         */
+        public Bypass(String name) {
+            this.name = name;
+        }
+
+        @Override
+        protected Supplier<Boolean> overrideSave() {
+            return () -> true;
         }
     }
 

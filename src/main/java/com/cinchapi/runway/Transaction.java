@@ -104,9 +104,12 @@ public class Transaction extends Binding implements AutoCloseable {
     private final Thread owner;
 
     /**
-     * Whether the transaction is still active.
+     * Whether the transaction is still active. The field is volatile so a
+     * thread that operates on a bound {@link Record} after the transaction ends
+     * observes the ended state and falls through to the enclosing
+     * {@link Runway}.
      */
-    private boolean open;
+    private volatile boolean open;
 
     /**
      * Whether a failed save poisoned the transaction. A poisoned transaction
@@ -114,6 +117,11 @@ public class Transaction extends Binding implements AutoCloseable {
      * staged before the failure can never {@link #commit()}.
      */
     private boolean poisoned = false;
+
+    /**
+     * Whether the transaction successfully committed.
+     */
+    private boolean committed = false;
 
     /**
      * The {@link SaveContext} for every save staged within the transaction, in
@@ -280,14 +288,17 @@ public class Transaction extends Binding implements AutoCloseable {
      * succeeds. Until then, no reader outside the transaction can observe them.
      * </p>
      * <p>
-     * If this method throws, then the transaction is poisoned: the writes that
+     * A {@link Record} that overrides the save pipeline is rejected before
+     * anything is staged, and the transaction remains usable. If the save fails
+     * after staging begins, then the transaction is poisoned: the writes that
      * were staged before the failure can never commit, and every subsequent
      * operation is refused except {@link #abort()}.
      * </p>
      *
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
-     * @throws IllegalStateException if a prior save failed within the
+     * @throws IllegalStateException if any of the {@code records} overrides the
+     *             save pipeline, or if a prior save failed within the
      *             transaction
      */
     @Override
@@ -304,7 +315,9 @@ public class Transaction extends Binding implements AutoCloseable {
      * </p>
      *
      * <p>
-     * If this method throws, then the transaction is poisoned: the writes that
+     * A {@link Record} that overrides the save pipeline is rejected before
+     * anything is staged, and the transaction remains usable. If the save fails
+     * after staging begins, then the transaction is poisoned: the writes that
      * were staged before the failure can never commit, and every subsequent
      * operation is refused except {@link #abort()}.
      * </p>
@@ -315,7 +328,8 @@ public class Transaction extends Binding implements AutoCloseable {
      * @return {@code true} when the changes are staged
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and any {@link Record} has been externally modified
-     * @throws IllegalStateException if a prior save failed within the
+     * @throws IllegalStateException if any of the {@code records} overrides the
+     *             save pipeline, or if a prior save failed within the
      *             transaction
      */
     @Override
@@ -323,17 +337,20 @@ public class Transaction extends Binding implements AutoCloseable {
         if(open) {
             verifyOwner();
             verifyNotPoisoned();
+            for (Record record : records) {
+                Verify.that(record.overrideSave() == null,
+                        "Cannot save a Record that overrides the save"
+                                + " pipeline within a Transaction");
+            }
             Saver saver = new IncrementalSaver(concourse);
             SaveContext context = new SaveContext(preventStaleWrites);
             try {
                 // NOTE: The saver is never staged or committed here because
                 // the connection is already within this transaction, whose
                 // commit is the terminal operation.
+                Set<Record> seen = Sets.newIdentityHashSet();
                 for (Record record : records) {
-                    Verify.that(record.overrideSave() == null,
-                            "Cannot save a Record that overrides the save"
-                                    + " pipeline within a Transaction");
-                    record.bind(this, provider);
+                    record.bindGraph(this, provider, seen);
                     record.saveWithinTransaction(saver, context);
                 }
                 database.stageDeletions(saver, context);
@@ -428,7 +445,6 @@ public class Transaction extends Binding implements AutoCloseable {
      */
     public boolean commit() {
         verify();
-        boolean committed = false;
         try {
             committed = concourse.commit();
         }
@@ -503,6 +519,15 @@ public class Transaction extends Binding implements AutoCloseable {
      */
     boolean open() {
         return open;
+    }
+
+    /**
+     * Return {@code true} if the transaction successfully committed.
+     *
+     * @return {@code true} if the transaction {@link #committed}
+     */
+    boolean committed() {
+        return committed;
     }
 
     /**
