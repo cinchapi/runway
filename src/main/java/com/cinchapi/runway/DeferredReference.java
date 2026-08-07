@@ -67,7 +67,7 @@ public final class DeferredReference<T extends Record> {
     /**
      * Construct a new instance.
      *
-     * @param reference
+     * @param reference the already loaded {@link Record} to wrap
      */
     public DeferredReference(T reference) {
         this.reference = reference;
@@ -78,8 +78,8 @@ public final class DeferredReference<T extends Record> {
     /**
      * Construct a new instance.
      *
-     * @param id
-     * @param db
+     * @param id the id of the referenced {@link Record}
+     * @param db the {@link Binding} through which the reference loads
      */
     DeferredReference(long id, Binding db) {
         this.id = id;

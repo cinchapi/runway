@@ -254,6 +254,8 @@ public class Transaction extends Binding implements AutoCloseable {
      * @param args constructor arguments for the {@link Record}
      * @param <T> the type of {@link Record}
      * @return the newly created {@link Record}, not yet saved
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
      */
     public <T extends Record> T create(Class<T> clazz, Object... args) {
         if(open) {
@@ -357,7 +359,7 @@ public class Transaction extends Binding implements AutoCloseable {
             }
             catch (Throwable t) {
                 // The writes that were staged before the failure cannot be
-                // surgically undone, so the transaction must never commit.
+                // selectively undone, so the transaction must never commit.
                 poisoned = true;
                 context.restore();
                 throw t;

@@ -1531,8 +1531,7 @@ public final class Runway extends Binding implements AutoCloseable {
         Concourse concourse = connections.request();
         try {
             // NOTE: The connection is held across the policy's backoff sleeps
-            // rather than released between attempts, because re-requesting
-            // per attempt would churn the pool.
+            // so the retry loop does not churn the pool.
             int attempts = 0;
             for (;;) {
                 Transaction transaction = new Transaction(this, concourse,
@@ -3039,8 +3038,7 @@ public final class Runway extends Binding implements AutoCloseable {
         Concourse concourse = connections.request();
         try {
             // NOTE: The connection is held across the policy's backoff sleeps
-            // rather than released between attempts, because re-requesting
-            // per attempt would churn the pool.
+            // so the retry loop does not churn the pool.
             int attempts = 0;
             for (;;) {
                 Transaction transaction = new Transaction(this, concourse,
