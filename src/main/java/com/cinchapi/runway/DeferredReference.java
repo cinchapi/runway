@@ -53,11 +53,11 @@ public final class DeferredReference<T extends Record> {
     private final long id;
 
     /**
-     * The {@link PersistentDatabaseInterface} to use for loading the reference.
-     * The reference resolves within the scope of the owning {@link Record
-     * Record's} binding at the moment of the first access.
+     * The {@link Binding} to use for loading the reference. The reference
+     * resolves within the scope of the owning {@link Record Record's} binding
+     * at the moment of the first access.
      */
-    private final PersistentDatabaseInterface db;
+    private final Binding db;
 
     /**
      * The loaded reference.
@@ -81,7 +81,7 @@ public final class DeferredReference<T extends Record> {
      * @param id
      * @param db
      */
-    DeferredReference(long id, PersistentDatabaseInterface db) {
+    DeferredReference(long id, Binding db) {
         this.id = id;
         this.db = db;
     }

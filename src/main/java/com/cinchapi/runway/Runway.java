@@ -133,9 +133,7 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  *
  * @author Jeff Nelson
  */
-public final class Runway implements
-        AutoCloseable,
-        PersistentDatabaseInterface {
+public final class Runway implements AutoCloseable, Binding {
 
     // NOTE: Internal methods within a $ prefix are ones that return raw
     // database results and are intended to be consumed by other methods in this
@@ -1006,7 +1004,7 @@ public final class Runway implements
     @Override
     public Gateway gateway() {
         if(gateway == null) {
-            gateway = PersistentDatabaseInterface.super.gateway();
+            gateway = Binding.super.gateway();
         }
         return gateway;
     }
@@ -1026,8 +1024,7 @@ public final class Runway implements
     public <T extends Record> T loadNullSafe(Class<T> clazz, long id,
             Realms realms) {
         try {
-            return PersistentDatabaseInterface.super.loadNullSafe(clazz, id,
-                    realms);
+            return Binding.super.loadNullSafe(clazz, id, realms);
         }
         catch (Exception e) {
             onLoadFailureHandler.accept(clazz, id, e);

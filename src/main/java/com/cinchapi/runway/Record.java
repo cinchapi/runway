@@ -670,8 +670,8 @@ public abstract class Record implements Comparable<Record> {
             setInternalFieldValue("id", NULL_ID, instance);
             setInternalFieldValue("inViolation", false, instance);
             setInternalFieldValue("connections", connections, instance);
-            setInternalFieldValue("db",
-                    new ReactiveDatabaseInterface((Record) instance), instance);
+            setInternalFieldValue("db", new ReactiveBinding((Record) instance),
+                    instance);
             return instance;
         }
         catch (InstantiationException e) {
@@ -923,8 +923,7 @@ public abstract class Record implements Comparable<Record> {
      * The {@link DatabaseInterface} that can be used to make queries within the
      * database from which this {@link Record} is sourced.
      */
-    protected final transient DatabaseInterface db = new ReactiveDatabaseInterface(
-            this);
+    protected final transient DatabaseInterface db = new ReactiveBinding(this);
 
     /**
      * A log of any suppressed errors related to this Record. A concatenation of
@@ -994,11 +993,11 @@ public abstract class Record implements Comparable<Record> {
     private transient boolean inViolation = false;
 
     /**
-     * The {@link PersistentDatabaseInterface} that this {@link Record} is bound
-     * to: the {@link Runway} instance it is {@link #assign(Runway) assigned}
-     * to, or the {@link Transaction} it joined.
+     * The {@link Binding} that this {@link Record} is bound to: the
+     * {@link Runway} instance it is {@link #assign(Runway) assigned} to, or the
+     * {@link Transaction} it joined.
      */
-    private transient PersistentDatabaseInterface binding = null;
+    private transient Binding binding = null;
 
     /**
      * A cache of the {@link #$computed() properties}.
@@ -2370,34 +2369,33 @@ public abstract class Record implements Comparable<Record> {
      * Bind this {@link Record} to {@code binding} so that every operation,
      * including each {@link #save() save}, is scoped to it.
      *
-     * @param binding the {@link PersistentDatabaseInterface} to bind
+     * @param binding the {@link Binding} to bind
      * @param connections the {@link ConcourseProvider} that supplies
      *            connections within the scope of the binding
      */
-    void bind(PersistentDatabaseInterface binding,
-            ConcourseProvider connections) {
+    void bind(Binding binding, ConcourseProvider connections) {
         this.binding = binding;
         this.connections = connections;
     }
 
     /**
-     * {@link #bind(PersistentDatabaseInterface, ConcourseProvider) Bind} this
-     * {@link Record}, and every loaded {@link Record} that is reachable from
-     * its fields, to {@code binding}.
+     * {@link #bind(Binding, ConcourseProvider) Bind} this {@link Record}, and
+     * every loaded {@link Record} that is reachable from its fields, to
+     * {@code binding}.
      * <p>
      * A {@link DeferredReference} that was never {@link DeferredReference#get()
      * accessed} holds no loaded {@link Record} to bind; when it is accessed, it
      * resolves through its owner's binding at that moment.
      * </p>
      *
-     * @param binding the {@link PersistentDatabaseInterface} to bind
+     * @param binding the {@link Binding} to bind
      * @param connections the {@link ConcourseProvider} that supplies
      *            connections within the scope of the binding
      * @param seen the identity set of {@link Record Records} that are already
      *            bound
      */
-    void bindGraph(PersistentDatabaseInterface binding,
-            ConcourseProvider connections, Set<Record> seen) {
+    void bindGraph(Binding binding, ConcourseProvider connections,
+            Set<Record> seen) {
         if(seen.add(this)) {
             bind(binding, connections);
             fields().stream().filter(
@@ -2553,7 +2551,7 @@ public abstract class Record implements Comparable<Record> {
         existing.put(id, this); // add the current object so we don't
                                 // recurse infinitely
         if(data == null) {
-            Set<String> paths = environment()
+            Set<String> paths = harness()
                     .getPathsForClassIfSupported(this.getClass());
             // @formatter:off
             data = paths != null
@@ -2561,8 +2559,8 @@ public abstract class Record implements Comparable<Record> {
                     : concourse.select(id);
             // @formatter:on
         }
-        if(prefix == null || !environment().properties()
-                .supportsPreSelectLinkedRecords()) {
+        if(prefix == null
+                || !harness().properties().supportsPreSelectLinkedRecords()) {
             prefix = "";
         }
         checkConstraints(concourse, data, prefix);
@@ -2646,7 +2644,7 @@ public abstract class Record implements Comparable<Record> {
                                 value = existing.get(id);
                                 value = value == null
                                         ? load(type, id, existing, connections,
-                                                concourse, environment(), data,
+                                                concourse, harness(), data,
                                                 prepend, targets)
                                         : value;
                             }
@@ -2685,10 +2683,10 @@ public abstract class Record implements Comparable<Record> {
      * operation, so it remains correct across {@link #assign(Runway)
      * re-assignment} and the end of a {@link Transaction}.
      *
-     * @return the reactive {@link PersistentDatabaseInterface}
+     * @return the reactive {@link Binding}
      */
-    /* package */ PersistentDatabaseInterface reactive() {
-        return (PersistentDatabaseInterface) db;
+    /* package */ Binding reactive() {
+        return (Binding) db;
     }
 
     /**
@@ -3267,8 +3265,8 @@ public abstract class Record implements Comparable<Record> {
                         Class<? extends Record> targetClass = Reflection
                                 .getClassCasted(section);
                         converted = load(targetClass, target, alreadyLoaded,
-                                connections, concourse, environment(), data,
-                                null, targets);
+                                connections, concourse, harness(), data, null,
+                                targets);
                     }
                 }
             }
@@ -3503,9 +3501,8 @@ public abstract class Record implements Comparable<Record> {
      * @return the governing {@link DynamicWritePolicy}
      */
     private DynamicWritePolicy dynamicWritePolicy() {
-        Runway environment = environment();
-        return environment != null
-                ? environment.properties().dynamicWritePolicy()
+        Runway runway = harness();
+        return runway != null ? runway.properties().dynamicWritePolicy()
                 : DynamicWritePolicy.permissive();
     }
 
@@ -3593,13 +3590,14 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the {@link Runway} engine behind this {@link Record Record's}
-     * {@link #binding}, or {@code null} if this {@link Record} is unbound.
+     * Return the {@link Runway} harness that ultimately backs this
+     * {@link Record Record's} {@link #binding}, or {@code null} if this
+     * {@link Record} is unbound.
      *
-     * @return the {@link Runway} environment
+     * @return the {@link Runway} harness
      */
     @Nullable
-    private Runway environment() {
+    private Runway harness() {
         if(binding instanceof Runway) {
             return (Runway) binding;
         }
@@ -4064,8 +4062,7 @@ public abstract class Record implements Comparable<Record> {
                 "Cannot atomically update {} in {} because this Record is"
                         + " staged for deletion",
                 key, __);
-        AtomicRetryPolicy policy = environment().properties()
-                .atomicRetryPolicy();
+        AtomicRetryPolicy policy = harness().properties().atomicRetryPolicy();
         int attempts = 0;
         for (;;) {
             Field field = getAtomicableField(key, this);
@@ -5692,13 +5689,12 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * A {@link DatabaseInterface} that reacts to the state of the tracked
-     * {@link Record} and delegates every operation to the
-     * {@link PersistentDatabaseInterface} it is bound to.
+     * {@link Record} and delegates every operation to the {@link Binding} it is
+     * bound to.
      *
      * @author Jeff Nelson
      */
-    private static class ReactiveDatabaseInterface implements
-            PersistentDatabaseInterface {
+    private static class ReactiveBinding implements Binding {
 
         /**
          * A reference to the enclosing {@link Record} whose state is watched
@@ -5711,7 +5707,7 @@ public abstract class Record implements Comparable<Record> {
          *
          * @param tracked
          */
-        private ReactiveDatabaseInterface(Record tracked) {
+        private ReactiveBinding(Record tracked) {
             this.tracked = tracked;
         }
 
@@ -5731,14 +5727,14 @@ public abstract class Record implements Comparable<Record> {
         }
 
         /**
-         * Return the {@link PersistentDatabaseInterface} that the
-         * {@link #tracked} {@link Record} is currently bound to.
+         * Return the {@link Binding} that the {@link #tracked} {@link Record}
+         * is currently bound to.
          *
-         * @return the delegate {@link PersistentDatabaseInterface}
+         * @return the delegate {@link Binding}
          * @throws UnsupportedOperationException if the {@link #tracked}
          *             {@link Record} is unbound
          */
-        private PersistentDatabaseInterface delegate() {
+        private Binding delegate() {
             if(tracked.binding != null) {
                 return tracked.binding;
             }

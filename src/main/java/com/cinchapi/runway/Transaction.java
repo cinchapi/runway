@@ -67,7 +67,7 @@ import com.google.common.collect.Sets;
  * @author Jeff Nelson
  */
 @NotThreadSafe
-public class Transaction implements PersistentDatabaseInterface, AutoCloseable {
+public class Transaction implements Binding, AutoCloseable {
 
     /**
      * The {@link Runway} instance that this {@link Transaction} operates
