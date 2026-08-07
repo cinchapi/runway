@@ -677,71 +677,6 @@ public final class Runway extends Binding implements AutoCloseable {
         return new AttachmentScope(this, sources);
     }
 
-    /**
-     * Run {@code work} within a {@link Transaction} and commit it after the
-     * work completes.
-     * <p>
-     * The work receives the open {@link Transaction}: reads through it observe
-     * the transaction's isolated snapshot, and a {@link Record} loaded through
-     * it, saved through it, or {@link Transaction#create(Class, Object...)
-     * created} by it saves within it, so everything becomes durable together
-     * when the commit succeeds. A {@link Record} bound elsewhere saves against
-     * its own binding, outside of the transaction.
-     * </p>
-     * <p>
-     * If the commit fails because of a conflict, then the transaction is
-     * discarded and {@code work} runs again against a fresh one, within the
-     * bounds of the governing {@link AtomicRetryPolicy}. The {@code work} must
-     * therefore be free of side effects outside of the transaction. Any other
-     * exception thrown by {@code work} aborts the transaction and propagates to
-     * the caller.
-     * </p>
-     *
-     * @param work the work to run
-     * @return the result of {@code work}
-     * @throws RetryExhaustedException if the transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
-    public <T> T call(Function<Transaction, T> work) {
-        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
-        Concourse concourse = connections.request();
-        try {
-            // NOTE: The connection is held across the policy's backoff sleeps
-            // rather than released between attempts, because re-requesting
-            // per attempt would churn the pool.
-            int attempts = 0;
-            for (;;) {
-                Transaction transaction = new Transaction(this, concourse,
-                        false);
-                try {
-                    T result = work.apply(transaction);
-                    if(transaction.commit()) {
-                        return result;
-                    }
-                    else {
-                        // The commit did not succeed, so fall through to the
-                        // governing retry policy.
-                    }
-                }
-                catch (TransactionException e) {
-                    transaction.abort();
-                }
-                finally {
-                    transaction.close();
-                }
-                if(++attempts > policy.limit()) {
-                    throw new RetryExhaustedException(attempts);
-                }
-                else {
-                    policy.backoff(attempts);
-                }
-            }
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
     @Override
     public void close() throws Exception {
         Obligations.runAll(() -> {
@@ -1122,7 +1057,7 @@ public final class Runway extends Binding implements AutoCloseable {
      * Run {@code work} within a {@link Transaction} and commit it after the
      * work completes.
      * <p>
-     * This method behaves exactly like {@link #call(Function)} for work that
+     * This method behaves exactly like {@link #supply(Function)} for work that
      * does not produce a result.
      * </p>
      *
@@ -1131,7 +1066,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
     public void run(Consumer<Transaction> work) {
-        call(transaction -> {
+        supply(transaction -> {
             work.accept(transaction);
             return null;
         });
@@ -1564,6 +1499,71 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     public Transaction startTransaction() {
         return stage();
+    }
+
+    /**
+     * Run {@code work} within a {@link Transaction} and commit it after the
+     * work completes.
+     * <p>
+     * The work receives the open {@link Transaction}: reads through it observe
+     * the transaction's isolated snapshot, and a {@link Record} loaded through
+     * it, saved through it, or {@link Transaction#create(Class, Object...)
+     * created} by it saves within it, so everything becomes durable together
+     * when the commit succeeds. A {@link Record} bound elsewhere saves against
+     * its own binding, outside of the transaction.
+     * </p>
+     * <p>
+     * If the commit fails because of a conflict, then the transaction is
+     * discarded and {@code work} runs again against a fresh one, within the
+     * bounds of the governing {@link AtomicRetryPolicy}. The {@code work} must
+     * therefore be free of side effects outside of the transaction. Any other
+     * exception thrown by {@code work} aborts the transaction and propagates to
+     * the caller.
+     * </p>
+     *
+     * @param work the work to run
+     * @return the result of {@code work}
+     * @throws RetryExhaustedException if the transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    public <T> T supply(Function<Transaction, T> work) {
+        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
+        Concourse concourse = connections.request();
+        try {
+            // NOTE: The connection is held across the policy's backoff sleeps
+            // rather than released between attempts, because re-requesting
+            // per attempt would churn the pool.
+            int attempts = 0;
+            for (;;) {
+                Transaction transaction = new Transaction(this, concourse,
+                        false);
+                try {
+                    T result = work.apply(transaction);
+                    if(transaction.commit()) {
+                        return result;
+                    }
+                    else {
+                        // The commit did not succeed, so fall through to the
+                        // governing retry policy.
+                    }
+                }
+                catch (TransactionException e) {
+                    transaction.abort();
+                }
+                finally {
+                    transaction.close();
+                }
+                if(++attempts > policy.limit()) {
+                    throw new RetryExhaustedException(attempts);
+                }
+                else {
+                    policy.backoff(attempts);
+                }
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
     }
 
     /**

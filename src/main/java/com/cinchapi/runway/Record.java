@@ -45,6 +45,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -2318,6 +2319,57 @@ public abstract class Record implements Comparable<Record> {
      */
     protected Supplier<Boolean> overrideSave() {
         return null;
+    }
+
+    /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope.
+     * <p>
+     * This method behaves exactly like {@link #supply(Function)} for work that
+     * does not produce a result.
+     * </p>
+     *
+     * @param work the work to run
+     * @throws IllegalStateException if this {@link Record} has no binding
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    protected final void run(Consumer<Transaction> work) {
+        supply(transaction -> {
+            work.accept(transaction);
+            return null;
+        });
+    }
+
+    /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope and return its result.
+     * <p>
+     * If this {@link Record} is bound to an open {@link Transaction}, then the
+     * work joins it: everything the work stages becomes durable when that
+     * transaction's owner commits it. Otherwise, the work runs the same as
+     * {@link Runway#supply(Function)}: it receives a new {@link Transaction}
+     * that commits after the work completes, conflicts retry within the bounds
+     * of the governing {@link AtomicRetryPolicy}, and the work must therefore
+     * be free of side effects outside of the transaction.
+     * </p>
+     *
+     * @param work the work to run
+     * @return the result of {@code work}
+     * @throws IllegalStateException if this {@link Record} has no binding
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    protected final <T> T supply(Function<Transaction, T> work) {
+        if(binding instanceof Transaction && ((Transaction) binding).open()) {
+            return work.apply((Transaction) binding);
+        }
+        else {
+            Runway runway = harness();
+            Verify.that(runway != null, "Cannot execute transactional work"
+                    + " because this Record has no binding");
+            return runway.supply(work);
+        }
     }
 
     /**

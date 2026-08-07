@@ -33,7 +33,7 @@ import com.cinchapi.runway.access.Audience;
 /**
  * Tests for {@link Runway#stage()},
  * {@link Runway#run(java.util.function.Consumer) run} and
- * {@link Runway#call(java.util.function.Function) call}: the
+ * {@link Runway#supply(java.util.function.Function) supply}: the
  * {@link Transaction} view that scopes reads and writes to a single ACID
  * transaction.
  *
@@ -510,6 +510,108 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Record#supply(java.util.function.Function) supply} on a
+     * {@link Runway}-bound {@link Record} runs the work in a new transaction
+     * that commits after the work completes.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1 and
+     * a saved {@link Item} with a score of 5.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code claimScore(5)} on the first {@link Item}, which uses
+     * {@code supply} to claim a score only if no other {@link Item} holds
+     * it.</li>
+     * <li>Call {@code claimScore(7)} on the first {@link Item}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The claim of 5 returns {@code false} and the
+     * stored score remains 1 at that point; the claim of 7 returns {@code true}
+     * and the stored score is 7.
+     */
+    @Test
+    public void testRecordSupplyStartsAndCommitsATransactionWhenRunwayBound() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Item other = new Item("gadget", 5);
+        other.assign(runway);
+        Assert.assertTrue(other.save());
+        Assert.assertFalse(item.claimScore(5));
+        Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+        Assert.assertTrue(item.claimScore(7));
+        Assert.assertEquals(7, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Record#supply(java.util.function.Function) supply} on a
+     * {@link Record} bound to an open {@link Transaction} joins that
+     * transaction instead of starting a new one.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and call
+     * {@code claimScore(7)} on the transactional copy.</li>
+     * <li>Load the {@link Item} through the enclosing {@link Runway} before the
+     * commit.</li>
+     * <li>Commit the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The claim returns {@code true} but the
+     * non-transactional load still observes 1 before the commit, which proves
+     * the work joined the open transaction; after the commit, the stored score
+     * is 7.
+     */
+    @Test
+    public void testRecordSupplyJoinsTheOpenTransactionWhenTransactionBound() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertTrue(txItem.claimScore(7));
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(7, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Record#run(java.util.function.Consumer) run} on a {@link Runway}-
+     * bound {@link Record} executes work with no result within a transaction
+     * that commits after the work completes.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code run} on the {@link Item} with work that loads the
+     * {@link Item} through the provided {@link Transaction}, sets the score to
+     * 9 and saves it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The stored score is 9 after {@code run}
+     * returns.
+     */
+    @Test
+    public void testRecordRunCommitsWorkWhenRunwayBound() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        item.run(transaction -> {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 9;
+            Assert.assertTrue(txItem.save());
+        });
+        Assert.assertEquals(9, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that save notifications for records saved
      * within a {@link Transaction} fire only after the commit succeeds.
      * <p>
@@ -581,26 +683,26 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that
-     * {@link Runway#call(java.util.function.Function) call} returns the result
-     * of the work after the commit.
+     * {@link Runway#supply(java.util.function.Function) supply} returns the
+     * result of the work after the commit.
      * <p>
      * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code runway.call(work)} where the work loads the {@link Item},
-     * sets the score to 2, saves and returns the new score.</li>
+     * <li>Call {@code runway.supply(work)} where the work loads the
+     * {@link Item}, sets the score to 2, saves and returns the new score.</li>
      * <li>Load the {@link Item} through the enclosing {@link Runway}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The call returns 2 and the stored score is 2.
      */
     @Test
-    public void testCallReturnsTheWorkResult() {
+    public void testSupplyReturnsTheWorkResult() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        int score = runway.call(transaction -> {
+        int score = runway.supply(transaction -> {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -1249,6 +1351,29 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         public Item(String name, int score) {
             this.name = name;
             this.score = score;
+        }
+
+        /**
+         * Set the score to {@code score} within this {@link Item Item's}
+         * transactional scope, only if no other {@link Item} currently holds
+         * it.
+         *
+         * @param score the score to claim
+         * @return {@code true} if the score is claimed
+         */
+        public boolean claimScore(int score) {
+            return supply(transaction -> {
+                Criteria taken = Criteria.where().key("score")
+                        .operator(Operator.EQUALS).value(score).build();
+                Item holder = transaction.findUnique(Item.class, taken);
+                if(holder == null) {
+                    this.score = score;
+                    return transaction.save(this);
+                }
+                else {
+                    return false;
+                }
+            });
         }
     }
 
