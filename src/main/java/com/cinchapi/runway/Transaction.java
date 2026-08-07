@@ -20,6 +20,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
+import javax.annotation.concurrent.NotThreadSafe;
+
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
@@ -66,6 +68,7 @@ import com.google.common.collect.Sets;
  *
  * @author Jeff Nelson
  */
+@NotThreadSafe
 public class Transaction implements PersistentDatabaseInterface, AutoCloseable {
 
     /**
