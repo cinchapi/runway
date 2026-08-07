@@ -922,6 +922,11 @@ public abstract class Record implements Comparable<Record> {
     /**
      * The {@link DatabaseInterface} that can be used to make queries within the
      * database from which this {@link Record} is sourced.
+     * <p>
+     * Every operation resolves against this {@link Record Record's} current
+     * binding, so this handle remains correct across {@link #assign(Runway)
+     * re-assignment} and the end of a {@link Transaction}.
+     * </p>
      */
     protected final transient DatabaseInterface db = new ReactiveBinding(this);
 
@@ -2678,14 +2683,12 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the persistent view of this {@link Record Record's} current
-     * {@link #binding}: a stable handle that re-resolves the binding on every
-     * operation, so it remains correct across {@link #assign(Runway)
-     * re-assignment} and the end of a {@link Transaction}.
+     * Return {@link #db} under its {@link Binding} type, so the caller can also
+     * save and {@link Binding#load(long) load} through it.
      *
-     * @return the reactive {@link Binding}
+     * @return {@link #db} as a {@link Binding}
      */
-    /* package */ Binding reactive() {
+    Binding reactive() {
         return (Binding) db;
     }
 
