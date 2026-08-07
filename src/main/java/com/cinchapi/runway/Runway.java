@@ -3933,10 +3933,10 @@ public final class Runway implements
      * <p>
      * The work receives the open {@link Transaction}: reads through it observe
      * the transaction's isolated snapshot, and a {@link Record} loaded through
-     * it or {@link Transaction#create(Class, Object...) created} by it saves
-     * within it, so everything becomes durable together when the commit
-     * succeeds. A {@link Record} bound elsewhere saves against its own binding,
-     * outside of the transaction.
+     * it, saved through it, or {@link Transaction#create(Class, Object...)
+     * created} by it saves within it, so everything becomes durable together
+     * when the commit succeeds. A {@link Record} bound elsewhere saves against
+     * its own binding, outside of the transaction.
      * </p>
      * <p>
      * If the commit fails because of a conflict, then the transaction is

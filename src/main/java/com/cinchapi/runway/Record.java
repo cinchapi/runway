@@ -136,6 +136,17 @@ import com.google.gson.stream.JsonWriter;
  * Record is {@link #save() saved}, the values of those variables (including any
  * changes) will automatically be stored/updated in Concourse.
  * </p>
+ * <h2>Database Binding</h2>
+ * <p>
+ * Every {@link Record} is bound to the {@link DatabaseInterface} that its reads
+ * and saves resolve against: the {@link Runway} instance it is
+ * {@link #assign(Runway) assigned} to, or the {@link Transaction} through which
+ * it is loaded, saved, or created. A {@link Record} bound to a {@link Runway}
+ * persists directly to the database. A {@link Record} bound to a
+ * {@link Transaction} stages within it, and the staged changes become durable
+ * when the transaction commits; after the transaction ends, the {@link Record}
+ * operates against the enclosing {@link Runway}.
+ * </p>
  * <h2>Variable Modifiers</h2>
  * <p>
  * Records will respect the native Java modifiers placed on variables. This
@@ -985,9 +996,9 @@ public abstract class Record implements Comparable<Record> {
     /**
      * The {@link PersistentDatabaseInterface} that this {@link Record} is bound
      * to: the {@link Runway} instance it is {@link #assign(Runway) assigned}
-     * to, or the {@link Transaction} it was loaded through.
+     * to, or the {@link Transaction} it joined.
      */
-    private transient PersistentDatabaseInterface database = null;
+    private transient PersistentDatabaseInterface binding = null;
 
     /**
      * A cache of the {@link #$computed() properties}.
@@ -1057,7 +1068,7 @@ public abstract class Record implements Comparable<Record> {
         this.id = Time.now();
         if(PINNED_RUNWAY_INSTANCE != null) {
             this.connections = PINNED_RUNWAY_INSTANCE.provider;
-            this.database = PINNED_RUNWAY_INSTANCE;
+            this.binding = PINNED_RUNWAY_INSTANCE;
         }
         checkpoint();
     }
@@ -1090,56 +1101,56 @@ public abstract class Record implements Comparable<Record> {
      *            stored.
      */
     public void assign(Runway runway) {
-        this.database = runway;
+        this.binding = runway;
         this.connections = runway.provider;
     }
 
     /**
-     * Bind this {@link Record} to {@code database} so that every operation,
+     * Bind this {@link Record} to {@code binding} so that every operation,
      * including each {@link #save() save}, is scoped to it.
      *
-     * @param database the {@link PersistentDatabaseInterface} to bind
+     * @param binding the {@link PersistentDatabaseInterface} to bind
      * @param connections the {@link ConcourseProvider} that supplies
      *            connections within the scope of the binding
      */
-    /* package */ void bind(PersistentDatabaseInterface database,
+    /* package */ void bind(PersistentDatabaseInterface binding,
             ConcourseProvider connections) {
-        this.database = database;
+        this.binding = binding;
         this.connections = connections;
     }
 
     /**
      * {@link #bind(PersistentDatabaseInterface, ConcourseProvider) Bind} this
      * {@link Record}, and every loaded {@link Record} that is reachable from
-     * its fields, to {@code database}.
+     * its fields, to {@code binding}.
      * <p>
      * A {@link DeferredReference} that was never {@link DeferredReference#get()
      * accessed} holds no loaded {@link Record} to bind; when it is accessed, it
      * resolves through its owner's binding at that moment.
      * </p>
      *
-     * @param database the {@link PersistentDatabaseInterface} to bind
+     * @param binding the {@link PersistentDatabaseInterface} to bind
      * @param connections the {@link ConcourseProvider} that supplies
      *            connections within the scope of the binding
      * @param seen the identity set of {@link Record Records} that are already
      *            bound
      */
-    /* package */ void bindGraph(PersistentDatabaseInterface database,
+    /* package */ void bindGraph(PersistentDatabaseInterface binding,
             ConcourseProvider connections, Set<Record> seen) {
         if(seen.add(this)) {
-            bind(database, connections);
+            bind(binding, connections);
             fields().stream().filter(
                     field -> !Modifier.isTransient(field.getModifiers()))
                     .map(field -> Reflection.get(field.getName(), this))
                     .forEach(value -> {
                         if(value instanceof Record) {
-                            ((Record) value).bindGraph(database, connections,
+                            ((Record) value).bindGraph(binding, connections,
                                     seen);
                         }
                         else if(value != null && Sequences.isSequence(value)) {
                             Sequences.forEach(value, item -> {
                                 if(item instanceof Record) {
-                                    ((Record) item).bindGraph(database,
+                                    ((Record) item).bindGraph(binding,
                                             connections, seen);
                                 }
                             });
@@ -1150,18 +1161,17 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return the {@link Runway} engine behind this {@link Record Record's}
-     * {@link #database} binding, or {@code null} if this {@link Record} is
-     * unbound.
+     * {@link #binding}, or {@code null} if this {@link Record} is unbound.
      *
      * @return the {@link Runway} environment
      */
     @Nullable
     private Runway environment() {
-        if(database instanceof Runway) {
-            return (Runway) database;
+        if(binding instanceof Runway) {
+            return (Runway) binding;
         }
-        else if(database instanceof Transaction) {
-            return ((Transaction) database).database();
+        else if(binding instanceof Transaction) {
+            return ((Transaction) binding).database();
         }
         else {
             return null;
@@ -1170,8 +1180,8 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return the persistent view of this {@link Record Record's} current
-     * {@link #database} binding: a stable handle that re-resolves the binding
-     * on every operation, so it remains correct across {@link #assign(Runway)
+     * {@link #binding}: a stable handle that re-resolves the binding on every
+     * operation, so it remains correct across {@link #assign(Runway)
      * re-assignment} and the end of a {@link Transaction}.
      *
      * @return the reactive {@link PersistentDatabaseInterface}
@@ -1451,7 +1461,7 @@ public abstract class Record implements Comparable<Record> {
      *             field named by {@code key}
      */
     public final <T> boolean exchange(String key, T replacement) {
-        Verify.that(database instanceof Runway,
+        Verify.that(binding instanceof Runway,
                 "Cannot atomically exchange {} in {} because single-key"
                         + " atomic operations require a direct Runway binding",
                 key, __);
@@ -1962,8 +1972,8 @@ public abstract class Record implements Comparable<Record> {
      *             {@link Runway} instance
      */
     public final void refresh() {
-        Verify.that(database != null, "Cannot refresh because this Record"
-                + " isn't bound to a database");
+        Verify.that(binding != null,
+                "Cannot refresh because this Record" + " has no binding");
         Concourse concourse = connections.request();
         try {
             ConcurrentMap<Long, Record> existing = new ConcurrentHashMap<>();
@@ -2033,8 +2043,15 @@ public abstract class Record implements Comparable<Record> {
      * <strong>NOTE:</strong> This method recursively saves any linked
      * {@link Record records}.
      * </p>
-     * 
+     * <p>
+     * The save resolves against this {@link Record Record's} binding: when
+     * bound to a {@link Runway}, the changes are durable when this method
+     * returns; when bound to a {@link Transaction}, the changes stage within it
+     * and become durable when the transaction commits.
+     * </p>
+     *
      * @return {@code true} if this {@link Record} is successfully saved
+     * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save() {
         return save(false);
@@ -2046,11 +2063,11 @@ public abstract class Record implements Comparable<Record> {
      * <strong>NOTE:</strong> This method recursively saves any linked
      * {@link Record Records}.
      * </p>
-     *
      * <p>
-     * When this {@link Record} is bound to a {@link Transaction}, the save
-     * stages within that transaction and the changes become durable when the
-     * transaction commits.
+     * The save resolves against this {@link Record Record's} binding: when
+     * bound to a {@link Runway}, the changes are durable when this method
+     * returns; when bound to a {@link Transaction}, the changes stage within it
+     * and become durable when the transaction commits.
      * </p>
      *
      * @param preventStaleWrite if {@code true}, reject the save when this
@@ -2059,13 +2076,12 @@ public abstract class Record implements Comparable<Record> {
      * @return {@code true} if this {@link Record} is successfully saved
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
      *             and stale data is detected
-     * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance
+     * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save(boolean preventStaleWrite) {
-        Verify.that(database != null, "Cannot perform an implicit save because"
-                + " this Record isn't bound to a database");
-        return database.save(preventStaleWrite, this);
+        Verify.that(binding != null, "Cannot perform an implicit save because"
+                + " this Record has no binding");
+        return binding.save(preventStaleWrite, this);
     }
 
     /**
@@ -4036,7 +4052,7 @@ public abstract class Record implements Comparable<Record> {
      */
     private <T> AtomicUpdate<T> updateAtomically(String key,
             UnaryOperator<T> update) {
-        Verify.that(database instanceof Runway,
+        Verify.that(binding instanceof Runway,
                 "Cannot atomically update {} in {} because single-key atomic"
                         + " operations require a direct Runway binding",
                 key, __);
@@ -5723,12 +5739,12 @@ public abstract class Record implements Comparable<Record> {
          *             {@link Record} is unbound
          */
         private PersistentDatabaseInterface delegate() {
-            if(tracked.database != null) {
-                return tracked.database;
+            if(tracked.binding != null) {
+                return tracked.binding;
             }
             else {
                 throw new UnsupportedOperationException(
-                        "No database interface has been assigned to this Record");
+                        "No binding has been assigned to this Record");
             }
         }
 

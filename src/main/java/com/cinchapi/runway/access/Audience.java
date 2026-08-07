@@ -235,9 +235,9 @@ public interface Audience extends DatabaseInterface {
             // audience operates against so that, for example, an audience
             // within a Transaction creates records whose saves stage within
             // it.
-            Object database = Reflection.get("database", this);
-            if(database != null) {
-                Reflection.call(record, "bind", database,
+            Object binding = Reflection.get("binding", this);
+            if(binding != null) {
+                Reflection.call(record, "bind", binding,
                         Reflection.get("connections", this));
             }
         }
