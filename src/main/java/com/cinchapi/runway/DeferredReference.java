@@ -72,7 +72,7 @@ public final class DeferredReference<T extends Record> {
     public DeferredReference(T reference) {
         this.reference = reference;
         this.id = reference.id();
-        this.db = reference.reactive();
+        this.db = reference.binding();
     }
 
     /**

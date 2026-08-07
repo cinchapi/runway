@@ -1198,7 +1198,7 @@ public abstract class Record implements Comparable<Record> {
                     else {
                         author = authors.computeIfAbsent(target,
                                 $ -> new DeferredReference<Record>(target,
-                                        reactive()));
+                                        binding()));
                     }
                 }
                 else {
@@ -2688,7 +2688,7 @@ public abstract class Record implements Comparable<Record> {
      *
      * @return {@link #db} as a {@link Binding}
      */
-    Binding reactive() {
+    Binding binding() {
         return (Binding) db;
     }
 
@@ -3247,7 +3247,7 @@ public abstract class Record implements Comparable<Record> {
             converted = alreadyLoaded.get(target);
             if(converted == null) {
                 if(type == DeferredReference.class) {
-                    converted = new DeferredReference(target, reactive());
+                    converted = new DeferredReference(target, binding());
                 }
                 else {
                     Map<String, Set<Object>> data = null;
