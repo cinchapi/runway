@@ -1543,8 +1543,7 @@ public final class Runway implements AutoCloseable, Binding {
      * with exactly one of {@link Transaction#commit() commit} or
      * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
      * close} to abort whatever was not committed. Use a try-with-resources
-     * block so the connection that hosts the transaction always returns to the
-     * pool.
+     * block so the transaction always ends.
      * </p>
      *
      * @return an open {@link Transaction}

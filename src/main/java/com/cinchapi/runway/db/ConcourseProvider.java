@@ -22,12 +22,6 @@ import com.cinchapi.concourse.ConnectionPool;
  * A {@link ConcourseProvider} supplies the {@link Concourse} connection for
  * each database operation without revealing where the connection comes from.
  * <p>
- * A provider backed by a {@link ConnectionPool} hands out a distinct pooled
- * connection per {@link #request()}. A provider that is scoped to a transaction
- * hands out the single connection that hosts the transaction, so every
- * operation that flows through the provider participates in it.
- * </p>
- * <p>
  * Every {@link #request()} must be paired with a {@link #release(Concourse)} of
  * the returned connection, typically in a {@code finally} block. A provider may
  * treat {@link #release(Concourse)} as a no-op when it retains ownership of the

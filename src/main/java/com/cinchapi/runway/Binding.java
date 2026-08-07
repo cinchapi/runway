@@ -19,10 +19,6 @@ package com.cinchapi.runway;
  * A {@link Binding} is a {@link DatabaseInterface} that can also persist
  * {@link Record} changes, so it is the contract that a {@link Record} binds to:
  * reads and saves both resolve against the same scope.
- * <p>
- * A {@link Runway} instance makes a save durable before the call returns; a
- * {@link Transaction} stages the save until the transaction commits.
- * </p>
  *
  * @author Jeff Nelson
  */

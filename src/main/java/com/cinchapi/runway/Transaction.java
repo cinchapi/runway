@@ -39,17 +39,21 @@ import com.google.common.collect.Sets;
  * <p>
  * Every read observes the transaction's isolated snapshot, including its own
  * uncommitted writes, and joins its conflict footprint. Results resolve
- * eagerly, and every loaded {@link Record}, including the records reachable
- * from its fields, is bound to this view, so each {@link Record#save() save}
- * stages within the transaction. A {@link Record}
- * {@link #create(Class, Object...) created} through the view is bound to it as
- * well. A {@link Record} that is not bound to the transaction, including one
- * constructed directly, operates against its own binding even while the
- * transaction is open. An {@link com.cinchapi.runway.access.Audience Audience}
- * loaded through the view routes the operations it performs through the
- * transaction as well, so access-controlled reads and writes stay within the
- * snapshot. Writes become durable when {@link #commit()} succeeds; until then
- * no reader outside the transaction can observe them. A
+ * eagerly. Writes become durable when {@link #commit()} succeeds; until then no
+ * reader outside the transaction can observe them.
+ * </p>
+ * <p>
+ * Every loaded {@link Record}, including the records reachable from its fields,
+ * is bound to this view, so each {@link Record#save() save} stages within the
+ * transaction. A {@link Record} {@link #create(Class, Object...) created}
+ * through the view is bound to it as well. A {@link Record} that is not bound
+ * to the transaction, including one constructed directly, operates against its
+ * own binding even while the transaction is open.
+ * </p>
+ * <p>
+ * An {@link com.cinchapi.runway.access.Audience Audience} loaded through the
+ * view routes the operations it performs through the transaction, so
+ * access-controlled reads and writes stay within the snapshot. A
  * {@link DeferredReference} that is first accessed within the transaction
  * resolves within it as well. Only {@link Record Records} persisted in the
  * database are visible; records supplied by an attached {@link AdHocDataSource}
@@ -355,8 +359,8 @@ public class Transaction implements Binding, AutoCloseable {
     }
 
     /**
-     * Return a private synchronous {@link Reader} for a resolver that must
-     * drive its own reads within this {@link Transaction}.
+     * Return a synchronous {@link Reader} whose reads execute within this
+     * {@link Transaction}.
      *
      * @return the {@link Reader}
      */
