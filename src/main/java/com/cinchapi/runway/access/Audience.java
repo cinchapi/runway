@@ -203,8 +203,12 @@ public interface Audience extends DatabaseInterface {
      * this {@link Audience}.
      * <p>
      * This method verifies that this {@link Audience} is permitted to create
-     * the {@link Record} before instantiation. The returned {@link Record} is
-     * not saved to the database until {@link Record#save()} is called.
+     * the {@link Record} before it is returned. The returned {@link Record} is
+     * not saved to the database until {@link Record#save()} is called, and it
+     * is bound to the same database context that this {@link Audience} operates
+     * against, so a direct {@link Record#save() save} persists within that
+     * context (e.g., within a {@link com.cinchapi.runway.Transaction
+     * Transaction}).
      * </p>
      *
      * @param clazz the type of {@link Record} to create
@@ -227,6 +231,15 @@ public interface Audience extends DatabaseInterface {
         }
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
+            // Bind the new record to the same database interface that this
+            // audience operates against so that, for example, an audience
+            // within a Transaction creates records whose saves stage within
+            // it.
+            Object database = Reflection.get("database", this);
+            if(database != null) {
+                Reflection.call(record, "bind", database,
+                        Reflection.get("connections", this));
+            }
         }
         return record;
     }

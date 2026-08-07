@@ -21,7 +21,7 @@ package com.cinchapi.runway;
  * {@link Record} binds to: reads and saves both resolve against the same scope.
  * <p>
  * A {@link Runway} instance makes a save durable before the call returns; a
- * {@link Runway.Transaction} stages the save until the transaction commits.
+ * {@link Transaction} stages the save until the transaction commits.
  * </p>
  *
  * @author Jeff Nelson

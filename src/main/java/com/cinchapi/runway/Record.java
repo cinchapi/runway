@@ -985,7 +985,7 @@ public abstract class Record implements Comparable<Record> {
     /**
      * The {@link PersistentDatabaseInterface} that this {@link Record} is bound
      * to: the {@link Runway} instance it is {@link #assign(Runway) assigned}
-     * to, or the {@link Runway.Transaction} it was loaded through.
+     * to, or the {@link Transaction} it was loaded through.
      */
     private transient PersistentDatabaseInterface database = null;
 
@@ -1160,8 +1160,8 @@ public abstract class Record implements Comparable<Record> {
         if(database instanceof Runway) {
             return (Runway) database;
         }
-        else if(database instanceof Runway.Transaction) {
-            return ((Runway.Transaction) database).database();
+        else if(database instanceof Transaction) {
+            return ((Transaction) database).database();
         }
         else {
             return null;
@@ -1172,7 +1172,7 @@ public abstract class Record implements Comparable<Record> {
      * Return the persistent view of this {@link Record Record's} current
      * {@link #database} binding: a stable handle that re-resolves the binding
      * on every operation, so it remains correct across {@link #assign(Runway)
-     * re-assignment} and the end of a {@link Runway.Transaction}.
+     * re-assignment} and the end of a {@link Transaction}.
      *
      * @return the reactive {@link PersistentDatabaseInterface}
      */
@@ -1444,8 +1444,8 @@ public abstract class Record implements Comparable<Record> {
      *             is not an instance of the field's type
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, is staged for deletion, is bound to
-     *             a {@link Runway.Transaction}, or {@code replacement} violates
-     *             the field's constraints
+     *             a {@link Transaction}, or {@code replacement} violates the
+     *             field's constraints
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
@@ -1569,7 +1569,7 @@ public abstract class Record implements Comparable<Record> {
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, has unsaved changes, is staged for
-     *             deletion, or is bound to a {@link Runway.Transaction}
+     *             deletion, or is bound to a {@link Transaction}
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
@@ -2048,9 +2048,9 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * <p>
-     * When this {@link Record} is bound to a {@link Runway.Transaction}, the
-     * save stages within that transaction and the changes become durable when
-     * the transaction commits.
+     * When this {@link Record} is bound to a {@link Transaction}, the save
+     * stages within that transaction and the changes become durable when the
+     * transaction commits.
      * </p>
      *
      * @param preventStaleWrite if {@code true}, reject the save when this
@@ -2193,7 +2193,7 @@ public abstract class Record implements Comparable<Record> {
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, has unsaved changes, is staged for
-     *             deletion, or is bound to a {@link Runway.Transaction}
+     *             deletion, or is bound to a {@link Transaction}
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
@@ -4029,7 +4029,7 @@ public abstract class Record implements Comparable<Record> {
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
      *             {@link Runway} instance, has unsaved changes, is staged for
-     *             deletion, or is bound to a {@link Runway.Transaction}
+     *             deletion, or is bound to a {@link Transaction}
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}

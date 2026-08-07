@@ -27,14 +27,15 @@ import org.junit.Test;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
-import com.cinchapi.runway.Runway.Transaction;
 import com.cinchapi.runway.access.AccessControl;
 import com.cinchapi.runway.access.Audience;
 
 /**
- * Tests for {@link Runway#transaction()} and
- * {@link Runway#run(java.util.function.Consumer) run}: the {@link Transaction}
- * view that scopes reads and writes to a single ACID transaction.
+ * Tests for {@link Runway#stage()},
+ * {@link Runway#run(java.util.function.Consumer) run} and
+ * {@link Runway#call(java.util.function.Function) call}: the
+ * {@link Transaction} view that scopes reads and writes to a single ACID
+ * transaction.
  *
  * @author Jeff Nelson
  */
@@ -64,7 +65,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -97,7 +98,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -129,7 +130,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -159,12 +160,43 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
         }
         Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#startTransaction()} is
+     * an alias for {@link Runway#stage()} that starts an open
+     * {@link Transaction}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code startTransaction()}, load the {@link Item}, set the score
+     * to 2 and {@code save()}.</li>
+     * <li>Call {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code commit()} returns {@code true} and the
+     * stored score is 2.
+     */
+    @Test
+    public void testStartTransactionIsAnAliasForStage() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
     }
 
     /**
@@ -191,7 +223,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        Transaction transaction = runway.transaction();
+        Transaction transaction = runway.stage();
         boolean conflicted;
         try {
             Item txItem = transaction.load(Item.class, item.id());
@@ -230,9 +262,40 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testNewRecordSavedThroughTransactionIsInvisibleUntilCommit() {
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item item = new Item("widget", 1);
             Assert.assertTrue(transaction.save(item));
+            Assert.assertEquals(0, runway.count(Item.class));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(1, runway.count(Item.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} created with
+     * {@link Transaction#create(Class, Object...)} is bound to the
+     * {@link Transaction}, so a direct {@code save()} stages within it.
+     * <p>
+     * <strong>Start state:</strong> No stored {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} and {@code create()} a new {@link Item}
+     * through it.</li>
+     * <li>Call {@code save()} on the {@link Item} directly.</li>
+     * <li>Count {@link Item Items} inside and outside the transaction, then
+     * commit and count again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Before the commit the inside count is 1 and
+     * the outside count is 0; after the commit the outside count is 1.
+     */
+    @Test
+    public void testCreatedRecordIsBoundToTheTransaction() {
+        try (Transaction transaction = runway.stage()) {
+            Item item = transaction.create(Item.class, "widget", 1);
+            Assert.assertTrue(item.save());
+            Assert.assertEquals(1, transaction.count(Item.class));
             Assert.assertEquals(0, runway.count(Item.class));
             Assert.assertTrue(transaction.commit());
         }
@@ -261,7 +324,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item txItem = transaction.load(Item.class, item.id());
             try {
                 txItem.getAndUpdate("score", (Integer score) -> score + 1);
@@ -299,7 +362,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -338,7 +401,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         AtomicInteger notified = new AtomicInteger(0);
         runway.properties().onSave(Item.class,
                 record -> notified.incrementAndGet());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -362,7 +425,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Call {@code runway.run(work)} where the work loads the {@link Item}
-     * through the provided database, sets the score to 2 and saves.</li>
+     * through the provided {@link Transaction}, sets the score to 2 and
+     * saves.</li>
      * <li>Load the {@link Item} through the enclosing {@link Runway}.</li>
      * </ul>
      * <p>
@@ -373,8 +437,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        runway.run(db -> {
-            Item txItem = db.load(Item.class, item.id());
+        runway.run(transaction -> {
+            Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
         });
@@ -382,8 +446,39 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a new {@link Record} saved with
-     * {@code record.save()} during
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#call(java.util.function.Function) call} returns the result
+     * of the work after the commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code runway.call(work)} where the work loads the {@link Item},
+     * sets the score to 2, saves and returns the new score.</li>
+     * <li>Load the {@link Item} through the enclosing {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns 2 and the stored score is 2.
+     */
+    @Test
+    public void testCallReturnsTheWorkResult() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        int score = runway.call(transaction -> {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            return txItem.score;
+        });
+        Assert.assertEquals(2, score);
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} created with
+     * {@link Transaction#create(Class, Object...)} during
      * {@link Runway#run(java.util.function.Consumer) run} joins the
      * transaction.
      * <p>
@@ -391,22 +486,53 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code runway.run(work)} where the work constructs a new
-     * {@link Item} and calls {@code save()} on it directly.</li>
-     * <li>Count the {@link Item Items} through the provided database inside the
-     * work, and through the enclosing {@link Runway} after the run.</li>
+     * <li>Call {@code runway.run(work)} where the work creates a new
+     * {@link Item} through the provided {@link Transaction} and calls
+     * {@code save()} on it directly.</li>
+     * <li>Count the {@link Item Items} through the transaction inside the work,
+     * and through the enclosing {@link Runway} after the run.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The count inside the work is 1, because the
-     * save joined the transaction, and the count after the run is 1, because
-     * the commit made it durable.
+     * <strong>Expected:</strong> Both counts are 1, because the created record
+     * is bound to the transaction and the commit made it durable.
      */
     @Test
-    public void testNewRecordSavedDuringRunJoinsTheTransaction() {
-        runway.run(db -> {
-            Item item = new Item("widget", 1);
+    public void testRecordCreatedDuringRunJoinsTheTransaction() {
+        runway.run(transaction -> {
+            Item item = transaction.create(Item.class, "widget", 1);
             Assert.assertTrue(item.save());
-            Assert.assertEquals(1, db.count(Item.class));
+            Assert.assertEquals(1, transaction.count(Item.class));
+        });
+        Assert.assertEquals(1, runway.count(Item.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} bound to the
+     * enclosing {@link Runway} saves directly to the database during
+     * {@link Runway#run(java.util.function.Consumer) run} instead of joining
+     * the transaction.
+     * <p>
+     * <strong>Start state:</strong> No stored {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code runway.run(work)} where the work saves a new {@link Item}
+     * that is assigned to the {@link Runway}.</li>
+     * <li>Count the {@link Item Items} through the enclosing {@link Runway}
+     * inside the work, before the transaction commits.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count inside the work is already 1,
+     * because the save wrote directly to the database instead of staging within
+     * the transaction.
+     */
+    @Test
+    public void testRunwayBoundRecordSavesOutsideTheRunTransaction() {
+        runway.run(transaction -> {
+            Item item = new Item("widget", 1);
+            item.assign(runway);
+            Assert.assertTrue(item.save());
+            Assert.assertEquals(1, runway.count(Item.class));
         });
         Assert.assertEquals(1, runway.count(Item.class));
     }
@@ -420,8 +546,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Run {@code runway.transaction(work)} where the work changes and saves
-     * the {@link Item} and then throws.</li>
+     * <li>Run {@code runway.run(work)} where the work changes and saves the
+     * {@link Item} and then throws.</li>
      * <li>Load the {@link Item} through the enclosing {@link Runway}.</li>
      * </ul>
      * <p>
@@ -434,8 +560,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         item.assign(runway);
         Assert.assertTrue(item.save());
         try {
-            runway.run(db -> {
-                Item txItem = db.load(Item.class, item.id());
+            runway.run(transaction -> {
+                Item txItem = transaction.load(Item.class, item.id());
                 txItem.score = 2;
                 txItem.save();
                 throw new RuntimeException("boom");
@@ -470,7 +596,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         item.assign(runway);
         Assert.assertTrue(item.save());
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Future<?> future = executor
                     .submit(() -> transaction.load(Item.class, item.id()));
             try {
@@ -513,7 +639,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Basket basket = new Basket("bin", item);
         basket.assign(runway);
         Assert.assertTrue(basket.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Basket txBasket = transaction.load(Basket.class, basket.id());
             txBasket.item.score = 2;
             Assert.assertTrue(txBasket.item.save());
@@ -545,7 +671,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -585,7 +711,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Viewer viewer = new Viewer("alice");
         viewer.assign(runway);
         Assert.assertTrue(viewer.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -624,7 +750,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Secret secret = new Secret("classified", alice);
         secret.assign(runway);
         Assert.assertTrue(secret.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Viewer txAlice = transaction.load(Viewer.class, alice.id());
             Viewer txBob = transaction.load(Viewer.class, bob.id());
             Assert.assertNotNull(txAlice.load(Secret.class, secret.id()));
@@ -660,7 +786,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Viewer viewer = new Viewer("alice");
         viewer.assign(runway);
         Assert.assertTrue(viewer.save());
-        Transaction transaction = runway.transaction();
+        Transaction transaction = runway.stage();
         boolean conflicted;
         try {
             Viewer txViewer = transaction.load(Viewer.class, viewer.id());
@@ -678,6 +804,42 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         }
         Assert.assertTrue(conflicted);
         Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} created by an
+     * {@link Audience} that operates within a {@link Transaction} is bound to
+     * the transaction.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Viewer} and no stored
+     * {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Viewer} through a {@link Transaction}.</li>
+     * <li>Create a new {@link Item} with {@code viewer.create()} and
+     * {@code save()} it directly.</li>
+     * <li>Count {@link Item Items} inside and outside the transaction, then
+     * commit and count again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Before the commit the inside count is 1 and
+     * the outside count is 0; after the commit the outside count is 1.
+     */
+    @Test
+    public void testAudienceCreatedRecordJoinsTheAudienceTransaction() {
+        Viewer viewer = new Viewer("alice");
+        viewer.assign(runway);
+        Assert.assertTrue(viewer.save());
+        try (Transaction transaction = runway.stage()) {
+            Viewer txViewer = transaction.load(Viewer.class, viewer.id());
+            Item item = txViewer.create(Item.class, "widget", 1);
+            Assert.assertTrue(item.save());
+            Assert.assertEquals(1, transaction.count(Item.class));
+            Assert.assertEquals(0, runway.count(Item.class));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(1, runway.count(Item.class));
     }
 
     /**
@@ -706,7 +868,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Crate crate = new Crate("bin", item);
         crate.assign(runway);
         Assert.assertTrue(runway.save(crate, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -743,7 +905,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Crate crate = new Crate("bin", item);
         crate.assign(runway);
         Assert.assertTrue(runway.save(crate, item));
-        Transaction transaction = runway.transaction();
+        Transaction transaction = runway.stage();
         boolean conflicted;
         try {
             Crate txCrate = transaction.load(Crate.class, crate.id());
@@ -789,7 +951,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Crate crate = new Crate("bin", item);
         crate.assign(runway);
         Assert.assertTrue(runway.save(crate, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.stage()) {
             Crate txCrate = transaction.load(Crate.class, crate.id());
             Assert.assertTrue(transaction.commit());
             Item lazy = txCrate.item.get();
