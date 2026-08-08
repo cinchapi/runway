@@ -213,9 +213,29 @@ public abstract class Record implements Comparable<Record> {
             ConcurrentMap<Long, Record> existing, ConcourseProvider connections,
             Runway runway, @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        return load(clazz, id, existing, connections, (Binding) runway, data,
+                targets);
+    }
+
+    /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id} and bind it to {@code binding}.
+     *
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @param binding the {@link Binding} that scopes the {@link Record
+     *            Record's} operations
+     * @return the loaded Record
+     */
+    static <T extends Record> T load(Class<?> clazz, long id,
+            ConcurrentMap<Long, Record> existing, ConcourseProvider connections,
+            Binding binding, @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Concourse concourse = connections.request();
         try {
-            return load(clazz, id, existing, connections, concourse, runway,
+            return load(clazz, id, existing, connections, concourse, binding,
                     data, null, targets);
         }
         finally {
@@ -647,7 +667,8 @@ public abstract class Record implements Comparable<Record> {
      *            cycles
      * @param connections the {@link ConcourseProvider} to use
      * @param concourse the active {@link Concourse} connection
-     * @param runway the owning {@link Runway} instance
+     * @param binding the {@link Binding} that scopes the {@link Record
+     *            Record's} operations
      * @param data pre-loaded data for this record, or {@code null} to fetch
      *            from the database
      * @param prefix a key prefix for navigation-style nested keys, or
@@ -660,12 +681,12 @@ public abstract class Record implements Comparable<Record> {
     @SuppressWarnings("unchecked")
     private static <T extends Record> T load(Class<?> clazz, long id,
             ConcurrentMap<Long, Record> existing, ConcourseProvider connections,
-            Concourse concourse, Runway runway,
+            Concourse concourse, Binding binding,
             @Nullable Map<String, Set<Object>> data, String prefix,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         T record = (T) newDefaultInstance(clazz, connections);
         setInternalFieldValue("id", id, record);
-        record.assign(runway);
+        record.bind(binding, connections);
         record.load(concourse, existing, data, prefix, targets);
         record.onLoad();
         return record;
@@ -2739,7 +2760,7 @@ public abstract class Record implements Comparable<Record> {
                                 value = existing.get(id);
                                 value = value == null
                                         ? load(type, id, existing, connections,
-                                                concourse, harness(), data,
+                                                concourse, binding, data,
                                                 prepend, targets)
                                         : value;
                             }
@@ -3349,7 +3370,7 @@ public abstract class Record implements Comparable<Record> {
                         Class<? extends Record> targetClass = Reflection
                                 .getClassCasted(section);
                         converted = load(targetClass, target, alreadyLoaded,
-                                connections, concourse, harness(), data, null,
+                                connections, concourse, binding, data, null,
                                 targets);
                     }
                 }

@@ -95,7 +95,6 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.primitives.Primitives;
 
-import gnu.trove.map.TLongObjectMap;
 import gnu.trove.map.hash.TLongObjectHashMap;
 
 /**
@@ -355,27 +354,38 @@ public final class Runway extends Binding implements AutoCloseable {
     }
 
     /**
-     * Call
-     * {@link Record#load(Class, long, TLongObjectMap, ConnectionPool, Runway, Map)}
-     * and handle any errors with the {@link #onLoadFailureHandler}.
+     * Load the {@link Record} of type {@code clazz} identified by {@code id},
+     * bound to {@code transaction} when it is open and to the enclosing
+     * {@link Runway} otherwise, and handle any errors with the
+     * {@link #onLoadFailureHandler}.
      *
      * @param <T>
      * @param clazz
      * @param id
      * @param loaded a {@link ConcurrentMap} used to track loaded {@link Record}
      *            references
-     * @param connections
-     * @param runway
+     * @param transaction the {@link Transaction} context that scopes the loaded
+     *            {@link Record Record's} operations
      * @param data
      * @return the loaded {@link Record} instance
      */
     private static <T extends Record> T loadWithErrorHandling(Class<T> clazz,
             long id, ConcurrentMap<Long, Record> loaded,
-            ConcourseProvider connections, Runway runway,
-            @Nullable Map<String, Set<Object>> data,
+            Transaction transaction, @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        Runway runway = transaction.database();
         try {
-            return Record.load(clazz, id, loaded, connections, runway, data,
+            Binding binding;
+            ConcourseProvider connections;
+            if(transaction.open()) {
+                binding = transaction;
+                connections = transaction.provider();
+            }
+            else {
+                binding = runway;
+                connections = runway.connections;
+            }
+            return Record.load(clazz, id, loaded, connections, binding, data,
                     targets);
         }
         catch (Exception e) {
@@ -1247,7 +1257,7 @@ public final class Runway extends Binding implements AutoCloseable {
             Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
                     getNavigatePathsForClassHierarchyIfSupported(clazz), ids,
                     data);
-            return instantiateAll(clazz, data, targets);
+            return instantiateAll(clazz, data, targets, noTransaction);
         }
     }
 
@@ -1284,7 +1294,7 @@ public final class Runway extends Binding implements AutoCloseable {
             Map<Long, Map<String, Set<Object>>> targets = prefetchLinkTargets(
                     getNavigatePathsForClassHierarchyIfSupported(clazz), ids,
                     data);
-            return instantiateAll(data, targets);
+            return instantiateAll(data, targets, noTransaction);
         }
     }
 
@@ -1599,7 +1609,8 @@ public final class Runway extends Binding implements AutoCloseable {
                     transaction);
         }
         else if(selection instanceof LoadRecordSelection) {
-            pending = $selectRecord(reader, (LoadRecordSelection<T>) selection);
+            pending = $selectRecord(reader, (LoadRecordSelection<T>) selection,
+                    transaction);
         }
         else if(selection instanceof LoadClassSelection) {
             pending = $selectClass(reader, (LoadClassSelection<T>) selection,
@@ -1747,7 +1758,7 @@ public final class Runway extends Binding implements AutoCloseable {
 
     @Override
     <T extends Record> T load(long id) {
-        return instantiate(id, null, null);
+        return instantiate(id, null, null, noTransaction);
     }
 
     /**
@@ -1889,13 +1900,11 @@ public final class Runway extends Binding implements AutoCloseable {
                         Read read = enqueueRead(sharedReader, any, clazz,
                                 criteria, order, $page);
                         AtomicReference<Set<T>> records = new AtomicReference<>();
-                        read.data
-                                .then($data -> read.navigated
-                                        .then($navigated -> resolveLinkTargets(
-                                                sharedReader, $data,
-                                                $navigated))
-                                        .map($targets -> instantiateAll(clazz,
-                                                any, $data, $targets)))
+                        read.data.then($data -> read.navigated
+                                .then($navigated -> resolveLinkTargets(
+                                        sharedReader, $data, $navigated))
+                                .map($targets -> instantiateAll(clazz, any,
+                                        $data, $targets, transaction)))
                                 .onResolve(records::set);
                         sharedReader.drain();
                         return records.get();
@@ -1911,7 +1920,7 @@ public final class Runway extends Binding implements AutoCloseable {
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
                         .map($targets -> finalizeSet(clazz, any, $data,
-                                $targets, hasFilter, filter)));
+                                $targets, hasFilter, filter, transaction)));
             }
         }
         else {
@@ -2041,7 +2050,7 @@ public final class Runway extends Binding implements AutoCloseable {
                                     .then($navigated -> resolveLinkTargets(
                                             sharedReader, $data, $navigated))
                                     .map($targets -> instantiateAll(clazz, any,
-                                            $data, $targets)))
+                                            $data, $targets, transaction)))
                                     .onResolve(records::set);
                             sharedReader.drain();
                             return records.get();
@@ -2065,7 +2074,7 @@ public final class Runway extends Binding implements AutoCloseable {
                         .then($navigated -> resolveLinkTargets(reader, $data,
                                 $navigated))
                         .map($targets -> finalizeSet(clazz, any, $data,
-                                $targets, hasFilter, filter)));
+                                $targets, hasFilter, filter, transaction)));
             }
             else {
                 Set<T> records = any
@@ -2249,6 +2258,8 @@ public final class Runway extends Binding implements AutoCloseable {
      *
      * @param reader the {@link Reader} that records the read
      * @param selection the {@link LoadRecordSelection} to resolve
+     * @param transaction the {@link Transaction} context that scopes the loaded
+     *            {@link Record Record's} operations
      * @param <T> the {@link Record} type
      * @return a {@link Pending} of the {@link SelectResult}, whose companion
      *         value (when a filter is applied) carries the unfiltered loaded
@@ -2256,7 +2267,8 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     @SuppressWarnings("unchecked")
     private <T extends Record> Pending<SelectResult<T>> $selectRecord(
-            Reader reader, LoadRecordSelection<T> selection) {
+            Reader reader, LoadRecordSelection<T> selection,
+            Transaction transaction) {
         Class<T> initialClazz = selection.clazz;
         long id = selection.id;
         Realms realms = selection.realms;
@@ -2316,7 +2328,8 @@ public final class Runway extends Binding implements AutoCloseable {
                     .then($navigated -> resolveLinkTargets(reader,
                             ImmutableMap.of(id, $data), $navigated));
             return targets.map($targets -> {
-                T record = instantiate(resolvedClazz, id, $data, $targets);
+                T record = instantiate(resolvedClazz, id, $data, $targets,
+                        transaction);
                 if(record != null && hasFilter) {
                     return new SelectResult<>(
                             filter.test(record) ? record : null, record);
@@ -2440,7 +2453,8 @@ public final class Runway extends Binding implements AutoCloseable {
                     String section = (String) Iterables.getLast(sections);
                     Class actualClass = Reflection.getClassCasted(section);
                     if(selection.clazz.isAssignableFrom(actualClass)) {
-                        result = instantiate(actualClass, id, recordData, null);
+                        result = instantiate(actualClass, id, recordData, null,
+                                noTransaction);
                     }
                 }
             }
@@ -2480,7 +2494,7 @@ public final class Runway extends Binding implements AutoCloseable {
                     .then($navigated -> resolveLinkTargets(reader, filtered,
                             $navigated))
                     .map($targets -> instantiateAll((Class) selection.clazz,
-                            selection.any, filtered, $targets))
+                            selection.any, filtered, $targets, noTransaction))
                     .onResolve(resolved::set);
             reader.drain();
             result = resolved.get();
@@ -2651,14 +2665,16 @@ public final class Runway extends Binding implements AutoCloseable {
      *            record id
      * @param hasFilter whether {@code filter} is non-trivial
      * @param filter the client-side filter
+     * @param transaction the {@link Transaction} context that scopes the loaded
+     *            {@link Record Records'} operations
      * @param <T> the {@link Record} type
      * @return the {@link SelectResult}
      */
     private <T extends Record> SelectResult<Set<T>> finalizeSet(Class<T> clazz,
             boolean any, Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets, boolean hasFilter,
-            Predicate<T> filter) {
-        Set<T> records = instantiateAll(clazz, any, data, targets);
+            Predicate<T> filter, Transaction transaction) {
+        Set<T> records = instantiateAll(clazz, any, data, targets, transaction);
         if(hasFilter) {
             return new SelectResult<>(
                     records.stream().filter(filter).collect(
@@ -2731,13 +2747,16 @@ public final class Runway extends Binding implements AutoCloseable {
      * @param id
      * @param existing
      * @param data
+     * @param transaction the {@link Transaction} context that scopes the loaded
+     *            {@link Record Record's} operations
      * @return the loaded {@link Record} instance
      */
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+            @Nullable Map<Long, Map<String, Set<Object>>> targets,
+            Transaction transaction) {
         return loadWithErrorHandling(clazz, id, new ConcurrentHashMap<>(),
-                connections, this, data, targets);
+                transaction, data, targets);
     }
 
     /**
@@ -2755,15 +2774,19 @@ public final class Runway extends Binding implements AutoCloseable {
      * @param loaded
      * @param existing
      * @param data
+     * @param transaction the {@link Transaction} context that scopes the loaded
+     *            {@link Record Record's} operations
      * @return the loaded {@link Record} instance
      */
     private <T extends Record> T instantiate(long id,
             ConcurrentMap<Long, Record> loaded,
             @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+            @Nullable Map<Long, Map<String, Set<Object>>> targets,
+            Transaction transaction) {
         if(data == null) {
             // Since the desired class isn't specified, we must
             // prematurely select the record's data to determine it.
+            ConcourseProvider connections = transaction.provider();
             Concourse connection = connections.request();
             try {
                 data = connection.select(id);
@@ -2775,7 +2798,7 @@ public final class Runway extends Binding implements AutoCloseable {
         String section = (String) Iterables
                 .getLast(data.get(Record.SECTION_KEY));
         Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, loaded, connections, this, data,
+        return loadWithErrorHandling(clazz, id, loaded, transaction, data,
                 targets);
     }
 
@@ -2793,12 +2816,16 @@ public final class Runway extends Binding implements AutoCloseable {
      * @param id
      * @param existing
      * @param data
+     * @param transaction the {@link Transaction} context that scopes the loaded
+     *            {@link Record Record's} operations
      * @return the loaded {@link Record} instance
      */
     private <T extends Record> T instantiate(long id,
             @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
-        return instantiate(id, new ConcurrentHashMap<>(), data, targets);
+            @Nullable Map<Long, Map<String, Set<Object>>> targets,
+            Transaction transaction) {
+        return instantiate(id, new ConcurrentHashMap<>(), data, targets,
+                transaction);
     }
 
     /**
@@ -2811,13 +2838,16 @@ public final class Runway extends Binding implements AutoCloseable {
      * @param data the record data keyed by record id
      * @param targets the pre-fetched {@link Link} targets keyed by destination
      *            record id
+     * @param transaction the {@link Transaction} context that scopes the loaded
+     *            {@link Record Records'} operations
      * @return the instantiated {@link Record Records}
      */
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             boolean any, Map<Long, Map<String, Set<Object>>> data,
-            Map<Long, Map<String, Set<Object>>> targets) {
-        return any ? instantiateAll(data, targets)
-                : instantiateAll(clazz, data, targets);
+            Map<Long, Map<String, Set<Object>>> targets,
+            Transaction transaction) {
+        return any ? instantiateAll(data, targets, transaction)
+                : instantiateAll(clazz, data, targets, transaction);
     }
 
     /**
@@ -2828,15 +2858,18 @@ public final class Runway extends Binding implements AutoCloseable {
      * @param data the record data keyed by record id
      * @param targets the pre-fetched {@link Link} targets keyed by destination
      *            record id
+     * @param transaction the {@link Transaction} context that scopes the loaded
+     *            {@link Record Records'} operations
      * @return the instantiated {@link Record Records}
      */
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Map<Long, Map<String, Set<Object>>> data,
-            Map<Long, Map<String, Set<Object>>> targets) {
+            Map<Long, Map<String, Set<Object>>> targets,
+            Transaction transaction) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         return LazyTransformSet.of(data.entrySet(),
                 entry -> loadWithErrorHandling(clazz, entry.getKey(), loaded,
-                        connections, this, entry.getValue(), targets));
+                        transaction, entry.getValue(), targets));
     }
 
     /**
@@ -2846,15 +2879,18 @@ public final class Runway extends Binding implements AutoCloseable {
      * @param data the record data keyed by record id
      * @param targets the pre-fetched {@link Link} targets keyed by destination
      *            record id
+     * @param transaction the {@link Transaction} context that scopes the loaded
+     *            {@link Record Records'} operations
      * @return the instantiated {@link Record Records}
      */
     private <T extends Record> Set<T> instantiateAll(
             Map<Long, Map<String, Set<Object>>> data,
-            Map<Long, Map<String, Set<Object>>> targets) {
+            Map<Long, Map<String, Set<Object>>> targets,
+            Transaction transaction) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         return LazyTransformSet.of(data.entrySet(),
                 entry -> instantiate(entry.getKey(), loaded, entry.getValue(),
-                        targets));
+                        targets, transaction));
     }
 
     /**

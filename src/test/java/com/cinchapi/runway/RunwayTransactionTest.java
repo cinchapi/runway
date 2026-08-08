@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -1803,6 +1804,81 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the {@link Record#onLoad() onLoad}
+     * hook of a {@link Record} loaded through a {@link Transaction} runs while
+     * the record is bound to it, so reads within the hook observe staged state.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1 and
+     * a saved {@link Probe} that references the {@link Item Item's} id.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, set the score to
+     * 2 and {@code save()}.</li>
+     * <li>Load the {@link Probe} through the transaction; its {@code onLoad()}
+     * hook loads the {@link Item} through the {@link Probe Probe's} own binding
+     * and captures the observed score.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The hook observes the staged score of 2.
+     */
+    @Test
+    public void testOnLoadHookObservesStagedStateWithinTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Probe probe = new Probe(item.id());
+        probe.assign(runway);
+        Assert.assertTrue(probe.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            Probe txProbe = transaction.load(Probe.class, probe.id());
+            Assert.assertEquals(2, txProbe.observedScore);
+            transaction.abort();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a filter predicate evaluated within a
+     * {@link Transaction} runs against transaction-bound {@link Record
+     * Records}, so a {@link DeferredReference} the predicate resolves observes
+     * staged state.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Crate} with a lazy link to a
+     * saved {@link Item} that has a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, set the score to
+     * 2 and {@code save()}.</li>
+     * <li>Fetch {@link Crate Crates} through the transaction with a filter that
+     * resolves each {@link Crate Crate's} lazy {@link Item} and matches a score
+     * of 2.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The filter matches the {@link Crate}, because
+     * its lazy {@link Item} resolves within the transaction.
+     */
+    @Test
+    public void testFilterPredicateObservesStagedStateWithinTransaction() {
+        Item item = new Item("widget", 1);
+        Crate crate = new Crate("bin", item);
+        crate.assign(runway);
+        Assert.assertTrue(runway.save(crate, item));
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            Set<Crate> matches = transaction.fetch(Selection.of(Crate.class)
+                    .filter($crate -> $crate.item.get().score == 2));
+            Assert.assertEquals(1, matches.size());
+            transaction.abort();
+        }
+    }
+
+    /**
      * A container with a lazy link to an {@link Item}.
      *
      * @author Jeff Nelson
@@ -2082,6 +2158,40 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         @Override
         protected Supplier<Boolean> overrideSave() {
             return () -> true;
+        }
+    }
+
+    /**
+     * A {@link Record} whose {@link Record#onLoad() onLoad} hook reads the
+     * {@link Item} named by {@link #itemId} through the record's own binding
+     * and captures the observed score.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Probe extends Record {
+
+        /**
+         * The id of the {@link Item} that {@code onLoad()} observes.
+         */
+        long itemId;
+
+        /**
+         * The score that {@code onLoad()} observed, or 0 before a load.
+         */
+        transient int observedScore;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param itemId the id of the {@link Item} to observe on load
+         */
+        public Probe(long itemId) {
+            this.itemId = itemId;
+        }
+
+        @Override
+        protected void onLoad() {
+            observedScore = db.load(Item.class, itemId).score;
         }
     }
 

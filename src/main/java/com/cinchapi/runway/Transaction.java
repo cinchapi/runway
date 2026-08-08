@@ -471,9 +471,8 @@ public class Transaction extends Binding implements AutoCloseable {
                 }
                 reader.drain();
             }
-            Set<Record> seen = Sets.newIdentityHashSet();
             for (DatabaseSelection<?> selection : selections) {
-                bind(selection.get(), seen);
+                materialize(selection.get());
             }
             return new Selections(selections);
         }
@@ -537,6 +536,16 @@ public class Transaction extends Binding implements AutoCloseable {
     }
 
     /**
+     * Return the {@link ConcourseProvider} that scopes a bound {@link Record
+     * Record's} operations to this transaction.
+     *
+     * @return the transaction's {@link ConcourseProvider}
+     */
+    ConcourseProvider provider() {
+        return provider;
+    }
+
+    /**
      * Return the server timestamp at which the staged transaction began. Every
      * revision that a read within the transaction observes with a newer
      * timestamp is one of this {@link Transaction Transaction's} own staged
@@ -580,22 +589,22 @@ public class Transaction extends Binding implements AutoCloseable {
     }
 
     /**
-     * Bind {@code result} to this {@link Transaction}: a {@link Record} is
-     * bound along with its loaded graph, an {@link Iterable} is bound
-     * element-wise, and any other result is left alone.
+     * Ensure that {@code result}, including every element of an
+     * {@link Iterable} result, is fully materialized while the transaction is
+     * open, so no part of a {@link Selection} result resolves after the
+     * transaction ends.
      *
      * @param result a resolved {@link Selection} result
-     * @param seen the identity set of {@link Record Records} that are already
-     *            bound
      */
-    private void bind(Object result, Set<Record> seen) {
-        if(result instanceof Record) {
-            ((Record) result).bindGraph(this, provider, seen);
-        }
-        else if(result instanceof Iterable) {
+    private void materialize(Object result) {
+        if(result instanceof Iterable) {
             for (Object item : (Iterable<?>) result) {
-                bind(item, seen);
+                materialize(item);
             }
+        }
+        else {
+            // A non-iterable result (a single Record, a count, or null) is
+            // already materialized.
         }
     }
 
