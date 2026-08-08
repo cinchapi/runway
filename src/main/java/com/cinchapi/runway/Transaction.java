@@ -373,18 +373,13 @@ public class Transaction extends Binding implements AutoCloseable {
                 throw t;
             }
             saves.add(context);
-            // The flush synchronized each staged record with the
-            // transaction's snapshot, so advance the staleness baseline that
-            // a later preventStaleWrites save compares against.
             context.forEach((record, outcome) -> {
                 if(outcome == SaveContext.Outcome.CHANGED
                         || outcome == SaveContext.Outcome.DELETED) {
+                    // The flush synchronized each staged record with the
+                    // transaction's snapshot, so advance the staleness baseline
+                    // that a later preventStaleWrites save compares against.
                     record.checkpoint();
-                }
-                else {
-                    // A record with no staged writes keeps its load-time
-                    // baseline, so a flagged save can still detect an
-                    // external write that predates the transaction.
                 }
             });
             return true;
