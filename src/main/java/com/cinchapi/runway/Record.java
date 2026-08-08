@@ -2886,6 +2886,7 @@ public abstract class Record implements Comparable<Record> {
         __checksum = snapshot.checksum;
         _author = snapshot.author;
         deleted = snapshot.deleted;
+        checkpointTs = snapshot.checkpointTs;
     }
 
     /**
@@ -5715,6 +5716,11 @@ public abstract class Record implements Comparable<Record> {
         final boolean deleted;
 
         /**
+         * The snapshotted value of {@link Record#checkpointTs}.
+         */
+        final long checkpointTs;
+
+        /**
          * Construct a new instance.
          */
         Snapshot() {
@@ -5722,6 +5728,7 @@ public abstract class Record implements Comparable<Record> {
             this.checksum = Record.this.__checksum;
             this.author = Record.this._author;
             this.deleted = Record.this.deleted;
+            this.checkpointTs = Record.this.checkpointTs;
         }
 
     }

@@ -605,6 +605,163 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@code preventStaleWrites} save of a
+     * {@link Record} that an earlier save in the same {@link Transaction}
+     * staged succeeds instead of a false stale rejection.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, set the score to
+     * 2 and {@code save()}.</li>
+     * <li>Set the score to 3 and {@code save(true)}.</li>
+     * <li>Commit the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both saves return {@code true} and the stored
+     * score is 3 after the commit.
+     */
+    @Test
+    public void testPreventStaleWritesAllowsResaveWithinTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            txItem.score = 3;
+            Assert.assertTrue(txItem.save(true));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(3, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code preventStaleWrites} save
+     * within a {@link Transaction} still rejects a {@link Record} that was
+     * externally modified before the transaction started.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1 that
+     * is loaded through the enclosing {@link Runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Write a score of 99 through a separate client connection.</li>
+     * <li>Start a {@link Transaction}, set the score to 50 on the loaded copy
+     * and save it through the transaction with {@code preventStaleWrites}.</li>
+     * <li>Call {@code abort()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a {@link StaleDataException}
+     * and the stored score remains 99 after the abort.
+     */
+    @Test
+    public void testPreventStaleWritesDetectsPreTransactionModification() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Item loaded = runway.load(Item.class, item.id());
+        client.set("score", 99, item.id());
+        try (Transaction transaction = runway.stage()) {
+            loaded.score = 50;
+            try {
+                transaction.save(true, loaded);
+                Assert.fail("Expected the save to be rejected as stale");
+            }
+            catch (StaleDataException e) {/* expected */}
+            transaction.abort();
+        }
+        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code preventStaleWrites} save of a
+     * {@link Record} whose changes an earlier linked-graph save staged succeeds
+     * instead of a false stale rejection.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Basket} that links to a
+     * saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Basket} through a {@link Transaction} and set the
+     * linked {@link Item Item's} score to 5.</li>
+     * <li>Save the {@link Basket}, which stages the linked {@link Item Item's}
+     * change.</li>
+     * <li>Save the linked {@link Item} directly with
+     * {@code preventStaleWrites}, then commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both saves return {@code true} and the stored
+     * score is 5 after the commit.
+     */
+    @Test
+    public void testPreventStaleWritesAllowsSaveAfterLinkedGraphStaging() {
+        Item item = new Item("widget", 1);
+        Basket basket = new Basket("tote", item);
+        basket.assign(runway);
+        Assert.assertTrue(runway.save(basket, item));
+        try (Transaction transaction = runway.stage()) {
+            Basket txBasket = transaction.load(Basket.class, basket.id());
+            txBasket.item.score = 5;
+            Assert.assertTrue(txBasket.save());
+            Assert.assertTrue(txBasket.item.save(true));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(5, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save that stages nothing for a
+     * {@link Record} does not advance its staleness baseline, so a later
+     * {@code preventStaleWrites} save still rejects a pre-transaction external
+     * modification.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Basket} that links to a
+     * saved {@link Item} with a score of 1, with both loaded through the
+     * enclosing {@link Runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Write a score of 99 to the {@link Item} through a separate client
+     * connection.</li>
+     * <li>Start a {@link Transaction}, change the {@link Basket Basket's} name
+     * and save the {@link Basket}, which processes the unchanged linked
+     * {@link Item}.</li>
+     * <li>Set the score to 50 on the linked {@link Item} and save it with
+     * {@code preventStaleWrites}.</li>
+     * <li>Call {@code abort()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The flagged save throws a
+     * {@link StaleDataException} and the stored score remains 99 after the
+     * abort.
+     */
+    @Test
+    public void testPreventStaleWritesDetectsModificationOfUnstagedRecord() {
+        Item item = new Item("widget", 1);
+        Basket basket = new Basket("tote", item);
+        basket.assign(runway);
+        Assert.assertTrue(runway.save(basket, item));
+        Basket loaded = runway.load(Basket.class, basket.id());
+        client.set("score", 99, item.id());
+        try (Transaction transaction = runway.stage()) {
+            loaded.name = "satchel";
+            Assert.assertTrue(transaction.save(loaded));
+            loaded.item.score = 50;
+            try {
+                loaded.item.save(true);
+                Assert.fail("Expected the save to be rejected as stale");
+            }
+            catch (StaleDataException e) {/* expected */}
+            transaction.abort();
+        }
+        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a {@link Transaction#save(Record...)}
      * call that is rejected because a {@link Record} overrides the save
      * pipeline stages nothing and does not poison the transaction.
