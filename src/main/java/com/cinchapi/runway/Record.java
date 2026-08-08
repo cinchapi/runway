@@ -592,6 +592,36 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Perform {@code action} on every loaded {@link Record} that is reachable
+     * from {@code value}: a {@link Record} directly, the loaded {@link Record}
+     * within a {@link DeferredReference}, or either one within a
+     * {@link Sequences#isSequence(Object) Sequence}.
+     *
+     * @param value the value to inspect for {@link Record} references
+     * @param action the action to perform on each reachable {@link Record}
+     */
+    private static void forEachReachableRecord(Object value,
+            Consumer<Record> action) {
+        if(Sequences.isSequence(value)) {
+            Sequences.forEach(value,
+                    item -> forEachReachableRecord(item, action));
+        }
+        else {
+            Record record = null;
+            if(value instanceof Record) {
+                record = (Record) value;
+            }
+            else if(value instanceof DeferredReference) {
+                record = ((DeferredReference<?>) value).$ref();
+            }
+
+            if(record != null) {
+                action.accept(record);
+            }
+        }
+    }
+
+    /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
      *
@@ -690,28 +720,13 @@ public abstract class Record implements Comparable<Record> {
      * @param saver the {@link Saver} for the attempt's transaction
      * @param context the active {@link SaveContext}
      */
-    @SuppressWarnings("rawtypes")
     private static void saveModifiedReferenceWithinTransaction(Object value,
             Saver saver, SaveContext context) {
-        if(Sequences.isSequence(value)) {
-            Sequences.forEach(value,
-                    item -> saveModifiedReferenceWithinTransaction(item, saver,
-                            context));
-        }
-        else {
-            Record record = null;
-            if(value instanceof Record) {
-                record = (Record) value;
-            }
-            else if(value instanceof DeferredReference) {
-                DeferredReference deferred = (DeferredReference) value;
-                record = deferred.$ref();
-            }
-
-            if(record != null && !context.contains(record)) {
+        forEachReachableRecord(value, record -> {
+            if(!context.contains(record)) {
                 record.saveWithinTransaction(saver, context);
             }
-        }
+        });
     }
 
     /**
@@ -2352,9 +2367,11 @@ public abstract class Record implements Comparable<Record> {
      * work joins it: everything the work stages becomes durable when that
      * transaction's owner commits it. Otherwise, the work runs the same as
      * {@link Runway#supply(Function)}: it receives a new {@link Transaction}
-     * that commits after the work completes, conflicts retry within the bounds
-     * of the governing {@link AtomicRetryPolicy}, and the work must therefore
-     * be free of side effects outside of the transaction.
+     * that commits after the work completes, and this {@link Record} joins each
+     * attempt's transaction, so a direct {@link #save() save} stages within it.
+     * Conflicts retry within the bounds of the governing
+     * {@link AtomicRetryPolicy}, so the work must be free of side effects
+     * outside of the transaction.
      * </p>
      *
      * @param work the work to run
@@ -2371,7 +2388,10 @@ public abstract class Record implements Comparable<Record> {
             Runway runway = harness();
             Verify.that(runway != null, "Cannot execute transactional work"
                     + " because this Record has no binding");
-            return runway.supply(work);
+            return runway.supply(transaction -> {
+                transaction.join(this);
+                return work.apply(transaction);
+            });
         }
     }
 
@@ -2461,20 +2481,9 @@ public abstract class Record implements Comparable<Record> {
             fields().stream().filter(
                     field -> !Modifier.isTransient(field.getModifiers()))
                     .map(field -> Reflection.get(field.getName(), this))
-                    .forEach(value -> {
-                        if(value instanceof Record) {
-                            ((Record) value).bindGraph(binding, connections,
-                                    seen);
-                        }
-                        else if(value != null && Sequences.isSequence(value)) {
-                            Sequences.forEach(value, item -> {
-                                if(item instanceof Record) {
-                                    ((Record) item).bindGraph(binding,
-                                            connections, seen);
-                                }
-                            });
-                        }
-                    });
+                    .forEach(value -> forEachReachableRecord(value,
+                            record -> record.bindGraph(binding, connections,
+                                    seen)));
         }
     }
 

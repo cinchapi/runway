@@ -152,6 +152,7 @@ public class Transaction extends Binding implements AutoCloseable {
         public Concourse request() {
             if(open) {
                 verifyOwner();
+                verifyNotPoisoned();
                 return concourse;
             }
             else {
@@ -530,6 +531,17 @@ public class Transaction extends Binding implements AutoCloseable {
      */
     boolean committed() {
         return committed;
+    }
+
+    /**
+     * Bind {@code record}, and every loaded {@link Record} that is reachable
+     * from it, to this {@link Transaction}, so each {@link Record#save() save}
+     * stages within it.
+     *
+     * @param record the {@link Record} that joins this {@link Transaction}
+     */
+    void join(Record record) {
+        record.bindGraph(this, provider, Sets.newIdentityHashSet());
     }
 
     /**

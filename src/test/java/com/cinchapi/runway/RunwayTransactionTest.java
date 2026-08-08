@@ -516,6 +516,51 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@link Record#refresh() refresh} on
+     * a {@link Record} bound to a poisoned {@link Transaction} is refused, so
+     * the record cannot absorb writes from the failed save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and change the
+     * score to 2.</li>
+     * <li>Save the {@link Item} together with a {@link Registration} whose
+     * {@link Required} name is empty, so the save throws.</li>
+     * <li>Call {@code refresh()} on the transactional copy.</li>
+     * <li>Call {@code abort()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The refresh throws an
+     * {@link IllegalStateException}, the abort succeeds and a load through the
+     * enclosing {@link Runway} still observes a score of 1.
+     */
+    @Test
+    public void testRefreshIsRefusedWhenTransactionIsPoisoned() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Registration invalid = new Registration(null);
+            try {
+                transaction.save(txItem, invalid);
+                Assert.fail("Expected the save to throw");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                txItem.refresh();
+                Assert.fail("Expected the refresh to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            transaction.abort();
+        }
+        Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a {@link Transaction#save(Record...)}
      * call that is rejected because a {@link Record} overrides the save
      * pipeline stages nothing and does not poison the transaction.
@@ -656,6 +701,39 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 9;
             Assert.assertTrue(txItem.save());
+        });
+        Assert.assertEquals(9, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Runway}-bound {@link Record}
+     * joins the managed transaction that
+     * {@link Record#run(java.util.function.Consumer) run} starts, so a direct
+     * {@code save()} within the work stages instead of an immediate commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code run} on the {@link Item} with work that sets the score to
+     * 9 on the {@link Item} itself and calls {@code save()} on it.</li>
+     * <li>Within the work, after the save, load the {@link Item} through the
+     * enclosing {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The load within the work still observes 1,
+     * which proves the save staged within the managed transaction; after
+     * {@code run} returns, the stored score is 9.
+     */
+    @Test
+    public void testRecordRunReceiverJoinsTheManagedTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        item.run(transaction -> {
+            item.score = 9;
+            Assert.assertTrue(item.save());
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
         });
         Assert.assertEquals(9, runway.load(Item.class, item.id()).score);
     }
@@ -1437,6 +1515,46 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(lazy.save());
             Assert.assertEquals(5, runway.load(Item.class, item.id()).score);
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@link Record} cached inside an
+     * already resolved {@link DeferredReference} binds to a {@link Transaction}
+     * along with its owner, so its saves stage within the transaction.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Crate} with a lazy link to a
+     * saved {@link Item} that has a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Crate} through the enclosing {@link Runway} and
+     * access its lazy {@link Item}.</li>
+     * <li>Save the {@link Crate} through a {@link Transaction}.</li>
+     * <li>Set the score to 7 on the lazily loaded copy and {@code save()}.</li>
+     * <li>Load the {@link Item} through the enclosing {@link Runway} before the
+     * commit.</li>
+     * <li>Commit the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The non-transactional load still observes 1
+     * before the commit; after the commit, the stored score is 7.
+     */
+    @Test
+    public void testResolvedDeferredReferenceJoinsTheTransactionWithItsOwner() {
+        Item item = new Item("widget", 1);
+        Crate crate = new Crate("bin", item);
+        crate.assign(runway);
+        Assert.assertTrue(runway.save(crate, item));
+        Crate loaded = runway.load(Crate.class, crate.id());
+        Item lazy = loaded.item.get();
+        try (Transaction transaction = runway.stage()) {
+            Assert.assertTrue(transaction.save(loaded));
+            lazy.score = 7;
+            Assert.assertTrue(lazy.save());
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(7, runway.load(Item.class, item.id()).score);
     }
 
     /**
