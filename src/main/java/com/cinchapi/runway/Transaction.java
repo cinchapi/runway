@@ -24,6 +24,8 @@ import javax.annotation.concurrent.NotThreadSafe;
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ForwardingConcourse;
+import com.cinchapi.concourse.thrift.TransactionToken;
 import com.cinchapi.runway.db.BatchReader;
 import com.cinchapi.runway.db.BatchSaver;
 import com.cinchapi.runway.db.ConcourseProvider;
@@ -123,6 +125,12 @@ public class Transaction extends Binding implements AutoCloseable {
      * Whether the transaction successfully committed.
      */
     private boolean committed = false;
+
+    /**
+     * The server timestamp at which the staged transaction began, or {@code 0}
+     * before the first {@link #startTimestamp()} access.
+     */
+    private long startTimestamp = 0;
 
     /**
      * The {@link SaveContext} for every save staged within the transaction, in
@@ -373,15 +381,6 @@ public class Transaction extends Binding implements AutoCloseable {
                 throw t;
             }
             saves.add(context);
-            context.forEach((record, outcome) -> {
-                if(outcome == SaveContext.Outcome.CHANGED
-                        || outcome == SaveContext.Outcome.DELETED) {
-                    // The flush synchronized each staged record with the
-                    // transaction's snapshot, so advance the staleness baseline
-                    // that a later preventStaleWrites save compares against.
-                    record.checkpoint();
-                }
-            });
             return true;
         }
         else {
@@ -547,6 +546,26 @@ public class Transaction extends Binding implements AutoCloseable {
      */
     boolean committed() {
         return committed;
+    }
+
+    /**
+     * Return the server timestamp at which the staged transaction began. Every
+     * revision that a read within the transaction observes with a newer
+     * timestamp is one of this {@link Transaction Transaction's} own staged
+     * writes, because no other writer is visible in the snapshot.
+     *
+     * @return the server timestamp of the transaction's start
+     */
+    long startTimestamp() {
+        if(startTimestamp == 0) {
+            Concourse source = concourse;
+            while (source instanceof ForwardingConcourse) {
+                source = Reflection.get("concourse", source);
+            }
+            TransactionToken token = Reflection.get("transaction", source);
+            startTimestamp = token.getTimestamp();
+        }
+        return startTimestamp;
     }
 
     /**

@@ -714,10 +714,9 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a save that stages nothing for a
-     * {@link Record} does not advance its staleness baseline, so a later
-     * {@code preventStaleWrites} save still rejects a pre-transaction external
-     * modification.
+     * <strong>Goal:</strong> Verify that a {@code preventStaleWrites} save
+     * still rejects a pre-transaction external modification of a {@link Record}
+     * that an earlier save in the transaction processed without changes.
      * <p>
      * <strong>Start state:</strong> A saved {@link Basket} that links to a
      * saved {@link Item} with a score of 1, with both loaded through the
@@ -759,6 +758,43 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             transaction.abort();
         }
         Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code preventStaleWrites} save of a
+     * second in-memory instance succeeds when the only newer revisions are the
+     * ones the {@link Transaction} itself staged.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1 and
+     * two copies of it loaded through the enclosing {@link Runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Set the score to 2 on the first copy and save it through a
+     * {@link Transaction}.</li>
+     * <li>Set the score to 3 on the second copy and save it through the
+     * transaction with {@code preventStaleWrites}.</li>
+     * <li>Commit the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both saves return {@code true} and the stored
+     * score is 3 after the commit.
+     */
+    @Test
+    public void testPreventStaleWritesIgnoresTheTransactionsOwnWrites() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Item first = runway.load(Item.class, item.id());
+        Item second = runway.load(Item.class, item.id());
+        try (Transaction transaction = runway.stage()) {
+            first.score = 2;
+            Assert.assertTrue(transaction.save(first));
+            second.score = 3;
+            Assert.assertTrue(transaction.save(true, second));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(3, runway.load(Item.class, item.id()).score);
     }
 
     /**

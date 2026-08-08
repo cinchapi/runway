@@ -613,8 +613,24 @@ public abstract class Record implements Comparable<Record> {
      */
     private static boolean isStaleAudit(Map<Timestamp, List<String>> audit,
             long checkpointTs) {
+        return isStaleAudit(audit, checkpointTs, Long.MAX_VALUE);
+    }
+
+    /**
+     * Return {@code true} if {@code audit} contains any change recorded after
+     * {@code checkpointTs} and no later than {@code ceiling}
+     *
+     * @param audit a record-level audit history keyed by {@link Timestamp}
+     * @param checkpointTs the timestamp of the most recent checkpoint
+     * @param ceiling the newest timestamp that can indicate staleness; changes
+     *            recorded after it are disregarded
+     * @return {@code true} if the data is stale
+     */
+    private static boolean isStaleAudit(Map<Timestamp, List<String>> audit,
+            long checkpointTs, long ceiling) {
         for (Timestamp ts : audit.keySet()) {
-            if(ts.getMicros() > checkpointTs) {
+            long micros = ts.getMicros();
+            if(micros > checkpointTs && micros <= ceiling) {
                 return true;
             }
         }
@@ -2886,7 +2902,6 @@ public abstract class Record implements Comparable<Record> {
         __checksum = snapshot.checksum;
         _author = snapshot.author;
         deleted = snapshot.deleted;
-        checkpointTs = snapshot.checkpointTs;
     }
 
     /**
@@ -2908,8 +2923,9 @@ public abstract class Record implements Comparable<Record> {
         context.snapshot(this);
         Preconditions.checkState(!inViolation);
         if(context.shouldPreventStaleWrite() && checkpointTs != 0) {
+            long ceiling = stalenessCeiling();
             saver.audit(id, audit -> {
-                if(isStaleAudit(audit, checkpointTs)) {
+                if(isStaleAudit(audit, checkpointTs, ceiling)) {
                     throw new StaleDataException(id);
                 }
             });
@@ -4048,6 +4064,27 @@ public abstract class Record implements Comparable<Record> {
             value = get(key);
         }
         return new SimpleEntry<>(key, value);
+    }
+
+    /**
+     * Return the newest revision timestamp that can mark this {@link Record} as
+     * stale.
+     * <p>
+     * Within an open {@link Transaction}, every revision after the transaction
+     * began is one of the transaction's own staged writes, because no other
+     * writer is visible in the snapshot, so newer revisions never indicate
+     * staleness. Outside of a transaction there is no bound.
+     * </p>
+     *
+     * @return the staleness ceiling
+     */
+    private long stalenessCeiling() {
+        if(binding instanceof Transaction && ((Transaction) binding).open()) {
+            return ((Transaction) binding).startTimestamp();
+        }
+        else {
+            return Long.MAX_VALUE;
+        }
     }
 
     /**
@@ -5716,11 +5753,6 @@ public abstract class Record implements Comparable<Record> {
         final boolean deleted;
 
         /**
-         * The snapshotted value of {@link Record#checkpointTs}.
-         */
-        final long checkpointTs;
-
-        /**
          * Construct a new instance.
          */
         Snapshot() {
@@ -5728,7 +5760,6 @@ public abstract class Record implements Comparable<Record> {
             this.checksum = Record.this.__checksum;
             this.author = Record.this._author;
             this.deleted = Record.this.deleted;
-            this.checkpointTs = Record.this.checkpointTs;
         }
 
     }
