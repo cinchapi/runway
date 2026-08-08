@@ -158,6 +158,17 @@ public class Transaction extends Binding implements AutoCloseable {
     private final ConcourseProvider provider = new ConcourseProvider() {
 
         @Override
+        public void release(Concourse connection) {
+            if(!open) {
+                database.connections.release(connection);
+            }
+            else {
+                // no-op: the Transaction owns the connection until the
+                // transaction ends
+            }
+        }
+
+        @Override
         public Concourse request() {
             if(open) {
                 verifyOwner();
@@ -169,18 +180,23 @@ public class Transaction extends Binding implements AutoCloseable {
             }
         }
 
-        @Override
-        public void release(Concourse connection) {
-            if(!open) {
-                database.connections.release(connection);
-            }
-            else {
-                // no-op: the Transaction owns the connection until the
-                // transaction ends
-            }
-        }
-
     };
+
+    /**
+     * Construct an instance that represents the absence of a transaction: it
+     * has no connection and stages nothing, so every operation behaves exactly
+     * as it does on {@code database}.
+     *
+     * @param database the {@link Runway} instance that this transaction
+     *            operates against
+     */
+    Transaction(Runway database) {
+        this.database = database;
+        this.concourse = null;
+        this.owned = false;
+        this.owner = Thread.currentThread();
+        this.open = false;
+    }
 
     /**
      * Construct a new instance and {@link Concourse#stage() stage} a
@@ -203,51 +219,112 @@ public class Transaction extends Binding implements AutoCloseable {
     }
 
     /**
-     * Construct an instance that represents the absence of a transaction: it
-     * has no connection and stages nothing, so every operation behaves exactly
-     * as it does on {@code database}.
-     *
-     * @param database the {@link Runway} instance that this transaction
-     *            operates against
+     * Abort the transaction and discard every staged write; a {@link Record
+     * Record's} in-memory edits remain, the same as after a failed save. Every
+     * {@link #afterAbort(Runnable) afterAbort} hook runs.
+     * <p>
+     * This method has no effect if the transaction already ended.
+     * </p>
      */
-    Transaction(Runway database) {
-        this.database = database;
-        this.concourse = null;
-        this.owned = false;
-        this.owner = Thread.currentThread();
-        this.open = false;
+    public void abort() {
+        if(open) {
+            verifyOwner();
+            try {
+                concourse.abort();
+            }
+            finally {
+                end(false);
+            }
+        }
+    }
+
+    /**
+     * Register a {@code hook} to run once, after this {@link Transaction} ends
+     * without a successful commit: an explicit {@link #abort()}, a
+     * {@link #close()} that aborts, or a {@link #commit()} that fails.
+     * <p>
+     * Use this for side effects that must happen only when the staged writes
+     * are discarded (e.g., compensating cleanup or telemetry). Hooks run
+     * synchronously on the owner thread, in registration order, after the
+     * transaction ends. If the transaction commits, then the hooks never run;
+     * within {@link Runway#run(java.util.function.Consumer) run} and
+     * {@link Runway#supply(java.util.function.Function) supply}, each attempt
+     * is a distinct {@link Transaction}, so a hook registered by the work runs
+     * for its own attempt, including an attempt that a conflict retry discards.
+     * </p>
+     * <p>
+     * A hook that throws does not affect the outcome: the exception propagates
+     * to the caller and any remaining hooks are skipped.
+     * </p>
+     *
+     * @param hook the side effect to run after the transaction ends without a
+     *            successful commit
+     * @throws IllegalStateException if the transaction already ended, or if a
+     *             save failed within it
+     */
+    public void afterAbort(Runnable hook) {
+        verify();
+        afterAbortHooks.add(hook);
+    }
+
+    /**
+     * Register a {@code hook} to run once, after this {@link Transaction}
+     * successfully commits.
+     * <p>
+     * Use this for side effects that must not happen unless the staged writes
+     * become durable (e.g., a notification about a created {@link Record}).
+     * Hooks run synchronously on the owner thread, in registration order, after
+     * the commit succeeds. If the transaction ends without a successful commit,
+     * then the hooks registered on it never run; within
+     * {@link Runway#run(java.util.function.Consumer) run} and
+     * {@link Runway#supply(java.util.function.Function) supply}, each attempt
+     * is a distinct {@link Transaction}, so a hook registered by the work never
+     * runs for an attempt that a conflict retry discards.
+     * </p>
+     * <p>
+     * A hook that throws does not affect the outcome: the transaction remains
+     * committed, the exception propagates to the caller and any remaining hooks
+     * are skipped.
+     * </p>
+     *
+     * @param hook the side effect to run after a successful commit
+     * @throws IllegalStateException if the transaction already ended, or if a
+     *             save failed within it
+     */
+    public void afterCommit(Runnable hook) {
+        verify();
+        afterCommitHooks.add(hook);
     }
 
     @Override
-    public Selections select(Selection<?>... options) {
-        if(open) {
-            verifyOwner();
-            verifyNotPoisoned();
-            DatabaseSelection<?>[] selections = DatabaseSelection
-                    .resolve(options);
-            try (Reader reader = database.supportsBulkCommands
-                    ? new BatchReader(concourse)
-                    : new IncrementalReader(concourse)) {
-                for (DatabaseSelection<?> selection : selections) {
-                    if(selection.state == Selection.State.RESOLVED) {
-                        selection.setState(Selection.State.FINISHED);
-                    }
-                    else {
-                        selection.setState(Selection.State.SUBMITTED);
-                        database.$selectFromDatabase(reader, selection, this);
-                    }
-                }
-                reader.drain();
-            }
-            Set<Record> seen = Sets.newIdentityHashSet();
-            for (DatabaseSelection<?> selection : selections) {
-                bind(selection.get(), seen);
-            }
-            return new Selections(selections);
+    public void close() {
+        abort();
+    }
+
+    /**
+     * Attempt to commit the transaction and make every staged write durable.
+     * <p>
+     * On success, the lifecycle consequences of each staged save (e.g., save
+     * and delete notifications) are dispatched and every
+     * {@link #afterCommit(Runnable) afterCommit} hook runs. On failure, every
+     * staged write is discarded and every {@link #afterAbort(Runnable)
+     * afterAbort} hook runs; a {@link Record Record's} in-memory edits remain,
+     * the same as after a failed save. Either way, the transaction ends.
+     * </p>
+     *
+     * @return {@code true} if the transaction commits
+     * @throws IllegalStateException if the transaction already ended, or if a
+     *             save failed within it
+     */
+    public boolean commit() {
+        verify();
+        try {
+            committed = concourse.commit();
         }
-        else {
-            return database.select(options);
+        finally {
+            end(committed);
         }
+        return committed;
     }
 
     /**
@@ -275,47 +352,6 @@ public class Transaction extends Binding implements AutoCloseable {
         T record = Reflection.newInstance(clazz, args);
         record.bind(this, provider);
         return record;
-    }
-
-    @Override
-    <T extends Record> T load(long id) {
-        if(open) {
-            verifyOwner();
-            verifyNotPoisoned();
-            Set<Object> sections = concourse.select(Record.SECTION_KEY, id);
-            Class<T> clazz = Reflection
-                    .getClassCasted((String) Iterables.getLast(sections));
-            return load(clazz, id);
-        }
-        else {
-            return database.load(id);
-        }
-    }
-
-    /**
-     * Save all changes in the provided {@code records} within this transaction.
-     * <p>
-     * The records, and every {@link Record} linked from them, are bound to this
-     * transaction, and the staged changes become durable when {@link #commit()}
-     * succeeds. Until then, no reader outside the transaction can observe them.
-     * </p>
-     * <p>
-     * A {@link Record} that overrides the save pipeline is rejected before
-     * anything is staged, and the transaction remains usable. If the save fails
-     * after staging begins, then the transaction is poisoned: the writes that
-     * were staged before the failure can never commit, and every subsequent
-     * operation is refused except {@link #abort()}.
-     * </p>
-     *
-     * @param records one or more {@link Record Records} to save
-     * @return {@code true} when the changes are staged
-     * @throws IllegalStateException if any of the {@code records} overrides the
-     *             save pipeline, or if a prior save failed within the
-     *             transaction
-     */
-    @Override
-    public boolean save(Record... records) {
-        return save(false, records);
     }
 
     /**
@@ -389,135 +425,70 @@ public class Transaction extends Binding implements AutoCloseable {
     }
 
     /**
-     * Register a {@code hook} to run once, after this {@link Transaction}
-     * successfully commits.
+     * Save all changes in the provided {@code records} within this transaction.
      * <p>
-     * Use this for side effects that must not happen unless the staged writes
-     * become durable (e.g., a notification about a created {@link Record}).
-     * Hooks run synchronously on the owner thread, in registration order, after
-     * the commit succeeds. If the transaction ends without a successful commit,
-     * then the hooks registered on it never run; within
-     * {@link Runway#run(java.util.function.Consumer) run} and
-     * {@link Runway#supply(java.util.function.Function) supply}, each attempt
-     * is a distinct {@link Transaction}, so a hook registered by the work never
-     * runs for an attempt that a conflict retry discards.
+     * The records, and every {@link Record} linked from them, are bound to this
+     * transaction, and the staged changes become durable when {@link #commit()}
+     * succeeds. Until then, no reader outside the transaction can observe them.
      * </p>
      * <p>
-     * A hook that throws does not affect the outcome: the transaction remains
-     * committed, the exception propagates to the caller and any remaining hooks
-     * are skipped.
+     * A {@link Record} that overrides the save pipeline is rejected before
+     * anything is staged, and the transaction remains usable. If the save fails
+     * after staging begins, then the transaction is poisoned: the writes that
+     * were staged before the failure can never commit, and every subsequent
+     * operation is refused except {@link #abort()}.
      * </p>
      *
-     * @param hook the side effect to run after a successful commit
-     * @throws IllegalStateException if the transaction already ended, or if a
-     *             save failed within it
+     * @param records one or more {@link Record Records} to save
+     * @return {@code true} when the changes are staged
+     * @throws IllegalStateException if any of the {@code records} overrides the
+     *             save pipeline, or if a prior save failed within the
+     *             transaction
      */
-    public void afterCommit(Runnable hook) {
-        verify();
-        afterCommitHooks.add(hook);
-    }
-
-    /**
-     * Register a {@code hook} to run once, after this {@link Transaction} ends
-     * without a successful commit: an explicit {@link #abort()}, a
-     * {@link #close()} that aborts, or a {@link #commit()} that fails.
-     * <p>
-     * Use this for side effects that must happen only when the staged writes
-     * are discarded (e.g., compensating cleanup or telemetry). Hooks run
-     * synchronously on the owner thread, in registration order, after the
-     * transaction ends. If the transaction commits, then the hooks never run;
-     * within {@link Runway#run(java.util.function.Consumer) run} and
-     * {@link Runway#supply(java.util.function.Function) supply}, each attempt
-     * is a distinct {@link Transaction}, so a hook registered by the work runs
-     * for its own attempt, including an attempt that a conflict retry discards.
-     * </p>
-     * <p>
-     * A hook that throws does not affect the outcome: the exception propagates
-     * to the caller and any remaining hooks are skipped.
-     * </p>
-     *
-     * @param hook the side effect to run after the transaction ends without a
-     *            successful commit
-     * @throws IllegalStateException if the transaction already ended, or if a
-     *             save failed within it
-     */
-    public void afterAbort(Runnable hook) {
-        verify();
-        afterAbortHooks.add(hook);
-    }
-
-    /**
-     * Attempt to commit the transaction and make every staged write durable.
-     * <p>
-     * On success, the lifecycle consequences of each staged save (e.g., save
-     * and delete notifications) are dispatched and every
-     * {@link #afterCommit(Runnable) afterCommit} hook runs. On failure, every
-     * staged write is discarded and every {@link #afterAbort(Runnable)
-     * afterAbort} hook runs; a {@link Record Record's} in-memory edits remain,
-     * the same as after a failed save. Either way, the transaction ends.
-     * </p>
-     *
-     * @return {@code true} if the transaction commits
-     * @throws IllegalStateException if the transaction already ended, or if a
-     *             save failed within it
-     */
-    public boolean commit() {
-        verify();
-        try {
-            committed = concourse.commit();
-        }
-        finally {
-            end(committed);
-        }
-        return committed;
-    }
-
-    /**
-     * Abort the transaction and discard every staged write; a {@link Record
-     * Record's} in-memory edits remain, the same as after a failed save. Every
-     * {@link #afterAbort(Runnable) afterAbort} hook runs.
-     * <p>
-     * This method has no effect if the transaction already ended.
-     * </p>
-     */
-    public void abort() {
-        if(open) {
-            verifyOwner();
-            try {
-                concourse.abort();
-            }
-            finally {
-                end(false);
-            }
-        }
+    @Override
+    public boolean save(Record... records) {
+        return save(false, records);
     }
 
     @Override
-    public void close() {
-        abort();
+    public Selections select(Selection<?>... options) {
+        if(open) {
+            verifyOwner();
+            verifyNotPoisoned();
+            DatabaseSelection<?>[] selections = DatabaseSelection
+                    .resolve(options);
+            try (Reader reader = database.supportsBulkCommands
+                    ? new BatchReader(concourse)
+                    : new IncrementalReader(concourse)) {
+                for (DatabaseSelection<?> selection : selections) {
+                    if(selection.state == Selection.State.RESOLVED) {
+                        selection.setState(Selection.State.FINISHED);
+                    }
+                    else {
+                        selection.setState(Selection.State.SUBMITTED);
+                        database.$selectFromDatabase(reader, selection, this);
+                    }
+                }
+                reader.drain();
+            }
+            Set<Record> seen = Sets.newIdentityHashSet();
+            for (DatabaseSelection<?> selection : selections) {
+                bind(selection.get(), seen);
+            }
+            return new Selections(selections);
+        }
+        else {
+            return database.select(options);
+        }
     }
 
     /**
-     * Return a synchronous {@link Reader} whose reads execute within this
-     * {@link Transaction}.
+     * Return {@code true} if the transaction successfully committed.
      *
-     * @return the {@link Reader}
+     * @return {@code true} if the transaction {@link #committed}
      */
-    Reader syncReader() {
-        return new IncrementalReader(concourse);
-    }
-
-    /**
-     * Execute {@link Concourse#verifyOrSet(String, Object, long) verifyOrSet}
-     * within the transaction.
-     *
-     * @param key the field name
-     * @param value the value to store as the only value for {@code key} in
-     *            {@code record}
-     * @param record the record id
-     */
-    void verifyOrSet(String key, Object value, long record) {
-        concourse.verifyOrSet(key, value, record);
+    boolean committed() {
+        return committed;
     }
 
     /**
@@ -531,21 +502,38 @@ public class Transaction extends Binding implements AutoCloseable {
     }
 
     /**
+     * Bind {@code record}, and every loaded {@link Record} that is reachable
+     * from it, to this {@link Transaction}, so each {@link Record#save() save}
+     * stages within it.
+     *
+     * @param record the {@link Record} that joins this {@link Transaction}
+     */
+    void join(Record record) {
+        record.bindGraph(this, provider, Sets.newIdentityHashSet());
+    }
+
+    @Override
+    <T extends Record> T load(long id) {
+        if(open) {
+            verifyOwner();
+            verifyNotPoisoned();
+            Set<Object> sections = concourse.select(Record.SECTION_KEY, id);
+            Class<T> clazz = Reflection
+                    .getClassCasted((String) Iterables.getLast(sections));
+            return load(clazz, id);
+        }
+        else {
+            return database.load(id);
+        }
+    }
+
+    /**
      * Return {@code true} if the transaction is still active.
      *
      * @return {@code true} if the transaction is {@link #open}
      */
     boolean open() {
         return open;
-    }
-
-    /**
-     * Return {@code true} if the transaction successfully committed.
-     *
-     * @return {@code true} if the transaction {@link #committed}
-     */
-    boolean committed() {
-        return committed;
     }
 
     /**
@@ -569,14 +557,26 @@ public class Transaction extends Binding implements AutoCloseable {
     }
 
     /**
-     * Bind {@code record}, and every loaded {@link Record} that is reachable
-     * from it, to this {@link Transaction}, so each {@link Record#save() save}
-     * stages within it.
+     * Return a synchronous {@link Reader} whose reads execute within this
+     * {@link Transaction}.
      *
-     * @param record the {@link Record} that joins this {@link Transaction}
+     * @return the {@link Reader}
      */
-    void join(Record record) {
-        record.bindGraph(this, provider, Sets.newIdentityHashSet());
+    Reader syncReader() {
+        return new IncrementalReader(concourse);
+    }
+
+    /**
+     * Execute {@link Concourse#verifyOrSet(String, Object, long) verifyOrSet}
+     * within the transaction.
+     *
+     * @param key the field name
+     * @param value the value to store as the only value for {@code key} in
+     *            {@code record}
+     * @param record the record id
+     */
+    void verifyOrSet(String key, Object value, long record) {
+        concourse.verifyOrSet(key, value, record);
     }
 
     /**
