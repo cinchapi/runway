@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -77,11 +78,20 @@ import com.google.common.collect.Sets;
  * staged before the failure can never commit, so every subsequent operation is
  * refused except {@link #abort()} (or {@link #close()}).
  * </p>
+ * <p>
+ * A deletion staged within the transaction is final. A later save of an
+ * id-equal {@link Record} adopts the deletion instead of restoring data, a
+ * reference to the deleted record that a later save stages is removed the same
+ * as one staged alongside the deletion, and the lifecycle consequences of the
+ * {@link #commit()} dispatch once per record.
+ * </p>
  *
  * @author Jeff Nelson
  */
 @NotThreadSafe
-public class Transaction extends Binding implements AutoCloseable {
+public class Transaction extends Binding implements
+        AutoCloseable,
+        TransactionInterface {
 
     /**
      * The {@link Runway} instance that this {@link Transaction} operates
@@ -146,6 +156,12 @@ public class Transaction extends Binding implements AutoCloseable {
      * {@link #commit()} or unwound at {@link #abort()}.
      */
     private final List<SaveContext> saves = new ArrayList<>();
+
+    /**
+     * The id of every record that a staged save deleted, so the deletion stays
+     * final for the saves that follow it within the transaction.
+     */
+    private final Set<Long> deletions = new LinkedHashSet<>();
 
     /**
      * The hooks to run, in registration order, after a successful
@@ -270,6 +286,7 @@ public class Transaction extends Binding implements AutoCloseable {
      * @throws IllegalStateException if the transaction already ended, or if a
      *             save failed within it
      */
+    @Override
     public void afterAbort(Runnable hook) {
         verify();
         afterAbortHooks.add(hook);
@@ -299,6 +316,7 @@ public class Transaction extends Binding implements AutoCloseable {
      * @throws IllegalStateException if the transaction already ended, or if a
      *             save failed within it
      */
+    @Override
     public void afterCommit(Runnable hook) {
         verify();
         afterCommitHooks.add(hook);
@@ -352,6 +370,7 @@ public class Transaction extends Binding implements AutoCloseable {
      * @throws IllegalStateException if a save failed within the open
      *             transaction
      */
+    @Override
     public <T extends Record> T create(Class<T> clazz, Object... args) {
         if(open) {
             verifyOwner();
@@ -371,10 +390,11 @@ public class Transaction extends Binding implements AutoCloseable {
      * </p>
      *
      * <p>
-     * A {@link Record} that overrides the save pipeline is rejected before
-     * anything is staged, and the transaction remains usable. If the save fails
-     * after staging begins, then the transaction is poisoned: the writes that
-     * were staged before the failure can never commit, and every subsequent
+     * A {@link Record} that overrides the save pipeline, or that is bound to a
+     * different open {@link Transaction}, is rejected before anything is
+     * staged, and the transaction remains usable. If the save fails after
+     * staging begins, then the transaction is poisoned: the writes that were
+     * staged before the failure can never commit, and every subsequent
      * operation is refused except {@link #abort()}.
      * </p>
      *
@@ -385,7 +405,8 @@ public class Transaction extends Binding implements AutoCloseable {
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and any {@link Record} has been externally modified
      * @throws IllegalStateException if any of the {@code records} overrides the
-     *             save pipeline, or if a prior save failed within the
+     *             save pipeline or is bound to a different open
+     *             {@link Transaction}, or if a prior save failed within the
      *             transaction
      */
     @Override
@@ -397,11 +418,13 @@ public class Transaction extends Binding implements AutoCloseable {
                 Verify.that(record.overrideSave() == null,
                         "Cannot save a Record that overrides the save"
                                 + " pipeline within a Transaction");
+                record.verifySavableThrough(this);
             }
             Saver saver = database.supportsBulkCommands
                     ? new BatchSaver(concourse)
                     : new IncrementalSaver(concourse);
-            SaveContext context = new SaveContext(preventStaleWrites);
+            SaveContext context = new SaveContext(preventStaleWrites,
+                    deletions);
             try {
                 // NOTE: The saver is never staged or committed here because
                 // the connection is already within this transaction, whose
@@ -425,6 +448,7 @@ public class Transaction extends Binding implements AutoCloseable {
                 throw t;
             }
             saves.add(context);
+            deletions.addAll(context.deletions());
             return true;
         }
         else {
@@ -440,17 +464,19 @@ public class Transaction extends Binding implements AutoCloseable {
      * succeeds. Until then, no reader outside the transaction can observe them.
      * </p>
      * <p>
-     * A {@link Record} that overrides the save pipeline is rejected before
-     * anything is staged, and the transaction remains usable. If the save fails
-     * after staging begins, then the transaction is poisoned: the writes that
-     * were staged before the failure can never commit, and every subsequent
+     * A {@link Record} that overrides the save pipeline, or that is bound to a
+     * different open {@link Transaction}, is rejected before anything is
+     * staged, and the transaction remains usable. If the save fails after
+     * staging begins, then the transaction is poisoned: the writes that were
+     * staged before the failure can never commit, and every subsequent
      * operation is refused except {@link #abort()}.
      * </p>
      *
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
      * @throws IllegalStateException if any of the {@code records} overrides the
-     *             save pipeline, or if a prior save failed within the
+     *             save pipeline or is bound to a different open
+     *             {@link Transaction}, or if a prior save failed within the
      *             transaction
      */
     @Override
@@ -638,9 +664,15 @@ public class Transaction extends Binding implements AutoCloseable {
         open = false;
         try {
             if(committed) {
+                // The commit is one durable event, so the lifecycle
+                // consequences dispatch once per record: the contexts merge
+                // under the monotonic Outcome ladder and the latest instance
+                // with the highest outcome receives the consequences.
+                SaveContext merged = new SaveContext(false);
                 for (SaveContext context : saves) {
-                    database.dispatchSaveOutcomes(context);
+                    context.forEach(merged::merge);
                 }
+                database.dispatchSaveOutcomes(merged);
                 try {
                     for (Runnable hook : afterCommitHooks) {
                         hook.run();
@@ -667,6 +699,13 @@ public class Transaction extends Binding implements AutoCloseable {
             }
         }
         finally {
+            // A Record stays bound to this Transaction after it ends, so drop
+            // the staged contexts and hooks; otherwise one retained Record
+            // would pin every record and closure the transaction touched.
+            saves.clear();
+            deletions.clear();
+            afterCommitHooks.clear();
+            afterAbortHooks.clear();
             // A hook that throws must not prevent the connection from being
             // released.
             if(owned) {
@@ -679,7 +718,7 @@ public class Transaction extends Binding implements AutoCloseable {
      * Verify that the transaction is still {@link #open}, is not
      * {@link #poisoned} and that the caller is the {@link #owner} thread.
      */
-    private void verify() {
+    void verify() {
         verifyOwner();
         Verify.that(open, "The Transaction has ended");
         verifyNotPoisoned();

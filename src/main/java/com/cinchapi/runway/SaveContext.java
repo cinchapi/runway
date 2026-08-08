@@ -18,6 +18,7 @@ package com.cinchapi.runway;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -34,8 +35,8 @@ import javax.annotation.Nullable;
  * A save can process multiple in-memory instances of the same logical record
  * (e.g., the caller's instance alongside a copy loaded for
  * {@link CaptureDelete} or {@link JoinDelete} handling). The context keeps one
- * entry per record id that pairs the instance that currently speaks for the
- * record with the record's {@link Outcome}.
+ * entry per record id that pairs the record's {@link Outcome} with its speaking
+ * instance: the latest instance that reported the record's highest outcome.
  * </p>
  * <p>
  * An {@link Outcome} is monotonic: it only ever rises from {@link Outcome#CLEAN
@@ -48,6 +49,11 @@ import javax.annotation.Nullable;
  * if the save fails, and the queue of companion deletions that annotations like
  * {@link CascadeDelete} and {@link JoinDelete} schedule. Snapshots survive
  * {@link #reset() retry attempts}; all other state is per-attempt.
+ * </p>
+ * <p>
+ * A save within a {@link Transaction} also treats the ids that the
+ * transaction's earlier saves deleted as {@link #isDeleted(long) deleted}, so a
+ * deletion stays final across the saves that share a commit.
  * </p>
  *
  * @author Jeff Nelson
@@ -72,6 +78,11 @@ final class SaveContext {
     private final Deque<Record> pendingDeletions = new ArrayDeque<>();
 
     /**
+     * The ids of records that earlier saves in the same transaction deleted.
+     */
+    private final Set<Long> priorDeletions;
+
+    /**
      * Whether the save rejects any {@link Record} that has been externally
      * modified.
      */
@@ -84,17 +95,50 @@ final class SaveContext {
      *            {@link Record} that has been externally modified
      */
     SaveContext(boolean shouldPreventStaleWrite) {
-        this.shouldPreventStaleWrite = shouldPreventStaleWrite;
+        this(shouldPreventStaleWrite, Collections.emptySet());
     }
 
     /**
-     * Add {@code record} as the instance that speaks for its id. The record's
-     * {@link Outcome} is not affected.
+     * Construct a new instance for a save within a transaction whose earlier
+     * saves deleted the {@code priorDeletions}.
+     *
+     * @param shouldPreventStaleWrite whether the save rejects any
+     *            {@link Record} that has been externally modified
+     * @param priorDeletions the ids of records that earlier saves in the same
+     *            transaction deleted
+     */
+    SaveContext(boolean shouldPreventStaleWrite, Set<Long> priorDeletions) {
+        this.shouldPreventStaleWrite = shouldPreventStaleWrite;
+        this.priorDeletions = priorDeletions;
+    }
+
+    /**
+     * Add {@code record} as a processed instance of its id. The record becomes
+     * the speaking instance only while the id's {@link Outcome} is still
+     * {@link Outcome#CLEAN CLEAN}; the {@link Outcome} itself is not affected.
      *
      * @param record the instance that is currently processed by the save
      */
     void add(Record record) {
-        entry(record).instance = record;
+        raise(record, Outcome.CLEAN);
+    }
+
+    /**
+     * Return the ids of every record whose deletion binds the active attempt:
+     * the attempt's own {@link #deletions() deletions} and the ids that earlier
+     * saves in the same transaction deleted.
+     *
+     * @return the deleted ids
+     */
+    Set<Long> allDeletions() {
+        if(priorDeletions.isEmpty()) {
+            return deletions();
+        }
+        else {
+            Set<Long> ids = new LinkedHashSet<>(priorDeletions);
+            ids.addAll(deletions());
+            return ids;
+        }
     }
 
     /**
@@ -161,20 +205,26 @@ final class SaveContext {
     }
 
     /**
-     * Return {@code true} if the active attempt deleted the record with
-     * {@code id}.
+     * Return {@code true} if the active attempt, or an earlier save in the same
+     * transaction, deleted the record with {@code id}.
      *
      * @param id the record id to test
      * @return {@code true} if the record was deleted
      */
     boolean isDeleted(long id) {
         Entry entry = entries.get(id);
-        return entry != null && entry.outcome == Outcome.DELETED;
+        if(entry != null && entry.outcome == Outcome.DELETED) {
+            return true;
+        }
+        else {
+            return priorDeletions.contains(id);
+        }
     }
 
     /**
      * Record that the active attempt stages data changes for {@code record} and
-     * make it the instance that speaks for its id.
+     * make it the instance that speaks for its id, unless the record was
+     * already deleted.
      *
      * @param record the {@link Record} whose data the save changes
      */
@@ -190,6 +240,21 @@ final class SaveContext {
      */
     void markDeleted(Record record) {
         raise(record, Outcome.DELETED);
+    }
+
+    /**
+     * Merge {@code record} and its {@code outcome} from another
+     * {@link SaveContext} into this one, under the same rule that governs a
+     * single save: the record's {@link Outcome} only rises, and {@code record}
+     * becomes the speaking instance only if {@code outcome} is at least the
+     * current one.
+     *
+     * @param record an instance that another {@link SaveContext} processed
+     * @param outcome the {@link Outcome} that the other context recorded for
+     *            the instance
+     */
+    void merge(Record record, Outcome outcome) {
+        raise(record, outcome);
     }
 
     /**
@@ -278,18 +343,22 @@ final class SaveContext {
     }
 
     /**
-     * Make {@code record} the instance that speaks for its id and raise the
-     * record's {@link Outcome} to {@code outcome} if it is higher than the
-     * current one.
+     * Raise the record's {@link Outcome} to {@code outcome} if it is higher
+     * than the current one, and make {@code record} the instance that speaks
+     * for its id if {@code outcome} is at least the current one.
      *
      * @param record the instance that reports the fact
      * @param outcome the {@link Outcome} to raise to
      */
     private void raise(Record record, Outcome outcome) {
         Entry entry = entry(record);
-        entry.instance = record;
-        if(outcome.compareTo(entry.outcome) > 0) {
+        if(outcome.compareTo(entry.outcome) >= 0) {
+            entry.instance = record;
             entry.outcome = outcome;
+        }
+        else {
+            // The instance that reported the higher outcome keeps speaking
+            // for the id.
         }
     }
 

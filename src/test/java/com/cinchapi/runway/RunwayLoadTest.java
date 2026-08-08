@@ -19,9 +19,12 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.junit.Assert;
 import org.junit.Test;
+
+import com.cinchapi.concourse.ConnectionPool;
 
 /**
  * Unit tests for Runway's loading functionality
@@ -348,6 +351,40 @@ public class RunwayLoadTest extends RunwayBaseClientServerTest {
         Inventory loaded = runway.load(Inventory.class, inventory.id());
         Assert.assertEquals("Empty Inventory", loaded.name);
         Assert.assertEquals(0, loaded.tags.length);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the protected {@code Record.load}
+     * overload that accepts a {@link ConnectionPool} loads a {@link Record}
+     * bound to the provided {@link Runway}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link A} record.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Open a {@link ConnectionPool} against the test server.</li>
+     * <li>Call {@code Record.load} with the pool and the test
+     * {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The loaded {@link A} carries the stored data.
+     */
+    @Test
+    public void testProtectedLoadAcceptsConnectionPool() throws Exception {
+        A a = new A();
+        a.name = "a";
+        Assert.assertTrue(runway.save(a));
+        ConnectionPool pool = ConnectionPool.newCachedConnectionPool(
+                "localhost", server.getClientPort(), "admin", "admin",
+                environment);
+        try {
+            A loaded = Record.load(A.class, a.id(), new ConcurrentHashMap<>(),
+                    pool, runway, null, null);
+            Assert.assertEquals("a", loaded.name);
+        }
+        finally {
+            pool.close();
+        }
     }
 
     class A extends Record {

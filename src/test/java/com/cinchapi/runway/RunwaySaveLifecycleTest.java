@@ -21,6 +21,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import org.junit.Assert;
@@ -1418,6 +1419,53 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 name = name + " (Modified)";
             }
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the changed copy of a record receives
+     * the save's lifecycle consequences when a clean id-equal copy is part of
+     * the same save call, so the clean copy is never falsely marked as
+     * synchronized.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Player} with a score of 1
+     * and a save listener that captures the notified instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load two id-equal copies of the {@link Player}.</li>
+     * <li>Change the first copy and save both copies in one call, with the
+     * unchanged copy listed last.</li>
+     * <li>Change a different field on the unchanged copy and save it with
+     * stale-write prevention.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The notification delivers the changed copy,
+     * the stale copy's save throws a {@link StaleDataException} and the saved
+     * score survives.
+     */
+    @Test
+    public void testChangedCopySpeaksForTheSaveDespiteCleanDuplicate()
+            throws InterruptedException {
+        Player player = new Player("a", 1);
+        Assert.assertTrue(runway.save(player));
+        Player changed = runway.load(Player.class, player.id());
+        Player stale = runway.load(Player.class, player.id());
+        changed.score = 2;
+        AtomicReference<Player> notified = new AtomicReference<>();
+        runway.properties().onSave(Player.class, notified::set);
+        Assert.assertTrue(runway.save(changed, stale));
+        long stop = System.currentTimeMillis() + 5000;
+        while (notified.get() == null && System.currentTimeMillis() < stop) {
+            Thread.sleep(10);
+        }
+        Assert.assertSame(changed, notified.get());
+        stale.name = "renamed";
+        try {
+            stale.save(true);
+            Assert.fail("Expected the stale copy's save to be rejected");
+        }
+        catch (StaleDataException e) {/* expected */}
+        Assert.assertEquals(2, runway.load(Player.class, player.id()).score);
     }
 
     /**

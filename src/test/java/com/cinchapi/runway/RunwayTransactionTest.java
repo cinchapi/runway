@@ -15,23 +15,27 @@
  */
 package com.cinchapi.runway;
 
+import java.lang.ref.WeakReference;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.access.AccessControl;
 import com.cinchapi.runway.access.Audience;
+import com.cinchapi.runway.meta.Metadata;
 
 /**
  * Tests for {@link Runway#stage()},
@@ -1183,6 +1187,42 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#run(java.util.function.Consumer) run} preserves the work's
+     * exception when an {@code afterAbort} hook also throws while the failed
+     * attempt is closed.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code runway.run(work)} where the work registers an
+     * {@code afterAbort} hook that throws an {@link IllegalStateException} and
+     * then throws a {@link RuntimeException} itself.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The caller receives the work's exception, and
+     * the hook's exception is attached to it as a suppressed exception.
+     */
+    @Test
+    public void testRunPreservesTheWorkExceptionWhenAnAfterAbortHookThrows() {
+        try {
+            runway.run(transaction -> {
+                transaction.afterAbort(() -> {
+                    throw new IllegalStateException("hook");
+                });
+                throw new RuntimeException("boom");
+            });
+            Assert.fail("Expected the work's exception to propagate");
+        }
+        catch (RuntimeException e) {
+            Assert.assertEquals("boom", e.getMessage());
+            Assert.assertEquals(1, e.getSuppressed().length);
+            Assert.assertEquals("hook", e.getSuppressed()[0].getMessage());
+        }
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that save notifications for records saved
      * within a {@link Transaction} fire only after the commit succeeds.
      * <p>
@@ -1928,6 +1968,906 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a deletion staged within a
+     * {@link Transaction} is invisible outside of it until the commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, call
+     * {@code deleteOnSave()} and {@code save()}.</li>
+     * <li>Load the {@link Item} through the transaction and through the
+     * enclosing {@link Runway} before the commit, and through the
+     * {@link Runway} after it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Before the commit, the transactional load
+     * returns {@code null} and the outside load returns the {@link Item}; after
+     * the commit, the outside load returns {@code null}.
+     */
+    @Test
+    public void testDeletionWithinTransactionIsInvisibleUntilCommit() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.deleteOnSave();
+            Assert.assertTrue(txItem.save());
+            Assert.assertNull(transaction.load(Item.class, item.id()));
+            Assert.assertNotNull(runway.load(Item.class, item.id()));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Transaction#abort() abort}
+     * discards a staged deletion and that no delete notification fires.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a delete listener
+     * that counts notifications for {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, call
+     * {@code deleteOnSave()} and {@code save()}.</li>
+     * <li>Call {@code abort()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Item} still exists outside of the
+     * transaction and the delete listener never fires.
+     */
+    @Test
+    public void testAbortDiscardsStagedDeletion() throws InterruptedException {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicInteger deletes = new AtomicInteger(0);
+        runway.properties().onDelete(Item.class,
+                record -> deletes.incrementAndGet());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.deleteOnSave();
+            Assert.assertTrue(txItem.save());
+            transaction.abort();
+        }
+        Assert.assertNotNull(runway.load(Item.class, item.id()));
+        Thread.sleep(250);
+        Assert.assertEquals(0, deletes.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that delete notifications for records
+     * deleted within a {@link Transaction} fire only after the commit succeeds.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a delete listener
+     * that counts notifications for {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, call
+     * {@code deleteOnSave()} and {@code save()}.</li>
+     * <li>Record the notification count, then commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count is 0 before the commit and rises to
+     * 1 after it.
+     */
+    @Test
+    public void testDeleteNotificationsFireOnlyAfterCommit()
+            throws InterruptedException {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicInteger deletes = new AtomicInteger(0);
+        runway.properties().onDelete(Item.class,
+                record -> deletes.incrementAndGet());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.deleteOnSave();
+            Assert.assertTrue(txItem.save());
+            Assert.assertEquals(0, deletes.get());
+            Assert.assertTrue(transaction.commit());
+        }
+        long stop = System.currentTimeMillis() + 5000;
+        while (deletes.get() == 0 && System.currentTimeMillis() < stop) {
+            Thread.sleep(10);
+        }
+        Assert.assertEquals(1, deletes.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link CascadeDelete} companion
+     * deletion resolves within the {@link Transaction}, so the parent and the
+     * companion disappear together at the commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Kit} whose
+     * {@link CascadeDelete} field links to a saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Kit} through a {@link Transaction}, call
+     * {@code deleteOnSave()} and {@code save()}.</li>
+     * <li>Load the {@link Item} through the enclosing {@link Runway} before the
+     * commit, and load both records after it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Item} still exists before the
+     * commit; after the commit, the {@link Kit} and the {@link Item} are both
+     * gone.
+     */
+    @Test
+    public void testCascadeDeleteResolvesWithinTransaction() {
+        Item part = new Item("part", 1);
+        Kit kit = new Kit("toolkit", part);
+        kit.assign(runway);
+        Assert.assertTrue(runway.save(kit, part));
+        try (Transaction transaction = runway.stage()) {
+            Kit txKit = transaction.load(Kit.class, kit.id());
+            txKit.deleteOnSave();
+            Assert.assertTrue(txKit.save());
+            Assert.assertNotNull(runway.load(Item.class, part.id()));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertNull(runway.load(Kit.class, kit.id()));
+        Assert.assertNull(runway.load(Item.class, part.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link JoinDelete} lookup resolves
+     * within the {@link Transaction}, so a record that joins the deletion
+     * disappears with its target at the commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Coupon} whose
+     * {@link JoinDelete} field links to a saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, call
+     * {@code deleteOnSave()} and {@code save()}.</li>
+     * <li>Load the {@link Coupon} through the enclosing {@link Runway} before
+     * the commit, and load both records after it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Coupon} still exists before the
+     * commit; after the commit, the {@link Item} and the {@link Coupon} are
+     * both gone.
+     */
+    @Test
+    public void testJoinDeleteResolvesWithinTransaction() {
+        Item item = new Item("widget", 1);
+        Coupon coupon = new Coupon("promo", item);
+        coupon.assign(runway);
+        Assert.assertTrue(runway.save(coupon, item));
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.deleteOnSave();
+            Assert.assertTrue(txItem.save());
+            Assert.assertNotNull(runway.load(Coupon.class, coupon.id()));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertNull(runway.load(Item.class, item.id()));
+        Assert.assertNull(runway.load(Coupon.class, coupon.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link CaptureDelete} lookup
+     * resolves within the {@link Transaction}, so a stored reference to the
+     * deleted record is removed at the commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Shelf} whose
+     * {@link CaptureDelete} field links to a saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, call
+     * {@code deleteOnSave()} and {@code save()}.</li>
+     * <li>Load the {@link Shelf} through the enclosing {@link Runway} before
+     * the commit, and load both records after it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Shelf Shelf's} reference is intact
+     * before the commit; after the commit, the reference is {@code null} and
+     * the {@link Item} is gone.
+     */
+    @Test
+    public void testCaptureDeleteRemovesStoredReferenceAtCommit() {
+        Item item = new Item("widget", 1);
+        Shelf shelf = new Shelf("front", item);
+        shelf.assign(runway);
+        Assert.assertTrue(runway.save(shelf, item));
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.deleteOnSave();
+            Assert.assertTrue(txItem.save());
+            Assert.assertNotNull(runway.load(Shelf.class, shelf.id()).display);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertNull(runway.load(Shelf.class, shelf.id()).display);
+        Assert.assertNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a deletion staged in one save is final
+     * for the later saves of the same {@link Transaction}, so an id-equal
+     * instance saved afterward adopts the deletion instead of restoring the
+     * record.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load two id-equal copies of the {@link Item} through a
+     * {@link Transaction}.</li>
+     * <li>Delete the first copy with {@code deleteOnSave()} and
+     * {@code save()}.</li>
+     * <li>Modify the second copy and {@code save()} it in a separate save
+     * call.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The commit succeeds and the {@link Item} does
+     * not exist afterward.
+     */
+    @Test
+    public void testDeletionIsFinalAcrossSavesWithinTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item doomed = transaction.load(Item.class, item.id());
+            Item copy = transaction.load(Item.class, item.id());
+            doomed.deleteOnSave();
+            Assert.assertTrue(doomed.save());
+            copy.name = "revived";
+            Assert.assertTrue(copy.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a record changed in one save and
+     * deleted in a later save of the same {@link Transaction} dispatches only a
+     * delete notification at the commit, because the commit is one durable
+     * event.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item}, a save listener and a
+     * delete listener that count notifications for {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load two id-equal copies of the {@link Item} through a
+     * {@link Transaction}.</li>
+     * <li>Change and {@code save()} the first copy.</li>
+     * <li>Delete the second copy with {@code deleteOnSave()} and
+     * {@code save()}.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Item} does not exist after the
+     * commit, the delete listener fires exactly once and the save listener
+     * never fires.
+     */
+    @Test
+    public void testChangeBeforeDeletionWithinTransactionDispatchesOnlyTheDeletion()
+            throws InterruptedException {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicInteger saves = new AtomicInteger(0);
+        AtomicInteger deletes = new AtomicInteger(0);
+        runway.properties().onSave(Item.class,
+                record -> saves.incrementAndGet());
+        runway.properties().onDelete(Item.class,
+                record -> deletes.incrementAndGet());
+        try (Transaction transaction = runway.stage()) {
+            Item changed = transaction.load(Item.class, item.id());
+            Item doomed = transaction.load(Item.class, item.id());
+            changed.score = 2;
+            Assert.assertTrue(changed.save());
+            doomed.deleteOnSave();
+            Assert.assertTrue(doomed.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        long stop = System.currentTimeMillis() + 5000;
+        while (deletes.get() == 0 && System.currentTimeMillis() < stop) {
+            Thread.sleep(10);
+        }
+        Thread.sleep(250);
+        Assert.assertEquals(1, deletes.get());
+        Assert.assertEquals(0, saves.get());
+        Assert.assertNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link CaptureDelete} reference
+     * staged after a deletion in an earlier save of the same
+     * {@link Transaction} is removed before the commit, so the commit never
+     * persists a reference to a deleted record.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Shelf} with no displayed
+     * {@link Item} and a saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Shelf} and two id-equal copies of the {@link Item}
+     * through a {@link Transaction}.</li>
+     * <li>Delete one {@link Item} copy with {@code deleteOnSave()} and
+     * {@code save()}.</li>
+     * <li>Set the {@link Shelf Shelf's} reference to the other copy and
+     * {@code save()} the {@link Shelf} in a separate save call.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the commit, the stored and in-memory
+     * {@link Shelf} references are {@code null} and the {@link Item} is gone.
+     */
+    @Test
+    public void testReferenceStagedAfterDeletionWithinTransactionIsRemoved() {
+        Item item = new Item("widget", 1);
+        Shelf shelf = new Shelf("front", null);
+        shelf.assign(runway);
+        Assert.assertTrue(runway.save(shelf, item));
+        Shelf txShelf;
+        try (Transaction transaction = runway.stage()) {
+            txShelf = transaction.load(Shelf.class, shelf.id());
+            Item copy = transaction.load(Item.class, item.id());
+            Item doomed = transaction.load(Item.class, item.id());
+            doomed.deleteOnSave();
+            Assert.assertTrue(doomed.save());
+            txShelf.display = copy;
+            Assert.assertTrue(txShelf.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertNull(txShelf.display);
+        Assert.assertNull(runway.load(Shelf.class, shelf.id()).display);
+        Assert.assertNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Transaction#abort() abort}
+     * discards cached audit metadata, so the record does not report a revision
+     * that never committed.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Receipt}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Record the {@link Receipt Receipt's} last update timestamp.</li>
+     * <li>Load the {@link Receipt} through a {@link Transaction}, change it and
+     * {@code save()}.</li>
+     * <li>Read the last update timestamp through the transactional copy, which
+     * observes the staged revision.</li>
+     * <li>Call {@code abort()} and read the last update timestamp again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The read within the transaction observes a
+     * newer timestamp than the committed one; the read after the abort reports
+     * the committed timestamp.
+     */
+    @Test
+    public void testAbortDiscardsCachedAuditMetadata() {
+        Receipt receipt = new Receipt("original");
+        receipt.assign(runway);
+        Assert.assertTrue(receipt.save());
+        Timestamp before = receipt.lastUpdatedAt();
+        try (Transaction transaction = runway.stage()) {
+            Receipt txReceipt = transaction.load(Receipt.class, receipt.id());
+            txReceipt.memo = "staged";
+            Assert.assertTrue(txReceipt.save());
+            Timestamp staged = txReceipt.lastUpdatedAt();
+            Assert.assertTrue(staged.getMicros() > before.getMicros());
+            transaction.abort();
+            Assert.assertEquals(before, txReceipt.lastUpdatedAt());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} releases its
+     * staged state after it ends, so one retained {@link Record} does not pin
+     * every record the transaction saved.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load both {@link Item Items} through a {@link Transaction}, change
+     * and {@code save()} each one, and commit.</li>
+     * <li>Keep a strong reference to the first {@link Item} and only a
+     * {@link WeakReference} to the second.</li>
+     * <li>Run the garbage collector until the weak reference clears or a
+     * timeout passes.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The weak reference clears, because the ended
+     * transaction that the retained {@link Item} is bound to no longer holds
+     * the other record.
+     */
+    @Test
+    public void testEndedTransactionDoesNotRetainStagedRecords()
+            throws InterruptedException {
+        Item kept = new Item("kept", 1);
+        Item other = new Item("other", 2);
+        kept.assign(runway);
+        Assert.assertTrue(runway.save(kept, other));
+        Item bound;
+        WeakReference<Item> weak;
+        try (Transaction transaction = runway.stage()) {
+            bound = transaction.load(Item.class, kept.id());
+            Item txOther = transaction.load(Item.class, other.id());
+            bound.score = 10;
+            Assert.assertTrue(bound.save());
+            txOther.score = 20;
+            Assert.assertTrue(txOther.save());
+            weak = new WeakReference<>(txOther);
+            Assert.assertTrue(transaction.commit());
+        }
+        long stop = System.currentTimeMillis() + 5000;
+        while (weak.get() != null && System.currentTimeMillis() < stop) {
+            System.gc();
+            Thread.sleep(10);
+        }
+        Assert.assertNull(weak.get());
+        Assert.assertEquals(10, bound.score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the creation permission check in
+     * {@link Audience#create(Class, Object...)} runs within the same database
+     * context that the {@link Audience} operates against, so a check that reads
+     * through the new record observes the transaction's staged state.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Viewer} and no stored
+     * {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Viewer} through a {@link Transaction}.</li>
+     * <li>Create and {@code save()} an {@link Item} through the transaction, so
+     * it is staged but not committed.</li>
+     * <li>Call {@code create(Gated.class, ...)} on the viewer, whose permission
+     * check requires at least one visible {@link Item}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The creation succeeds, because the check
+     * observes the staged {@link Item} within the transaction.
+     */
+    @Test
+    public void testAudienceCreateAuthorizesWithinTransaction() {
+        Viewer viewer = new Viewer("alice");
+        viewer.assign(runway);
+        Assert.assertTrue(viewer.save());
+        try (Transaction transaction = runway.stage()) {
+            Viewer txViewer = transaction.load(Viewer.class, viewer.id());
+            Item item = transaction.create(Item.class, "widget", 1);
+            Assert.assertTrue(item.save());
+            Gated gated = txViewer.create(Gated.class, "pass");
+            Assert.assertNotNull(gated);
+            transaction.abort();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses to save
+     * a {@link Record} that is bound to a different open {@link Transaction},
+     * and that the refusal leaves both transactions intact.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a first {@link Transaction}.</li>
+     * <li>Start a second {@link Transaction} and attempt to save the loaded
+     * {@link Item} through it.</li>
+     * <li>After the refusal, change the {@link Item} and {@code save()} it,
+     * then commit the first transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second transaction's save throws an
+     * {@link IllegalStateException}, and the {@link Item} still saves and
+     * commits through the first transaction.
+     */
+    @Test
+    public void testTransactionSaveRefusesRecordBoundToAnotherOpenTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction tx1 = runway.stage()) {
+            Item txItem = tx1.load(Item.class, item.id());
+            try (Transaction tx2 = runway.stage()) {
+                try {
+                    tx2.save(txItem);
+                    Assert.fail("Expected the save to be refused");
+                }
+                catch (IllegalStateException e) {/* expected */}
+                tx2.abort();
+            }
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(tx1.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a direct {@link Runway#save(Record...)
+     * save} refuses a {@link Record} that is bound to an open
+     * {@link Transaction}, so the transaction's atomic boundary cannot be
+     * bypassed by accident.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and change
+     * it.</li>
+     * <li>Attempt to save the loaded {@link Item} directly through the
+     * enclosing {@link Runway}.</li>
+     * <li>After the refusal, {@code save()} the {@link Item} and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The direct save throws an
+     * {@link IllegalStateException}, and the change commits through the
+     * transaction.
+     */
+    @Test
+    public void testDirectSaveRefusesRecordBoundToAnOpenTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            try {
+                runway.save(txItem);
+                Assert.fail("Expected the direct save to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Record#run(java.util.function.Consumer) run} refuses to start work
+     * when the record's {@link Transaction} is poisoned, so no side effect of
+     * the work executes.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Counter}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Counter} through a {@link Transaction}.</li>
+     * <li>Poison the transaction with a save of a {@link Registration} whose
+     * {@link Required} name is empty.</li>
+     * <li>Call {@code bump()} on the transactional copy.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws an
+     * {@link IllegalStateException} and the work never starts.
+     */
+    @Test
+    public void testRecordWorkIsRefusedBeforeItRunsWhenTransactionIsPoisoned() {
+        Counter counter = new Counter(0);
+        counter.assign(runway);
+        Assert.assertTrue(counter.save());
+        try (Transaction transaction = runway.stage()) {
+            Counter txCounter = transaction.load(Counter.class, counter.id());
+            Registration invalid = new Registration(null);
+            try {
+                transaction.save(invalid);
+                Assert.fail("Expected the save to throw");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                txCounter.bump();
+                Assert.fail("Expected the work to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            Assert.assertFalse(txCounter.workStarted);
+            transaction.abort();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Record#run(java.util.function.Consumer) run} refuses to start work
+     * from a thread that does not own the record's open {@link Transaction}, so
+     * no side effect of the work executes.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Counter} and an open
+     * {@link Transaction} started on the test thread.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Counter} through the {@link Transaction}.</li>
+     * <li>Submit a {@code bump()} of the transactional copy to a different
+     * thread.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The other thread's call throws an
+     * {@link IllegalStateException} and the work never starts.
+     */
+    @Test
+    public void testRecordWorkIsRefusedBeforeItRunsOnAnotherThread()
+            throws Exception {
+        Counter counter = new Counter(0);
+        counter.assign(runway);
+        Assert.assertTrue(counter.save());
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Transaction transaction = runway.stage()) {
+            Counter txCounter = transaction.load(Counter.class, counter.id());
+            Future<?> future = executor.submit(() -> txCounter.bump());
+            try {
+                future.get();
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (ExecutionException e) {
+                Assert.assertTrue(
+                        e.getCause() instanceof IllegalStateException);
+            }
+            Assert.assertFalse(txCounter.workStarted);
+            transaction.abort();
+        }
+        finally {
+            executor.shutdownNow();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the changed copy of a record receives
+     * the commit's lifecycle consequences when a clean id-equal copy is saved
+     * in a later save call of the same {@link Transaction}, so the clean copy
+     * is never falsely marked as synchronized.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1 and
+     * a save listener that captures the notified instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load two id-equal copies of the {@link Item} through a
+     * {@link Transaction}.</li>
+     * <li>Change and {@code save()} the second copy, then {@code save()} the
+     * unchanged first copy in a separate call, then commit.</li>
+     * <li>After the commit, change a different field on the unchanged copy and
+     * save it with stale-write prevention.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The notification delivers the changed copy,
+     * the stale copy's save throws a {@link StaleDataException} and the
+     * committed score survives.
+     */
+    @Test
+    public void testChangedCopySpeaksForTheCommitDespiteLaterCleanSave()
+            throws InterruptedException {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicReference<Item> notified = new AtomicReference<>();
+        runway.properties().onSave(Item.class, notified::set);
+        Item stale;
+        Item changed;
+        try (Transaction transaction = runway.stage()) {
+            stale = transaction.load(Item.class, item.id());
+            changed = transaction.load(Item.class, item.id());
+            changed.score = 2;
+            Assert.assertTrue(changed.save());
+            Assert.assertTrue(stale.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        long stop = System.currentTimeMillis() + 5000;
+        while (notified.get() == null && System.currentTimeMillis() < stop) {
+            Thread.sleep(10);
+        }
+        Assert.assertSame(changed, notified.get());
+        stale.name = "renamed";
+        try {
+            stale.save(true);
+            Assert.fail("Expected the stale copy's save to be rejected");
+        }
+        catch (StaleDataException e) {/* expected */}
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the changed copy of a record receives
+     * the commit's lifecycle consequences when a clean id-equal copy is part of
+     * the same save call, so the clean copy is never falsely marked as
+     * synchronized.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1 and
+     * a save listener that captures the notified instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load two id-equal copies of the {@link Item} through a
+     * {@link Transaction}.</li>
+     * <li>Change the second copy and save both copies in one call, with the
+     * unchanged copy listed last, then commit.</li>
+     * <li>After the commit, change a different field on the unchanged copy and
+     * save it with stale-write prevention.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The notification delivers the changed copy,
+     * the stale copy's save throws a {@link StaleDataException} and the
+     * committed score survives.
+     */
+    @Test
+    public void testChangedCopySpeaksForTheCommitDespiteCleanCopyInSameSave()
+            throws InterruptedException {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicReference<Item> notified = new AtomicReference<>();
+        runway.properties().onSave(Item.class, notified::set);
+        Item stale;
+        Item changed;
+        try (Transaction transaction = runway.stage()) {
+            stale = transaction.load(Item.class, item.id());
+            changed = transaction.load(Item.class, item.id());
+            changed.score = 2;
+            Assert.assertTrue(transaction.save(changed, stale));
+            Assert.assertTrue(transaction.commit());
+        }
+        long stop = System.currentTimeMillis() + 5000;
+        while (notified.get() == null && System.currentTimeMillis() < stop) {
+            Thread.sleep(10);
+        }
+        Assert.assertSame(changed, notified.get());
+        stale.name = "renamed";
+        try {
+            stale.save(true);
+            Assert.fail("Expected the stale copy's save to be rejected");
+        }
+        catch (StaleDataException e) {/* expected */}
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the later of two changed id-equal
+     * copies receives the commit's lifecycle consequences, because its writes
+     * land last.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1 and
+     * a save listener that captures the notified instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load two id-equal copies of the {@link Item} through a
+     * {@link Transaction}.</li>
+     * <li>Change and {@code save()} the first copy, then change and
+     * {@code save()} the second copy, then commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The notification delivers the second copy and
+     * the stored score is the second copy's value.
+     */
+    @Test
+    public void testLaterChangedCopySpeaksForTheCommit()
+            throws InterruptedException {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicReference<Item> notified = new AtomicReference<>();
+        runway.properties().onSave(Item.class, notified::set);
+        Item second;
+        try (Transaction transaction = runway.stage()) {
+            Item first = transaction.load(Item.class, item.id());
+            second = transaction.load(Item.class, item.id());
+            first.score = 2;
+            Assert.assertTrue(first.save());
+            second.score = 3;
+            Assert.assertTrue(second.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        long stop = System.currentTimeMillis() + 5000;
+        while (notified.get() == null && System.currentTimeMillis() < stop) {
+            Thread.sleep(10);
+        }
+        Assert.assertSame(second, notified.get());
+        Assert.assertEquals(3, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#supply(java.util.function.Function) supply} retries the
+     * work when a conflicting outside write invalidates the transaction in the
+     * middle of the work, so the conflict never escapes to the caller.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code runway.supply(work)} where the work reads the
+     * {@link Item} through the transaction.</li>
+     * <li>On the first attempt only, commit a conflicting change to the
+     * {@link Item} outside of the transaction.</li>
+     * <li>Read the {@link Item} through the transaction again, count the
+     * completion, derive a new score from the read and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The work runs more than once, only the
+     * successful attempt completes, and the result derives from the outside
+     * write.
+     */
+    @Test
+    public void testWorkRetriesWhenTheTransactionIsInvalidatedMidWork() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicInteger attempts = new AtomicInteger(0);
+        AtomicInteger completed = new AtomicInteger(0);
+        int result = runway.supply(transaction -> {
+            int attempt = attempts.incrementAndGet();
+            transaction.load(Item.class, item.id());
+            if(attempt == 1) {
+                Item outside = runway.load(Item.class, item.id());
+                outside.score = 5;
+                Assert.assertTrue(outside.save());
+            }
+            Item current = transaction.load(Item.class, item.id());
+            completed.incrementAndGet();
+            current.score = current.score + 1;
+            Assert.assertTrue(current.save());
+            return current.score;
+        });
+        Assert.assertTrue(attempts.get() > 1);
+        Assert.assertEquals(1, completed.get());
+        Assert.assertEquals(6, result);
+        Assert.assertEquals(6, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link RetryExhaustedException} from
+     * {@link Runway#run(java.util.function.Consumer) run} carries the final
+     * conflict as its cause.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} whose
+     * {@link AtomicRetryPolicy} permits a single retry, and a saved
+     * {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code run(work)} where every attempt reads the {@link Item}
+     * through the transaction, commits a conflicting outside write, and then
+     * operates on the transaction again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The retries exhaust, and the thrown
+     * {@link RetryExhaustedException} has a {@link TransactionException} cause.
+     */
+    @Test
+    public void testRetryExhaustionCarriesTheFinalConflictAsCause()
+            throws Exception {
+        try (Runway contentious = runwayBuilder()
+                .atomicRetryPolicy(AtomicRetryPolicy.create(1, 1)).build()) {
+            Item item = new Item("widget", 1);
+            item.assign(contentious);
+            Assert.assertTrue(item.save());
+            try {
+                contentious.run(transaction -> {
+                    transaction.load(Item.class, item.id());
+                    Item outside = contentious.load(Item.class, item.id());
+                    outside.score = outside.score + 1;
+                    Assert.assertTrue(outside.save());
+                    Item doomed = transaction.load(Item.class, item.id());
+                    doomed.score = doomed.score + 1;
+                    Assert.assertTrue(doomed.save());
+                });
+                Assert.fail("Expected the retries to exhaust");
+            }
+            catch (RetryExhaustedException e) {
+                Assert.assertTrue(e.getCause() instanceof TransactionException);
+            }
+        }
+    }
+
+    /**
      * A container with a lazy link to an {@link Item}.
      *
      * @author Jeff Nelson
@@ -2241,6 +3181,229 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         @Override
         protected void onLoad() {
             observedScore = db.load(Item.class, itemId).score;
+        }
+    }
+
+    /**
+     * A {@link Record} whose {@link Item} part is deleted along with it.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Kit extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The contained part, deleted when this {@link Kit} is deleted.
+         */
+        @CascadeDelete
+        Item part;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param part the contained part
+         */
+        public Kit(String name, Item part) {
+            this.name = name;
+            this.part = part;
+        }
+    }
+
+    /**
+     * A {@link Record} that joins the deletion of its {@link Item}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Coupon extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The promoted {@link Item}; this {@link Coupon} is deleted when the
+         * item is deleted.
+         */
+        @JoinDelete
+        Item item;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param item the promoted {@link Item}
+         */
+        public Coupon(String name, Item item) {
+            this.name = name;
+            this.item = item;
+        }
+    }
+
+    /**
+     * A {@link Record} whose reference to a deleted {@link Item} is removed.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Shelf extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The displayed {@link Item}; the reference is removed when the item is
+         * deleted.
+         */
+        @CaptureDelete
+        Item display;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param display the displayed {@link Item}
+         */
+        public Shelf(String name, Item display) {
+            this.name = name;
+            this.display = display;
+        }
+    }
+
+    /**
+     * A {@link Record} with {@link Metadata}, so a test can read its audit
+     * history.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Receipt extends Record implements Metadata {
+
+        /**
+         * The memo text.
+         */
+        String memo;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param memo the memo text
+         */
+        public Receipt(String memo) {
+            this.memo = memo;
+        }
+    }
+
+    /**
+     * A {@link Record} whose {@code bump()} runs work within its transactional
+     * scope and reports whether the work started.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Counter extends Record {
+
+        /**
+         * The tallied count.
+         */
+        int count;
+
+        /**
+         * Whether the {@link #bump()} work began to run.
+         */
+        transient boolean workStarted = false;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param count the initial count
+         */
+        public Counter(int count) {
+            this.count = count;
+        }
+
+        /**
+         * Increment the count within this {@link Counter Counter's}
+         * transactional scope.
+         */
+        public void bump() {
+            run(transaction -> {
+                workStarted = true;
+                count++;
+                save();
+            });
+        }
+    }
+
+    /**
+     * An access-controlled {@link Record} whose creation is permitted only when
+     * at least one {@link Item} is visible to the creation check.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Gated extends Record implements AccessControl {
+
+        /**
+         * The display label.
+         */
+        String label;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param label the display label
+         */
+        public Gated(String label) {
+            this.label = label;
+        }
+
+        @Override
+        public boolean $isCreatableBy(Audience audience) {
+            return db.count(Item.class) > 0;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return false;
+        }
+
+        @Override
+        public boolean $isDeletableBy(Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableBy(Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableByAnonymous() {
+            return false;
+        }
+
+        @Override
+        public java.util.Set<String> $readableBy(Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public java.util.Set<String> $readableByAnonymous() {
+            return NO_KEYS;
+        }
+
+        @Override
+        public java.util.Set<String> $writableBy(Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public java.util.Set<String> $writableByAnonymous() {
+            return NO_KEYS;
         }
     }
 

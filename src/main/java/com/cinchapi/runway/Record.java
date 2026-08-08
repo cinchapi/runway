@@ -77,6 +77,7 @@ import com.cinchapi.common.collect.Sequences;
 import com.cinchapi.common.describe.Empty;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
@@ -215,6 +216,24 @@ public abstract class Record implements Comparable<Record> {
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         return load(clazz, id, existing, connections, (Binding) runway, data,
                 targets);
+    }
+
+    /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id}.
+     *
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @return the loaded Record
+     */
+    protected static <T extends Record> T load(Class<?> clazz, long id,
+            ConcurrentMap<Long, Record> existing, ConnectionPool connections,
+            Runway runway, @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        return load(clazz, id, existing, ConcourseProvider.from(connections),
+                runway, data, targets);
     }
 
     /**
@@ -2385,11 +2404,13 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * @param work the work to run
-     * @throws IllegalStateException if this {@link Record} has no binding
+     * @throws IllegalStateException if this {@link Record} has no binding, or
+     *             if it is bound to an open {@link Transaction} that another
+     *             thread owns or that a failed save poisoned
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    protected final void run(Consumer<Transaction> work) {
+    protected final void run(Consumer<TransactionInterface> work) {
         supply(transaction -> {
             work.accept(transaction);
             return null;
@@ -2403,30 +2424,42 @@ public abstract class Record implements Comparable<Record> {
      * If this {@link Record} is bound to an open {@link Transaction}, then the
      * work joins it: everything the work stages becomes durable when that
      * transaction's owner commits it. Otherwise, the work runs the same as
-     * {@link Runway#supply(Function)}: it receives a new {@link Transaction}
-     * that commits after the work completes, and this {@link Record} joins each
+     * {@link Runway#supply(Function)}: it receives the
+     * {@link TransactionInterface} view of a new {@link Transaction} that
+     * commits after the work completes, and this {@link Record} joins each
      * attempt's transaction, so a direct {@link #save() save} stages within it.
-     * Conflicts retry within the bounds of the governing
-     * {@link AtomicRetryPolicy}, so the work must be free of side effects
-     * outside of the transaction.
+     * Either way, the work cannot commit, abort or close the transaction it
+     * joins. Conflicts retry within the bounds of the governing
+     * {@link AtomicRetryPolicy}, so the work may run more than once and must be
+     * free of side effects outside of the transaction; this {@link Record
+     * Record's} in-memory state is outside of it, so an edit survives a
+     * discarded attempt and is visible to the next one. Set each value
+     * absolutely, or derive it from a read through the transaction, rather than
+     * increment what a prior attempt left behind.
      * </p>
      *
      * @param work the work to run
      * @return the result of {@code work}
-     * @throws IllegalStateException if this {@link Record} has no binding
+     * @throws IllegalStateException if this {@link Record} has no binding, or
+     *             if it is bound to an open {@link Transaction} that another
+     *             thread owns or that a failed save poisoned
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    protected final <T> T supply(Function<Transaction, T> work) {
-        if(binding instanceof Transaction && ((Transaction) binding).open()) {
-            return work.apply((Transaction) binding);
+    protected final <T> T supply(Function<TransactionInterface, T> work) {
+        if(isBoundToOpenTransaction()) {
+            Transaction transaction = (Transaction) binding;
+            transaction.verify();
+            return work.apply(transaction);
         }
         else {
             Runway runway = harness();
             Verify.that(runway != null, "Cannot execute transactional work"
                     + " because this Record has no binding");
             return runway.supply(transaction -> {
-                transaction.join(this);
+                // The lambda receives the Transaction that supply constructs,
+                // so the cast to reach the package-private join is safe.
+                ((Transaction) transaction).join(this);
                 return work.apply(transaction);
             });
         }
@@ -2489,8 +2522,14 @@ public abstract class Record implements Comparable<Record> {
      * @param binding the {@link Binding} to bind
      * @param connections the {@link ConcourseProvider} that supplies
      *            connections within the scope of the binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} other than {@code binding}
      */
     void bind(Binding binding, ConcourseProvider connections) {
+        Verify.that(this.binding == binding || !isBoundToOpenTransaction(),
+                "Cannot bind {} to a different scope because it is bound to"
+                        + " an open Transaction",
+                __);
         this.binding = binding;
         this.connections = connections;
     }
@@ -2616,6 +2655,16 @@ public abstract class Record implements Comparable<Record> {
      */
     final boolean inZombieState(Concourse concourse) {
         return inZombieState(id, concourse, null);
+    }
+
+    /**
+     * Return {@code true} if this {@link Record} is bound to an open
+     * {@link Transaction}.
+     *
+     * @return {@code true} if the binding is an open {@link Transaction}
+     */
+    boolean isBoundToOpenTransaction() {
+        return binding instanceof Transaction && ((Transaction) binding).open();
     }
 
     /**
@@ -2923,6 +2972,10 @@ public abstract class Record implements Comparable<Record> {
         __checksum = snapshot.checksum;
         _author = snapshot.author;
         deleted = snapshot.deleted;
+        // The discarded attempt may have cached audit history that includes
+        // its own staged revisions, so the next metadata read must re-fetch
+        // from the durable state.
+        _audit = null;
     }
 
     /**
@@ -2954,9 +3007,9 @@ public abstract class Record implements Comparable<Record> {
         errors.clear();
         context.add(this);
         if(!deleted && context.isDeleted(id)) {
-            // NOTE: A deletion is final within a save, so an id-equal
-            // instance processed after the save deleted its record adopts
-            // the deletion instead of staging data that the deletion
+            // NOTE: A deletion is final within a save and across the saves
+            // of a transaction, so an id-equal instance processed after the
+            // deletion adopts it instead of staging data that the deletion
             // erases. The adoption keeps the instance's deleted state
             // aligned with the notification it receives.
             deleted = true;
@@ -3046,6 +3099,23 @@ public abstract class Record implements Comparable<Record> {
      */
     Snapshot snapshot() {
         return new Snapshot();
+    }
+
+    /**
+     * Verify that a save of this {@link Record} through {@code scope} does not
+     * cross the boundary of an open {@link Transaction}: the save must resolve
+     * against the transaction this {@link Record} is bound to, or this
+     * {@link Record} must not be bound to an open transaction at all.
+     *
+     * @param scope the {@link Binding} that the save resolves against
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} other than {@code scope}
+     */
+    void verifySavableThrough(Binding scope) {
+        Verify.that(binding == scope || !isBoundToOpenTransaction(),
+                "Cannot save {} through a different scope because it is bound"
+                        + " to an open Transaction",
+                __);
     }
 
     /**

@@ -1070,7 +1070,7 @@ public final class Runway extends Binding implements AutoCloseable {
      * @throws RetryExhaustedException if the transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    public void run(Consumer<Transaction> work) {
+    public void run(Consumer<TransactionInterface> work) {
         supply(transaction -> {
             work.accept(transaction);
             return null;
@@ -1109,8 +1109,14 @@ public final class Runway extends Binding implements AutoCloseable {
      * @return {@code true} if all changes are atomically saved
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and any {@link Record} has been externally modified
+     * @throws IllegalStateException if any of the {@code records} is bound to
+     *             an open {@link Transaction}, whose commit is the only way to
+     *             persist it
      */
     public boolean save(boolean preventStaleWrites, Record... records) {
+        for (Record record : records) {
+            record.verifySavableThrough(this);
+        }
         Concourse concourse = connections.request();
         Record current = null;
         try {
@@ -1510,20 +1516,27 @@ public final class Runway extends Binding implements AutoCloseable {
      * Run {@code work} within a {@link Transaction} and commit it after the
      * work completes.
      * <p>
-     * The work receives the open {@link Transaction}: reads through it observe
-     * the transaction's isolated snapshot, and a {@link Record} loaded through
-     * it, saved through it, or {@link Transaction#create(Class, Object...)
-     * created} by it saves within it, so everything becomes durable together
-     * when the commit succeeds. A {@link Record} bound elsewhere saves against
-     * its own binding, outside of the transaction.
+     * The work receives the transaction's {@link TransactionInterface} view:
+     * reads through it observe the transaction's isolated snapshot, and a
+     * {@link Record} loaded through it, saved through it, or
+     * {@link TransactionInterface#create(Class, Object...) created} by it saves
+     * within it, so everything becomes durable together when the commit
+     * succeeds. The transaction's lifecycle belongs to this method, so the work
+     * cannot commit, abort or close the transaction it joins. A {@link Record}
+     * bound elsewhere saves against its own binding, outside of the
+     * transaction.
      * </p>
      * <p>
      * If the commit fails because of a conflict, then the transaction is
      * discarded and {@code work} runs again against a fresh one, within the
-     * bounds of the governing {@link AtomicRetryPolicy}. The {@code work} must
-     * therefore be free of side effects outside of the transaction. Any other
-     * exception thrown by {@code work} aborts the transaction and propagates to
-     * the caller.
+     * bounds of the governing {@link AtomicRetryPolicy}, so the work may run
+     * more than once. The work must therefore be free of side effects outside
+     * of the transaction; a {@link Record Record's} in-memory state is outside
+     * of it, so an edit to a record the work captured survives a discarded
+     * attempt and is visible to the next one. Set each value absolutely, or
+     * derive it from a read through the transaction, rather than increment what
+     * a prior attempt left behind. Any other exception thrown by {@code work}
+     * aborts the transaction and propagates to the caller.
      * </p>
      *
      * @param work the work to run
@@ -1531,13 +1544,14 @@ public final class Runway extends Binding implements AutoCloseable {
      * @throws RetryExhaustedException if the transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    public <T> T supply(Function<Transaction, T> work) {
+    public <T> T supply(Function<TransactionInterface, T> work) {
         AtomicRetryPolicy policy = properties().atomicRetryPolicy();
         Concourse concourse = connections.request();
         try {
             // NOTE: The connection is held across the policy's backoff sleeps
             // so the retry loop does not churn the pool.
             int attempts = 0;
+            TransactionException conflict = null;
             for (;;) {
                 Transaction transaction = new Transaction(this, concourse,
                         false);
@@ -1561,14 +1575,28 @@ public final class Runway extends Binding implements AutoCloseable {
                         throw e;
                     }
                     else {
+                        conflict = e;
                         transaction.abort();
                     }
+                }
+                catch (Throwable t) {
+                    // The work's failure is the signal: if the close (and the
+                    // afterAbort hooks it runs) also throws, then attach that
+                    // failure instead of letting it replace the work's
+                    // exception.
+                    try {
+                        transaction.close();
+                    }
+                    catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
+                    throw t;
                 }
                 finally {
                     transaction.close();
                 }
                 if(++attempts > policy.limit()) {
-                    throw new RetryExhaustedException(attempts);
+                    throw new RetryExhaustedException(attempts, conflict);
                 }
                 else {
                     policy.backoff(attempts);
@@ -1764,24 +1792,25 @@ public final class Runway extends Binding implements AutoCloseable {
     }
 
     /**
-     * Stage the cleanup that the {@code context} deletions require on
-     * {@code saver}: the removal of every surviving {@link Record Record's}
-     * references to deleted records, and the re-assertion of each deletion as
-     * the last write for its record.
+     * Stage the cleanup that the deletions visible to {@code context} require
+     * on {@code saver}: the removal of every surviving {@link Record Record's}
+     * references to deleted records, and the re-assertion of each of the save's
+     * own deletions as the last write for its record.
      *
      * @param saver the {@link Saver} for the active staged transaction
      * @param context the {@link SaveContext} for the save
      */
     void stageDeletions(Saver saver, SaveContext context) {
-        Set<Long> deletions = context.deletions();
+        Set<Long> deletions = context.allDeletions();
         if(!deletions.isEmpty()) {
-            // NOTE: A deletion is final within a save. A record staged before
-            // a deletion may reference (or hold data for) a record that the
-            // save has since deleted, so stage the removal of every survivor's
-            // references to deleted records and re-assert each deletion as
-            // the last write for its record. The removals must stay
-            // staged-only: mutating a survivor's in-memory state here would
-            // leave it inconsistent when the transaction aborts.
+            // NOTE: A deletion is final. A record staged in this save may
+            // reference (or hold data for) a record that this save, or an
+            // earlier save in the same transaction, has since deleted, so
+            // stage the removal of every survivor's references to deleted
+            // records and re-assert each of this save's deletions as the
+            // last write for its record. The removals must stay staged-only:
+            // mutating a survivor's in-memory state here would leave it
+            // inconsistent when the transaction aborts.
             context.forEach((record, outcome) -> {
                 if(outcome != SaveContext.Outcome.DELETED && record
                         .reconcileCaptureDeleteReferences(saver, deletions)) {
@@ -1790,7 +1819,7 @@ public final class Runway extends Binding implements AutoCloseable {
                     context.markChanged(record);
                 }
             });
-            for (long id : deletions) {
+            for (long id : context.deletions()) {
                 saver.clear(id);
             }
         }
@@ -3135,7 +3164,7 @@ public final class Runway extends Binding implements AutoCloseable {
                 catch (TransactionException e) {
                     transaction.abort();
                     if(++attempts > policy.limit()) {
-                        throw new RetryExhaustedException(attempts);
+                        throw new RetryExhaustedException(attempts, e);
                     }
                     else {
                         policy.backoff(attempts);
@@ -3516,7 +3545,7 @@ public final class Runway extends Binding implements AutoCloseable {
          * <p>
          * Save listening is designed for implementing side-effects that occur
          * after a record is successfully persisted to the database. This is
-         * ideal for operations such as:n
+         * ideal for operations such as:
          * <ul>
          * <li>Triggering notifications or events</li>
          * <li>Updating external systems</li>

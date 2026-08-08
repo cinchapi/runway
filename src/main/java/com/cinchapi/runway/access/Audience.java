@@ -203,12 +203,12 @@ public interface Audience extends DatabaseInterface {
      * this {@link Audience}.
      * <p>
      * This method verifies that this {@link Audience} is permitted to create
-     * the {@link Record} before it is returned. The returned {@link Record} is
-     * not saved to the database until {@link Record#save()} is called, and it
-     * is bound to the same database context that this {@link Audience} operates
-     * against, so a direct {@link Record#save() save} persists within that
-     * context (e.g., within a {@link com.cinchapi.runway.Transaction
-     * Transaction}).
+     * the {@link Record} before it is returned, and the check resolves within
+     * the same database context that this {@link Audience} operates against.
+     * The returned {@link Record} is not saved to the database until
+     * {@link Record#save()} is called, and it is bound to that same context, so
+     * a direct {@link Record#save() save} persists within it (e.g., within a
+     * {@link com.cinchapi.runway.Transaction Transaction}).
      * </p>
      *
      * @param clazz the type of {@link Record} to create
@@ -221,6 +221,17 @@ public interface Audience extends DatabaseInterface {
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
         T record = Reflection.newInstance(clazz, args);
+        if(this instanceof Record) {
+            // Bind the new record to the same database interface that this
+            // audience operates against before the permission check runs, so
+            // the check and a later save both resolve within that context
+            // (e.g., within a Transaction).
+            Object binding = Reflection.get("binding", this);
+            if(binding != null) {
+                Reflection.call(record, "bind", binding,
+                        Reflection.get("connections", this));
+            }
+        }
         if(record instanceof AccessControl) {
             AccessControl subject = (AccessControl) record;
             if((this instanceof Anonymous && !subject.$isCreatableByAnonymous())
@@ -231,15 +242,6 @@ public interface Audience extends DatabaseInterface {
         }
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
-            // Bind the new record to the same database interface that this
-            // audience operates against so that, for example, an audience
-            // within a Transaction creates records whose saves stage within
-            // it.
-            Object binding = Reflection.get("binding", this);
-            if(binding != null) {
-                Reflection.call(record, "bind", binding,
-                        Reflection.get("connections", this));
-            }
         }
         return record;
     }
