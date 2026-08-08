@@ -924,10 +924,13 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <li>Call {@code run} on the {@link Item} with work that loads the
      * {@link Item} through the provided {@link Transaction}, sets the score to
      * 9 and saves it.</li>
+     * <li>Within the work, after the save, load the {@link Item} through the
+     * enclosing {@link Runway}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The stored score is 9 after {@code run}
-     * returns.
+     * <strong>Expected:</strong> The load within the work still observes 1,
+     * which proves the save staged within the transaction; after {@code run}
+     * returns, the stored score is 9.
      */
     @Test
     public void testRecordRunCommitsWorkWhenRunwayBound() {
@@ -938,6 +941,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 9;
             Assert.assertTrue(txItem.save());
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
         });
         Assert.assertEquals(9, runway.load(Item.class, item.id()).score);
     }
@@ -1180,10 +1184,13 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <li>Call {@code runway.run(work)} where the work loads the {@link Item}
      * through the provided {@link Transaction}, sets the score to 2 and
      * saves.</li>
-     * <li>Load the {@link Item} through the enclosing {@link Runway}.</li>
+     * <li>Within the work, after the save, load the {@link Item} through the
+     * enclosing {@link Runway}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The stored score is 2.
+     * <strong>Expected:</strong> The load within the work still observes 1,
+     * which proves the save staged within the transaction; after {@code run}
+     * returns, the stored score is 2.
      */
     @Test
     public void testRunCommitsWorkAtomically() {
@@ -1194,6 +1201,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
         });
         Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
     }
