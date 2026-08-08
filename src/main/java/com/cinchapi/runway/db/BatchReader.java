@@ -23,6 +23,7 @@ import java.util.Set;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.lang.CommandGroup;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
@@ -73,6 +74,17 @@ public final class BatchReader extends AbstractReader {
      */
     public BatchReader(ConcourseProvider connections) {
         super(connections);
+    }
+
+    /**
+     * Construct a {@link BatchReader} that borrows a {@link Concourse}
+     * connection from {@code pool} and returns it on {@link #close()}.
+     *
+     * @param pool the {@link ConnectionPool} that owns the {@link Concourse}
+     *            connection; must not be {@code null}
+     */
+    public BatchReader(ConnectionPool pool) {
+        super(pool);
     }
 
     /**

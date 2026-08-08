@@ -21,6 +21,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.google.common.base.Preconditions;
 
 /**
@@ -72,6 +73,17 @@ public abstract class AbstractReader implements Reader {
     protected AbstractReader(ConcourseProvider connections) {
         this(Preconditions.checkNotNull(connections)::request,
                 connections::release);
+    }
+
+    /**
+     * Construct an {@link AbstractReader} that borrows a {@link Concourse}
+     * connection from {@code pool} and returns it on {@link #close()}.
+     *
+     * @param pool the {@link ConnectionPool} that owns the {@link Concourse}
+     *            connection; must not be {@code null}
+     */
+    protected AbstractReader(ConnectionPool pool) {
+        this(ConcourseProvider.from(Preconditions.checkNotNull(pool)));
     }
 
     /**
