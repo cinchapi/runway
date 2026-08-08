@@ -3516,7 +3516,7 @@ public final class Runway extends Binding implements AutoCloseable {
          * <p>
          * Save listening is designed for implementing side-effects that occur
          * after a record is successfully persisted to the database. This is
-         * ideal for operations such as:
+         * ideal for operations such as:n
          * <ul>
          * <li>Triggering notifications or events</li>
          * <li>Updating external systems</li>

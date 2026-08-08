@@ -218,32 +218,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
-     * {@code id} and bind it to {@code binding}.
-     *
-     * @param clazz
-     * @param id
-     * @param existing
-     * @param connections
-     * @param binding the {@link Binding} that scopes the {@link Record
-     *            Record's} operations
-     * @return the loaded Record
-     */
-    static <T extends Record> T load(Class<?> clazz, long id,
-            ConcurrentMap<Long, Record> existing, ConcourseProvider connections,
-            Binding binding, @Nullable Map<String, Set<Object>> data,
-            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
-        Concourse concourse = connections.request();
-        try {
-            return load(clazz, id, existing, connections, concourse, binding,
-                    data, null, targets);
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
      * Return the {@link Field} named {@code key} if it is eligible for
      * single-key atomic operations on {@code record}.
      *
@@ -304,6 +278,32 @@ public abstract class Record implements Comparable<Record> {
     @SuppressWarnings("unchecked")
     static <T> T getAtomicableFieldValue(Field field, Record record) {
         return (T) getFieldValue(field, record);
+    }
+
+    /**
+     * INTERNAL method to load a {@link Record} from {@code clazz} identified by
+     * {@code id} and bind it to {@code binding}.
+     *
+     * @param clazz
+     * @param id
+     * @param existing
+     * @param connections
+     * @param binding the {@link Binding} that scopes the {@link Record
+     *            Record's} operations
+     * @return the loaded Record
+     */
+    static <T extends Record> T load(Class<?> clazz, long id,
+            ConcurrentMap<Long, Record> existing, ConcourseProvider connections,
+            Binding binding, @Nullable Map<String, Set<Object>> data,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        Concourse concourse = connections.request();
+        try {
+            return load(clazz, id, existing, connections, concourse, binding,
+                    data, null, targets);
+        }
+        finally {
+            connections.release(concourse);
+        }
     }
 
     /**
