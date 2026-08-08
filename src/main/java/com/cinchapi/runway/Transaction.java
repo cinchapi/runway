@@ -122,6 +122,14 @@ public class Transaction extends Binding implements AutoCloseable {
     private boolean poisoned = false;
 
     /**
+     * Whether an {@link #afterCommit(Runnable) afterCommit} or
+     * {@link #afterAbort(Runnable) afterAbort} hook threw while the transaction
+     * was ending. The exception a hook throws must propagate to the caller
+     * instead of being mistaken for a commit conflict.
+     */
+    private boolean hookFailed = false;
+
+    /**
      * Whether the transaction successfully committed.
      */
     private boolean committed = false;
@@ -501,6 +509,17 @@ public class Transaction extends Binding implements AutoCloseable {
     }
 
     /**
+     * Return {@code true} if an {@link #afterCommit(Runnable) afterCommit} or
+     * {@link #afterAbort(Runnable) afterAbort} hook threw while the transaction
+     * was ending.
+     *
+     * @return {@code true} if a hook failed
+     */
+    boolean hookFailed() {
+        return hookFailed;
+    }
+
+    /**
      * Bind {@code record}, and every loaded {@link Record} that is reachable
      * from it, to this {@link Transaction}, so each {@link Record#save() save}
      * stages within it.
@@ -622,16 +641,28 @@ public class Transaction extends Binding implements AutoCloseable {
                 for (SaveContext context : saves) {
                     database.dispatchSaveOutcomes(context);
                 }
-                for (Runnable hook : afterCommitHooks) {
-                    hook.run();
+                try {
+                    for (Runnable hook : afterCommitHooks) {
+                        hook.run();
+                    }
+                }
+                catch (Throwable t) {
+                    hookFailed = true;
+                    throw t;
                 }
             }
             else {
                 for (int i = saves.size() - 1; i >= 0; --i) {
                     saves.get(i).restore();
                 }
-                for (Runnable hook : afterAbortHooks) {
-                    hook.run();
+                try {
+                    for (Runnable hook : afterAbortHooks) {
+                        hook.run();
+                    }
+                }
+                catch (Throwable t) {
+                    hookFailed = true;
+                    throw t;
                 }
             }
         }

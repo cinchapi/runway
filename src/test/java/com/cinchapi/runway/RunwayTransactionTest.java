@@ -1134,6 +1134,55 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Runway#run(java.util.function.Consumer) run} does not re-run the
+     * work when an {@code afterAbort} hook throws a
+     * {@link TransactionException} after a failed commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code runway.run(work)} where the work registers an
+     * {@code afterAbort} hook that throws a {@link TransactionException}, loads
+     * the {@link Item} and saves a change.</li>
+     * <li>Within the work, modify the {@link Item} outside of the transaction
+     * after the transactional read, so the commit fails and the hook runs.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The hook's exception propagates, the work runs
+     * exactly once and the staged change is discarded.
+     */
+    @Test
+    public void testRunDoesNotRetryWhenAfterAbortHookThrowsTransactionException() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicInteger runs = new AtomicInteger(0);
+        try {
+            runway.run(transaction -> {
+                runs.incrementAndGet();
+                transaction.afterAbort(() -> {
+                    throw new TransactionException();
+                });
+                Item txItem = transaction.load(Item.class, item.id());
+                Item outside = runway.load(Item.class, item.id());
+                outside.name = "conflict";
+                Assert.assertTrue(outside.save());
+                txItem.score = 2;
+                Assert.assertTrue(txItem.save());
+            });
+            Assert.fail("Expected the afterAbort hook's exception to"
+                    + " propagate");
+        }
+        catch (TransactionException e) {
+            // Expected: the hook's failure propagates without a retry.
+        }
+        Assert.assertEquals(1, runs.get());
+        Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that save notifications for records saved
      * within a {@link Transaction} fire only after the commit succeeds.
      * <p>

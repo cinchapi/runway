@@ -1552,10 +1552,12 @@ public final class Runway extends Binding implements AutoCloseable {
                     }
                 }
                 catch (TransactionException e) {
-                    if(transaction.committed()) {
-                        // The commit succeeded, so the exception came from a
-                        // post-commit consequence (e.g., an afterCommit hook)
-                        // and re-running the work would apply it twice.
+                    if(transaction.committed() || transaction.hookFailed()) {
+                        // The exception is not a commit conflict: either the
+                        // commit succeeded and a post-commit consequence
+                        // threw, or a lifecycle hook failed. Re-running the
+                        // work would repeat side effects or mask the hook's
+                        // failure.
                         throw e;
                     }
                     else {
