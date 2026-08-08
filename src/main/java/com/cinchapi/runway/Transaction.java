@@ -25,6 +25,7 @@ import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.runway.db.BatchReader;
+import com.cinchapi.runway.db.BatchSaver;
 import com.cinchapi.runway.db.ConcourseProvider;
 import com.cinchapi.runway.db.IncrementalReader;
 import com.cinchapi.runway.db.IncrementalSaver;
@@ -345,18 +346,24 @@ public class Transaction extends Binding implements AutoCloseable {
                         "Cannot save a Record that overrides the save"
                                 + " pipeline within a Transaction");
             }
-            Saver saver = new IncrementalSaver(concourse);
+            Saver saver = database.supportsBulkCommands
+                    ? new BatchSaver(concourse)
+                    : new IncrementalSaver(concourse);
             SaveContext context = new SaveContext(preventStaleWrites);
             try {
                 // NOTE: The saver is never staged or committed here because
                 // the connection is already within this transaction, whose
-                // commit is the terminal operation.
+                // commit is the terminal operation. The flush is what sends a
+                // bulk saver's queued writes and runs its validators, so the
+                // staged state is on the server, and validated, before any
+                // later operation through this transaction reads it.
                 Set<Record> seen = Sets.newIdentityHashSet();
                 for (Record record : records) {
                     record.bindGraph(this, provider, seen);
                     record.saveWithinTransaction(saver, context);
                 }
                 database.stageDeletions(saver, context);
+                saver.flush();
             }
             catch (Throwable t) {
                 // The writes that were staged before the failure cannot be

@@ -34,8 +34,8 @@ import com.cinchapi.concourse.lang.Criteria;
  * {@link #find(Criteria, Consumer) find}) accept a {@link Consumer} that may
  * throw to signal a validation failure. Depending on the implementation, the
  * {@link Consumer} runs either inline at the recording call or deferred until
- * {@link #commit()}; the throw propagates from whichever site invokes the
- * {@link Consumer}.
+ * {@link #commit()} or {@link #flush()}; the throw propagates from whichever
+ * site invokes the {@link Consumer}.
  * </p>
  * <h2>Writes</h2> Writes ({@link #set set}, {@link #remove remove},
  * {@link #clear(String, long) clear}, {@link #verifyOrSet verifyOrSet},
@@ -43,10 +43,13 @@ import com.cinchapi.concourse.lang.Criteria;
  * transaction, which is the unit of atomicity: a failure anywhere before
  * {@link #commit()} succeeds aborts the entire save.
  *
- * <h2>Lifecycle</h2> The caller drives the lifecycle: {@link #stage()} once,
- * any number of recording calls, then exactly one of {@link #commit()} or
- * {@link #abort()}. A {@link Saver} is single-use and is not safe for
- * concurrent access.
+ * <h2>Lifecycle</h2> The caller drives the lifecycle. For a self-contained
+ * save: {@link #stage()} once, any number of recording calls, then exactly one
+ * of {@link #commit()} or {@link #abort()}. For a save that participates in an
+ * externally managed transaction: no {@link #stage()}, any number of recording
+ * calls, then {@link #flush()}; the external transaction's own commit or abort
+ * is terminal. A {@link Saver} is single-use and is not safe for concurrent
+ * access.
  *
  * @author Jeff Nelson
  */
@@ -55,10 +58,12 @@ public interface Saver {
     /**
      * Begin a staged transaction for the save this {@link Saver} represents.
      * <p>
-     * Must be called exactly once before any recording method. For synchronous
-     * implementations the stage takes effect on the server immediately; for
-     * bulk implementations the stage is recorded for execution as the first
-     * command of the read submission inside {@link #commit()}.
+     * Must be called exactly once before any recording method for a
+     * self-contained save, and never for a save that participates in an
+     * externally managed transaction. For synchronous implementations the stage
+     * takes effect on the server immediately; for bulk implementations the
+     * stage is recorded for execution as the first command of the first
+     * submission.
      * </p>
      */
     void stage();
@@ -90,6 +95,23 @@ public interface Saver {
     boolean commit();
 
     /**
+     * Ensure that every recorded operation has reached the server and that
+     * every queued validator has run.
+     * <p>
+     * Synchronous implementations perform each operation when it is recorded,
+     * so the default implementation does nothing. Bulk implementations submit
+     * every pending operation and apply the queued validators, any of which may
+     * throw to reject the save; the operations that shared the submission have
+     * already reached the server, so the caller is responsible for the
+     * enclosing transaction's rollback after handling the exception. When the
+     * recorded operations participate in an externally managed transaction, the
+     * caller does not invoke {@link #commit()} and must instead call this
+     * method after its final recording, so no operation remains client-side.
+     * </p>
+     */
+    default void flush() {}
+
+    /**
      * Abort the staged transaction.
      * <p>
      * Safe to call even when nothing has been submitted yet (for bulk
@@ -106,7 +128,7 @@ public interface Saver {
      * The {@code validator} may throw to signal a validation failure (typically
      * {@link com.cinchapi.runway.StaleDataException}); the exception propagates
      * from the recording call for synchronous implementations and from
-     * {@link #commit()} for bulk implementations.
+     * {@link #commit()} or {@link #flush()} for bulk implementations.
      * </p>
      *
      * @param record the record id whose change history is being inspected
@@ -123,7 +145,8 @@ public interface Saver {
      * a {@link com.cinchapi.runway.Unique} violation surfaces as a
      * {@link com.cinchapi.runway.Record.ConstraintViolationException}); the
      * exception propagates from the recording call for synchronous
-     * implementations and from {@link #commit()} for bulk implementations.
+     * implementations and from {@link #commit()} or {@link #flush()} for bulk
+     * implementations.
      * </p>
      *
      * @param criteria the {@link Criteria} that identifies the matching records

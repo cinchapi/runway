@@ -28,6 +28,7 @@ import org.junit.Test;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.access.AccessControl;
 import com.cinchapi.runway.access.Audience;
 
@@ -558,6 +559,49 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             transaction.abort();
         }
         Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Unique} violation within a
+     * {@link Transaction} throws from the save call and poisons the
+     * transaction, so the duplicate can never commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Handle} named "alpha".
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create a second {@link Handle} named "alpha" through a
+     * {@link Transaction} and {@code save()} it.</li>
+     * <li>Attempt a load through the poisoned transaction.</li>
+     * <li>Call {@code abort()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a
+     * {@link ConstraintViolationException}, the subsequent load is refused with
+     * an {@link IllegalStateException} and only one {@link Handle} named
+     * "alpha" exists after the abort.
+     */
+    @Test
+    public void testUniqueViolationWithinTransactionPoisonsIt() {
+        Handle handle = new Handle("alpha");
+        handle.assign(runway);
+        Assert.assertTrue(handle.save());
+        try (Transaction transaction = runway.stage()) {
+            Handle duplicate = transaction.create(Handle.class, "alpha");
+            try {
+                duplicate.save();
+                Assert.fail("Expected the save to throw");
+            }
+            catch (ConstraintViolationException e) {/* expected */}
+            try {
+                transaction.load(Handle.class, handle.id());
+                Assert.fail("Expected the load to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            transaction.abort();
+        }
+        Assert.assertEquals(1, runway.count(Handle.class, Criteria.where()
+                .key("name").operator(Operator.EQUALS).value("alpha").build()));
     }
 
     /**
@@ -1785,6 +1829,29 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
          * @param name the display name
          */
         public Registration(String name) {
+            this.name = name;
+        }
+    }
+
+    /**
+     * A {@link Record} whose name must be {@link Unique}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Handle extends Record {
+
+        /**
+         * The unique display name.
+         */
+        @Unique
+        String name;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         */
+        public Handle(String name) {
             this.name = name;
         }
     }

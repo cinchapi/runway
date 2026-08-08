@@ -35,9 +35,9 @@ import com.google.common.base.Preconditions;
  * A {@link Saver} that batches save-pipeline interaction into the smallest
  * number of {@link CommandGroup} submissions a given save permits. Recording
  * calls accumulate deferred operations rather than touching the server;
- * submissions happen at {@link #commit()} and whenever a save-time
- * {@link #select(String, Criteria, Consumer) select} requires its result
- * inline.
+ * submissions happen at {@link #commit()}, at {@link #flush()} and whenever a
+ * save-time {@link #select(String, Criteria, Consumer) select} requires its
+ * result inline.
  * <p>
  * If any queued {@link Consumer} throws during a submission, the staged
  * transaction has already been opened on the server; the caller is responsible
@@ -221,18 +221,29 @@ public final class BatchSaver implements Saver {
     @Override
     public boolean commit() {
         flushReads();
-        CommandGroup writes = concourse.prepare();
-        if(stageRequested && !stageBundled) {
-            writes.stage();
-            stageBundled = true;
-        }
-        for (Consumer<CommandGroup> op : deferredWriteOps) {
-            op.accept(writes);
-        }
+        CommandGroup writes = prepareGroup();
+        drainWrites(writes);
         int commitSlot = writes.commands().size();
         writes.commit();
         List<Object> results = concourse.submit(writes);
         return (Boolean) results.get(commitSlot);
+    }
+
+    @Override
+    public void flush() {
+        while (!preWriteReadOps.isEmpty() || !postWriteReadOps.isEmpty()
+                || !deferredWriteOps.isEmpty()) {
+            if(preWriteReadOps.isEmpty() && postWriteReadOps.isEmpty()) {
+                CommandGroup writes = prepareGroup();
+                drainWrites(writes);
+                concourse.submit(writes);
+            }
+            else {
+                // A queued validator may record further operations, so loop
+                // until a pass leaves nothing pending.
+                flushReads();
+            }
+        }
     }
 
     @Override
@@ -255,24 +266,12 @@ public final class BatchSaver implements Saver {
      */
     private void flushReads() {
         if(!preWriteReadOps.isEmpty() || !postWriteReadOps.isEmpty()) {
-            CommandGroup group = concourse.prepare();
-            if(stageRequested && !stageBundled) {
-                // NOTE: STAGE inside this CommandGroup relies on the driver
-                // to adopt the resulting TransactionToken and to clear it
-                // when a later submission's COMMIT runs, so the
-                // reads-then-writes pair shares one staged transaction
-                // (cinchapi/concourse#735).
-                group.stage();
-                stageBundled = true;
-            }
+            CommandGroup group = prepareGroup();
             for (Consumer<CommandGroup> op : preWriteReadOps) {
                 op.accept(group);
             }
             preWriteReadOps.clear();
-            for (Consumer<CommandGroup> op : deferredWriteOps) {
-                op.accept(group);
-            }
-            deferredWriteOps.clear();
+            drainWrites(group);
             for (Consumer<CommandGroup> op : postWriteReadOps) {
                 op.accept(group);
             }
@@ -288,6 +287,38 @@ public final class BatchSaver implements Saver {
                 validator.accept(results);
             }
         }
+    }
+
+    /**
+     * Append every deferred write to {@code group} and clear the queue.
+     *
+     * @param group the {@link CommandGroup} that receives the deferred writes
+     */
+    private void drainWrites(CommandGroup group) {
+        for (Consumer<CommandGroup> op : deferredWriteOps) {
+            op.accept(group);
+        }
+        deferredWriteOps.clear();
+    }
+
+    /**
+     * Prepare a new {@link CommandGroup} for a submission, bundling the
+     * requested {@link #stage()} into it if no prior submission has already
+     * carried it.
+     *
+     * @return the {@link CommandGroup}
+     */
+    private CommandGroup prepareGroup() {
+        CommandGroup group = concourse.prepare();
+        if(stageRequested && !stageBundled) {
+            // NOTE: STAGE inside this CommandGroup relies on the driver
+            // to adopt the resulting TransactionToken and to clear it
+            // when a later submission's COMMIT runs, so every submission
+            // shares one staged transaction (cinchapi/concourse#735).
+            group.stage();
+            stageBundled = true;
+        }
+        return group;
     }
 
 }
