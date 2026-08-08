@@ -56,17 +56,47 @@ import com.cinchapi.concourse.lang.Criteria;
 public interface Saver {
 
     /**
-     * Begin a staged transaction for the save this {@link Saver} represents.
+     * Abort the staged transaction.
      * <p>
-     * Must be called exactly once before any recording method for a
-     * self-contained save, and never for a save that participates in an
-     * externally managed transaction. For synchronous implementations the stage
-     * takes effect on the server immediately; for bulk implementations the
-     * stage is recorded for execution as the first command of the first
-     * submission.
+     * Safe to call even when nothing has been submitted yet (for bulk
+     * implementations) &mdash; in that case the call is a no-op because no
+     * server-side state exists to roll back.
      * </p>
      */
-    void stage();
+    void abort();
+
+    /**
+     * Record an {@link Concourse#audit(long) audit} for {@code record} and
+     * arrange to apply {@code validator} to the result.
+     * <p>
+     * The {@code validator} may throw to signal a validation failure (typically
+     * {@link com.cinchapi.runway.StaleDataException}); the exception propagates
+     * from the recording call for synchronous implementations and from
+     * {@link #commit()} or {@link #flush()} for bulk implementations.
+     * </p>
+     *
+     * @param record the record id whose change history is being inspected
+     * @param validator a {@link Consumer} that receives the audit result and
+     *            may throw to reject the save
+     */
+    void audit(long record, Consumer<Map<Timestamp, List<String>>> validator);
+
+    /**
+     * Record a {@link Concourse#clear(long) clear} of every value stored in
+     * {@code record}, leaving the record empty.
+     *
+     * @param record the record id to clear
+     */
+    void clear(long record);
+
+    /**
+     * Record a {@link Concourse#clear(String, long) clear} of all values for
+     * {@code key} in {@code record}.
+     *
+     * @param key the field name to clear
+     * @param record the record id to clear from
+     */
+    void clear(String key, long record);
 
     /**
      * Commit the staged transaction.
@@ -95,49 +125,6 @@ public interface Saver {
     boolean commit();
 
     /**
-     * Ensure that every recorded operation has reached the server and that
-     * every queued validator has run.
-     * <p>
-     * Synchronous implementations perform each operation when it is recorded,
-     * so the default implementation does nothing. Bulk implementations submit
-     * every pending operation and apply the queued validators, any of which may
-     * throw to reject the save; the operations that shared the submission have
-     * already reached the server, so the caller is responsible for the
-     * enclosing transaction's rollback after handling the exception. When the
-     * recorded operations participate in an externally managed transaction, the
-     * caller does not invoke {@link #commit()} and must instead call this
-     * method after its final recording, so no operation remains client-side.
-     * </p>
-     */
-    default void flush() {}
-
-    /**
-     * Abort the staged transaction.
-     * <p>
-     * Safe to call even when nothing has been submitted yet (for bulk
-     * implementations) &mdash; in that case the call is a no-op because no
-     * server-side state exists to roll back.
-     * </p>
-     */
-    void abort();
-
-    /**
-     * Record an {@link Concourse#audit(long) audit} for {@code record} and
-     * arrange to apply {@code validator} to the result.
-     * <p>
-     * The {@code validator} may throw to signal a validation failure (typically
-     * {@link com.cinchapi.runway.StaleDataException}); the exception propagates
-     * from the recording call for synchronous implementations and from
-     * {@link #commit()} or {@link #flush()} for bulk implementations.
-     * </p>
-     *
-     * @param record the record id whose change history is being inspected
-     * @param validator a {@link Consumer} that receives the audit result and
-     *            may throw to reject the save
-     */
-    void audit(long record, Consumer<Map<Timestamp, List<String>>> validator);
-
-    /**
      * Record a {@link Concourse#find(Criteria) find} for the {@code criteria}
      * and arrange to apply {@code validator} to the matching record ids.
      * <p>
@@ -156,76 +143,21 @@ public interface Saver {
     void find(Criteria criteria, Consumer<Set<Long>> validator);
 
     /**
-     * Record a {@link Concourse#select(String, Criteria) select} of values for
-     * {@code key} on every record matching {@code criteria} and arrange to
-     * apply {@code consumer} to the resulting record-keyed map.
+     * Ensure that every recorded operation has reached the server and that
+     * every queued validator has run.
      * <p>
-     * Unlike {@link #audit audit} and {@link #find find}, this read drives
-     * control flow rather than a throw/no-throw validation &mdash; the
-     * {@code consumer} typically iterates the result and triggers further save
-     * work (e.g. cascade-delete loads). Implementations therefore guarantee
-     * that {@code consumer} runs before the recording call returns. For bulk
-     * implementations this means an early submission of any reads accumulated
-     * so far so the result is available; subsequent recordings start a fresh
-     * batch.
+     * Synchronous implementations perform each operation when it is recorded,
+     * so the default implementation does nothing. Bulk implementations submit
+     * every pending operation and apply the queued validators, any of which may
+     * throw to reject the save; the operations that shared the submission have
+     * already reached the server, so the caller is responsible for the
+     * enclosing transaction's rollback after handling the exception. When the
+     * recorded operations participate in an externally managed transaction, the
+     * caller does not invoke {@link #commit()} and must instead call this
+     * method after its final recording, so no operation remains client-side.
      * </p>
-     *
-     * @param key the field name whose values should be returned
-     * @param criteria the {@link Criteria} that identifies the matching records
-     * @param consumer a {@link Consumer} that receives the result and may
-     *            mutate caller state, trigger further recordings on this
-     *            {@link Saver}, or throw to reject the save
      */
-    void select(String key, Criteria criteria,
-            Consumer<Map<Long, Set<Object>>> consumer);
-
-    /**
-     * Record a {@link Concourse#set(String, Object, long) set} of {@code value}
-     * for {@code key} in {@code record}.
-     *
-     * @param key the field name to set
-     * @param value the value to associate with {@code key}
-     * @param record the record id to set into
-     */
-    void set(String key, Object value, long record);
-
-    /**
-     * Record a {@link Concourse#remove(String, Object, long) remove} of
-     * {@code value} from {@code key} in {@code record}. The removal is a no-op
-     * when {@code key} does not hold {@code value}.
-     *
-     * @param key the field name to remove from
-     * @param value the value to remove
-     * @param record the record id to remove from
-     */
-    void remove(String key, Object value, long record);
-
-    /**
-     * Record a {@link Concourse#clear(String, long) clear} of all values for
-     * {@code key} in {@code record}.
-     *
-     * @param key the field name to clear
-     * @param record the record id to clear from
-     */
-    void clear(String key, long record);
-
-    /**
-     * Record a {@link Concourse#clear(long) clear} of every value stored in
-     * {@code record}, leaving the record empty.
-     *
-     * @param record the record id to clear
-     */
-    void clear(long record);
-
-    /**
-     * Record a {@link Concourse#verifyOrSet(String, Object, long) verifyOrSet}
-     * of {@code value} for {@code key} in {@code record}.
-     *
-     * @param key the field name to verifyOrSet
-     * @param value the value to associate with {@code key}
-     * @param record the record id whose mapping is being verified or set
-     */
-    void verifyOrSet(String key, Object value, long record);
+    default void flush() {}
 
     /**
      * Record a {@link Concourse#reconcile(String, long, Collection) reconcile}
@@ -264,5 +196,73 @@ public interface Saver {
      *            {@link #clear(String, long)}
      */
     void reconcile(String key, long record, Object[] values);
+
+    /**
+     * Record a {@link Concourse#remove(String, Object, long) remove} of
+     * {@code value} from {@code key} in {@code record}. The removal is a no-op
+     * when {@code key} does not hold {@code value}.
+     *
+     * @param key the field name to remove from
+     * @param value the value to remove
+     * @param record the record id to remove from
+     */
+    void remove(String key, Object value, long record);
+
+    /**
+     * Record a {@link Concourse#select(String, Criteria) select} of values for
+     * {@code key} on every record matching {@code criteria} and arrange to
+     * apply {@code consumer} to the resulting record-keyed map.
+     * <p>
+     * Unlike {@link #audit audit} and {@link #find find}, this read drives
+     * control flow rather than a throw/no-throw validation &mdash; the
+     * {@code consumer} typically iterates the result and triggers further save
+     * work (e.g. cascade-delete loads). Implementations therefore guarantee
+     * that {@code consumer} runs before the recording call returns. For bulk
+     * implementations this means an early submission of any reads accumulated
+     * so far so the result is available; subsequent recordings start a fresh
+     * batch.
+     * </p>
+     *
+     * @param key the field name whose values should be returned
+     * @param criteria the {@link Criteria} that identifies the matching records
+     * @param consumer a {@link Consumer} that receives the result and may
+     *            mutate caller state, trigger further recordings on this
+     *            {@link Saver}, or throw to reject the save
+     */
+    void select(String key, Criteria criteria,
+            Consumer<Map<Long, Set<Object>>> consumer);
+
+    /**
+     * Record a {@link Concourse#set(String, Object, long) set} of {@code value}
+     * for {@code key} in {@code record}.
+     *
+     * @param key the field name to set
+     * @param value the value to associate with {@code key}
+     * @param record the record id to set into
+     */
+    void set(String key, Object value, long record);
+
+    /**
+     * Begin a staged transaction for the save this {@link Saver} represents.
+     * <p>
+     * Must be called exactly once before any recording method for a
+     * self-contained save, and never for a save that participates in an
+     * externally managed transaction. For synchronous implementations the stage
+     * takes effect on the server immediately; for bulk implementations the
+     * stage is recorded for execution as the first command of the first
+     * submission.
+     * </p>
+     */
+    void stage();
+
+    /**
+     * Record a {@link Concourse#verifyOrSet(String, Object, long) verifyOrSet}
+     * of {@code value} for {@code key} in {@code record}.
+     *
+     * @param key the field name to verifyOrSet
+     * @param value the value to associate with {@code key}
+     * @param record the record id whose mapping is being verified or set
+     */
+    void verifyOrSet(String key, Object value, long record);
 
 }

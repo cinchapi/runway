@@ -116,8 +116,8 @@ public final class BatchSaver implements Saver {
     }
 
     @Override
-    public void stage() {
-        stageRequested = true;
+    public void abort() {
+        concourse.abort();
     }
 
     @SuppressWarnings("unchecked")
@@ -137,6 +137,27 @@ public final class BatchSaver implements Saver {
         });
     }
 
+    @Override
+    public void clear(long record) {
+        deferredWriteOps.add(group -> group.clear(record));
+    }
+
+    @Override
+    public void clear(String key, long record) {
+        deferredWriteOps.add(group -> group.clear(key, record));
+    }
+
+    @Override
+    public boolean commit() {
+        flushReads();
+        CommandGroup writes = prepareGroup();
+        drainWrites(writes);
+        int commitSlot = writes.commands().size();
+        writes.commit();
+        List<Object> results = concourse.submit(writes);
+        return (Boolean) results.get(commitSlot);
+    }
+
     @SuppressWarnings("unchecked")
     @Override
     public void find(Criteria criteria, Consumer<Set<Long>> validator) {
@@ -152,47 +173,21 @@ public final class BatchSaver implements Saver {
         });
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public void select(String key, Criteria criteria,
-            Consumer<Map<Long, Set<Object>>> consumer) {
-        Preconditions.checkNotNull(consumer);
-        int[] slot = new int[1];
-        postWriteReadOps.add(group -> {
-            slot[0] = group.commands().size();
-            group.select(key, criteria);
-        });
-        pendingValidators.add(results -> {
-            Map<Long, Set<Object>> result = (Map<Long, Set<Object>>) results
-                    .get(slot[0]);
-            consumer.accept(result);
-        });
-        flushReads();
-    }
-
-    @Override
-    public void set(String key, Object value, long record) {
-        deferredWriteOps.add(group -> group.set(key, value, record));
-    }
-
-    @Override
-    public void remove(String key, Object value, long record) {
-        deferredWriteOps.add(group -> group.remove(key, value, record));
-    }
-
-    @Override
-    public void clear(String key, long record) {
-        deferredWriteOps.add(group -> group.clear(key, record));
-    }
-
-    @Override
-    public void clear(long record) {
-        deferredWriteOps.add(group -> group.clear(record));
-    }
-
-    @Override
-    public void verifyOrSet(String key, Object value, long record) {
-        deferredWriteOps.add(group -> group.verifyOrSet(key, value, record));
+    public void flush() {
+        while (!preWriteReadOps.isEmpty() || !postWriteReadOps.isEmpty()
+                || !deferredWriteOps.isEmpty()) {
+            if(preWriteReadOps.isEmpty() && postWriteReadOps.isEmpty()) {
+                CommandGroup writes = prepareGroup();
+                drainWrites(writes);
+                concourse.submit(writes);
+            }
+            else {
+                // A queued validator may record further operations, so loop
+                // until a pass leaves nothing pending.
+                flushReads();
+            }
+        }
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
@@ -219,36 +214,53 @@ public final class BatchSaver implements Saver {
     }
 
     @Override
-    public boolean commit() {
+    public void remove(String key, Object value, long record) {
+        deferredWriteOps.add(group -> group.remove(key, value, record));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public void select(String key, Criteria criteria,
+            Consumer<Map<Long, Set<Object>>> consumer) {
+        Preconditions.checkNotNull(consumer);
+        int[] slot = new int[1];
+        postWriteReadOps.add(group -> {
+            slot[0] = group.commands().size();
+            group.select(key, criteria);
+        });
+        pendingValidators.add(results -> {
+            Map<Long, Set<Object>> result = (Map<Long, Set<Object>>) results
+                    .get(slot[0]);
+            consumer.accept(result);
+        });
         flushReads();
-        CommandGroup writes = prepareGroup();
-        drainWrites(writes);
-        int commitSlot = writes.commands().size();
-        writes.commit();
-        List<Object> results = concourse.submit(writes);
-        return (Boolean) results.get(commitSlot);
     }
 
     @Override
-    public void flush() {
-        while (!preWriteReadOps.isEmpty() || !postWriteReadOps.isEmpty()
-                || !deferredWriteOps.isEmpty()) {
-            if(preWriteReadOps.isEmpty() && postWriteReadOps.isEmpty()) {
-                CommandGroup writes = prepareGroup();
-                drainWrites(writes);
-                concourse.submit(writes);
-            }
-            else {
-                // A queued validator may record further operations, so loop
-                // until a pass leaves nothing pending.
-                flushReads();
-            }
+    public void set(String key, Object value, long record) {
+        deferredWriteOps.add(group -> group.set(key, value, record));
+    }
+
+    @Override
+    public void stage() {
+        stageRequested = true;
+    }
+
+    @Override
+    public void verifyOrSet(String key, Object value, long record) {
+        deferredWriteOps.add(group -> group.verifyOrSet(key, value, record));
+    }
+
+    /**
+     * Append every deferred write to {@code group} and clear the queue.
+     *
+     * @param group the {@link CommandGroup} that receives the deferred writes
+     */
+    private void drainWrites(CommandGroup group) {
+        for (Consumer<CommandGroup> op : deferredWriteOps) {
+            op.accept(group);
         }
-    }
-
-    @Override
-    public void abort() {
-        concourse.abort();
+        deferredWriteOps.clear();
     }
 
     /**
@@ -287,18 +299,6 @@ public final class BatchSaver implements Saver {
                 validator.accept(results);
             }
         }
-    }
-
-    /**
-     * Append every deferred write to {@code group} and clear the queue.
-     *
-     * @param group the {@link CommandGroup} that receives the deferred writes
-     */
-    private void drainWrites(CommandGroup group) {
-        for (Consumer<CommandGroup> op : deferredWriteOps) {
-            op.accept(group);
-        }
-        deferredWriteOps.clear();
     }
 
     /**

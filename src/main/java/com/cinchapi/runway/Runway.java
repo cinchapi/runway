@@ -945,11 +945,6 @@ public final class Runway extends Binding implements AutoCloseable {
     }
 
     @Override
-    <T extends Record> T load(long id) {
-        return instantiate(id, null, null);
-    }
-
-    @Override
     public <T extends Record> T loadNullSafe(Class<T> clazz, long id,
             Realms realms) {
         try {
@@ -1748,6 +1743,11 @@ public final class Runway extends Binding implements AutoCloseable {
                 && StaticAnalysis.instance().hasFieldOfTypeRecordInClass(clazz)
                         ? StaticAnalysis.instance().getPaths(clazz)
                         : null;
+    }
+
+    @Override
+    <T extends Record> T load(long id) {
+        return instantiate(id, null, null);
     }
 
     /**

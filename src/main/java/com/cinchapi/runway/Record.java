@@ -328,6 +328,36 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Perform {@code action} on every loaded {@link Record} that is reachable
+     * from {@code value}: a {@link Record} directly, the loaded {@link Record}
+     * within a {@link DeferredReference}, or either one within a
+     * {@link Sequences#isSequence(Object) Sequence}.
+     *
+     * @param value the value to inspect for {@link Record} references
+     * @param action the action to perform on each reachable {@link Record}
+     */
+    private static void forEachReachableRecord(Object value,
+            Consumer<Record> action) {
+        if(Sequences.isSequence(value)) {
+            Sequences.forEach(value,
+                    item -> forEachReachableRecord(item, action));
+        }
+        else {
+            Record record = null;
+            if(value instanceof Record) {
+                record = (Record) value;
+            }
+            else if(value instanceof DeferredReference) {
+                record = ((DeferredReference<?>) value).$ref();
+            }
+
+            if(record != null) {
+                action.accept(record);
+            }
+        }
+    }
+
+    /**
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
      * track of linked records to prevent infinite recursion.
      *
@@ -589,36 +619,6 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return false;
-    }
-
-    /**
-     * Perform {@code action} on every loaded {@link Record} that is reachable
-     * from {@code value}: a {@link Record} directly, the loaded {@link Record}
-     * within a {@link DeferredReference}, or either one within a
-     * {@link Sequences#isSequence(Object) Sequence}.
-     *
-     * @param value the value to inspect for {@link Record} references
-     * @param action the action to perform on each reachable {@link Record}
-     */
-    private static void forEachReachableRecord(Object value,
-            Consumer<Record> action) {
-        if(Sequences.isSequence(value)) {
-            Sequences.forEach(value,
-                    item -> forEachReachableRecord(item, action));
-        }
-        else {
-            Record record = null;
-            if(value instanceof Record) {
-                record = (Record) value;
-            }
-            else if(value instanceof DeferredReference) {
-                record = ((DeferredReference<?>) value).$ref();
-            }
-
-            if(record != null) {
-                action.accept(record);
-            }
-        }
     }
 
     /**
