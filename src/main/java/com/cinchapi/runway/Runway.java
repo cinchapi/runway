@@ -2942,9 +2942,15 @@ public final class Runway extends Binding implements AutoCloseable {
             Map<Long, Map<String, Set<Object>>> targets,
             Transaction transaction) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
+        // NOTE: The lazy set does not cache a slot that resolves to null, so
+        // without the scope check a null slot would re-resolve through the
+        // ended transaction's database fallback and the result's content
+        // could change after the transaction ends.
+        boolean scoped = transaction.open();
         return LazyTransformSet.of(data.entrySet(),
-                entry -> instantiate(entry.getKey(), loaded, entry.getValue(),
-                        targets, transaction));
+                entry -> scoped && !transaction.open() ? null
+                        : instantiate(entry.getKey(), loaded, entry.getValue(),
+                                targets, transaction));
     }
 
     /**

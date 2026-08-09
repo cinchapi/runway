@@ -58,7 +58,8 @@ public interface TransactionInterface extends DatabaseInterface {
      * Hooks run synchronously, in registration order, after the commit
      * succeeds. A hook that throws does not affect the outcome: the transaction
      * remains committed, the exception propagates to the caller and any
-     * remaining hooks are skipped.
+     * remaining hooks are skipped. A failure while the commit's consequences
+     * dispatch skips the hooks the same way.
      * </p>
      *
      * @param hook the side effect to run after a successful commit
@@ -90,6 +91,10 @@ public interface TransactionInterface extends DatabaseInterface {
      *
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
+     * @throws IllegalStateException if any of the {@code records} overrides the
+     *             save pipeline, if any {@link Record} that the save processes
+     *             is bound to a different open transaction, or if a prior save
+     *             failed within the transaction
      */
     default boolean save(Record... records) {
         return save(false, records);

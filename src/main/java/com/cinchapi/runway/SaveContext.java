@@ -233,6 +233,17 @@ final class SaveContext {
     }
 
     /**
+     * Dispatch every snapshotted {@link Record} and its {@link Record.Snapshot}
+     * to the {@code consumer}.
+     *
+     * @param consumer the consumer that accepts each {@link Record} and its
+     *            snapshot
+     */
+    void forEachSnapshot(BiConsumer<Record, Record.Snapshot> consumer) {
+        snapshots.forEach(consumer);
+    }
+
+    /**
      * Return the instance that speaks for the record with {@code id}, or
      * {@code null} if the active attempt has not processed the id.
      *

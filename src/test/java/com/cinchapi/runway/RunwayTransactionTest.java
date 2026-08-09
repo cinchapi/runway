@@ -704,6 +704,207 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a direct {@link Runway#save(Record...)
+     * save} propagates the boundary refusal loudly when a {@code beforeSave()}
+     * hook moves a later root into an open {@link Transaction} while the save
+     * runs.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Recruiter} and a saved
+     * {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Open a {@link Transaction} and wire the {@link Recruiter Recruiter's}
+     * hook to save the {@link Item} into it.</li>
+     * <li>Change the {@link Recruiter} and attempt a direct save of the
+     * {@link Recruiter} and the {@link Item} together.</li>
+     * <li>Abort the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The direct save throws an
+     * {@link IllegalStateException} instead of returning {@code false}, the
+     * {@link Recruiter Recruiter's} change does not persist, and the
+     * transaction still aborts cleanly.
+     */
+    @Test
+    public void testDirectSaveRefusalPropagatesWhenHookMovesRootIntoTransaction() {
+        Recruiter recruiter = new Recruiter("scout");
+        Item item = new Item("widget", 1);
+        recruiter.assign(runway);
+        Assert.assertTrue(runway.save(recruiter, item));
+        try (Transaction transaction = runway.stage()) {
+            recruiter.target = transaction;
+            recruiter.recruit = item;
+            recruiter.name = "poacher";
+            try {
+                runway.save(recruiter, item);
+                Assert.fail("Expected the direct save to throw");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            transaction.abort();
+        }
+        Assert.assertEquals("scout",
+                runway.load(Recruiter.class, recruiter.id()).name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses to end
+     * while a {@link Record#refresh() refresh} borrows its connection, so an
+     * {@code onLoad()} hook cannot end the transaction underneath the refresh.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Sleeper}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Sleeper} through a {@link Transaction} and wire its
+     * hook to abort the transaction.</li>
+     * <li>Call {@code refresh()} on the loaded copy.</li>
+     * <li>After the failure, load through the transaction and abort it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The refresh throws an
+     * {@link IllegalStateException} because the hook's abort is refused, the
+     * transaction remains open and usable, and the later abort succeeds.
+     */
+    @Test
+    public void testTransactionRefusesAbortWhileARefreshIsInFlight() {
+        Sleeper sleeper = new Sleeper("agent");
+        sleeper.assign(runway);
+        Assert.assertTrue(sleeper.save());
+        try (Transaction transaction = runway.stage()) {
+            Sleeper txSleeper = transaction.load(Sleeper.class, sleeper.id());
+            txSleeper.target = transaction;
+            try {
+                txSleeper.refresh();
+                Assert.fail("Expected the refresh to fail");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            Assert.assertNotNull(transaction.load(Sleeper.class, sleeper.id()));
+            transaction.abort();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record#refresh() refresh}
+     * within a {@link Transaction} releases its operation window, so the
+     * transaction can still commit afterward.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and
+     * {@code refresh()} it.</li>
+     * <li>Change the {@link Item} and {@code save()} it.</li>
+     * <li>Commit the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save and the commit succeed, and the
+     * change is durable.
+     */
+    @Test
+    public void testCommitSucceedsAfterARefreshWithinTheTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.refresh();
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a hierarchy selection result read
+     * through a {@link Transaction} holds stable content after the transaction
+     * ends.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage a change through a {@link Transaction} and read a result with
+     * {@code findAny}.</li>
+     * <li>Collect the result's ids, abort the transaction and collect the ids
+     * again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result holds the same records with the
+     * same ids before and after the abort.
+     */
+    @Test
+    public void testTransactionalHierarchySelectionResultIsStableAfterTheTransactionEnds() {
+        Item one = new Item("one", 1);
+        Item two = new Item("two", 2);
+        one.assign(runway);
+        Assert.assertTrue(runway.save(one, two));
+        Criteria positive = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(0).build();
+        Set<Item> result;
+        List<Long> before = Lists.newArrayList();
+        try (Transaction transaction = runway.stage()) {
+            Item txOne = transaction.load(Item.class, one.id());
+            txOne.score = 10;
+            Assert.assertTrue(txOne.save());
+            result = transaction.findAny(Item.class, positive);
+            for (Item item : result) {
+                before.add(item.id());
+            }
+            Assert.assertEquals(2, before.size());
+            transaction.abort();
+        }
+        List<Long> after = Lists.newArrayList();
+        for (Item item : result) {
+            after.add(item.id());
+        }
+        Assert.assertEquals(before, after);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a pending realm edit survives an abort
+     * when a {@code beforeSave()} hook nests a save inside the save that staged
+     * the edit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Ledger}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Ledger} through a {@link Transaction} and create a
+     * {@link Posting} that links it.</li>
+     * <li>Add a realm to the {@link Ledger}, change it and wire its hook to
+     * save the {@link Posting} into the transaction.</li>
+     * <li>Call {@code save()} on the {@link Ledger}, then abort.</li>
+     * <li>Save the {@link Ledger} again after the abort.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save after the abort stages the realm
+     * edit, so the reloaded {@link Ledger} is in the realm.
+     */
+    @Test
+    public void testAbortKeepsPendingRealmEditWhenAHookNestsASave() {
+        Ledger ledger = new Ledger("book");
+        ledger.assign(runway);
+        Assert.assertTrue(ledger.save());
+        try (Transaction transaction = runway.stage()) {
+            Ledger txLedger = transaction.load(Ledger.class, ledger.id());
+            Posting posting = transaction.create(Posting.class, "line",
+                    txLedger);
+            txLedger.target = transaction;
+            txLedger.companion = posting;
+            Assert.assertTrue(txLedger.addRealm("vip"));
+            txLedger.name = "opened";
+            Assert.assertTrue(txLedger.save());
+            transaction.abort();
+            Assert.assertTrue(txLedger.save());
+        }
+        Assert.assertTrue(runway.load(Ledger.class, ledger.id()).realms()
+                .contains("vip"));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a {@code preventStaleWrites} save of a
      * {@link Record} that an earlier save in the same {@link Transaction}
      * staged succeeds instead of a false stale rejection.
@@ -4140,6 +4341,157 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         @Override
         void applyCaptureDeleteCleanup(Set<Long> ids) {
             throw new RuntimeException("dispatch failure");
+        }
+    }
+
+    /**
+     * A {@link Record} whose {@code beforeSave()} hook saves another
+     * {@link Record} into a {@link Transaction}, so a root of a direct save can
+     * become transaction-bound while the save runs.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Recruiter extends Record {
+
+        /**
+         * The name of the {@link Recruiter}.
+         */
+        public String name;
+
+        /**
+         * The {@link Transaction} that the hook saves into.
+         */
+        transient Transaction target;
+
+        /**
+         * The {@link Record} that the hook saves into {@link #target}.
+         */
+        transient Record recruit;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the name
+         */
+        public Recruiter(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public void beforeSave() {
+            if(target != null) {
+                target.save(recruit);
+            }
+        }
+    }
+
+    /**
+     * A {@link Record} whose {@code onLoad()} hook tries to end a
+     * {@link Transaction}, so a refresh can attack the transaction that
+     * services it.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Sleeper extends Record {
+
+        /**
+         * The name of the {@link Sleeper}.
+         */
+        public String name;
+
+        /**
+         * The {@link Transaction} that the hook tries to end.
+         */
+        transient Transaction target;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the name
+         */
+        public Sleeper(String name) {
+            this.name = name;
+        }
+
+        @Override
+        protected void onLoad() {
+            if(target != null) {
+                target.abort();
+            }
+        }
+    }
+
+    /**
+     * A {@link Record} whose {@code beforeSave()} hook saves a companion
+     * {@link Record} through a {@link Transaction} exactly once, so a save can
+     * nest inside a save.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Ledger extends Record {
+
+        /**
+         * The name of the {@link Ledger}.
+         */
+        public String name;
+
+        /**
+         * The {@link Transaction} that the hook saves into, cleared after the
+         * first save so the nesting does not recurse.
+         */
+        transient Transaction target;
+
+        /**
+         * The {@link Record} that the hook saves into {@link #target}.
+         */
+        transient Record companion;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the name
+         */
+        public Ledger(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public void beforeSave() {
+            if(target != null) {
+                Transaction transaction = target;
+                target = null;
+                transaction.save(companion);
+            }
+        }
+    }
+
+    /**
+     * A {@link Record} that links a {@link Ledger}, so a save of it reaches the
+     * {@link Ledger} through the graph.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Posting extends Record {
+
+        /**
+         * The label of the {@link Posting}.
+         */
+        public String label;
+
+        /**
+         * The linked {@link Ledger}.
+         */
+        public Ledger ledger;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param label the label
+         * @param ledger the linked {@link Ledger}
+         */
+        public Posting(String label, Ledger ledger) {
+            this.label = label;
+            this.ledger = ledger;
         }
     }
 

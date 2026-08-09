@@ -16,8 +16,10 @@
 package com.cinchapi.runway;
 
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import javax.annotation.concurrent.NotThreadSafe;
@@ -76,10 +78,12 @@ import com.google.common.collect.Sets;
  * {@link #afterAbort(Runnable)}.
  * </p>
  * <p>
- * A save that fails within an open transaction poisons it: the writes that were
- * staged before the failure can never commit, so every subsequent operation is
- * refused except {@link #abort()} (or {@link #close()}) and
- * {@link #afterAbort(Runnable) afterAbort} registration.
+ * A save that fails after its arguments are accepted poisons the transaction:
+ * the writes that were staged before the failure can never commit, so every
+ * subsequent operation is refused except {@link #abort()} (or {@link #close()})
+ * and {@link #afterAbort(Runnable) afterAbort} registration. A save argument
+ * that fails its checks is rejected before anything is staged, and the
+ * transaction remains usable.
  * </p>
  * <p>
  * A deletion staged within the transaction is final. A later save of an
@@ -129,7 +133,7 @@ public class Transaction extends Binding implements
 
     /**
      * Whether a failed save poisoned the transaction. A poisoned transaction
-     * refuses every operation except {@link #abort()} and
+     * refuses every operation except {@link #abort()} (or {@link #close()}) and
      * {@link #afterAbort(Runnable) afterAbort} registration, so the writes that
      * were staged before the failure can never {@link #commit()}.
      */
@@ -145,9 +149,10 @@ public class Transaction extends Binding implements
 
     /**
      * Whether an {@link #afterCommit(Runnable) afterCommit} or
-     * {@link #afterAbort(Runnable) afterAbort} hook threw while the transaction
-     * was ending. The exception a hook throws must propagate to the caller
-     * instead of being mistaken for a commit conflict.
+     * {@link #afterAbort(Runnable) afterAbort} hook, or the dispatch of a
+     * commit's consequences, threw while the transaction was ending. The
+     * exception must propagate to the caller instead of being mistaken for a
+     * commit conflict.
      */
     private boolean hookFailed = false;
 
@@ -195,12 +200,14 @@ public class Transaction extends Binding implements
 
         @Override
         public void release(Concourse connection) {
-            if(!open) {
-                database.connections.release(connection);
+            if(open) {
+                // The Transaction owns the connection until the transaction
+                // ends, so the return only closes the operation window that
+                // the request opened.
+                operating--;
             }
             else {
-                // no-op: the Transaction owns the connection until the
-                // transaction ends
+                database.connections.release(connection);
             }
         }
 
@@ -209,6 +216,9 @@ public class Transaction extends Binding implements
             if(open) {
                 verifyOwner();
                 verifyNotPoisoned();
+                // A borrowed connection is an operation in flight, so
+                // commit() and abort() are refused until the release.
+                operating++;
                 return concourse;
             }
             else {
@@ -261,6 +271,9 @@ public class Transaction extends Binding implements
      * <p>
      * This method has no effect if the transaction already ended.
      * </p>
+     *
+     * @throws IllegalStateException if one of the transaction's own operations
+     *             is in flight
      */
     public void abort() {
         if(open) {
@@ -323,7 +336,9 @@ public class Transaction extends Binding implements
      * <p>
      * A hook that throws does not affect the outcome: the transaction remains
      * committed, the exception propagates to the caller and any remaining hooks
-     * are skipped.
+     * are skipped. A failure while the commit's consequences dispatch skips the
+     * hooks the same way: the transaction remains committed and the exception
+     * propagates.
      * </p>
      *
      * @param hook the side effect to run after a successful commit
@@ -355,8 +370,9 @@ public class Transaction extends Binding implements
      * </p>
      *
      * @return {@code true} if the transaction commits
-     * @throws IllegalStateException if the transaction already ended, or if a
-     *             save failed within it
+     * @throws IllegalStateException if the transaction already ended, if a save
+     *             failed within it, or if one of the transaction's own
+     *             operations is in flight
      */
     public boolean commit() {
         verify();
@@ -407,13 +423,15 @@ public class Transaction extends Binding implements
      * </p>
      *
      * <p>
-     * A {@code records} argument that overrides the save pipeline, or one that
-     * is bound to a different open {@link Transaction}, is rejected before
-     * anything is staged, and the transaction remains usable. Any other
-     * failure, including a linked {@link Record} that is bound to a different
-     * open {@link Transaction}, poisons the transaction: the writes that were
-     * staged before the failure can never commit, and every subsequent
-     * operation is refused except {@link #abort()} and
+     * A {@code records} argument that fails its checks (one that is
+     * {@code null}, overrides the save pipeline, throws from its
+     * {@code overrideSave} accessor, or is bound to a different open
+     * {@link Transaction}) is rejected before anything is staged, and the
+     * transaction remains usable. Any failure after the arguments are accepted,
+     * including a linked {@link Record} that is bound to a different open
+     * {@link Transaction}, poisons the transaction: the writes that were staged
+     * before the failure can never commit, and every subsequent operation is
+     * refused except {@link #abort()} (or {@link #close()}) and
      * {@link #afterAbort(Runnable) afterAbort} registration.
      * </p>
      *
@@ -490,13 +508,15 @@ public class Transaction extends Binding implements
      * succeeds. Until then, no reader outside the transaction can observe them.
      * </p>
      * <p>
-     * A {@code records} argument that overrides the save pipeline, or one that
-     * is bound to a different open {@link Transaction}, is rejected before
-     * anything is staged, and the transaction remains usable. Any other
-     * failure, including a linked {@link Record} that is bound to a different
-     * open {@link Transaction}, poisons the transaction: the writes that were
-     * staged before the failure can never commit, and every subsequent
-     * operation is refused except {@link #abort()} and
+     * A {@code records} argument that fails its checks (one that is
+     * {@code null}, overrides the save pipeline, throws from its
+     * {@code overrideSave} accessor, or is bound to a different open
+     * {@link Transaction}) is rejected before anything is staged, and the
+     * transaction remains usable. Any failure after the arguments are accepted,
+     * including a linked {@link Record} that is bound to a different open
+     * {@link Transaction}, poisons the transaction: the writes that were staged
+     * before the failure can never commit, and every subsequent operation is
+     * refused except {@link #abort()} (or {@link #close()}) and
      * {@link #afterAbort(Runnable) afterAbort} registration.
      * </p>
      *
@@ -725,9 +745,17 @@ public class Transaction extends Binding implements
                 }
             }
             else {
-                for (int i = saves.size() - 1; i >= 0; --i) {
-                    saves.get(i).restore();
+                // NOTE: A nested save completes before its parent, so list
+                // order cannot identify a record's oldest snapshot; the
+                // capture sequence can. The oldest snapshot is the record's
+                // true pre-save state.
+                Map<Record, Record.Snapshot> oldest = new IdentityHashMap<>();
+                for (SaveContext context : saves) {
+                    context.forEachSnapshot((record, snapshot) -> oldest.merge(
+                            record, snapshot,
+                            (a, b) -> a.sequence <= b.sequence ? a : b));
                 }
+                oldest.forEach((record, snapshot) -> record.restore(snapshot));
                 try {
                     for (Runnable hook : afterAbortHooks) {
                         hook.run();

@@ -43,6 +43,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -968,6 +969,11 @@ public abstract class Record implements Comparable<Record> {
     private static final long SELF_AUTHOR_SENTINEL_ID = -2;
 
     /**
+     * The source of {@link Snapshot#sequence} stamps.
+     */
+    private static final AtomicLong SNAPSHOT_SEQUENCE = new AtomicLong();
+
+    /**
      * The coefficient multiplied by the result of a comparison to push the
      * sorting in the ascending direction.
      */
@@ -1183,12 +1189,15 @@ public abstract class Record implements Comparable<Record> {
      *             move to another scope
      */
     public void assign(Runway runway) {
-        Verify.that(binding == runway || !isBoundToOpenTransaction(),
-                "Cannot assign {} to a different scope because it is bound"
-                        + " to an open Transaction",
-                __);
-        this.binding = runway;
-        this.connections = runway.connections;
+        if(binding == runway || !isBoundToOpenTransaction()) {
+            this.binding = runway;
+            this.connections = runway.connections;
+        }
+        else {
+            throw new TransactionBoundaryException(
+                    "Cannot assign " + __ + " to a different scope because"
+                            + " it is bound to an open Transaction");
+        }
     }
 
     /**
@@ -3779,8 +3788,11 @@ public abstract class Record implements Comparable<Record> {
             record = context.instance(record.id());
         }
         if(!record.deleted) {
-            // NOTE: The snapshot must precede the mark so a failed save
-            // restores the record to its unmarked state.
+            // NOTE: The admission must precede the mark so a record that
+            // another scope owns is refused before anything mutates it, and
+            // the snapshot must precede the mark so a failed save restores
+            // the record to its unmarked state.
+            context.admit(record);
             context.snapshot(record);
             record.deleted = true;
             context.scheduleDeletion(record);
@@ -5845,6 +5857,13 @@ public abstract class Record implements Comparable<Record> {
         // NOTE: The current implementation only captures some
         // metadata, but it is expandable to capture other data
         // in the future
+
+        /**
+         * The capture order of this {@link Snapshot} across every save, so a
+         * restore can identify a {@link Record Record's} temporally oldest
+         * snapshot.
+         */
+        final long sequence = SNAPSHOT_SEQUENCE.incrementAndGet();
 
         /**
          * The snapshotted value of {@link Record#_hasModifiedRealms}.
