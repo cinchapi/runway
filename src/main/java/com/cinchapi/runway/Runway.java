@@ -1113,23 +1113,16 @@ public final class Runway extends Binding implements AutoCloseable {
      *             processes is bound to an open {@link Transaction}, whose
      *             commit is the only way to persist it
      */
+    @Override
     public boolean save(boolean preventStaleWrites, Record... records) {
         // NOTE: The overrideSave suppliers are captured once so the preflight
         // and the execution of every attempt act on the same decision for
         // each record.
         List<Supplier<Boolean>> overrides = Lists
                 .newArrayListWithCapacity(records.length);
-        Set<Record> preflight = Sets.newIdentityHashSet();
         for (Record record : records) {
-            Supplier<Boolean> override = record.overrideSave();
-            overrides.add(override);
-            if(override == null) {
-                record.forEachInGraph(preflight,
-                        included -> included.verifySavableThrough(this));
-            }
-            else {
-                record.verifySavableThrough(this);
-            }
+            overrides.add(record.overrideSave());
+            record.verifySavableThrough(this);
         }
         Concourse concourse = connections.request();
         Record current = null;
@@ -1249,6 +1242,7 @@ public final class Runway extends Binding implements AutoCloseable {
      * @param records one or more {@link Record Records} to save
      * @return {@code true} if all changes are atomically saved
      */
+    @Override
     public boolean save(Record... records) {
         return save(false, records);
     }
@@ -2921,9 +2915,15 @@ public final class Runway extends Binding implements AutoCloseable {
             Map<Long, Map<String, Set<Object>>> targets,
             Transaction transaction) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
+        // NOTE: The lazy set does not cache a slot that resolves to null, so
+        // without the scope check a null slot would re-resolve through the
+        // ended transaction's database fallback and the result's content
+        // could change after the transaction ends.
+        boolean scoped = transaction.open();
         return LazyTransformSet.of(data.entrySet(),
-                entry -> loadWithErrorHandling(clazz, entry.getKey(), loaded,
-                        transaction, entry.getValue(), targets));
+                entry -> scoped && !transaction.open() ? null
+                        : loadWithErrorHandling(clazz, entry.getKey(), loaded,
+                                transaction, entry.getValue(), targets));
     }
 
     /**

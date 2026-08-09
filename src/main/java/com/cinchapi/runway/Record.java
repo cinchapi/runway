@@ -1969,8 +1969,7 @@ public abstract class Record implements Comparable<Record> {
      * recompute against the refreshed state on next access.
      * </p>
      *
-     * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance
+     * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final void refresh() {
         Verify.that(binding != null,
@@ -2549,8 +2548,8 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * {@link #bind(Binding, ConcourseProvider) Bind} this {@link Record}, and
-     * every loaded {@link Record} that is reachable from its fields, to
-     * {@code binding}.
+     * every loaded {@link Record} that is reachable from its persistent
+     * (non-transient) fields, to {@code binding}.
      * <p>
      * A {@link DeferredReference} that was never {@link DeferredReference#get()
      * accessed} holds no loaded {@link Record} to bind; when it is accessed, it
@@ -2565,7 +2564,15 @@ public abstract class Record implements Comparable<Record> {
      */
     void bindGraph(Binding binding, ConcourseProvider connections,
             Set<Record> seen) {
-        forEachInGraph(seen, record -> record.bind(binding, connections));
+        if(seen.add(this)) {
+            bind(binding, connections);
+            fields().stream().filter(
+                    field -> !Modifier.isTransient(field.getModifiers()))
+                    .map(field -> Reflection.get(field.getName(), this))
+                    .forEach(value -> forEachReachableRecord(value,
+                            record -> record.bindGraph(binding, connections,
+                                    seen)));
+        }
     }
 
     /**
@@ -2619,30 +2626,6 @@ public abstract class Record implements Comparable<Record> {
      */
     final void checkpoint() {
         checkpointTs = Time.now();
-    }
-
-    /**
-     * Perform {@code action} on this {@link Record} and on every loaded
-     * {@link Record} that is reachable from its fields, visiting each
-     * {@link Record} at most once.
-     * <p>
-     * A {@link DeferredReference} that was never {@link DeferredReference#get()
-     * accessed} holds no loaded {@link Record} to visit.
-     * </p>
-     *
-     * @param seen the identity set of {@link Record Records} that were already
-     *            visited
-     * @param action the action to perform on each {@link Record}
-     */
-    void forEachInGraph(Set<Record> seen, Consumer<Record> action) {
-        if(seen.add(this)) {
-            action.accept(this);
-            fields().stream().filter(
-                    field -> !Modifier.isTransient(field.getModifiers()))
-                    .map(field -> Reflection.get(field.getName(), this))
-                    .forEach(value -> forEachReachableRecord(value,
-                            record -> record.forEachInGraph(seen, action)));
-        }
     }
 
     /**
@@ -3571,6 +3554,7 @@ public abstract class Record implements Comparable<Record> {
      * @param context the active {@link SaveContext}
      */
     private void deleteWithinTransaction(Saver saver, SaveContext context) {
+        context.admit(this);
         // Mark the deletion up front so this instance speaks for its id,
         // even when it enters the delete path directly as a companion
         // (e.g., @CascadeDelete or @JoinDelete) rather than through

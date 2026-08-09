@@ -41,13 +41,13 @@ public interface TransactionInterface extends DatabaseInterface {
      * <p>
      * Hooks run synchronously, in registration order, after the transaction
      * ends. A hook that throws does not affect the outcome: the exception
-     * propagates to the caller and any remaining hooks are skipped.
+     * propagates to the caller and any remaining hooks are skipped. A failed
+     * save within the transaction does not refuse registration.
      * </p>
      *
      * @param hook the side effect to run after the transaction ends without a
      *            successful commit
-     * @throws IllegalStateException if the transaction already ended, or if a
-     *             save failed within it
+     * @throws IllegalStateException if the transaction already ended
      */
     void afterAbort(Runnable hook);
 
@@ -109,6 +109,10 @@ public interface TransactionInterface extends DatabaseInterface {
      * @return {@code true} when the changes are staged
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and any {@link Record} has been externally modified
+     * @throws IllegalStateException if any of the {@code records} overrides the
+     *             save pipeline, if any {@link Record} that the save processes
+     *             is bound to a different open transaction, or if a prior save
+     *             failed within the transaction
      */
     boolean save(boolean preventStaleWrites, Record... records);
 

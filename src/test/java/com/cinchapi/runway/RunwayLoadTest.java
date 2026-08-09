@@ -365,9 +365,11 @@ public class RunwayLoadTest extends RunwayBaseClientServerTest {
      * <li>Open a {@link ConnectionPool} against the test server.</li>
      * <li>Call {@code Record.load} with the pool and the test
      * {@link Runway}.</li>
+     * <li>Change the loaded {@link A} and {@code save()} it directly.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The loaded {@link A} carries the stored data.
+     * <strong>Expected:</strong> The loaded {@link A} carries the stored data,
+     * and its direct save persists through the provided {@link Runway}.
      */
     @Test
     public void testProtectedLoadAcceptsConnectionPool() throws Exception {
@@ -381,6 +383,9 @@ public class RunwayLoadTest extends RunwayBaseClientServerTest {
             A loaded = Record.load(A.class, a.id(), new ConcurrentHashMap<>(),
                     pool, runway, null, null);
             Assert.assertEquals("a", loaded.name);
+            loaded.name = "b";
+            Assert.assertTrue(loaded.save());
+            Assert.assertEquals("b", runway.load(A.class, a.id()).name);
         }
         finally {
             pool.close();
