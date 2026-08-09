@@ -2175,9 +2175,9 @@ public abstract class Record implements Comparable<Record> {
      * </ul>
      * </p>
      * <p>
-     * Any changes made to the record's fields within this method will be
-     * included in the save operation. This method is called within the same
-     * transaction as the save operation, ensuring atomicity.
+     * Any changes made to the record's fields or realm membership within this
+     * method will be included in the save operation. This method is called
+     * within the same transaction as the save operation, ensuring atomicity.
      * </p>
      * <p>
      * <strong>Note:</strong> This method should not throw exceptions unless the
@@ -2979,7 +2979,6 @@ public abstract class Record implements Comparable<Record> {
             // aligned with the notification it receives.
             deleted = true;
         }
-        stageRealmsDelta(saver);
         if(_author != null) {
             // Check for self-authorship: if this record is its own author,
             // use the sentinel ID to avoid self-referential links in Concourse
@@ -3003,6 +3002,7 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         else if(!hasUnsavedChanges()) {
+            stageRealmsDelta(saver);
             // This Record hasn't been modified, so simply go through each
             // persistent field and try to save any outgoing Record references
             // that contain modifications. A transient field is outside the
@@ -3019,6 +3019,11 @@ public abstract class Record implements Comparable<Record> {
         else {
             context.markChanged(this);
             beforeSave();
+            // NOTE: The realm delta must stage after beforeSave so realm
+            // changes made by the hook join this save; staged earlier, they
+            // would be captured in the baseline as synchronized without ever
+            // being written.
+            stageRealmsDelta(saver);
             saver.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
             for (Field field : fields()) {

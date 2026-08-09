@@ -567,6 +567,38 @@ public class GH163 extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a realm change made inside the
+     * {@link Record#beforeSave() beforeSave} hook persists with the save in
+     * which the hook runs.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link Journal}, whose {@code beforeSave} hook adds realm
+     * {@code "audited"}, and save it.</li>
+     * <li>Reload the {@link Journal}, change {@code name} and save it.</li>
+     * <li>Reload the {@link Journal}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The reloaded {@link Journal} is in realm
+     * {@code "audited"} and carries the {@code name} change.
+     */
+    @Test
+    public void testRealmAddedInBeforeSaveHookPersists() {
+        Journal journal = new Journal("Original");
+        Assert.assertTrue(runway.save(journal));
+
+        Journal loaded = runway.load(Journal.class, journal.id());
+        loaded.name = "Renamed";
+        Assert.assertTrue(loaded.save());
+
+        loaded = runway.load(Journal.class, journal.id());
+        Assert.assertEquals("Renamed", loaded.name);
+        Assert.assertTrue(loaded.realms().contains("audited"));
+    }
+
+    /**
      * A {@link Team} exercises a scalar field, a scalar link, and a collection
      * of links in one {@link Record}.
      *
@@ -687,6 +719,35 @@ public class GH163 extends RunwayBaseClientServerTest {
          */
         public Project(String title) {
             this.title = title;
+        }
+
+    }
+
+    /**
+     * A {@link Journal} adds itself to a bookkeeping realm in
+     * {@link #beforeSave()}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Journal extends Record {
+
+        /**
+         * The journal name.
+         */
+        public String name;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the {@link #name} value
+         */
+        public Journal(String name) {
+            this.name = name;
+        }
+
+        @Override
+        protected void beforeSave() {
+            addRealm("audited");
         }
 
     }
