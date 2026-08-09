@@ -1167,7 +1167,7 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Assign this {@link Record} to a the specified {@code runway} instance.
+     * Assign this {@link Record} to the specified {@code runway} instance.
      * <p>
      * Each {@link Record} must know the {@link Runway} instance in which it is
      * stored. Explicit assignment via this method is only required if there are
@@ -1178,8 +1178,15 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param runway the {@link Runway} instance where this {@link Record} is
      *            stored.
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction}, which must end before the record can
+     *             move to another scope
      */
     public void assign(Runway runway) {
+        Verify.that(binding == runway || !isBoundToOpenTransaction(),
+                "Cannot assign {} to a different scope because it is bound"
+                        + " to an open Transaction",
+                __);
         this.binding = runway;
         this.connections = runway.connections;
     }
@@ -2552,15 +2559,7 @@ public abstract class Record implements Comparable<Record> {
      */
     void bindGraph(Binding binding, ConcourseProvider connections,
             Set<Record> seen) {
-        if(seen.add(this)) {
-            bind(binding, connections);
-            fields().stream().filter(
-                    field -> !Modifier.isTransient(field.getModifiers()))
-                    .map(field -> Reflection.get(field.getName(), this))
-                    .forEach(value -> forEachReachableRecord(value,
-                            record -> record.bindGraph(binding, connections,
-                                    seen)));
-        }
+        forEachInGraph(seen, record -> record.bind(binding, connections));
     }
 
     /**
@@ -2614,6 +2613,30 @@ public abstract class Record implements Comparable<Record> {
      */
     final void checkpoint() {
         checkpointTs = Time.now();
+    }
+
+    /**
+     * Perform {@code action} on this {@link Record} and on every loaded
+     * {@link Record} that is reachable from its fields, visiting each
+     * {@link Record} at most once.
+     * <p>
+     * A {@link DeferredReference} that was never {@link DeferredReference#get()
+     * accessed} holds no loaded {@link Record} to visit.
+     * </p>
+     *
+     * @param seen the identity set of {@link Record Records} that were already
+     *            visited
+     * @param action the action to perform on each {@link Record}
+     */
+    void forEachInGraph(Set<Record> seen, Consumer<Record> action) {
+        if(seen.add(this)) {
+            action.accept(this);
+            fields().stream().filter(
+                    field -> !Modifier.isTransient(field.getModifiers()))
+                    .map(field -> Reflection.get(field.getName(), this))
+                    .forEach(value -> forEachReachableRecord(value,
+                            record -> record.forEachInGraph(seen, action)));
+        }
     }
 
     /**

@@ -2537,6 +2537,145 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a direct {@link Runway#save(Record...)
+     * save} refuses a graph that reaches a {@link Record} bound to an open
+     * {@link Transaction}, so the transaction's staged state cannot leak into
+     * the global store through a link.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a saved
+     * {@link Basket} that links to it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and change
+     * it.</li>
+     * <li>Point a fresh {@link Basket Basket's} link at the transactional
+     * copy.</li>
+     * <li>Attempt to save the {@link Basket} directly through the enclosing
+     * {@link Runway}.</li>
+     * <li>After the refusal, {@code save()} the copy through the transaction
+     * and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The direct save throws an
+     * {@link IllegalStateException}, the change stays invisible outside the
+     * transaction until the commit, and the commit makes it durable.
+     */
+    @Test
+    public void testDirectSaveRefusesGraphThatReachesRecordInOpenTransaction() {
+        Item item = new Item("widget", 1);
+        Basket basket = new Basket("caddy", item);
+        basket.assign(runway);
+        Assert.assertTrue(runway.save(basket, item));
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 99;
+            Basket parent = runway.load(Basket.class, basket.id());
+            parent.item = txItem;
+            try {
+                runway.save(parent);
+                Assert.fail("Expected the direct save to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses to save
+     * a graph that reaches a {@link Record} bound to a different open
+     * {@link Transaction}, and that the refusal happens before anything is
+     * staged, so the transaction remains usable.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Item Items} and a saved
+     * {@link Basket} that links to the first one.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the first {@link Item} through a first {@link Transaction}.</li>
+     * <li>In a second {@link Transaction}, load the {@link Basket}, point its
+     * link at the first transaction's copy and attempt to save it.</li>
+     * <li>After the refusal, change the second {@link Item} through the second
+     * transaction, save it and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws an
+     * {@link IllegalStateException}, and the second transaction still loads,
+     * stages and commits the later change, so the refusal did not poison it.
+     */
+    @Test
+    public void testTransactionSaveRefusesGraphThatReachesRecordInAnotherTransaction() {
+        Item hostage = new Item("hostage", 1);
+        Item bystander = new Item("bystander", 1);
+        Basket basket = new Basket("caddy", hostage);
+        basket.assign(runway);
+        Assert.assertTrue(runway.save(basket, hostage, bystander));
+        try (Transaction tx1 = runway.stage()) {
+            Item txHostage = tx1.load(Item.class, hostage.id());
+            try (Transaction tx2 = runway.stage()) {
+                Basket parent = tx2.load(Basket.class, basket.id());
+                parent.item = txHostage;
+                try {
+                    tx2.save(parent);
+                    Assert.fail("Expected the save to be refused");
+                }
+                catch (IllegalStateException e) {/* expected */}
+                Item txBystander = tx2.load(Item.class, bystander.id());
+                txBystander.score = 2;
+                Assert.assertTrue(txBystander.save());
+                Assert.assertTrue(tx2.commit());
+            }
+            tx1.abort();
+        }
+        Assert.assertEquals(2, runway.load(Item.class, bystander.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Record#assign(Runway) assign}
+     * refuses to move a {@link Record} out of an open {@link Transaction}, so
+     * an explicit reassignment cannot bypass the transaction's atomic boundary.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and change
+     * it.</li>
+     * <li>Attempt to {@code assign} the copy to the enclosing
+     * {@link Runway}.</li>
+     * <li>After the refusal, {@code save()} the copy, abort the transaction and
+     * assign the copy again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The assignment throws an
+     * {@link IllegalStateException} while the transaction is open, the staged
+     * change never becomes durable, and the assignment succeeds after the
+     * transaction ends.
+     */
+    @Test
+    public void testAssignRefusesToMoveRecordOutOfOpenTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            try {
+                txItem.assign(runway);
+                Assert.fail("Expected the assignment to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            Assert.assertTrue(txItem.save());
+            transaction.abort();
+            txItem.assign(runway);
+        }
+        Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that
      * {@link Record#run(java.util.function.Consumer) run} refuses to start work
      * when the record's {@link Transaction} is poisoned, so no side effect of

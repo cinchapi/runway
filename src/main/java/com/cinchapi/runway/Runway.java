@@ -1109,13 +1109,21 @@ public final class Runway extends Binding implements AutoCloseable {
      * @return {@code true} if all changes are atomically saved
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and any {@link Record} has been externally modified
-     * @throws IllegalStateException if any of the {@code records} is bound to
-     *             an open {@link Transaction}, whose commit is the only way to
-     *             persist it
+     * @throws IllegalStateException if any of the {@code records}, or any
+     *             {@link Record} reachable from them, is bound to an open
+     *             {@link Transaction}, whose commit is the only way to persist
+     *             it
      */
     public boolean save(boolean preventStaleWrites, Record... records) {
+        Set<Record> preflight = Sets.newIdentityHashSet();
         for (Record record : records) {
-            record.verifySavableThrough(this);
+            if(record.overrideSave() == null) {
+                record.forEachInGraph(preflight,
+                        included -> included.verifySavableThrough(this));
+            }
+            else {
+                record.verifySavableThrough(this);
+            }
         }
         Concourse concourse = connections.request();
         Record current = null;
@@ -3128,7 +3136,6 @@ public final class Runway extends Binding implements AutoCloseable {
                         return null;
                     }
                     else {
-                        record.assign(this);
                         Field field = Record.getAtomicableField(key, record);
                         V current = Record.getAtomicableFieldValue(field,
                                 record);
@@ -3152,6 +3159,10 @@ public final class Runway extends Binding implements AutoCloseable {
                                     record.id());
                         }
                         if(transaction.commit()) {
+                            // NOTE: The record can move to this Runway only
+                            // after its internal transaction ends, so the
+                            // assignment follows the commit.
+                            record.assign(this);
                             record.applyValueChange(key, next, clean);
                             return record;
                         }
