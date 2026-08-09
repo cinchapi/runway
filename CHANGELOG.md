@@ -1,5 +1,35 @@
 # Changelog
 
+#### Version 2.3.0 (TBD)
+##### Transaction API
+Runway previously offered no way to guarantee atomicity or full ACID compliance across an ad hoc combination of reads and writes: each save committed atomically, but a decision made on loaded data could not be guaranteed to still hold when it was written. The Transaction API provides that guarantee and opens a window to the full power of Concourse transactions, including serializable isolation and atomic multi-operation commits, without a raw Concourse connection.
+
+* **`Runway#stage` starts a `Transaction`.** `stage()` (or its alias, `startTransaction()`) returns a `DatabaseInterface` view that scopes every read and write to a single ACID transaction.
+    * Reads observe the transaction's isolated snapshot, including its own uncommitted writes; no reader outside the transaction can observe a staged write before the commit.
+    * Reads join the transaction's conflict footprint, so a commit fails instead of persisting a decision that was made on data a concurrent writer changed.
+* **A transaction owns its records exclusively.** Every `Record` loaded or created through the view is bound to the transaction, along with the records linked from it: `save()` stages within the transaction and the writes become durable only when `commit()` succeeds.
+    * While the transaction is open, a bound record can only be read, written or deleted through it. Any other path to the record (a direct save, a save or deletion that reaches it through another record, or `Record#assign`) is refused with an `IllegalStateException`.
+    * A record that is not bound to the transaction operates against its own scope, even while the transaction is open.
+* **`Transaction` is `AutoCloseable` and thread-confined.** `close()` aborts whatever was not committed, so try-with-resources guarantees a clean end, and only the thread that starts a transaction may use it.
+    * An abort discards every staged write; a record's in-memory edits remain, so the caller can retry.
+    * Save and delete notifications fire only after a successful commit.
+    * After a transaction ends, the view and its bound records operate against the enclosing `Runway` again; only another `commit()` and new hook registrations are refused.
+* **A failed save poisons the transaction.** A save that throws after it begins writing can never commit: every subsequent operation is refused except `abort()` (or `close()`) and `afterAbort` registration, so a partial save never becomes durable.
+    * A save that is refused before it begins (an invalid argument) leaves the transaction usable.
+* **A deletion is final within a transaction.** Once a save deletes a record, no later save in the same transaction can bring it back, references to it are removed at commit, and its delete notification fires once.
+* **`Runway#run` and `Runway#supply` execute work within a managed transaction.** The work receives a `TransactionInterface` (`run` for work with no result, `supply` for work that returns one) and the commit happens after the work completes.
+    * The view withholds `commit`, `abort` and `close`, so the work cannot end the transaction it joins.
+    * Conflicts retry within the bounds of the governing `AtomicRetryPolicy`, so the work must be free of side effects outside of the transaction; `RetryExhaustedException` carries the final conflict as its cause.
+* **`Record#run` and `Record#supply` execute work in the record's scope.** These protected methods let a `Record` method perform an atomic combination of reads and writes: within an open transaction the work joins it, and otherwise the work runs in its own managed transaction, the same as `Runway#run` and `Runway#supply`.
+* **`Transaction#afterCommit` and `Transaction#afterAbort` schedule outcome-dependent side effects.** An `afterCommit` hook runs once, only after the transaction successfully commits, and never for an attempt that a conflict retry discards; an `afterAbort` hook runs when the transaction ends without a successful commit. Hooks run synchronously in registration order, and a hook that throws does not change the transaction's outcome.
+* **Access control and lazy references stay within the snapshot.** An `Audience` loaded through the view, and a `DeferredReference` first accessed within the transaction, resolve their reads and writes within it, so access-controlled operations and lazy loads observe the snapshot and join the conflict footprint.
+* **Single-key atomic operations are refused on a `Record` bound to an open `Transaction`.** `getAndUpdate`, `updateAndGet` and `exchange` throw because the transaction's commit is the unit of atomicity; after the transaction ends, the operations resume against the enclosing `Runway`.
+
+##### Bug Fixes
+* Fixed a bug where a save (or the combined saves of one transaction) that processed multiple in-memory copies of the same record could deliver the save notification to a copy that changed nothing and treat that copy as current, so a later `preventStaleWrites` save of it silently overwrote the changes that actually persisted. Now the notification goes to the copy whose changes persisted, and the stale copy fails the stale-write check.
+* Fixed a bug where a save of a record with no unsaved changes traversed its transient fields and saved modified records that were referenced only through them. A transient field is outside a record's persistent data, so a record referenced only through one no longer saves with its holder.
+* Fixed a bug where an exception thrown by an `overrideSave` accessor, or a `null` record argument, was recorded as an ordinary save failure and returned `false`, disguising a programming error as a data rejection. Now both propagate from the save as exceptions.
+
 #### Version 2.2.0 (August 4, 2026)
 * **Added `DynamicWritePolicy` to govern which fields `Record#set` can write.** By default, a dynamic write can reach any field, including final, private, package-private and protected ones, which preserves the historical behavior. Configure a policy per `Runway` instance with `Runway.builder().dynamicWritePolicy(...)`. ([GH-147](https://github.com/cinchapi/runway/issues/147))
     * `DynamicWritePolicy.javaDefaults()` returns a policy that respects Java modifiers, so only public non-final fields accept dynamic writes. `DynamicWritePolicy.builder()` composes a policy that selectively allows final, private, package-private or protected fields.

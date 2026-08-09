@@ -53,9 +53,11 @@ public final class DeferredReference<T extends Record> {
     private final long id;
 
     /**
-     * The {@link DatabaseInterface} to use for loading the reference.
+     * The {@link Binding} to use for loading the reference. The reference
+     * resolves within the scope of the owning {@link Record Record's} binding
+     * at the moment of the first access.
      */
-    private final DatabaseInterface db;
+    private final Binding db;
 
     /**
      * The loaded reference.
@@ -64,35 +66,34 @@ public final class DeferredReference<T extends Record> {
 
     /**
      * Construct a new instance.
-     * 
-     * @param reference
+     *
+     * @param reference the already loaded {@link Record} to wrap
      */
     public DeferredReference(T reference) {
         this.reference = reference;
         this.id = reference.id();
-        this.db = reference.db;
+        this.db = reference.binding();
     }
 
     /**
      * Construct a new instance.
-     * 
-     * @param clazz
-     * @param id
-     * @param db
+     *
+     * @param id the id of the referenced {@link Record}
+     * @param db the {@link Binding} through which the reference loads
      */
-    DeferredReference(long id, Runway db) {
+    DeferredReference(long id, Binding db) {
         this.id = id;
         this.db = db;
     }
 
     /**
      * Return the reference.
-     * 
+     *
      * @return the {@link Record reference}
      */
     public T get() {
         if(reference == null) {
-            reference = ((Runway) db).load(id); // (authorized)
+            reference = db.load(id);
         }
         return reference;
     }

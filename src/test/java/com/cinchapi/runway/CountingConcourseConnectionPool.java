@@ -30,15 +30,17 @@ import com.cinchapi.concourse.lang.CommandGroup;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
+import com.cinchapi.runway.db.ConcourseProvider;
 
 /**
  * A {@link ConnectionPool} whose connections are {@link CountingConcourse}
  * instances, so a test can assert the read-RPC count of a Runway operation by
- * swapping this pool onto a {@link Runway}.
+ * swapping this pool onto a {@link Runway} as its {@link ConcourseProvider}.
  *
  * @author Jeff Nelson
  */
-final class CountingConcourseConnectionPool extends ConnectionPool {
+final class CountingConcourseConnectionPool extends ConnectionPool implements
+        ConcourseProvider {
 
     /**
      * Construct a new instance whose pooled {@link CountingConcourse}

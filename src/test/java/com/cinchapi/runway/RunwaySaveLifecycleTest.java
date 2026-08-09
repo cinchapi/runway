@@ -21,6 +21,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import org.junit.Assert;
@@ -1313,6 +1314,68 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a save does not recursively persist a
+     * {@link Record} that is reachable only through a transient field, so a
+     * transient reference stays outside the saved graph.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TransientLinkRecord} and a
+     * saved {@link ChildRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Change the {@link ChildRecord ChildRecord's} label without saving
+     * it.</li>
+     * <li>Point the {@link TransientLinkRecord TransientLinkRecord's} transient
+     * field at the {@link ChildRecord}.</li>
+     * <li>Save the {@link TransientLinkRecord}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save succeeds, and a fresh load of the
+     * {@link ChildRecord} shows the original label, because the transient
+     * reference did not carry the change into the save.
+     */
+    @Test
+    public void testSaveIgnoresRecordHeldOnlyByTransientField() {
+        TransientLinkRecord holder = new TransientLinkRecord();
+        holder.name = "holder";
+        ChildRecord child = new ChildRecord();
+        child.label = "original";
+        Assert.assertTrue(runway.save(holder, child));
+        child.label = "changed";
+        holder.scratch = child;
+        Assert.assertTrue(runway.save(holder));
+        Assert.assertEquals("original",
+                runway.load(ChildRecord.class, child.id()).label);
+        Assert.assertTrue(child.save());
+        Assert.assertEquals("changed",
+                runway.load(ChildRecord.class, child.id()).label);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that one save evaluates a {@link Record
+     * Record's} {@code overrideSave()} hook exactly once, so the preflight and
+     * the save execution act on the same decision.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link CountingOverrideRecord}.</li>
+     * <li>Save it once through the {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save succeeds and the hook was evaluated
+     * exactly once.
+     */
+    @Test
+    public void testSaveEvaluatesOverrideSaveHookExactlyOnce() {
+        CountingOverrideRecord record = new CountingOverrideRecord();
+        record.name = "counted";
+        Assert.assertTrue(runway.save(record));
+        Assert.assertEquals(1, record.overrideSaveEvaluations);
+    }
+
+    /**
      * A test {@link Record} that holds a link to a {@link ChildRecord}.
      *
      * @author Jeff Nelson
@@ -1331,6 +1394,50 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     public static class ChildRecord extends Record {
 
         public String label;
+    }
+
+    /**
+     * A test {@link Record} that references a {@link ChildRecord} only through
+     * a transient field.
+     *
+     * @author Jeff Nelson
+     */
+    public static class TransientLinkRecord extends Record {
+
+        /**
+         * The persistent display name.
+         */
+        public String name;
+
+        /**
+         * The non-persistent {@link ChildRecord} reference.
+         */
+        public transient ChildRecord scratch;
+    }
+
+    /**
+     * A test {@link Record} that counts how many times the save pipeline
+     * evaluates its {@code overrideSave()} hook.
+     *
+     * @author Jeff Nelson
+     */
+    public static class CountingOverrideRecord extends Record {
+
+        /**
+         * The persistent display name.
+         */
+        public String name;
+
+        /**
+         * The number of {@code overrideSave()} evaluations.
+         */
+        public transient int overrideSaveEvaluations = 0;
+
+        @Override
+        protected Supplier<Boolean> overrideSave() {
+            overrideSaveEvaluations++;
+            return null;
+        }
     }
 
     /**
@@ -1418,6 +1525,53 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 name = name + " (Modified)";
             }
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the changed copy of a record receives
+     * the save's lifecycle consequences when a clean id-equal copy is part of
+     * the same save call, so the clean copy is never falsely marked as
+     * synchronized.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Player} with a score of 1
+     * and a save listener that captures the notified instance.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load two id-equal copies of the {@link Player}.</li>
+     * <li>Change the first copy and save both copies in one call, with the
+     * unchanged copy listed last.</li>
+     * <li>Change a different field on the unchanged copy and save it with
+     * stale-write prevention.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The notification delivers the changed copy,
+     * the stale copy's save throws a {@link StaleDataException} and the saved
+     * score survives.
+     */
+    @Test
+    public void testChangedCopySpeaksForTheSaveDespiteCleanDuplicate()
+            throws InterruptedException {
+        Player player = new Player("a", 1);
+        Assert.assertTrue(runway.save(player));
+        Player changed = runway.load(Player.class, player.id());
+        Player stale = runway.load(Player.class, player.id());
+        changed.score = 2;
+        AtomicReference<Player> notified = new AtomicReference<>();
+        runway.properties().onSave(Player.class, notified::set);
+        Assert.assertTrue(runway.save(changed, stale));
+        long stop = System.currentTimeMillis() + 5000;
+        while (notified.get() == null && System.currentTimeMillis() < stop) {
+            Thread.sleep(10);
+        }
+        Assert.assertSame(changed, notified.get());
+        stale.name = "renamed";
+        try {
+            stale.save(true);
+            Assert.fail("Expected the stale copy's save to be rejected");
+        }
+        catch (StaleDataException e) {/* expected */}
+        Assert.assertEquals(2, runway.load(Player.class, player.id()).score);
     }
 
     /**

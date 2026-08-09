@@ -140,7 +140,7 @@ public final class Realms {
      * 
      * @return the matched realms
      */
-    /* package */ Set<String> names() {
+    Set<String> names() {
         return java.util.Collections.unmodifiableSet(realms);
     }
 
