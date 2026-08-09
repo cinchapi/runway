@@ -614,6 +614,96 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a poisoned {@link Transaction} still
+     * accepts an {@link Transaction#afterAbort(Runnable) afterAbort}
+     * registration and runs the hook when the abort happens.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Handle} named "alpha".
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create a second {@link Handle} named "alpha" through a
+     * {@link Transaction} and {@code save()} it to poison the transaction.</li>
+     * <li>Register an {@code afterAbort} hook.</li>
+     * <li>Call {@code abort()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The registration succeeds while the
+     * transaction is poisoned and the hook runs exactly once after the abort.
+     */
+    @Test
+    public void testAfterAbortRegistrationSurvivesPoisonAndHookRunsOnAbort() {
+        Handle handle = new Handle("alpha");
+        handle.assign(runway);
+        Assert.assertTrue(handle.save());
+        AtomicInteger aborts = new AtomicInteger(0);
+        try (Transaction transaction = runway.stage()) {
+            Handle duplicate = transaction.create(Handle.class, "alpha");
+            try {
+                duplicate.save();
+                Assert.fail("Expected the save to throw");
+            }
+            catch (ConstraintViolationException e) {/* expected */}
+            transaction.afterAbort(aborts::incrementAndGet);
+            transaction.abort();
+        }
+        Assert.assertEquals(1, aborts.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a failure while a
+     * {@link Transaction#commit() commit's} consequences dispatch propagates to
+     * the caller while the commit stands and the
+     * {@link Transaction#afterCommit(Runnable) afterCommit} hooks are skipped.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Grenade} and a saved
+     * {@link Item}. The {@link Grenade} throws from the cleanup step that the
+     * dispatch performs when the commit also deleted a record.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load both records through a {@link Transaction}.</li>
+     * <li>Change the {@link Grenade} and {@code save()} it.</li>
+     * <li>Delete the {@link Item} with {@code deleteOnSave()} and
+     * {@code save()}.</li>
+     * <li>Register an {@code afterCommit} hook and call {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The injected exception propagates from the
+     * commit, {@code committed()} reports {@code true}, the hook never runs,
+     * and the changed and deleted data are durable.
+     */
+    @Test
+    public void testDispatchFailureAfterCommitPropagatesWhileCommitStands() {
+        Grenade grenade = new Grenade("pin");
+        Item item = new Item("shrapnel", 1);
+        grenade.assign(runway);
+        Assert.assertTrue(runway.save(grenade, item));
+        AtomicInteger commits = new AtomicInteger(0);
+        try (Transaction transaction = runway.stage()) {
+            Grenade txGrenade = transaction.load(Grenade.class, grenade.id());
+            Item txItem = transaction.load(Item.class, item.id());
+            txGrenade.name = "pulled";
+            Assert.assertTrue(txGrenade.save());
+            txItem.deleteOnSave();
+            Assert.assertTrue(txItem.save());
+            transaction.afterCommit(commits::incrementAndGet);
+            try {
+                transaction.commit();
+                Assert.fail("Expected the dispatch failure to propagate");
+            }
+            catch (RuntimeException e) {
+                Assert.assertEquals("dispatch failure", e.getMessage());
+            }
+            Assert.assertTrue(transaction.committed());
+        }
+        Assert.assertEquals(0, commits.get());
+        Assert.assertEquals("pulled",
+                runway.load(Grenade.class, grenade.id()).name);
+        Assert.assertNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a {@code preventStaleWrites} save of a
      * {@link Record} that an earlier save in the same {@link Transaction}
      * staged succeeds instead of a false stale rejection.
@@ -2466,13 +2556,16 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <li>Load the {@link Item} through a first {@link Transaction}.</li>
      * <li>Start a second {@link Transaction} and attempt to save the loaded
      * {@link Item} through it.</li>
-     * <li>After the refusal, change the {@link Item} and {@code save()} it,
-     * then commit the first transaction.</li>
+     * <li>After the refusal, load through the second transaction to prove it is
+     * not poisoned, then abort it.</li>
+     * <li>Change the {@link Item} and {@code save()} it, then commit the first
+     * transaction.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The second transaction's save throws an
-     * {@link IllegalStateException}, and the {@link Item} still saves and
-     * commits through the first transaction.
+     * {@link IllegalStateException} before anything is staged, so the second
+     * transaction still loads, and the {@link Item} still saves and commits
+     * through the first transaction.
      */
     @Test
     public void testTransactionSaveRefusesRecordBoundToAnotherOpenTransaction() {
@@ -2487,6 +2580,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                     Assert.fail("Expected the save to be refused");
                 }
                 catch (IllegalStateException e) {/* expected */}
+                Assert.assertNotNull(tx2.load(Item.class, item.id()));
                 tx2.abort();
             }
             txItem.score = 2;
@@ -2775,10 +2869,365 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses to save
-     * a graph that reaches a {@link Record} bound to a different open
-     * {@link Transaction}, and that the refusal happens before anything is
-     * staged, so the transaction remains usable.
+     * <strong>Goal:</strong> Verify that a companion deletion is checked
+     * against the transaction boundary, so a {@link CascadeDelete} reference
+     * cannot delete a {@link Record} that an open {@link Transaction} owns.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a saved
+     * {@link Bomb}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and change
+     * it.</li>
+     * <li>Point the {@link Bomb Bomb's} transient {@link CascadeDelete} field
+     * at the transactional copy, mark the {@link Bomb} for deletion and save it
+     * directly through the enclosing {@link Runway}.</li>
+     * <li>After the refusal, {@code save()} the copy through the transaction
+     * and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The direct save throws an
+     * {@link IllegalStateException}, both records survive, and the commit makes
+     * the transactional change durable.
+     */
+    @Test
+    public void testDirectSaveRefusesCascadeDeletionOfRecordInOpenTransaction() {
+        Item item = new Item("widget", 1);
+        Bomb bomb = new Bomb("crate");
+        bomb.assign(runway);
+        Assert.assertTrue(runway.save(bomb, item));
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 99;
+            Bomb holder = runway.load(Bomb.class, bomb.id());
+            holder.fuse = txItem;
+            holder.deleteOnSave();
+            try {
+                runway.save(holder);
+                Assert.fail("Expected the deletion to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            Assert.assertNotNull(runway.load(Item.class, item.id()));
+            Assert.assertNotNull(runway.load(Bomb.class, bomb.id()));
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses a
+     * companion deletion that reaches a {@link Record} bound to a different
+     * open {@link Transaction}, and poisons itself because the refusal happens
+     * after staging begins.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a saved
+     * {@link Bomb}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a first {@link Transaction}.</li>
+     * <li>In a second {@link Transaction}, load the {@link Bomb}, point its
+     * transient {@link CascadeDelete} field at the first transaction's copy,
+     * mark it for deletion and save it.</li>
+     * <li>After the refusal, change and {@code save()} the copy through the
+     * first transaction and commit it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws an
+     * {@link IllegalStateException} and poisons the second transaction; the
+     * first transaction still commits its change and both records survive.
+     */
+    @Test
+    public void testTransactionSaveRefusesCascadeDeletionOfRecordInAnotherTransaction() {
+        Item item = new Item("widget", 1);
+        Bomb bomb = new Bomb("crate");
+        bomb.assign(runway);
+        Assert.assertTrue(runway.save(bomb, item));
+        try (Transaction tx1 = runway.stage()) {
+            Item txItem = tx1.load(Item.class, item.id());
+            try (Transaction tx2 = runway.stage()) {
+                Bomb holder = tx2.load(Bomb.class, bomb.id());
+                holder.fuse = txItem;
+                holder.deleteOnSave();
+                try {
+                    tx2.save(holder);
+                    Assert.fail("Expected the deletion to be refused");
+                }
+                catch (IllegalStateException e) {/* expected */}
+                try {
+                    tx2.load(Item.class, item.id());
+                    Assert.fail("Expected the transaction to be poisoned");
+                }
+                catch (IllegalStateException e) {/* expected */}
+            }
+            txItem.score = 99;
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(tx1.commit());
+        }
+        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+        Assert.assertNotNull(runway.load(Bomb.class, bomb.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses to abort
+     * while one of its own saves is in flight, so a hook cannot end the
+     * transaction and turn the rest of the save into unscoped writes.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Saboteur}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Saboteur} through a {@link Transaction} and change
+     * it.</li>
+     * <li>Arm it so its {@code beforeSave()} hook calls {@code abort()} on the
+     * same transaction, then save it through the transaction.</li>
+     * <li>After the failure, abort the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws an
+     * {@link IllegalStateException} and poisons the transaction, the abort
+     * still works, and nothing becomes durable.
+     */
+    @Test
+    public void testTransactionRefusesAbortWhileASaveIsInFlight() {
+        Saboteur saboteur = new Saboteur("mole");
+        saboteur.assign(runway);
+        Assert.assertTrue(saboteur.save());
+        try (Transaction transaction = runway.stage()) {
+            Saboteur bound = transaction.load(Saboteur.class, saboteur.id());
+            bound.name = "renamed";
+            bound.target = transaction;
+            try {
+                transaction.save(bound);
+                Assert.fail("Expected the reentrant abort to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.load(Saboteur.class, saboteur.id());
+                Assert.fail("Expected the transaction to be poisoned");
+            }
+            catch (IllegalStateException e) {/* expected */}
+        }
+        Assert.assertEquals("mole",
+                runway.load(Saboteur.class, saboteur.id()).name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses to
+     * commit while one of its own saves is in flight, so a hook cannot make a
+     * partial save durable.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Saboteur}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Saboteur} through a {@link Transaction} and change
+     * it.</li>
+     * <li>Arm it so its {@code beforeSave()} hook calls {@code commit()} on the
+     * same transaction, then save it through the transaction.</li>
+     * <li>After the failure, abort the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws an
+     * {@link IllegalStateException} and poisons the transaction, the abort
+     * still works, and nothing becomes durable.
+     */
+    @Test
+    public void testTransactionRefusesCommitWhileASaveIsInFlight() {
+        Saboteur saboteur = new Saboteur("mole");
+        saboteur.assign(runway);
+        Assert.assertTrue(saboteur.save());
+        try (Transaction transaction = runway.stage()) {
+            Saboteur bound = transaction.load(Saboteur.class, saboteur.id());
+            bound.name = "renamed";
+            bound.target = transaction;
+            bound.commitInstead = true;
+            try {
+                transaction.save(bound);
+                Assert.fail("Expected the reentrant commit to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.load(Saboteur.class, saboteur.id());
+                Assert.fail("Expected the transaction to be poisoned");
+            }
+            catch (IllegalStateException e) {/* expected */}
+        }
+        Assert.assertEquals("mole",
+                runway.load(Saboteur.class, saboteur.id()).name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code commit()} is refused after the
+     * {@link Transaction} ends, whether the end was a commit or an abort.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Commit one {@link Transaction}, then call {@code commit()}
+     * again.</li>
+     * <li>Abort another {@link Transaction}, then call {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both late {@code commit()} calls throw an
+     * {@link IllegalStateException}.
+     */
+    @Test
+    public void testCommitIsRefusedAfterTheTransactionEnds() {
+        try (Transaction transaction = runway.stage()) {
+            Assert.assertTrue(transaction.commit());
+            try {
+                transaction.commit();
+                Assert.fail("Expected the second commit to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+        }
+        try (Transaction transaction = runway.stage()) {
+            transaction.abort();
+            try {
+                transaction.commit();
+                Assert.fail("Expected the commit after abort to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code afterCommit} hooks run in
+     * registration order and that the hooks after a throwing hook are skipped,
+     * while the commit outcome stands.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create and save an {@link Item} through a {@link Transaction}.</li>
+     * <li>Register three {@code afterCommit} hooks; the second one throws.</li>
+     * <li>Commit the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The commit throws the hook's exception, the
+     * first two hooks ran in order, the third never ran, and the staged
+     * {@link Item} is durable.
+     */
+    @Test
+    public void testAfterCommitHooksRunInOrderAndStopAfterAThrow() {
+        List<Integer> order = Lists.newArrayList();
+        Item item;
+        try (Transaction transaction = runway.stage()) {
+            item = transaction.create(Item.class, "widget", 1);
+            Assert.assertTrue(item.save());
+            transaction.afterCommit(() -> order.add(1));
+            transaction.afterCommit(() -> {
+                order.add(2);
+                throw new RuntimeException("boom");
+            });
+            transaction.afterCommit(() -> order.add(3));
+            try {
+                transaction.commit();
+                Assert.fail("Expected the hook failure to propagate");
+            }
+            catch (RuntimeException e) {
+                Assert.assertEquals("boom", e.getMessage());
+            }
+        }
+        Assert.assertEquals(Lists.newArrayList(1, 2), order);
+        Assert.assertNotNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that records supplied by an attached
+     * {@link AdHocDataSource} are not visible within a {@link Transaction},
+     * because only persisted records participate in the snapshot.
+     * <p>
+     * <strong>Start state:</strong> An attached {@link AdHocDataSource} that
+     * supplies one {@link Memo}; nothing is saved in the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Find {@link Memo Memos} through the {@link Runway}.</li>
+     * <li>Find {@link Memo Memos} through an open {@link Transaction}.</li>
+     * <li>Find {@link Memo Memos} through the {@link Runway} again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Runway} reads see the supplied
+     * {@link Memo}; the transactional read sees none.
+     */
+    @Test
+    public void testAttachedAdHocRecordsAreNotVisibleWithinATransaction() {
+        AdHocDataSource<Memo> source = new AdHocDataSource<>(Memo.class,
+                () -> Lists.newArrayList(new Memo(1)));
+        runway.attach(source);
+        try {
+            Criteria positive = Criteria.where().key("rank")
+                    .operator(Operator.GREATER_THAN).value(0).build();
+            Assert.assertEquals(1, runway.find(Memo.class, positive).size());
+            try (Transaction transaction = runway.stage()) {
+                Assert.assertTrue(
+                        transaction.find(Memo.class, positive).isEmpty());
+                transaction.abort();
+            }
+            Assert.assertEquals(1, runway.find(Memo.class, positive).size());
+        }
+        finally {
+            runway.detach(source);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a selection result produced within a
+     * {@link Transaction} keeps the same content after the transaction ends, so
+     * no part of it resolves against the database later.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Change one {@link Item} through a {@link Transaction} and
+     * {@code save()} it.</li>
+     * <li>Find all {@link Item Items} through the transaction and record the
+     * result's ids.</li>
+     * <li>Abort the transaction and iterate the same result again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result holds the same records with the
+     * same ids before and after the abort.
+     */
+    @Test
+    public void testTransactionalSelectionResultIsStableAfterTheTransactionEnds() {
+        Item one = new Item("one", 1);
+        Item two = new Item("two", 2);
+        one.assign(runway);
+        Assert.assertTrue(runway.save(one, two));
+        Criteria positive = Criteria.where().key("score")
+                .operator(Operator.GREATER_THAN).value(0).build();
+        Set<Item> result;
+        List<Long> before = Lists.newArrayList();
+        try (Transaction transaction = runway.stage()) {
+            Item txOne = transaction.load(Item.class, one.id());
+            txOne.score = 10;
+            Assert.assertTrue(txOne.save());
+            result = transaction.find(Item.class, positive);
+            for (Item item : result) {
+                before.add(item.id());
+            }
+            Assert.assertEquals(2, before.size());
+            transaction.abort();
+        }
+        List<Long> after = Lists.newArrayList();
+        for (Item item : result) {
+            after.add(item.id());
+        }
+        Assert.assertEquals(before, after);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} save whose graph
+     * reaches a {@link Record} bound to a different open {@link Transaction}
+     * fails and poisons the transaction, so the partial save can never commit.
      * <p>
      * <strong>Start state:</strong> Two saved {@link Item Items} and a saved
      * {@link Basket} that links to the first one.
@@ -2788,16 +3237,19 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <li>Load the first {@link Item} through a first {@link Transaction}.</li>
      * <li>In a second {@link Transaction}, load the {@link Basket}, point its
      * link at the first transaction's copy and attempt to save it.</li>
-     * <li>After the refusal, change the second {@link Item} through the second
-     * transaction, save it and commit.</li>
+     * <li>After the failure, attempt to load and to commit through the second
+     * transaction, then abort it.</li>
+     * <li>Change the {@link Item} through the first transaction, save it and
+     * commit.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save throws an
-     * {@link IllegalStateException}, and the second transaction still loads,
-     * stages and commits the later change, so the refusal did not poison it.
+     * {@link IllegalStateException} and poisons the second transaction: the
+     * load and the commit are refused and only the abort succeeds. The first
+     * transaction still stages and commits its change.
      */
     @Test
-    public void testTransactionSaveRefusesGraphThatReachesRecordInAnotherTransaction() {
+    public void testTransactionSavePoisonsWhenGraphReachesRecordInAnotherTransaction() {
         Item hostage = new Item("hostage", 1);
         Item bystander = new Item("bystander", 1);
         Basket basket = new Basket("caddy", hostage);
@@ -2810,17 +3262,26 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 parent.item = txHostage;
                 try {
                     tx2.save(parent);
-                    Assert.fail("Expected the save to be refused");
+                    Assert.fail("Expected the save to fail");
                 }
                 catch (IllegalStateException e) {/* expected */}
-                Item txBystander = tx2.load(Item.class, bystander.id());
-                txBystander.score = 2;
-                Assert.assertTrue(txBystander.save());
-                Assert.assertTrue(tx2.commit());
+                try {
+                    tx2.load(Item.class, bystander.id());
+                    Assert.fail("Expected the load to be refused");
+                }
+                catch (IllegalStateException e) {/* expected */}
+                try {
+                    tx2.commit();
+                    Assert.fail("Expected the commit to be refused");
+                }
+                catch (IllegalStateException e) {/* expected */}
+                tx2.abort();
             }
-            tx1.abort();
+            txHostage.score = 5;
+            Assert.assertTrue(txHostage.save());
+            Assert.assertTrue(tx1.commit());
         }
-        Assert.assertEquals(2, runway.load(Item.class, bystander.id()).score);
+        Assert.assertEquals(5, runway.load(Item.class, hostage.id()).score);
     }
 
     /**
@@ -3509,6 +3970,105 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * A container whose transient {@link CascadeDelete} field pulls its
+     * {@link Item} into the deletion when the container is deleted.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Bomb extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The {@link Item} that is deleted along with this {@link Bomb}.
+         */
+        @CascadeDelete
+        transient Item fuse;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         */
+        public Bomb(String name) {
+            this.name = name;
+        }
+    }
+
+    /**
+     * A {@link Record} whose {@code beforeSave()} hook tries to end the
+     * {@link Transaction} that is armed on it.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Saboteur extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The {@link Transaction} that the hook tries to end.
+         */
+        transient Transaction target;
+
+        /**
+         * If {@code true}, the hook calls {@code commit()} instead of
+         * {@code abort()}.
+         */
+        transient boolean commitInstead = false;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         */
+        public Saboteur(String name) {
+            this.name = name;
+        }
+
+        @Override
+        protected void beforeSave() {
+            if(target != null) {
+                Transaction victim = target;
+                target = null;
+                if(commitInstead) {
+                    victim.commit();
+                }
+                else {
+                    victim.abort();
+                }
+            }
+        }
+    }
+
+    /**
+     * An {@link AdHocRecord} with an orderable rank.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Memo extends AdHocRecord {
+
+        /**
+         * The orderable rank.
+         */
+        int rank;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param rank the orderable rank
+         */
+        public Memo(int rank) {
+            this.rank = rank;
+        }
+    }
+
+    /**
      * A {@link Record} whose {@code name} is {@link Required}, so a save with
      * an empty name throws.
      *
@@ -3552,6 +4112,34 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
          */
         public Handle(String name) {
             this.name = name;
+        }
+    }
+
+    /**
+     * A {@link Record} that throws from the cleanup step of the consequence
+     * dispatch, to inject a failure after a successful commit.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Grenade extends Record {
+
+        /**
+         * The name of the {@link Grenade}.
+         */
+        String name;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the name
+         */
+        public Grenade(String name) {
+            this.name = name;
+        }
+
+        @Override
+        void applyCaptureDeleteCleanup(Set<Long> ids) {
+            throw new RuntimeException("dispatch failure");
         }
     }
 

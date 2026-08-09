@@ -69,14 +69,17 @@ import com.google.common.collect.Sets;
  * {@link #close()} aborts whatever was not committed, so a try-with-resources
  * block guarantees a clean end. After the transaction ends, it forwards reads
  * and saves to the enclosing {@link Runway}, so a {@link Record} bound to it
- * unwinds to the database scope; only another {@link #commit()} is refused.
- * Side effects that depend on the outcome can be registered with
- * {@link #afterCommit(Runnable)} and {@link #afterAbort(Runnable)}.
+ * unwinds to the database scope; only another {@link #commit()} and new
+ * {@link #afterCommit(Runnable) afterCommit}/{@link #afterAbort(Runnable)
+ * afterAbort} registrations are refused. Side effects that depend on the
+ * outcome can be registered with {@link #afterCommit(Runnable)} and
+ * {@link #afterAbort(Runnable)}.
  * </p>
  * <p>
  * A save that fails within an open transaction poisons it: the writes that were
  * staged before the failure can never commit, so every subsequent operation is
- * refused except {@link #abort()} (or {@link #close()}).
+ * refused except {@link #abort()} (or {@link #close()}) and
+ * {@link #afterAbort(Runnable) afterAbort} registration.
  * </p>
  * <p>
  * A deletion staged within the transaction is final. A later save of an
@@ -126,10 +129,19 @@ public class Transaction extends Binding implements
 
     /**
      * Whether a failed save poisoned the transaction. A poisoned transaction
-     * refuses every operation except {@link #abort()}, so the writes that were
-     * staged before the failure can never {@link #commit()}.
+     * refuses every operation except {@link #abort()} and
+     * {@link #afterAbort(Runnable) afterAbort} registration, so the writes that
+     * were staged before the failure can never {@link #commit()}.
      */
     private boolean poisoned = false;
+
+    /**
+     * The number of operations that are in flight on this transaction. While an
+     * operation is in flight, {@link #commit()} and {@link #abort()} are
+     * refused, so a hook that the operation runs cannot end the transaction
+     * underneath it.
+     */
+    private int operating = 0;
 
     /**
      * Whether an {@link #afterCommit(Runnable) afterCommit} or
@@ -253,6 +265,7 @@ public class Transaction extends Binding implements
     public void abort() {
         if(open) {
             verifyOwner();
+            verifyNotOperating();
             try {
                 concourse.abort();
             }
@@ -275,6 +288,8 @@ public class Transaction extends Binding implements
      * {@link Runway#supply(java.util.function.Function) supply}, each attempt
      * is a distinct {@link Transaction}, so a hook registered by the work runs
      * for its own attempt, including an attempt that a conflict retry discards.
+     * A poisoned transaction still accepts registration, so cleanup can be
+     * scheduled before the required {@link #abort()}.
      * </p>
      * <p>
      * A hook that throws does not affect the outcome: the exception propagates
@@ -283,12 +298,11 @@ public class Transaction extends Binding implements
      *
      * @param hook the side effect to run after the transaction ends without a
      *            successful commit
-     * @throws IllegalStateException if the transaction already ended, or if a
-     *             save failed within it
+     * @throws IllegalStateException if the transaction already ended
      */
     @Override
     public void afterAbort(Runnable hook) {
-        verify();
+        verifyOpen();
         afterAbortHooks.add(hook);
     }
 
@@ -332,7 +346,9 @@ public class Transaction extends Binding implements
      * <p>
      * On success, the lifecycle consequences of each staged save (e.g., save
      * and delete notifications) are dispatched and every
-     * {@link #afterCommit(Runnable) afterCommit} hook runs. On failure, every
+     * {@link #afterCommit(Runnable) afterCommit} hook runs. A failure while the
+     * consequences dispatch propagates the same as a hook failure: the commit
+     * itself stands and {@link #committed()} reports it. On failure, every
      * staged write is discarded and every {@link #afterAbort(Runnable)
      * afterAbort} hook runs; a {@link Record Record's} in-memory edits remain,
      * the same as after a failed save. Either way, the transaction ends.
@@ -344,6 +360,7 @@ public class Transaction extends Binding implements
      */
     public boolean commit() {
         verify();
+        verifyNotOperating();
         try {
             committed = concourse.commit();
         }
@@ -390,13 +407,14 @@ public class Transaction extends Binding implements
      * </p>
      *
      * <p>
-     * A {@link Record} that overrides the save pipeline, or any {@link Record}
-     * in the graph when the save begins that is bound to a different open
-     * {@link Transaction}, is rejected before anything is staged, and the
-     * transaction remains usable. If the save fails after staging begins, then
-     * the transaction is poisoned: the writes that were staged before the
-     * failure can never commit, and every subsequent operation is refused
-     * except {@link #abort()}.
+     * A {@code records} argument that overrides the save pipeline, or one that
+     * is bound to a different open {@link Transaction}, is rejected before
+     * anything is staged, and the transaction remains usable. Any other
+     * failure, including a linked {@link Record} that is bound to a different
+     * open {@link Transaction}, poisons the transaction: the writes that were
+     * staged before the failure can never commit, and every subsequent
+     * operation is refused except {@link #abort()} and
+     * {@link #afterAbort(Runnable) afterAbort} registration.
      * </p>
      *
      * @param preventStaleWrites if {@code true}, reject the save when any
@@ -415,13 +433,11 @@ public class Transaction extends Binding implements
         if(open) {
             verifyOwner();
             verifyNotPoisoned();
-            Set<Record> preflight = Sets.newIdentityHashSet();
             for (Record record : records) {
                 Verify.that(record.overrideSave() == null,
                         "Cannot save a Record that overrides the save"
                                 + " pipeline within a Transaction");
-                record.forEachInGraph(preflight,
-                        included -> included.verifySavableThrough(this));
+                record.verifySavableThrough(this);
             }
             Saver saver = database.supportsBulkCommands
                     ? new BatchSaver(concourse)
@@ -431,6 +447,7 @@ public class Transaction extends Binding implements
                         record.verifySavableThrough(this);
                         record.bind(this, provider);
                     });
+            operating++;
             try {
                 // NOTE: The saver is never staged or committed here because
                 // the connection is already within this transaction, whose
@@ -453,6 +470,9 @@ public class Transaction extends Binding implements
                 context.restore();
                 throw t;
             }
+            finally {
+                operating--;
+            }
             saves.add(context);
             deletions.addAll(context.deletions());
             return true;
@@ -470,13 +490,14 @@ public class Transaction extends Binding implements
      * succeeds. Until then, no reader outside the transaction can observe them.
      * </p>
      * <p>
-     * A {@link Record} that overrides the save pipeline, or any {@link Record}
-     * in the graph when the save begins that is bound to a different open
-     * {@link Transaction}, is rejected before anything is staged, and the
-     * transaction remains usable. If the save fails after staging begins, then
-     * the transaction is poisoned: the writes that were staged before the
-     * failure can never commit, and every subsequent operation is refused
-     * except {@link #abort()}.
+     * A {@code records} argument that overrides the save pipeline, or one that
+     * is bound to a different open {@link Transaction}, is rejected before
+     * anything is staged, and the transaction remains usable. Any other
+     * failure, including a linked {@link Record} that is bound to a different
+     * open {@link Transaction}, poisons the transaction: the writes that were
+     * staged before the failure can never commit, and every subsequent
+     * operation is refused except {@link #abort()} and
+     * {@link #afterAbort(Runnable) afterAbort} registration.
      * </p>
      *
      * @param records one or more {@link Record Records} to save
@@ -496,26 +517,33 @@ public class Transaction extends Binding implements
         if(open) {
             verifyOwner();
             verifyNotPoisoned();
-            DatabaseSelection<?>[] selections = DatabaseSelection
-                    .resolve(options);
-            try (Reader reader = database.supportsBulkCommands
-                    ? new BatchReader(concourse)
-                    : new IncrementalReader(concourse)) {
-                for (DatabaseSelection<?> selection : selections) {
-                    if(selection.state == Selection.State.RESOLVED) {
-                        selection.setState(Selection.State.FINISHED);
+            operating++;
+            try {
+                DatabaseSelection<?>[] selections = DatabaseSelection
+                        .resolve(options);
+                try (Reader reader = database.supportsBulkCommands
+                        ? new BatchReader(concourse)
+                        : new IncrementalReader(concourse)) {
+                    for (DatabaseSelection<?> selection : selections) {
+                        if(selection.state == Selection.State.RESOLVED) {
+                            selection.setState(Selection.State.FINISHED);
+                        }
+                        else {
+                            selection.setState(Selection.State.SUBMITTED);
+                            database.$selectFromDatabase(reader, selection,
+                                    this);
+                        }
                     }
-                    else {
-                        selection.setState(Selection.State.SUBMITTED);
-                        database.$selectFromDatabase(reader, selection, this);
-                    }
+                    reader.drain();
                 }
-                reader.drain();
+                for (DatabaseSelection<?> selection : selections) {
+                    materialize(selection.get());
+                }
+                return new Selections(selections);
             }
-            for (DatabaseSelection<?> selection : selections) {
-                materialize(selection.get());
+            finally {
+                operating--;
             }
-            return new Selections(selections);
         }
         else {
             return database.select(options);
@@ -554,8 +582,8 @@ public class Transaction extends Binding implements
 
     /**
      * Bind {@code record}, and every loaded {@link Record} that is reachable
-     * from it, to this {@link Transaction}, so each {@link Record#save() save}
-     * stages within it.
+     * from its persistent (non-transient) fields, to this {@link Transaction},
+     * so each {@link Record#save() save} stages within it.
      *
      * @param record the {@link Record} that joins this {@link Transaction}
      */
@@ -568,10 +596,16 @@ public class Transaction extends Binding implements
         if(open) {
             verifyOwner();
             verifyNotPoisoned();
-            Set<Object> sections = concourse.select(Record.SECTION_KEY, id);
-            Class<T> clazz = Reflection
-                    .getClassCasted((String) Iterables.getLast(sections));
-            return load(clazz, id);
+            operating++;
+            try {
+                Set<Object> sections = concourse.select(Record.SECTION_KEY, id);
+                Class<T> clazz = Reflection
+                        .getClassCasted((String) Iterables.getLast(sections));
+                return load(clazz, id);
+            }
+            finally {
+                operating--;
+            }
         }
         else {
             return database.load(id);
@@ -679,8 +713,8 @@ public class Transaction extends Binding implements
                 for (SaveContext context : saves) {
                     context.forEach(merged::merge);
                 }
-                database.dispatchSaveOutcomes(merged);
                 try {
+                    database.dispatchSaveOutcomes(merged);
                     for (Runnable hook : afterCommitHooks) {
                         hook.run();
                     }
@@ -726,9 +760,16 @@ public class Transaction extends Binding implements
      * {@link #poisoned} and that the caller is the {@link #owner} thread.
      */
     void verify() {
-        verifyOwner();
-        Verify.that(open, "The Transaction has ended");
+        verifyOpen();
         verifyNotPoisoned();
+    }
+
+    /**
+     * Verify that no operation is in flight on this transaction.
+     */
+    private void verifyNotOperating() {
+        Verify.that(operating == 0,
+                "Cannot end the Transaction while an operation is in flight");
     }
 
     /**
@@ -739,6 +780,15 @@ public class Transaction extends Binding implements
                 "The Transaction cannot continue because a save failed"
                         + " within it; abort and retry the work in a new"
                         + " Transaction");
+    }
+
+    /**
+     * Verify that the transaction is still {@link #open} and that the caller is
+     * the {@link #owner} thread.
+     */
+    private void verifyOpen() {
+        verifyOwner();
+        Verify.that(open, "The Transaction has ended");
     }
 
     /**
