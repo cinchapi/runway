@@ -30,18 +30,15 @@ import com.cinchapi.concourse.lang.Criteria;
  * staged transaction, the save-time validation reads, the persisted writes, and
  * the terminal commit or abort.
  * <p>
- * <h2>Reads</h2> Validation reads ({@link #audit(long, Consumer) audit},
- * {@link #find(Criteria, Consumer) find}) accept a {@link Consumer} that may
- * throw to signal a validation failure. Depending on the implementation, the
+ * <h2>Reads</h2> A validation read accepts a {@link Consumer} that may throw to
+ * signal a validation failure. Depending on the implementation, the
  * {@link Consumer} runs either inline at the recording call or deferred until
  * {@link #commit()} or {@link #flush()}; the throw propagates from whichever
  * site invokes the {@link Consumer}.
  * </p>
- * <h2>Writes</h2> Writes ({@link #set set}, {@link #add add}, {@link #remove
- * remove}, {@link #clear(String, long) clear}, {@link #verifyOrSet
- * verifyOrSet}) are recorded against the active staged transaction, which is
- * the unit of atomicity: a failure anywhere before {@link #commit()} succeeds
- * aborts the entire save.
+ * <h2>Writes</h2> A write is recorded against the active staged transaction,
+ * which is the unit of atomicity: a failure anywhere before {@link #commit()}
+ * succeeds aborts the entire save.
  *
  * <h2>Lifecycle</h2> The caller drives the lifecycle. For a self-contained
  * save: {@link #stage()} once, any number of recording calls, then exactly one

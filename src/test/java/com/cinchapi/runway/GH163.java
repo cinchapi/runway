@@ -530,6 +530,43 @@ public class GH163 extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a failed save does not consume a
+     * pending realm change, so the change stages again on the next save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Project} with a valid
+     * {@code title}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Reload the {@link Project}.</li>
+     * <li>Add realm {@code "east"}, assign {@code null} to the required
+     * {@code title} and save; the save fails.</li>
+     * <li>Assign a valid {@code title} and save again.</li>
+     * <li>Reload the {@link Project}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The reloaded {@link Project} is in realm
+     * {@code "east"} and carries the valid {@code title}.
+     */
+    @Test
+    public void testFailedSaveDoesNotConsumePendingRealmChange() {
+        Project project = new Project("Original");
+        Assert.assertTrue(runway.save(project));
+
+        Project loaded = runway.load(Project.class, project.id());
+        loaded.addRealm("east");
+        loaded.title = null;
+        Assert.assertFalse(loaded.save());
+
+        loaded.title = "Restored";
+        Assert.assertTrue(loaded.save());
+
+        loaded = runway.load(Project.class, project.id());
+        Assert.assertEquals("Restored", loaded.title);
+        Assert.assertTrue(loaded.realms().contains("east"));
+    }
+
+    /**
      * A {@link Team} exercises a scalar field, a scalar link, and a collection
      * of links in one {@link Record}.
      *
@@ -625,6 +662,31 @@ public class GH163 extends RunwayBaseClientServerTest {
          */
         public Pipeline(String name) {
             this.name = name;
+        }
+
+    }
+
+    /**
+     * A {@link Project} carries a {@link Required} field so a save can be made
+     * to fail on demand.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Project extends Record {
+
+        /**
+         * The required title.
+         */
+        @Required
+        public String title;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param title the {@link #title} value
+         */
+        public Project(String title) {
+            this.title = title;
         }
 
     }

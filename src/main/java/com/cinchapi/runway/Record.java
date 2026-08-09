@@ -2584,10 +2584,11 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Return {@code true} if this {@link Record} has any unsaved changes.
      * <p>
-     * A change is a difference between the current state and the state this
-     * {@link Record} last loaded or persisted, judged by what a {@link #save()
-     * save} would write. A mutation with no serialized effect (e.g., reordering
-     * a {@link List}, whose order the database does not store) is not a change.
+     * A change is a difference between a field's current value and the value it
+     * held when this {@link Record} was last loaded or persisted. A mutation
+     * with no serialized effect (e.g., reordering a {@link List}, whose order
+     * the database does not store) is not a change. Realm membership changes do
+     * not affect this result.
      * </p>
      *
      * @return {@code true} if there are changes that need to be saved.
@@ -4193,27 +4194,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the newest revision timestamp that can mark this {@link Record} as
-     * stale.
-     * <p>
-     * Within an open {@link Transaction}, every revision after the transaction
-     * began is one of the transaction's own staged writes, because no other
-     * writer is visible in the snapshot, so newer revisions never indicate
-     * staleness. Outside of a transaction there is no bound.
-     * </p>
-     *
-     * @return the staleness ceiling
-     */
-    private long stalenessCeiling() {
-        if(binding instanceof Transaction && ((Transaction) binding).open()) {
-            return ((Transaction) binding).startTimestamp();
-        }
-        else {
-            return Long.MAX_VALUE;
-        }
-    }
-
-    /**
      * Stage the difference between this {@link Record Record's} current realm
      * membership and its {@link #__baseline baseline} realm membership on
      * {@code saver}: an add for every realm this instance joined and a remove
@@ -4302,6 +4282,27 @@ public abstract class Record implements Comparable<Record> {
         }
         else {
             saver.clear(key, id);
+        }
+    }
+
+    /**
+     * Return the newest revision timestamp that can mark this {@link Record} as
+     * stale.
+     * <p>
+     * Within an open {@link Transaction}, every revision after the transaction
+     * began is one of the transaction's own staged writes, because no other
+     * writer is visible in the snapshot, so newer revisions never indicate
+     * staleness. Outside of a transaction there is no bound.
+     * </p>
+     *
+     * @return the staleness ceiling
+     */
+    private long stalenessCeiling() {
+        if(binding instanceof Transaction && ((Transaction) binding).open()) {
+            return ((Transaction) binding).startTimestamp();
+        }
+        else {
+            return Long.MAX_VALUE;
         }
     }
 
