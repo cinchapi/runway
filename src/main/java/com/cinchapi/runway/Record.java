@@ -5898,6 +5898,30 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * A {@link TransactionBoundaryException} is thrown when a save refuses a
+     * {@link Record} because it is bound to an open {@link Transaction}, whose
+     * commit is the only way to persist it.
+     *
+     * @author Jeff Nelson
+     */
+    static class TransactionBoundaryException extends IllegalStateException {
+
+        /**
+         * Serialization version.
+         */
+        private static final long serialVersionUID = 1L;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param message the refusal message
+         */
+        TransactionBoundaryException(String message) {
+            super(message);
+        }
+    }
+
+    /**
      * The before-and-after state of a successful single-key atomic update.
      *
      * @author Jeff Nelson
@@ -5944,30 +5968,6 @@ public abstract class Record implements Comparable<Record> {
             return before;
         }
 
-    }
-
-    /**
-     * A {@link TransactionBoundaryException} is thrown when a save refuses a
-     * {@link Record} because it is bound to an open {@link Transaction}, whose
-     * commit is the only way to persist it.
-     *
-     * @author Jeff Nelson
-     */
-    static class TransactionBoundaryException extends IllegalStateException {
-
-        /**
-         * Serialization version.
-         */
-        private static final long serialVersionUID = 1L;
-
-        /**
-         * Construct a new instance.
-         *
-         * @param message the refusal message
-         */
-        TransactionBoundaryException(String message) {
-            super(message);
-        }
     }
 
     /**
