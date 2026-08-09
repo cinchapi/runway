@@ -16,6 +16,8 @@
 package com.cinchapi.runway;
 
 import java.lang.ref.WeakReference;
+import java.util.List;
+import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -36,6 +38,8 @@ import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.access.AccessControl;
 import com.cinchapi.runway.access.Audience;
 import com.cinchapi.runway.meta.Metadata;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 /**
  * Tests for {@link Runway#stage()},
@@ -2374,12 +2378,13 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Load both {@link Item Items} through a {@link Transaction}, change
-     * and {@code save()} each one, and commit.</li>
-     * <li>Keep a strong reference to the first {@link Item} and only a
-     * {@link WeakReference} to the second.</li>
-     * <li>Run the garbage collector until the weak reference clears or a
-     * timeout passes.</li>
+     * <li>In a helper frame, load both {@link Item Items} through a
+     * {@link Transaction}, change and {@code save()} each one, and commit.</li>
+     * <li>Return the first {@link Item} strongly and the second only through a
+     * {@link WeakReference}, so no stack slot of the test frame keeps the
+     * second one reachable.</li>
+     * <li>Run the garbage collector, under allocation pressure, until the weak
+     * reference clears or a timeout passes.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The weak reference clears, because the ended
@@ -2393,21 +2398,20 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item other = new Item("other", 2);
         kept.assign(runway);
         Assert.assertTrue(runway.save(kept, other));
-        Item bound;
-        WeakReference<Item> weak;
-        try (Transaction transaction = runway.stage()) {
-            bound = transaction.load(Item.class, kept.id());
-            Item txOther = transaction.load(Item.class, other.id());
-            bound.score = 10;
-            Assert.assertTrue(bound.save());
-            txOther.score = 20;
-            Assert.assertTrue(txOther.save());
-            weak = new WeakReference<>(txOther);
-            Assert.assertTrue(transaction.commit());
-        }
-        long stop = System.currentTimeMillis() + 5000;
+        Entry<Item, WeakReference<Item>> handle = stageAndCommit(kept.id(),
+                other.id());
+        Item bound = handle.getKey();
+        WeakReference<Item> weak = handle.getValue();
+        List<byte[]> pressure = Lists.newArrayList();
+        long stop = System.currentTimeMillis() + 10000;
         while (weak.get() != null && System.currentTimeMillis() < stop) {
             System.gc();
+            // The allocations force real collection cycles even if the JVM
+            // ignores the explicit request.
+            pressure.add(new byte[1024 * 1024]);
+            if(pressure.size() > 64) {
+                pressure.clear();
+            }
             Thread.sleep(10);
         }
         Assert.assertNull(weak.get());
@@ -2864,6 +2868,36 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             catch (RetryExhaustedException e) {
                 Assert.assertTrue(e.getCause() instanceof TransactionException);
             }
+        }
+    }
+
+    /**
+     * Load the two {@link Item Items} with {@code keptId} and {@code otherId}
+     * through a new {@link Transaction}, change and save each one, commit, and
+     * return the first instance paired with only a {@link WeakReference} to the
+     * second.
+     * <p>
+     * The transactional work runs entirely within this method, so no stack slot
+     * that referenced the second instance survives the return; the caller can
+     * therefore observe whether anything else still retains it.
+     * </p>
+     *
+     * @param keptId the id of the {@link Item} to return strongly
+     * @param otherId the id of the {@link Item} to reference weakly
+     * @return the retained {@link Item} paired with a {@link WeakReference} to
+     *         the other one
+     */
+    private Entry<Item, WeakReference<Item>> stageAndCommit(long keptId,
+            long otherId) {
+        try (Transaction transaction = runway.stage()) {
+            Item kept = transaction.load(Item.class, keptId);
+            Item other = transaction.load(Item.class, otherId);
+            kept.score = 10;
+            Assert.assertTrue(kept.save());
+            other.score = 20;
+            Assert.assertTrue(other.save());
+            Assert.assertTrue(transaction.commit());
+            return Maps.immutableEntry(kept, new WeakReference<>(other));
         }
     }
 
