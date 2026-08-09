@@ -2250,6 +2250,12 @@ public abstract class Record implements Comparable<Record> {
      * that is retried after a spurious failure. Implementations must therefore
      * be idempotent and free of external side effects.
      * </p>
+     * <p>
+     * <strong>Note:</strong> A {@link Record} that this hook introduces into a
+     * persistent field joins the active save: it must pass the same
+     * transaction-boundary check as every other record, and within a
+     * {@link Transaction} it is bound to the transaction.
+     * </p>
      */
     protected void beforeSave() {}
 
@@ -3017,6 +3023,7 @@ public abstract class Record implements Comparable<Record> {
      *             is violated
      */
     void saveWithinTransaction(Saver saver, SaveContext context) {
+        context.admit(this);
         context.snapshot(this);
         Preconditions.checkState(!inViolation);
         if(context.shouldPreventStaleWrite() && checkpointTs != 0) {
@@ -3065,11 +3072,16 @@ public abstract class Record implements Comparable<Record> {
         }
         else if(!hasUnsavedChanges()) {
             // This Record hasn't been modified, so simply go through each
-            // field and try to save any outgoing Record references that contain
-            // modifications.
+            // persistent field and try to save any outgoing Record references
+            // that contain modifications. A transient field is outside the
+            // Record's persistent data, so a reference it holds does not save
+            // with the Record.
             for (Field field : fields()) {
-                Object value = getFieldValue(field, this);
-                saveModifiedReferenceWithinTransaction(value, saver, context);
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    Object value = getFieldValue(field, this);
+                    saveModifiedReferenceWithinTransaction(value, saver,
+                            context);
+                }
             }
         }
         else {
@@ -3135,10 +3147,14 @@ public abstract class Record implements Comparable<Record> {
      *             {@link Transaction} other than {@code scope}
      */
     void verifySavableThrough(Binding scope) {
-        Verify.that(binding == scope || !isBoundToOpenTransaction(),
-                "Cannot save {} through a different scope because it is bound"
-                        + " to an open Transaction",
-                __);
+        if(binding == scope || !isBoundToOpenTransaction()) {
+            // The record is savable through the scope.
+        }
+        else {
+            throw new TransactionBoundaryException(
+                    "Cannot save " + __ + " through a different scope because"
+                            + " it is bound to an open Transaction");
+        }
     }
 
     /**
@@ -5925,6 +5941,30 @@ public abstract class Record implements Comparable<Record> {
             return before;
         }
 
+    }
+
+    /**
+     * A {@link TransactionBoundaryException} is thrown when a save refuses a
+     * {@link Record} because it is bound to an open {@link Transaction}, whose
+     * commit is the only way to persist it.
+     *
+     * @author Jeff Nelson
+     */
+    static class TransactionBoundaryException extends IllegalStateException {
+
+        /**
+         * Serialization version.
+         */
+        private static final long serialVersionUID = 1L;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param message the refusal message
+         */
+        TransactionBoundaryException(String message) {
+            super(message);
+        }
     }
 
     /**

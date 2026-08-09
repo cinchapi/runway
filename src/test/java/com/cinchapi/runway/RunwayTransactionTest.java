@@ -2585,6 +2585,196 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a record referenced only through a
+     * transient field is not saved with its holder, so a transient reference
+     * can neither carry another transaction's staged state into the global
+     * store nor trip the boundary refusal.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a saved
+     * {@link Satchel}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and change
+     * it.</li>
+     * <li>Point a fresh {@link Satchel Satchel's} transient field at the
+     * transactional copy.</li>
+     * <li>Save the {@link Satchel} directly through the enclosing
+     * {@link Runway}.</li>
+     * <li>Commit the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The direct save succeeds without touching the
+     * {@link Item}, the change stays invisible outside the transaction until
+     * the commit, and the commit makes it durable.
+     */
+    @Test
+    public void testDirectSaveIgnoresRecordHeldOnlyByTransientField() {
+        Item item = new Item("widget", 1);
+        Satchel satchel = new Satchel("bag");
+        satchel.assign(runway);
+        Assert.assertTrue(runway.save(satchel, item));
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 99;
+            Satchel holder = runway.load(Satchel.class, satchel.id());
+            holder.scratch = txItem;
+            Assert.assertTrue(runway.save(holder));
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses a
+     * {@link Record} that a {@code beforeSave()} hook introduces when that
+     * record is bound to a different open {@link Transaction}, so a hook cannot
+     * carry a record across the boundary after the preflight.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a saved
+     * {@link Locker}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a first {@link Transaction} and change
+     * it.</li>
+     * <li>In a second {@link Transaction}, load the {@link Locker}, change it,
+     * and stash the first transaction's copy in the transient field that its
+     * hook promotes.</li>
+     * <li>Attempt to save the {@link Locker} through the second
+     * transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws an
+     * {@link IllegalStateException} and poisons the second transaction, because
+     * the refusal happens after staging begins; the first transaction still
+     * commits its change.
+     */
+    @Test
+    public void testTransactionSaveRefusesRecordThatBeforeSaveIntroduces() {
+        Item item = new Item("widget", 1);
+        Locker locker = new Locker("cabinet");
+        locker.assign(runway);
+        Assert.assertTrue(runway.save(locker, item));
+        try (Transaction tx1 = runway.stage()) {
+            Item txItem = tx1.load(Item.class, item.id());
+            txItem.score = 99;
+            try (Transaction tx2 = runway.stage()) {
+                Locker txLocker = tx2.load(Locker.class, locker.id());
+                txLocker.name = "renamed";
+                txLocker.pending = txItem;
+                try {
+                    tx2.save(txLocker);
+                    Assert.fail("Expected the save to be refused");
+                }
+                catch (IllegalStateException e) {/* expected */}
+                try {
+                    tx2.load(Item.class, item.id());
+                    Assert.fail("Expected the transaction to be poisoned");
+                }
+                catch (IllegalStateException e) {/* expected */}
+            }
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(tx1.commit());
+        }
+        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a direct {@link Runway#save(Record...)
+     * save} refuses a {@link Record} that a {@code beforeSave()} hook
+     * introduces when that record is bound to an open {@link Transaction}, so a
+     * hook cannot leak the transaction's staged state into the global store.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a saved
+     * {@link Locker}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction} and change
+     * it.</li>
+     * <li>Load the {@link Locker} globally, change it, and stash the
+     * transactional copy in the transient field that its hook promotes.</li>
+     * <li>Attempt to save the {@link Locker} directly through the enclosing
+     * {@link Runway}.</li>
+     * <li>After the refusal, {@code save()} the copy through the transaction
+     * and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The direct save throws an
+     * {@link IllegalStateException}, the change stays invisible outside the
+     * transaction until the commit, and the commit makes it durable.
+     */
+    @Test
+    public void testDirectSaveRefusesRecordThatBeforeSaveIntroduces() {
+        Item item = new Item("widget", 1);
+        Locker locker = new Locker("cabinet");
+        locker.assign(runway);
+        Assert.assertTrue(runway.save(locker, item));
+        try (Transaction transaction = runway.stage()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 99;
+            Locker holder = runway.load(Locker.class, locker.id());
+            holder.name = "renamed";
+            holder.pending = txItem;
+            try {
+                runway.save(holder);
+                Assert.fail("Expected the direct save to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a new {@link Record} that a
+     * {@code beforeSave()} hook introduces within a {@link Transaction} is
+     * bound to the transaction, so its writes stage within the transaction and
+     * it remains usable as a transactional record afterward.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Locker}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Locker} through a {@link Transaction} and change
+     * it.</li>
+     * <li>Stash a brand new {@link Item} in the transient field that the
+     * {@link Locker Locker's} hook promotes, and save the {@link Locker}
+     * through the transaction.</li>
+     * <li>Change the promoted {@link Item} and {@code save()} it directly.</li>
+     * <li>Commit the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The introduced {@link Item} stays invisible
+     * outside the transaction until the commit, its direct {@code save()}
+     * stages within the transaction, and the commit makes both changes durable.
+     */
+    @Test
+    public void testTransactionSaveBindsRecordThatBeforeSaveIntroduces() {
+        Locker locker = new Locker("cabinet");
+        locker.assign(runway);
+        Assert.assertTrue(locker.save());
+        try (Transaction transaction = runway.stage()) {
+            Locker txLocker = transaction.load(Locker.class, locker.id());
+            txLocker.name = "renamed";
+            txLocker.pending = new Item("spawned", 7);
+            Assert.assertTrue(transaction.save(txLocker));
+            Item spawned = txLocker.child;
+            Assert.assertNotNull(spawned);
+            Assert.assertNull(runway.load(Item.class, spawned.id()));
+            spawned.score = 8;
+            Assert.assertTrue(spawned.save());
+            Assert.assertTrue(transaction.commit());
+            Assert.assertEquals(8, runway.load(Item.class, spawned.id()).score);
+        }
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a {@link Transaction} refuses to save
      * a graph that reaches a {@link Record} bound to a different open
      * {@link Transaction}, and that the refusal happens before anything is
@@ -3245,6 +3435,76 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         public Basket(String name, Item item) {
             this.name = name;
             this.item = item;
+        }
+    }
+
+    /**
+     * A container that references an {@link Item} only through a transient
+     * field.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Satchel extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The non-persistent {@link Item} reference.
+         */
+        transient Item scratch;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         */
+        public Satchel(String name) {
+            this.name = name;
+        }
+    }
+
+    /**
+     * A container whose {@code beforeSave()} hook promotes a transient
+     * {@link Item} into its persistent link.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Locker extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The persistent {@link Item} link.
+         */
+        Item child;
+
+        /**
+         * The non-persistent {@link Item} that the hook promotes into
+         * {@link #child}.
+         */
+        transient Item pending;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         */
+        public Locker(String name) {
+            this.name = name;
+        }
+
+        @Override
+        protected void beforeSave() {
+            if(pending != null) {
+                child = pending;
+                pending = null;
+            }
         }
     }
 

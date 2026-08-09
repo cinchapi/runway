@@ -1109,15 +1109,21 @@ public final class Runway extends Binding implements AutoCloseable {
      * @return {@code true} if all changes are atomically saved
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and any {@link Record} has been externally modified
-     * @throws IllegalStateException if any of the {@code records}, or any
-     *             {@link Record} reachable from them, is bound to an open
-     *             {@link Transaction}, whose commit is the only way to persist
-     *             it
+     * @throws IllegalStateException if any {@link Record} that the save
+     *             processes is bound to an open {@link Transaction}, whose
+     *             commit is the only way to persist it
      */
     public boolean save(boolean preventStaleWrites, Record... records) {
+        // NOTE: The overrideSave suppliers are captured once so the preflight
+        // and the execution of every attempt act on the same decision for
+        // each record.
+        List<Supplier<Boolean>> overrides = Lists
+                .newArrayListWithCapacity(records.length);
         Set<Record> preflight = Sets.newIdentityHashSet();
         for (Record record : records) {
-            if(record.overrideSave() == null) {
+            Supplier<Boolean> override = record.overrideSave();
+            overrides.add(override);
+            if(override == null) {
                 record.forEachInGraph(preflight,
                         included -> included.verifySavableThrough(this));
             }
@@ -1129,7 +1135,8 @@ public final class Runway extends Binding implements AutoCloseable {
         Record current = null;
         try {
             boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
-            SaveContext context = new SaveContext(preventStaleWrites);
+            SaveContext context = new SaveContext(preventStaleWrites,
+                    record -> record.verifySavableThrough(this));
             int attempts = 0;
             while (true) {
                 Saver saver = supportsBulkCommands ? new BatchSaver(concourse)
@@ -1137,8 +1144,9 @@ public final class Runway extends Binding implements AutoCloseable {
                 try {
                     context.reset();
                     saver.stage();
-                    for (Record record : records) {
-                        Supplier<Boolean> override = record.overrideSave();
+                    for (int i = 0; i < records.length; ++i) {
+                        Record record = records[i];
+                        Supplier<Boolean> override = overrides.get(i);
                         if(override != null && !override.get()) {
                             // Early exit the entire transaction because an
                             // overriden save has failed.
@@ -1187,6 +1195,13 @@ public final class Runway extends Binding implements AutoCloseable {
                     else if(t instanceof StaleDataException) {
                         context.restore();
                         throw (StaleDataException) t;
+                    }
+                    else if(t instanceof Record.TransactionBoundaryException) {
+                        // A refusal at the transaction boundary is a
+                        // programming error, so it propagates instead of
+                        // becoming a false return like a validation failure.
+                        context.restore();
+                        throw (Record.TransactionBoundaryException) t;
                     }
                     else {
                         for (Record record : context.records()) {

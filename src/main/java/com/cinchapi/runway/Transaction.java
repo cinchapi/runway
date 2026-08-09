@@ -391,12 +391,12 @@ public class Transaction extends Binding implements
      *
      * <p>
      * A {@link Record} that overrides the save pipeline, or any {@link Record}
-     * in the saved graph that is bound to a different open {@link Transaction},
-     * is rejected before anything is staged, and the transaction remains
-     * usable. If the save fails after staging begins, then the transaction is
-     * poisoned: the writes that were staged before the failure can never
-     * commit, and every subsequent operation is refused except
-     * {@link #abort()}.
+     * in the graph when the save begins that is bound to a different open
+     * {@link Transaction}, is rejected before anything is staged, and the
+     * transaction remains usable. If the save fails after staging begins, then
+     * the transaction is poisoned: the writes that were staged before the
+     * failure can never commit, and every subsequent operation is refused
+     * except {@link #abort()}.
      * </p>
      *
      * @param preventStaleWrites if {@code true}, reject the save when any
@@ -406,9 +406,9 @@ public class Transaction extends Binding implements
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and any {@link Record} has been externally modified
      * @throws IllegalStateException if any of the {@code records} overrides the
-     *             save pipeline, if any {@link Record} in the saved graph is
-     *             bound to a different open {@link Transaction}, or if a prior
-     *             save failed within the transaction
+     *             save pipeline, if any {@link Record} that the save processes
+     *             is bound to a different open {@link Transaction}, or if a
+     *             prior save failed within the transaction
      */
     @Override
     public boolean save(boolean preventStaleWrites, Record... records) {
@@ -426,8 +426,11 @@ public class Transaction extends Binding implements
             Saver saver = database.supportsBulkCommands
                     ? new BatchSaver(concourse)
                     : new IncrementalSaver(concourse);
-            SaveContext context = new SaveContext(preventStaleWrites,
-                    deletions);
+            SaveContext context = new SaveContext(preventStaleWrites, deletions,
+                    record -> {
+                        record.verifySavableThrough(this);
+                        record.bind(this, provider);
+                    });
             try {
                 // NOTE: The saver is never staged or committed here because
                 // the connection is already within this transaction, whose
@@ -468,20 +471,20 @@ public class Transaction extends Binding implements
      * </p>
      * <p>
      * A {@link Record} that overrides the save pipeline, or any {@link Record}
-     * in the saved graph that is bound to a different open {@link Transaction},
-     * is rejected before anything is staged, and the transaction remains
-     * usable. If the save fails after staging begins, then the transaction is
-     * poisoned: the writes that were staged before the failure can never
-     * commit, and every subsequent operation is refused except
-     * {@link #abort()}.
+     * in the graph when the save begins that is bound to a different open
+     * {@link Transaction}, is rejected before anything is staged, and the
+     * transaction remains usable. If the save fails after staging begins, then
+     * the transaction is poisoned: the writes that were staged before the
+     * failure can never commit, and every subsequent operation is refused
+     * except {@link #abort()}.
      * </p>
      *
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
      * @throws IllegalStateException if any of the {@code records} overrides the
-     *             save pipeline, if any {@link Record} in the saved graph is
-     *             bound to a different open {@link Transaction}, or if a prior
-     *             save failed within the transaction
+     *             save pipeline, if any {@link Record} that the save processes
+     *             is bound to a different open {@link Transaction}, or if a
+     *             prior save failed within the transaction
      */
     @Override
     public boolean save(Record... records) {

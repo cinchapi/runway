@@ -26,6 +26,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import javax.annotation.Nullable;
 
@@ -59,6 +60,17 @@ import javax.annotation.Nullable;
  * @author Jeff Nelson
  */
 final class SaveContext {
+
+    /**
+     * An {@link #admit(Record) admission} that accepts every {@link Record}.
+     */
+    private static final Consumer<Record> NO_ADMISSION = record -> {};
+
+    /**
+     * The check that every {@link Record} must pass when it
+     * {@link #admit(Record) enters} the save.
+     */
+    private final Consumer<Record> admission;
 
     /**
      * One {@link Entry} per record id processed within the active attempt.
@@ -95,7 +107,20 @@ final class SaveContext {
      *            {@link Record} that has been externally modified
      */
     SaveContext(boolean shouldPreventStaleWrite) {
-        this(shouldPreventStaleWrite, Collections.emptySet());
+        this(shouldPreventStaleWrite, NO_ADMISSION);
+    }
+
+    /**
+     * Construct a new instance whose {@code admission} checks every
+     * {@link Record} that enters the save.
+     *
+     * @param shouldPreventStaleWrite whether the save rejects any
+     *            {@link Record} that has been externally modified
+     * @param admission the check that every {@link Record} must pass when it
+     *            enters the save
+     */
+    SaveContext(boolean shouldPreventStaleWrite, Consumer<Record> admission) {
+        this(shouldPreventStaleWrite, Collections.emptySet(), admission);
     }
 
     /**
@@ -106,10 +131,14 @@ final class SaveContext {
      *            {@link Record} that has been externally modified
      * @param priorDeletions the ids of records that earlier saves in the same
      *            transaction deleted
+     * @param admission the check that every {@link Record} must pass when it
+     *            enters the save
      */
-    SaveContext(boolean shouldPreventStaleWrite, Set<Long> priorDeletions) {
+    SaveContext(boolean shouldPreventStaleWrite, Set<Long> priorDeletions,
+            Consumer<Record> admission) {
         this.shouldPreventStaleWrite = shouldPreventStaleWrite;
         this.priorDeletions = priorDeletions;
+        this.admission = admission;
     }
 
     /**
@@ -121,6 +150,18 @@ final class SaveContext {
      */
     void add(Record record) {
         raise(record, Outcome.CLEAN);
+    }
+
+    /**
+     * Apply the save's admission check to {@code record} as it enters the save.
+     *
+     * @param record the {@link Record} that enters the save
+     * @throws IllegalStateException if the {@link Record} cannot participate in
+     *             the save (e.g., it is bound to a different open
+     *             {@link Transaction})
+     */
+    void admit(Record record) {
+        admission.accept(record);
     }
 
     /**
