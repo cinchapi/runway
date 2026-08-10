@@ -783,12 +783,13 @@ public class Transaction extends Binding implements
                     "The factory cannot return null");
             save(record);
             try {
-                Verify.thatArgument(record.equals(lookup.get()),
+                T found = lookup.get();
+                Verify.thatArgument(found != null && record.id() == found.id(),
                         "The created Record does not match the criteria");
             }
-            catch (RuntimeException e) {
+            catch (Throwable t) {
                 poisoned = true;
-                throw e;
+                throw t;
             }
         }
         return record;
