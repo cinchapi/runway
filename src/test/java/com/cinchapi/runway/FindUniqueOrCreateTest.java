@@ -393,6 +393,45 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findAnyUniqueOrCreate} throws
+     * {@link DuplicateEntryException} when the match set spans the class
+     * hierarchy, and that the factory never runs and nothing is created.
+     * <p>
+     * <strong>Start state:</strong> One {@link Item} and one
+     * {@link SpecialItem} that share the same code.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Item} and a {@link SpecialItem} both with code 7.</li>
+     * <li>Call {@code findAnyUniqueOrCreate} with {@code code == 7} and a
+     * factory that flips an {@link AtomicBoolean}.</li>
+     * <li>Catch the expected exception, then query for every {@link Item} in
+     * the hierarchy with code 7.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown,
+     * the factory never ran, and exactly the two original records match.
+     */
+    @Test
+    public void testFindAnyUniqueOrCreateThrowsOnDuplicateAcrossHierarchy() {
+        runway.save(new Item(7), new SpecialItem(7));
+        AtomicBoolean factoryRan = new AtomicBoolean(false);
+        boolean threw = false;
+        try {
+            runway.findAnyUniqueOrCreate(Item.class, code(7), () -> {
+                factoryRan.set(true);
+                return new Item(7);
+            });
+        }
+        catch (DuplicateEntryException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertFalse(factoryRan.get());
+        Assert.assertEquals(2, runway.findAny(Item.class, code(7)).size());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that, within a caller-owned
      * {@link Transaction}, {@code findUniqueOrCreate} stages the created record
      * so it is invisible outside the transaction until the commit and visible
@@ -514,6 +553,40 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(refused);
         }
         Assert.assertTrue(runway.load(Item.class).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findUniqueOrCreate} resumes
+     * against the enclosing {@link Runway} after the {@link Transaction} ends.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link Item Items} and a committed
+     * {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * try-with-resources block and {@code commit()} it immediately.</li>
+     * <li>Call {@code findUniqueOrCreate} on the ended transaction with
+     * {@code code == 2} and a factory that returns a new {@link Item} with code
+     * 2.</li>
+     * <li>Query for the record through the enclosing {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The create persists directly through the
+     * {@link Runway}: the query returns the created {@link Item} with the same
+     * id.
+     */
+    @Test
+    public void testFindUniqueOrCreateResumesAgainstRunwayAfterTransactionEnds() {
+        try (Transaction transaction = runway.stage()) {
+            Assert.assertTrue(transaction.commit());
+            Item item = transaction.findUniqueOrCreate(Item.class, code(2),
+                    () -> new Item(2));
+            Assert.assertNotNull(item);
+            Item visible = runway.findUnique(Item.class, code(2));
+            Assert.assertNotNull(visible);
+            Assert.assertEquals(item.id(), visible.id());
+        }
     }
 
     /**
