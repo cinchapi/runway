@@ -3019,10 +3019,6 @@ public abstract class Record implements Comparable<Record> {
         else {
             context.markChanged(this);
             beforeSave();
-            // NOTE: The realm delta must stage after beforeSave so realm
-            // changes made by the hook join this save; staged earlier, they
-            // would be captured in the baseline as synchronized without ever
-            // being written.
             stageRealmsDelta(saver);
             saver.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
