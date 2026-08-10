@@ -816,6 +816,33 @@ public final class Runway extends Binding implements AutoCloseable {
     }
 
     /**
+     * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
+     * that matches the {@code criteria}, or create one from {@code factory}
+     * when none exists; the find and the save commit as one transaction.
+     * <p>
+     * This method applies the contract of
+     * {@link #findUniqueOrCreate(Class, Criteria, Supplier) findUniqueOrCreate}
+     * across the {@code clazz} hierarchy, as
+     * {@link DatabaseInterface#findAnyUnique(Class, Criteria) findAnyUnique}
+     * does for {@code findUnique}.
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param factory supplies the {@link Record} to create when none match
+     * @return the matched or created {@link Record}
+     * @throws DuplicateEntryException if more than one record in the hierarchy
+     *             matches
+     * @throws RetryExhaustedException if the create cannot commit within the
+     *             bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if {@code factory} returns {@code null}
+     *             or a {@link Record} that does not match {@code criteria}
+     */
+    public <T extends Record> T findAnyUniqueOrCreate(Class<T> clazz,
+            Criteria criteria, Supplier<T> factory) {
+        return supply(tx -> tx.findAnyUniqueOrCreate(clazz, criteria, factory));
+    }
+
+    /**
      * Atomically find the first {@link Record} of type {@code clazz} that
      * matches the {@code criteria} under the supplied {@code order} and update
      * the value of {@code key} by applying the {@code update} operator; the
@@ -943,6 +970,43 @@ public final class Runway extends Binding implements AutoCloseable {
             Criteria criteria, String key, UnaryOperator<V> update) {
         return readAndUpdateAtomically(false, clazz, criteria, null, key,
                 update);
+    }
+
+    /**
+     * Atomically find the one {@link Record} of type {@code clazz} that matches
+     * the {@code criteria}, or create one from {@code factory} when none
+     * exists; the find and the save commit as one transaction.
+     * <p>
+     * Concurrent callers for the same {@code criteria} converge on one record:
+     * the loser of a creation race retries and adopts the winner. The operation
+     * runs in its own transaction, independent of any {@link Transaction} the
+     * caller holds open. Throw {@link DuplicateEntryException} when more than
+     * one record matches, consistent with
+     * {@link DatabaseInterface#findUnique(Class, Criteria) findUnique}; a
+     * violation neither creates nor commits.
+     * <p>
+     * The {@code factory} runs only when no record matches; it may run more
+     * than once, so it must be free of side effects, and it must return a new,
+     * unsaved {@link Record} that matches {@code criteria}. A mismatch aborts
+     * instead of persisting a record the lookup cannot return.
+     * <p>
+     * <strong>NOTE:</strong> This method operates solely on {@link Record
+     * Records} persisted in the database; records supplied by an attached
+     * {@link AdHocDataSource} are never matched.
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param factory supplies the {@link Record} to create when none match
+     * @return the matched or created {@link Record}
+     * @throws DuplicateEntryException if more than one record matches
+     * @throws RetryExhaustedException if the create cannot commit within the
+     *             bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if {@code factory} returns {@code null}
+     *             or a {@link Record} that does not match {@code criteria}
+     */
+    public <T extends Record> T findUniqueOrCreate(Class<T> clazz,
+            Criteria criteria, Supplier<T> factory) {
+        return supply(tx -> tx.findUniqueOrCreate(clazz, criteria, factory));
     }
 
     @SuppressWarnings("deprecation")

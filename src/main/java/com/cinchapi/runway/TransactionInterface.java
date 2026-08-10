@@ -15,6 +15,12 @@
  */
 package com.cinchapi.runway;
 
+import java.util.function.Supplier;
+
+import com.cinchapi.common.base.Verify;
+import com.cinchapi.concourse.DuplicateEntryException;
+import com.cinchapi.concourse.lang.Criteria;
+
 /**
  * A {@link TransactionInterface} is the {@link DatabaseInterface} view of an
  * ACID transaction that scoped work operates against: reads observe the
@@ -85,6 +91,79 @@ public interface TransactionInterface extends DatabaseInterface {
      *             transaction
      */
     <T extends Record> T create(Class<T> clazz, Object... args);
+
+    /**
+     * Return the unique {@link Record} of type {@code clazz} that matches
+     * {@code criteria}, creating and saving one from {@code factory} when none
+     * exists.
+     * <p>
+     * This method applies the contract of
+     * {@link #findUniqueOrCreate(Class, Criteria, Supplier) findUniqueOrCreate}
+     * across the {@code clazz} hierarchy, as
+     * {@link DatabaseInterface#findAnyUnique(Class, Criteria) findAnyUnique}
+     * does for {@code findUnique}.
+     * </p>
+     *
+     * @param clazz the {@link Record} class to query
+     * @param criteria the {@link Criteria} that identifies the record
+     * @param factory supplies the {@link Record} to create when none match
+     * @param <T> the type of {@link Record}
+     * @return the matched or created {@link Record}
+     * @throws DuplicateEntryException if more than one record in the hierarchy
+     *             matches
+     * @throws IllegalArgumentException if {@code factory} returns {@code null}
+     *             or a {@link Record} that does not match {@code criteria}
+     */
+    default <T extends Record> T findAnyUniqueOrCreate(Class<T> clazz,
+            Criteria criteria, Supplier<T> factory) {
+        T record = findAnyUnique(clazz, criteria);
+        if(record == null) {
+            record = factory.get();
+            Verify.thatArgument(record != null,
+                    "The factory cannot return null");
+            save(record);
+            Verify.thatArgument(record.equals(findAnyUnique(clazz, criteria)),
+                    "The created Record does not match the criteria");
+        }
+        return record;
+    }
+
+    /**
+     * Return the unique {@link Record} of type {@code clazz} that matches
+     * {@code criteria}, creating and saving one from {@code factory} when none
+     * exists.
+     * <p>
+     * The lookup and the save stage within the transaction, so at commit
+     * exactly one record matches {@code criteria}. The {@code factory} runs
+     * only when no record matches. It must return a new, unsaved {@link Record}
+     * that matches {@code criteria}, and it must be free of side effects
+     * because an enclosing retry may run it again. When the verification of a
+     * created {@link Record} fails, the staged save remains; a caller that owns
+     * the transaction should abort it.
+     * </p>
+     *
+     * @param clazz the {@link Record} class to query
+     * @param criteria the {@link Criteria} that identifies the record
+     * @param factory supplies the {@link Record} to create when none match
+     * @param <T> the type of {@link Record}
+     * @return the matched or created {@link Record}
+     * @throws DuplicateEntryException if more than one record matches
+     * @throws IllegalArgumentException if {@code factory} returns {@code null}
+     *             or a {@link Record} that does not match {@code criteria}
+     */
+    default <T extends Record> T findUniqueOrCreate(Class<T> clazz,
+            Criteria criteria, Supplier<T> factory) {
+        T record = findUnique(clazz, criteria);
+        if(record == null) {
+            record = factory.get();
+            Verify.thatArgument(record != null,
+                    "The factory cannot return null");
+            save(record);
+            Verify.thatArgument(record.equals(findUnique(clazz, criteria)),
+                    "The created Record does not match the criteria");
+        }
+        return record;
+    }
 
     /**
      * Save all changes in the provided {@code records} within the transaction.
