@@ -183,10 +183,13 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
         Supplier<Item> factory = () -> {
             bothFoundNoMatch.countDown();
             try {
-                bothFoundNoMatch.await(5, TimeUnit.SECONDS);
+                Assert.assertTrue(
+                        "Both workers should observe no match before either"
+                                + " creates",
+                        bothFoundNoMatch.await(5, TimeUnit.SECONDS));
             }
             catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
             }
             return new Item(2);
         };
