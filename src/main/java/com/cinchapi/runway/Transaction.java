@@ -81,12 +81,15 @@ import com.google.common.collect.Sets;
  * {@link #afterAbort(Runnable)}.
  * </p>
  * <p>
- * A save that fails after its arguments are accepted poisons the transaction:
- * the writes that were staged before the failure can never commit, so every
- * subsequent operation is refused except {@link #abort()} (or {@link #close()})
- * and {@link #afterAbort(Runnable) afterAbort} registration. A save argument
- * that fails its checks is rejected before anything is staged, and the
- * transaction remains usable.
+ * A failure that leaves staged writes that can never commit poisons the
+ * transaction: a save that fails after its arguments are accepted, or a created
+ * {@link Record} that fails
+ * {@link #findUniqueOrCreate(Class, Criteria, Supplier) findUniqueOrCreate}
+ * verification. Every subsequent operation on a poisoned transaction is refused
+ * except {@link #abort()} (or {@link #close()}) and
+ * {@link #afterAbort(Runnable) afterAbort} registration. A save argument that
+ * fails its checks is rejected before anything is staged, and the transaction
+ * remains usable.
  * </p>
  * <p>
  * A deletion staged within the transaction is final. A later save of an
@@ -135,10 +138,10 @@ public class Transaction extends Binding implements
     private volatile boolean open;
 
     /**
-     * Whether a failed save poisoned the transaction. A poisoned transaction
-     * refuses every operation except {@link #abort()} (or {@link #close()}) and
-     * {@link #afterAbort(Runnable) afterAbort} registration, so the writes that
-     * were staged before the failure can never {@link #commit()}.
+     * Whether a failure left staged writes that can never {@link #commit()},
+     * poisoning the transaction. A poisoned transaction refuses every operation
+     * except {@link #abort()} (or {@link #close()}) and
+     * {@link #afterAbort(Runnable) afterAbort} registration.
      */
     private boolean poisoned = false;
 
@@ -441,8 +444,7 @@ public class Transaction extends Binding implements
     public <T extends Record> T findAnyUniqueOrCreate(Class<T> clazz,
             Criteria criteria, Supplier<T> factory) {
         if(open) {
-            return TransactionInterface.super.findAnyUniqueOrCreate(clazz,
-                    criteria, factory);
+            return findOrCreate(() -> findAnyUnique(clazz, criteria), factory);
         }
         else {
             return database.findAnyUniqueOrCreate(clazz, criteria, factory);
@@ -472,8 +474,7 @@ public class Transaction extends Binding implements
     public <T extends Record> T findUniqueOrCreate(Class<T> clazz,
             Criteria criteria, Supplier<T> factory) {
         if(open) {
-            return TransactionInterface.super.findUniqueOrCreate(clazz,
-                    criteria, factory);
+            return findOrCreate(() -> findUnique(clazz, criteria), factory);
         }
         else {
             return database.findUniqueOrCreate(clazz, criteria, factory);
@@ -761,6 +762,39 @@ public class Transaction extends Binding implements
     }
 
     /**
+     * Return the unique {@link Record} that the {@code lookup} matches,
+     * creating and saving one from {@code factory} when none exists.
+     * <p>
+     * A verification failure after the save poisons the transaction before the
+     * rejection propagates, so the staged save can never commit.
+     * </p>
+     *
+     * @param lookup performs the criteria lookup within the transaction
+     * @param factory supplies the {@link Record} to create when none match
+     * @param <T> the type of {@link Record}
+     * @return the matched or created {@link Record}
+     */
+    private <T extends Record> T findOrCreate(Supplier<T> lookup,
+            Supplier<T> factory) {
+        T record = lookup.get();
+        if(record == null) {
+            record = factory.get();
+            Verify.thatArgument(record != null,
+                    "The factory cannot return null");
+            save(record);
+            try {
+                Verify.thatArgument(record.equals(lookup.get()),
+                        "The created Record does not match the criteria");
+            }
+            catch (RuntimeException e) {
+                poisoned = true;
+                throw e;
+            }
+        }
+        return record;
+    }
+
+    /**
      * Ensure that {@code result}, including every element of an
      * {@link Iterable} result, is fully materialized while the transaction is
      * open, so no part of a {@link Selection} result resolves after the
@@ -871,9 +905,9 @@ public class Transaction extends Binding implements
      */
     private void verifyNotPoisoned() {
         Verify.that(!poisoned,
-                "The Transaction cannot continue because a save failed"
-                        + " within it; abort and retry the work in a new"
-                        + " Transaction");
+                "The Transaction cannot continue because a failure left"
+                        + " staged writes that can never commit; abort and"
+                        + " retry the work in a new Transaction");
     }
 
     /**

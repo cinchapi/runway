@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -156,9 +157,11 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Start two threads that, gated by a common latch, each call
-     * {@code findUniqueOrCreate} with {@code code == 2} and a factory that
-     * returns a new {@link Item} with code 2, capturing any {@link Throwable} a
-     * worker throws.</li>
+     * {@code findUniqueOrCreate} with {@code code == 2}, capturing any
+     * {@link Throwable} a worker throws.</li>
+     * <li>Share a factory that waits until both threads have observed no match
+     * before it returns a new {@link Item} with code 2, so the create race is
+     * guaranteed rather than schedule-dependent.</li>
      * <li>{@code join()} both threads, then query for every {@link Item} with
      * code 2.</li>
      * </ul>
@@ -176,12 +179,23 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
         AtomicReference<Item> result2 = new AtomicReference<>();
         AtomicReference<Throwable> failure1 = new AtomicReference<>();
         AtomicReference<Throwable> failure2 = new AtomicReference<>();
+        CountDownLatch bothFoundNoMatch = new CountDownLatch(2);
+        Supplier<Item> factory = () -> {
+            bothFoundNoMatch.countDown();
+            try {
+                bothFoundNoMatch.await(5, TimeUnit.SECONDS);
+            }
+            catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return new Item(2);
+        };
         Thread t1 = new Thread(() -> {
             ready.countDown();
             try {
                 go.await();
                 result1.set(runway.findUniqueOrCreate(Item.class, code(2),
-                        () -> new Item(2)));
+                        factory));
             }
             catch (Throwable t) {
                 failure1.set(t);
@@ -192,7 +206,7 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
             try {
                 go.await();
                 result2.set(runway.findUniqueOrCreate(Item.class, code(2),
-                        () -> new Item(2)));
+                        factory));
             }
             catch (Throwable t) {
                 failure2.set(t);
@@ -454,9 +468,9 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that, within a caller-owned
-     * {@link Transaction}, a factory result that does not match the criteria is
-     * rejected while the staged save remains until the abort discards it.
+     * <strong>Goal:</strong> Verify that a factory result that does not match
+     * the criteria poisons a caller-owned {@link Transaction}, so the staged
+     * save can never commit.
      * <p>
      * <strong>Start state:</strong> No saved {@link Item Items}.
      * <p>
@@ -466,17 +480,17 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
      * try-with-resources block.</li>
      * <li>Call {@code findUniqueOrCreate} with {@code code == 2} and a factory
      * that returns a new {@link Item} with code 99.</li>
-     * <li>Catch the expected exception, query for {@code code == 99} within the
-     * transaction, then leave the block without a commit and load every
-     * {@link Item}.</li>
+     * <li>Catch the expected rejection, then attempt to {@code commit()}.</li>
+     * <li>Leave the block, then load every {@link Item}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown,
-     * the staged {@link Item} with code 99 is visible within the transaction,
-     * and no {@link Item} exists after the abort.
+     * <strong>Expected:</strong> The rejection is an
+     * {@link IllegalArgumentException}, the commit attempt is refused with an
+     * {@link IllegalStateException}, and no {@link Item} exists after the
+     * abort.
      */
     @Test
-    public void testFindUniqueOrCreateMismatchLeavesStagedSaveUntilAbort() {
+    public void testFindUniqueOrCreateMismatchPoisonsTransaction() {
         try (Transaction transaction = runway.stage()) {
             boolean threw = false;
             try {
@@ -487,8 +501,14 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
                 threw = true;
             }
             Assert.assertTrue(threw);
-            Assert.assertEquals(1,
-                    transaction.find(Item.class, code(99)).size());
+            boolean refused = false;
+            try {
+                transaction.commit();
+            }
+            catch (IllegalStateException e) {
+                refused = true;
+            }
+            Assert.assertTrue(refused);
         }
         Assert.assertTrue(runway.load(Item.class).isEmpty());
     }

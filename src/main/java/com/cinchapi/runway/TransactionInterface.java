@@ -17,7 +17,6 @@ package com.cinchapi.runway;
 
 import java.util.function.Supplier;
 
-import com.cinchapi.common.base.Verify;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 
@@ -114,19 +113,8 @@ public interface TransactionInterface extends DatabaseInterface {
      * @throws IllegalArgumentException if {@code factory} returns {@code null}
      *             or a {@link Record} that does not match {@code criteria}
      */
-    default <T extends Record> T findAnyUniqueOrCreate(Class<T> clazz,
-            Criteria criteria, Supplier<T> factory) {
-        T record = findAnyUnique(clazz, criteria);
-        if(record == null) {
-            record = factory.get();
-            Verify.thatArgument(record != null,
-                    "The factory cannot return null");
-            save(record);
-            Verify.thatArgument(record.equals(findAnyUnique(clazz, criteria)),
-                    "The created Record does not match the criteria");
-        }
-        return record;
-    }
+    <T extends Record> T findAnyUniqueOrCreate(Class<T> clazz,
+            Criteria criteria, Supplier<T> factory);
 
     /**
      * Return the unique {@link Record} of type {@code clazz} that matches
@@ -138,8 +126,9 @@ public interface TransactionInterface extends DatabaseInterface {
      * only when no record matches. It must return a new, unsaved {@link Record}
      * that matches {@code criteria}, and it must be free of side effects
      * because an enclosing retry may run it again. When the verification of a
-     * created {@link Record} fails, the staged save remains; a caller that owns
-     * the transaction should abort it.
+     * created {@link Record} fails, the transaction is poisoned: the staged
+     * save can never commit, and every subsequent operation through the view is
+     * refused.
      * </p>
      *
      * @param clazz the {@link Record} class to query
@@ -151,19 +140,8 @@ public interface TransactionInterface extends DatabaseInterface {
      * @throws IllegalArgumentException if {@code factory} returns {@code null}
      *             or a {@link Record} that does not match {@code criteria}
      */
-    default <T extends Record> T findUniqueOrCreate(Class<T> clazz,
-            Criteria criteria, Supplier<T> factory) {
-        T record = findUnique(clazz, criteria);
-        if(record == null) {
-            record = factory.get();
-            Verify.thatArgument(record != null,
-                    "The factory cannot return null");
-            save(record);
-            Verify.thatArgument(record.equals(findUnique(clazz, criteria)),
-                    "The created Record does not match the criteria");
-        }
-        return record;
-    }
+    <T extends Record> T findUniqueOrCreate(Class<T> clazz, Criteria criteria,
+            Supplier<T> factory);
 
     /**
      * Save all changes in the provided {@code records} within the transaction.
