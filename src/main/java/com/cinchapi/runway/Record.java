@@ -22,7 +22,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.AbstractMap;
 import java.util.AbstractMap.SimpleEntry;
 import java.util.AbstractMap.SimpleImmutableEntry;
@@ -115,8 +114,6 @@ import com.google.common.collect.Multimap;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
-import com.google.common.hash.Hasher;
-import com.google.common.hash.Hashing;
 import com.google.common.io.BaseEncoding;
 import com.google.common.primitives.Longs;
 import com.google.common.primitives.Primitives;
@@ -524,78 +521,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Add the canonical data representation of {@code value} to the
-     * {@code hasher}.
-     *
-     * @param hasher
-     * @param value
-     */
-    @SuppressWarnings("rawtypes")
-    private static void hashValue(Hasher hasher, @Nullable Object value) {
-        if(value != null) {
-            hasher.putString(value.getClass().getName(),
-                    StandardCharsets.UTF_8);
-            if(Sequences.isSequence(value)) {
-                Sequences.forEach(value, item -> hashValue(hasher, item));
-            }
-            else if(value instanceof Record) {
-                Record record = (Record) value;
-                hasher.putLong(record.id());
-            }
-            else if(value instanceof DeferredReference) {
-                DeferredReference deferred = (DeferredReference) value;
-                hasher.putLong(deferred.$id());
-            }
-            else if(value instanceof Tag || value instanceof String) {
-                hasher.putString(value.toString(), StandardCharsets.UTF_8);
-            }
-            else if(value instanceof Enum) {
-                hasher.putInt(((Enum) value).ordinal());
-            }
-            else if(value instanceof Boolean
-                    || value.getClass() == boolean.class) {
-                hasher.putBoolean((boolean) value);
-            }
-            else if(value instanceof Byte || value.getClass() == byte.class) {
-                hasher.putByte((byte) value);
-            }
-            else if(value instanceof Double
-                    || value.getClass() == double.class) {
-                hasher.putDouble((double) value);
-            }
-            else if(value instanceof Float || value.getClass() == float.class) {
-                hasher.putFloat((float) value);
-            }
-            else if(value instanceof Integer || value.getClass() == int.class) {
-                hasher.putInt((int) value);
-            }
-            else if(value instanceof Long || value.getClass() == long.class) {
-                hasher.putLong((long) value);
-            }
-            else if(value instanceof Short || value.getClass() == short.class) {
-                hasher.putShort((short) value);
-            }
-            else if(value instanceof Timestamp) {
-                Timestamp timestamp = (Timestamp) value;
-                hasher.putLong(timestamp.getMicros());
-            }
-            else if(value instanceof Serializable) {
-                byte[] bytes = ByteBuffers.toByteArray(
-                        Serializables.getBytes((Serializable) value));
-                hasher.putBytes(bytes);
-            }
-            else {
-                String json = new Gson().toJson(value);
-                hasher.putString(json, StandardCharsets.UTF_8);
-            }
-        }
-        else {
-            hasher.putInt(0);
-            hasher.putInt(0);
-        }
-    }
-
-    /**
      * Return {@code true} if the record identified by {@code id} is in a
      * "zombie" state meaning it exists in the database without any actual data.
      *
@@ -956,6 +881,13 @@ public abstract class Record implements Comparable<Record> {
     private static long NULL_ID = -1;
 
     /**
+     * A placeholder that stands in for a {@code null} sequence element within a
+     * {@link #__baseline baseline}, since {@code null} cannot be serialized for
+     * storage but its presence in memory must still be observable as a change.
+     */
+    private static final Object NULL_PLACEHOLDER = new Object();
+
+    /**
      * A sentinel id used to indicate that a record is its own author.
      * <p>
      * Since Concourse does not allow records to link to themselves, this
@@ -1018,12 +950,6 @@ public abstract class Record implements Comparable<Record> {
      * this record is stored.
      */
     private transient String __ = getClass().getName();
-
-    /**
-     * An internal flag that tracks whether {@link #_realms} have been
-     * {@link #addRealm(String) added} or {@link #removeRealm(String) removed}.
-     */
-    private transient boolean _hasModifiedRealms = false;
 
     /**
      * The list of realms to which this Record belongs.
@@ -1102,16 +1028,24 @@ public abstract class Record implements Comparable<Record> {
     private transient Map<String, Object> _computeOnceCache;
 
     /**
-     * This {@link Record Record's} checksum as of the most recent time it was
-     * loaded or persisted.
+     * The per-key serialized state of this {@link Record} as of the most recent
+     * time it was loaded from or persisted to the database, or {@code null} if
+     * this {@link Record} has never been synchronized with the database.
      * <p>
-     * This value is <strong>NOT</strong> returned from {@link #checksum()}, but
-     * is instead compared against the value returned from that method to
-     * determine if this {@link Record} has any {@link #hasUnsavedChanges()
-     * unsaved} changes.
+     * A {@link #save() save} stages only the difference between the current
+     * state and this baseline, so concurrent changes to keys this instance
+     * never modified are preserved. Each entry maps a key to its serialized
+     * scalar value or, for a sequence, to the {@link Set} of its serialized
+     * elements.
+     * </p>
+     * <p>
+     * The map is replaced wholesale on every update and its contents are never
+     * mutated in place, so a {@link Snapshot} can capture and
+     * {@link #restore(Snapshot) restore} it by reference.
      * </p>
      */
-    private String __checksum = null;
+    @Nullable
+    private transient Map<String, Object> __baseline = null;
 
     /**
      * The timestamp (in microseconds) when this {@link Record} was last loaded
@@ -1169,7 +1103,7 @@ public abstract class Record implements Comparable<Record> {
         if(_realms.isEmpty()) {
             _realms = Sets.newLinkedHashSet();
         }
-        return _realms.add(realm) && (_hasModifiedRealms = true);
+        return _realms.add(realm);
     }
 
     /**
@@ -1492,7 +1426,6 @@ public abstract class Record implements Comparable<Record> {
         Object expected = getAtomicableFieldValue(field, this);
         Concourse concourse = connections.request();
         try {
-            boolean clean = !hasUnsavedChanges();
             boolean swapped;
             if(expected == null) {
                 swapped = Runway.setIfAbsent(concourse, key,
@@ -1504,7 +1437,7 @@ public abstract class Record implements Comparable<Record> {
                         serializeScalarValue(replacement));
             }
             if(swapped) {
-                applyValueChange(key, replacement, clean);
+                applyValueChange(key, replacement);
                 return true;
             }
             else {
@@ -2005,7 +1938,7 @@ public abstract class Record implements Comparable<Record> {
      */
     public boolean removeRealm(String realm) {
         try {
-            return _realms.remove(realm) && (_hasModifiedRealms = true);
+            return _realms.remove(realm);
         }
         finally {
             if(_realms.isEmpty()) {
@@ -2242,9 +2175,9 @@ public abstract class Record implements Comparable<Record> {
      * </ul>
      * </p>
      * <p>
-     * Any changes made to the record's fields within this method will be
-     * included in the save operation. This method is called within the same
-     * transaction as the save operation, ensuring atomicity.
+     * Any changes made to the record's fields or realm membership within this
+     * method will be included in the save operation. This method is called
+     * within the same transaction as the save operation, ensuring atomicity.
      * </p>
      * <p>
      * <strong>Note:</strong> This method should not throw exceptions unless the
@@ -2513,7 +2446,7 @@ public abstract class Record implements Comparable<Record> {
         if(removeCaptureDeleteReferences(ids)) {
             clearComputeOnceCache();
             _audit = null;
-            __checksum = checksum();
+            __baseline = captureBaseline();
         }
     }
 
@@ -2523,17 +2456,12 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param key the name of the field that was written
      * @param replacement the value that now holds in the database
-     * @param clean {@code true} if this {@link Record} had no unsaved changes
-     *            when the write began, in which case it reports none after this
-     *            method returns
      */
-    void applyValueChange(String key, Object replacement, boolean clean) {
+    void applyValueChange(String key, Object replacement) {
         Reflection.set(key, replacement, this);
         clearComputeOnceCache();
         _audit = null;
-        if(clean) {
-            __checksum = checksum();
-        }
+        updateBaseline(key, replacement);
     }
 
     /**
@@ -2655,15 +2583,31 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Return {@code true} if this {@link Record} has any unsaved changes.
+     * <p>
+     * A change is a difference between a field's current value and the value it
+     * held when this {@link Record} was last loaded or persisted. A mutation
+     * with no serialized effect (e.g., reordering a {@link List}, whose order
+     * the database does not store) is not a change. Realm membership changes do
+     * not affect this result.
+     * </p>
      *
      * @return {@code true} if there are changes that need to be saved.
      */
     boolean hasUnsavedChanges() {
-        if(__checksum == null) {
+        if(__baseline == null) {
             return true;
         }
         else {
-            return !__checksum.equals(checksum());
+            for (Field field : fields()) {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    Object current = serializeFieldValue(field);
+                    Object stored = __baseline.get(field.getName());
+                    if(!Objects.equals(current, stored)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
     }
 
@@ -2859,7 +2803,7 @@ public abstract class Record implements Comparable<Record> {
                 throw CheckedExceptions.throwAsRuntimeException(e);
             }
         }
-        __checksum = checksum();
+        __baseline = captureBaseline();
         checkpoint();
     }
 
@@ -2989,8 +2933,7 @@ public abstract class Record implements Comparable<Record> {
      * @param snapshot the {@link Snapshot} to restore
      */
     void restore(Snapshot snapshot) {
-        _hasModifiedRealms = snapshot.hasModifiedRealms;
-        __checksum = snapshot.checksum;
+        __baseline = snapshot.baseline;
         _author = snapshot.author;
         deleted = snapshot.deleted;
         // The discarded attempt may have cached audit history that includes
@@ -3036,10 +2979,6 @@ public abstract class Record implements Comparable<Record> {
             // aligned with the notification it receives.
             deleted = true;
         }
-        if(_hasModifiedRealms) {
-            saver.reconcile(REALMS_KEY, id, _realms);
-            _hasModifiedRealms = false;
-        }
         if(_author != null) {
             // Check for self-authorship: if this record is its own author,
             // use the sentinel ID to avoid self-referential links in Concourse
@@ -3063,6 +3002,7 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         else if(!hasUnsavedChanges()) {
+            stageRealmsDelta(saver);
             // This Record hasn't been modified, so simply go through each
             // persistent field and try to save any outgoing Record references
             // that contain modifications. A transient field is outside the
@@ -3079,6 +3019,7 @@ public abstract class Record implements Comparable<Record> {
         else {
             context.markChanged(this);
             beforeSave();
+            stageRealmsDelta(saver);
             saver.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
             for (Field field : fields()) {
@@ -3087,6 +3028,10 @@ public abstract class Record implements Comparable<Record> {
                     Object value = getFieldValue(field, this);
                     boolean isSequence = Sequences.isSequence(value);
                     checkIsSavable(field, key, value);
+                    MergeStrategy directive = field
+                            .getAnnotation(MergeStrategy.class);
+                    boolean overwrite = directive != null && directive
+                            .value() == MergeStrategy.Strategy.OVERWRITE;
                     if(value != null) {
                         // Enforce that Unique fields have non-duplicated
                         // values across the class
@@ -3103,19 +3048,29 @@ public abstract class Record implements Comparable<Record> {
                         }
                         value = transform(value, saver, context);
                         if(value.getClass().isArray()) {
-                            saver.reconcile(key, id, (Object[]) value);
+                            if(overwrite) {
+                                saver.reconcile(key, id, (Object[]) value);
+                            }
+                            else {
+                                stageSequenceDelta(saver, key,
+                                        (Object[]) value);
+                            }
                         }
-                        else {
+                        else if(overwrite
+                                || !Objects.equals(value, baseline(key))) {
                             saver.verifyOrSet(key, value, id);
                         }
                     }
-                    else {
+                    else if(overwrite) {
                         saver.clear(key, id);
+                    }
+                    else {
+                        stageValueRemoval(saver, key);
                     }
                 }
             }
             _audit = null;
-            __checksum = checksum();
+            __baseline = captureBaseline();
         }
     }
 
@@ -3250,6 +3205,44 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the {@link #__baseline baseline} state for {@code key}, or
+     * {@code null} if no value for {@code key} was present the last time this
+     * {@link Record} was synchronized with the database.
+     *
+     * @param key the key whose baseline state is requested
+     * @return the serialized scalar value, the {@link Set} of serialized
+     *         sequence elements, or {@code null}
+     */
+    @Nullable
+    private Object baseline(String key) {
+        return __baseline != null ? __baseline.get(key) : null;
+    }
+
+    /**
+     * Capture the {@link #__baseline baseline} that describes this
+     * {@link Record Record's} current state: the serialized value of every
+     * non-transient field and the current realm membership. Keys with no value
+     * have no entry.
+     *
+     * @return the captured baseline
+     */
+    private Map<String, Object> captureBaseline() {
+        Map<String, Object> baseline = Maps.newHashMap();
+        for (Field field : fields()) {
+            if(!Modifier.isTransient(field.getModifiers())) {
+                Object value = serializeFieldValue(field);
+                if(value != null) {
+                    baseline.put(field.getName(), value);
+                }
+            }
+        }
+        if(!_realms.isEmpty()) {
+            baseline.put(REALMS_KEY, ImmutableSet.copyOf(_realms));
+        }
+        return baseline;
+    }
+
+    /**
      * Check to ensure that this Record does not violate any constraints. If so,
      * throw an {@link IllegalStateException}.
      *
@@ -3332,25 +3325,6 @@ public abstract class Record implements Comparable<Record> {
             enqueueUniquenessCheck(saver, values, errorName);
             alreadyVerifiedUniqueConstraints.add(name);
         }
-    }
-
-    /**
-     * Return a checksum for this {@link Record} based on its current state.
-     *
-     * @return the checksum
-     */
-    private final String checksum() {
-        Hasher hasher = Hashing.murmur3_128().newHasher();
-        Set<Field> fields = fields().stream()
-                .sorted((f1, f2) -> f1.getName().compareTo(f2.getName()))
-                .filter(field -> !Modifier.isTransient(field.getModifiers()))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-        for (Field field : fields) {
-            Object value = getFieldValue(field, this);
-            hasher.putString(field.getName(), StandardCharsets.UTF_8);
-            hashValue(hasher, value);
-        }
-        return hasher.hash().toString();
     }
 
     /**
@@ -4071,7 +4045,7 @@ public abstract class Record implements Comparable<Record> {
             Reflection.set(key, fresh, this);
             clearComputeOnceCache();
             _audit = null;
-            __checksum = checksum();
+            updateBaseline(key, fresh);
         }
         finally {
             connections.release(concourse);
@@ -4190,6 +4164,126 @@ public abstract class Record implements Comparable<Record> {
             value = get(key);
         }
         return new SimpleEntry<>(key, value);
+    }
+
+    /**
+     * Serialize the current value of {@code field} into the form the database
+     * stores: a serialized scalar, a {@link Set} of serialized sequence
+     * elements, or {@code null} when the field holds no storable value. This
+     * method has no side effects and never touches the database.
+     *
+     * @param field the {@link Field} whose value is serialized
+     * @return the serialized value, or {@code null}
+     */
+    @Nullable
+    private Object serializeFieldValue(Field field) {
+        Object value = getFieldValue(field, this);
+        if(value == null) {
+            return null;
+        }
+        else if(Sequences.isSequence(value)) {
+            Set<Object> serialized = Sets.newLinkedHashSet();
+            Sequences.forEach(value,
+                    item -> serialized
+                            .add(item != null ? serializeScalarValue(item)
+                                    : NULL_PLACEHOLDER));
+            return serialized.isEmpty() ? null : serialized;
+        }
+        else {
+            return serializeScalarValue(value);
+        }
+    }
+
+    /**
+     * Stage the difference between this {@link Record Record's} current realm
+     * membership and its {@link #__baseline baseline} realm membership on
+     * {@code saver}: an add for every realm this instance joined and a remove
+     * for every realm it left. Realms that other writers changed concurrently
+     * are untouched.
+     *
+     * @param saver the {@link Saver} for the attempt's transaction
+     */
+    private void stageRealmsDelta(Saver saver) {
+        Object stored = baseline(REALMS_KEY);
+        Set<?> known = stored instanceof Set ? (Set<?>) stored
+                : ImmutableSet.of();
+        boolean changed = false;
+        for (String realm : _realms) {
+            if(!known.contains(realm)) {
+                saver.add(REALMS_KEY, realm, id);
+                changed = true;
+            }
+        }
+        for (Object realm : known) {
+            if(!_realms.contains(realm)) {
+                saver.remove(REALMS_KEY, realm, id);
+                changed = true;
+            }
+        }
+        if(changed && __baseline != null) {
+            Map<String, Object> baseline = Maps.newHashMap(__baseline);
+            if(_realms.isEmpty()) {
+                baseline.remove(REALMS_KEY);
+            }
+            else {
+                baseline.put(REALMS_KEY, ImmutableSet.copyOf(_realms));
+            }
+            __baseline = baseline;
+        }
+    }
+
+    /**
+     * Stage the difference between the {@code values} a sequence field
+     * currently holds for {@code key} and the elements in the field's
+     * {@link #__baseline baseline} on {@code saver}: an add for every element
+     * this instance introduced and a remove for every element it dropped.
+     * Elements that other writers changed concurrently are untouched.
+     *
+     * @param saver the {@link Saver} for the attempt's transaction
+     * @param key the field name
+     * @param values the field's current elements in serialized form
+     */
+    private void stageSequenceDelta(Saver saver, String key, Object[] values) {
+        Object stored = baseline(key);
+        Set<?> known = stored instanceof Set ? (Set<?>) stored
+                : ImmutableSet.of();
+        Set<Object> current = Sets.newLinkedHashSet(Arrays.asList(values));
+        for (Object value : current) {
+            if(!known.contains(value)) {
+                saver.add(key, value, id);
+            }
+        }
+        for (Object value : known) {
+            if(value != NULL_PLACEHOLDER && !current.contains(value)) {
+                saver.remove(key, value, id);
+            }
+        }
+    }
+
+    /**
+     * Stage the removal of every value this {@link Record} knew to be stored
+     * for {@code key} on {@code saver}, because the corresponding field no
+     * longer holds a value. If nothing was known to be stored, nothing is
+     * staged, so a value that another writer stored concurrently survives.
+     *
+     * @param saver the {@link Saver} for the attempt's transaction
+     * @param key the field name
+     */
+    private void stageValueRemoval(Saver saver, String key) {
+        Object stored = baseline(key);
+        if(stored == null) {
+            return;
+        }
+        else if(stored instanceof Set) {
+            for (Object value : (Set<?>) stored) {
+                if(value != NULL_PLACEHOLDER) {
+                    saver.remove(key, value, id);
+                }
+            }
+        }
+        else {
+            saver.clear(key, id);
+        }
     }
 
     /**
@@ -4348,6 +4442,29 @@ public abstract class Record implements Comparable<Record> {
                 policy.backoff(attempts);
                 refreshAtomicableField(field, key);
             }
+        }
+    }
+
+    /**
+     * Record in the {@link #__baseline baseline} that the database now stores
+     * {@code value} (or, when {@code value} is {@code null}, nothing) for
+     * {@code key}, without affecting any other key. A no-op when this
+     * {@link Record} has never been synchronized with the database.
+     *
+     * @param key the key whose stored state changed
+     * @param value the scalar value the database now stores, in its
+     *            unserialized form; may be {@code null}
+     */
+    private void updateBaseline(String key, @Nullable Object value) {
+        if(__baseline != null) {
+            Map<String, Object> baseline = Maps.newHashMap(__baseline);
+            if(value != null) {
+                baseline.put(key, serializeScalarValue(value));
+            }
+            else {
+                baseline.remove(key);
+            }
+            __baseline = baseline;
         }
     }
 
@@ -5866,14 +5983,10 @@ public abstract class Record implements Comparable<Record> {
         final long sequence = SNAPSHOT_SEQUENCE.incrementAndGet();
 
         /**
-         * The snapshotted value of {@link Record#_hasModifiedRealms}.
+         * The snapshotted value of {@link Record#__baseline}.
          */
-        final boolean hasModifiedRealms;
-
-        /**
-         * The snapshotted value of {@link Record#__checksum}.
-         */
-        final String checksum;
+        @Nullable
+        final Map<String, Object> baseline;
 
         /**
          * The snapshotted value of {@link Record#_author}.
@@ -5889,8 +6002,7 @@ public abstract class Record implements Comparable<Record> {
          * Construct a new instance.
          */
         Snapshot() {
-            this.hasModifiedRealms = Record.this._hasModifiedRealms;
-            this.checksum = Record.this.__checksum;
+            this.baseline = Record.this.__baseline;
             this.author = Record.this._author;
             this.deleted = Record.this.deleted;
         }

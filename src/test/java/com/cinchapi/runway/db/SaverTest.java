@@ -119,6 +119,39 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@link Saver#add(String, Object, long)
+     * add} appends a value alongside the values a key already holds and that an
+     * add of an already-present value is a no-op.
+     * <p>
+     * <strong>Start state:</strong> A record with one value under
+     * {@code "tags"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record an {@code add} of a new value.</li>
+     * <li>Record an {@code add} of the value the key already holds.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The key holds the prior value and the new
+     * value, each exactly once.
+     */
+    @Test
+    public void testAddAppendsValueAfterCommit() {
+        long id = client.add("tags", "a");
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.add("tags", "b", id);
+        saver.add("tags", "a", id);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertEquals(ImmutableSet.of("a", "b"),
+                client.select("tags", id));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that an empty {@link Saver#reconcile
      * reconcile} is equivalent to {@link Saver#clear(String, long) clear(key,
      * record)} &mdash; both impls must route empty values through clear so
@@ -181,6 +214,37 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(saver.commit());
 
         Assert.assertTrue(client.select("tags", id).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Saver#reconcile} replaces the
+     * existing values for a key with exactly the supplied set.
+     * <p>
+     * <strong>Start state:</strong> A record with two existing values under
+     * {@code "tags"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@code reconcile} with a different set of values.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The record holds exactly the reconciled
+     * values, with the prior values removed.
+     */
+    @Test
+    public void testReconcileIsAppliedAfterCommit() {
+        long id = client.add("tags", "a");
+        client.add("tags", "b", id);
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.reconcile("tags", id, new Object[] { "b", "c" });
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertEquals(ImmutableSet.of("b", "c"),
+                client.select("tags", id));
     }
 
     /**
@@ -384,37 +448,6 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(saver.commit());
 
         Assert.assertEquals(ImmutableSet.of(match1, match2), captured.get());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@link Saver#reconcile} replaces the
-     * existing values for a key with exactly the supplied set.
-     * <p>
-     * <strong>Start state:</strong> A record with two existing values under
-     * {@code "tags"}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage the {@link Saver}.</li>
-     * <li>Record a {@code reconcile} with a different set of values.</li>
-     * <li>Commit.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The record holds exactly the reconciled
-     * values, with the prior values removed.
-     */
-    @Test
-    public void testReconcileIsAppliedAfterCommit() {
-        long id = client.add("tags", "a");
-        client.add("tags", "b", id);
-
-        Saver saver = newSaver();
-        saver.stage();
-        saver.reconcile("tags", id, new Object[] { "b", "c" });
-        Assert.assertTrue(saver.commit());
-
-        Assert.assertEquals(ImmutableSet.of("b", "c"),
-                client.select("tags", id));
     }
 
     /**

@@ -174,8 +174,25 @@ public class RecordUnsavedChangesTest extends AbstractRecordTest {
         Assert.assertFalse(lock.hasUnsavedChanges());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that reordering a {@link List} field is not
+     * an unsaved change, because the database stores an unordered set and a
+     * save of the reordered sequence writes nothing (GH-163).
+     * <p>
+     * <strong>Start state:</strong> A saved {@code Lock} with two
+     * {@code docks}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Move the first dock to the end of the list.</li>
+     * <li>Call {@code hasUnsavedChanges()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code hasUnsavedChanges()} returns
+     * {@code false}.
+     */
     @Test
-    public void testUnsavedChangesIfSequenceOrderChanges() {
+    public void testNoUnsavedChangesIfSequenceOrderChanges() {
         Lock lock = new Lock(new ArrayList<>());
         Dock a = new Dock("a");
         Dock b = new Dock("b");
@@ -184,7 +201,7 @@ public class RecordUnsavedChangesTest extends AbstractRecordTest {
         lock.save();
         lock.docks.remove(0);
         lock.docks.add(a);
-        Assert.assertTrue(lock.hasUnsavedChanges());
+        Assert.assertFalse(lock.hasUnsavedChanges());
     }
 
     @Test

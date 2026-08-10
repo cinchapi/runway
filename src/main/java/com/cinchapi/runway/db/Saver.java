@@ -30,18 +30,15 @@ import com.cinchapi.concourse.lang.Criteria;
  * staged transaction, the save-time validation reads, the persisted writes, and
  * the terminal commit or abort.
  * <p>
- * <h2>Reads</h2> Validation reads ({@link #audit(long, Consumer) audit},
- * {@link #find(Criteria, Consumer) find}) accept a {@link Consumer} that may
- * throw to signal a validation failure. Depending on the implementation, the
+ * <h2>Reads</h2> A validation read accepts a {@link Consumer} that may throw to
+ * signal a validation failure. Depending on the implementation, the
  * {@link Consumer} runs either inline at the recording call or deferred until
  * {@link #commit()} or {@link #flush()}; the throw propagates from whichever
  * site invokes the {@link Consumer}.
  * </p>
- * <h2>Writes</h2> Writes ({@link #set set}, {@link #remove remove},
- * {@link #clear(String, long) clear}, {@link #verifyOrSet verifyOrSet},
- * {@link #reconcile reconcile}) are recorded against the active staged
- * transaction, which is the unit of atomicity: a failure anywhere before
- * {@link #commit()} succeeds aborts the entire save.
+ * <h2>Writes</h2> A write is recorded against the active staged transaction,
+ * which is the unit of atomicity: a failure anywhere before {@link #commit()}
+ * succeeds aborts the entire save.
  *
  * <h2>Lifecycle</h2> The caller drives the lifecycle. For a self-contained
  * save: {@link #stage()} once, any number of recording calls, then exactly one
@@ -64,6 +61,17 @@ public interface Saver {
      * </p>
      */
     void abort();
+
+    /**
+     * Record an {@link Concourse#add(String, Object, long) add} of
+     * {@code value} to {@code key} in {@code record}. The addition is a no-op
+     * when {@code key} already holds {@code value}.
+     *
+     * @param key the field name to add to
+     * @param value the value to add
+     * @param record the record id to add into
+     */
+    void add(String key, Object value, long record);
 
     /**
      * Record an {@link Concourse#audit(long) audit} for {@code record} and
