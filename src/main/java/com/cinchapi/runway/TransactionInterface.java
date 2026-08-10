@@ -93,9 +93,9 @@ public interface TransactionInterface extends DatabaseInterface {
     <T extends Record> T create(Class<T> clazz, Object... args);
 
     /**
-     * Return the unique {@link Record} of type {@code clazz} that matches
-     * {@code criteria}, creating and saving one from {@code factory} when none
-     * exists.
+     * Return the unique {@link Record} in the hierarchy of {@code clazz} that
+     * matches {@code criteria}, creating and saving one from {@code factory}
+     * when none exists.
      * <p>
      * This method applies the contract of
      * {@link #findUniqueOrCreate(Class, Criteria, Supplier) findUniqueOrCreate}
@@ -104,7 +104,7 @@ public interface TransactionInterface extends DatabaseInterface {
      * does for {@code findUnique}.
      * </p>
      *
-     * @param clazz the {@link Record} class to query
+     * @param clazz the {@link Record} type whose hierarchy is searched
      * @param criteria the {@link Criteria} that identifies the record
      * @param factory supplies the {@link Record} to create when none match
      * @param <T> the type of {@link Record}
@@ -167,20 +167,6 @@ public interface TransactionInterface extends DatabaseInterface {
 
     /**
      * Save all changes in the provided {@code records} within the transaction.
-     *
-     * @param records one or more {@link Record Records} to save
-     * @return {@code true} when the changes are staged
-     * @throws IllegalStateException if any of the {@code records} overrides the
-     *             save pipeline, if any {@link Record} that the save processes
-     *             is bound to a different open transaction, or if a prior save
-     *             failed within the transaction
-     */
-    default boolean save(Record... records) {
-        return save(false, records);
-    }
-
-    /**
-     * Save all changes in the provided {@code records} within the transaction.
      * <p>
      * The records, and every {@link Record} linked from them, are bound to the
      * transaction, and the staged changes become durable when the transaction
@@ -199,5 +185,19 @@ public interface TransactionInterface extends DatabaseInterface {
      *             failed within the transaction
      */
     boolean save(boolean preventStaleWrites, Record... records);
+
+    /**
+     * Save all changes in the provided {@code records} within the transaction.
+     *
+     * @param records one or more {@link Record Records} to save
+     * @return {@code true} when the changes are staged
+     * @throws IllegalStateException if any of the {@code records} overrides the
+     *             save pipeline, if any {@link Record} that the save processes
+     *             is bound to a different open transaction, or if a prior save
+     *             failed within the transaction
+     */
+    default boolean save(Record... records) {
+        return save(false, records);
+    }
 
 }

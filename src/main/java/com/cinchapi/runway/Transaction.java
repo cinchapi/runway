@@ -21,13 +21,16 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.ForwardingConcourse;
+import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.TransactionToken;
 import com.cinchapi.runway.db.BatchReader;
 import com.cinchapi.runway.db.BatchSaver;
@@ -412,6 +415,69 @@ public class Transaction extends Binding implements
         T record = Reflection.newInstance(clazz, args);
         record.bind(this, provider);
         return record;
+    }
+
+    /**
+     * Return the unique {@link Record} in the hierarchy of {@code clazz} that
+     * matches {@code criteria}, creating and saving one from {@code factory}
+     * when none exists.
+     * <p>
+     * While the transaction is open, the lookup and the save stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} that identifies the record
+     * @param factory supplies the {@link Record} to create when none match
+     * @param <T> the type of {@link Record}
+     * @return the matched or created {@link Record}
+     * @throws DuplicateEntryException if more than one record in the hierarchy
+     *             matches
+     * @throws IllegalArgumentException if {@code factory} returns {@code null}
+     *             or a {@link Record} that does not match {@code criteria}
+     */
+    @Override
+    public <T extends Record> T findAnyUniqueOrCreate(Class<T> clazz,
+            Criteria criteria, Supplier<T> factory) {
+        if(open) {
+            return TransactionInterface.super.findAnyUniqueOrCreate(clazz,
+                    criteria, factory);
+        }
+        else {
+            return database.findAnyUniqueOrCreate(clazz, criteria, factory);
+        }
+    }
+
+    /**
+     * Return the unique {@link Record} of type {@code clazz} that matches
+     * {@code criteria}, creating and saving one from {@code factory} when none
+     * exists.
+     * <p>
+     * While the transaction is open, the lookup and the save stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param clazz the {@link Record} class to query
+     * @param criteria the {@link Criteria} that identifies the record
+     * @param factory supplies the {@link Record} to create when none match
+     * @param <T> the type of {@link Record}
+     * @return the matched or created {@link Record}
+     * @throws DuplicateEntryException if more than one record matches
+     * @throws IllegalArgumentException if {@code factory} returns {@code null}
+     *             or a {@link Record} that does not match {@code criteria}
+     */
+    @Override
+    public <T extends Record> T findUniqueOrCreate(Class<T> clazz,
+            Criteria criteria, Supplier<T> factory) {
+        if(open) {
+            return TransactionInterface.super.findUniqueOrCreate(clazz,
+                    criteria, factory);
+        }
+        else {
+            return database.findUniqueOrCreate(clazz, criteria, factory);
+        }
     }
 
     /**

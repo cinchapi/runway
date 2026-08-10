@@ -454,6 +454,46 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that, within a caller-owned
+     * {@link Transaction}, a factory result that does not match the criteria is
+     * rejected while the staged save remains until the abort discards it.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * try-with-resources block.</li>
+     * <li>Call {@code findUniqueOrCreate} with {@code code == 2} and a factory
+     * that returns a new {@link Item} with code 99.</li>
+     * <li>Catch the expected exception, query for {@code code == 99} within the
+     * transaction, then leave the block without a commit and load every
+     * {@link Item}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown,
+     * the staged {@link Item} with code 99 is visible within the transaction,
+     * and no {@link Item} exists after the abort.
+     */
+    @Test
+    public void testFindUniqueOrCreateMismatchLeavesStagedSaveUntilAbort() {
+        try (Transaction transaction = runway.stage()) {
+            boolean threw = false;
+            try {
+                transaction.findUniqueOrCreate(Item.class, code(2),
+                        () -> new Item(99));
+            }
+            catch (IllegalArgumentException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            Assert.assertEquals(1,
+                    transaction.find(Item.class, code(99)).size());
+        }
+        Assert.assertTrue(runway.load(Item.class).isEmpty());
+    }
+
+    /**
      * Return a {@link Criteria} matching every {@link Item} whose {@code code}
      * equals the given {@code value}.
      *
