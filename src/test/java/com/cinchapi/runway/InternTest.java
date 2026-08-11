@@ -15,11 +15,20 @@
  */
 package com.cinchapi.runway;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
+import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record.ConstraintViolationException;
@@ -30,11 +39,45 @@ import com.google.common.collect.Lists;
  * {@link TransactionInterface#intern(Record) TransactionInterface} counterpart
  * and {@link Record#intern()}. The tests cover how a {@link Record Record's}
  * {@link Unique} constraints define the identity that the lookup and the create
- * converge on.
+ * converge on. Each test runs under both Command-API modes (bulk enabled and
+ * disabled), so the tests exercise both read paths of the transactional find.
  *
  * @author Jeff Nelson
  */
+@RunWith(Parameterized.class)
 public class InternTest extends RunwayBaseClientServerTest {
+
+    /**
+     * Return the parameter matrix that runs each test once per Command-API
+     * mode.
+     *
+     * @return one row with bulk commands enabled and one with it disabled
+     */
+    @Parameters(name = "bulkCommands={0}")
+    public static Collection<Object[]> parameters() {
+        return Arrays.asList(new Object[][] { { true }, { false } });
+    }
+
+    /**
+     * Whether the test run exercises the bulk Command-API read path.
+     */
+    private final boolean useBulkCommands;
+
+    /**
+     * Construct a new instance.
+     *
+     * @param useBulkCommands {@code true} to exercise the bulk Command-API read
+     *            path; {@code false} for the incremental path
+     */
+    public InternTest(boolean useBulkCommands) {
+        this.useBulkCommands = useBulkCommands;
+    }
+
+    @Override
+    protected void beforeTestRun() {
+        super.beforeTestRun();
+        Reflection.set("supportsBulkCommands", useBulkCommands, runway); // (authorized)
+    }
 
     /**
      * <strong>Goal:</strong> Verify that {@code intern} saves and returns the
@@ -489,6 +532,196 @@ public class InternTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify the convergence guarantee: two threads that
+     * race to intern the same identity both receive the same record, and only
+     * one record exists afterwards.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link RacingUser RacingUsers} and
+     * a rendezvous latch that both workers must reach before either can
+     * complete its create.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start two threads that, gated by a common latch, each call
+     * {@code intern} with a new {@link RacingUser} that has the same email, and
+     * capture any {@link Throwable} a worker throws.</li>
+     * <li>Use a {@code beforeSave} rendezvous so both workers observe no match
+     * and stage a create before either commits, so the create race is
+     * guaranteed rather than schedule-dependent.</li>
+     * <li>{@code join()} both threads, then count every {@link RacingUser} with
+     * the email.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Neither worker hangs or fails, both threads
+     * receive a non-null {@link RacingUser} with the same id, and exactly one
+     * record exists.
+     */
+    @Test
+    public void testInternConvergesConcurrentCallersOnOneRecord()
+            throws InterruptedException {
+        RacingUser.bothStagedCreate = new CountDownLatch(2);
+        try {
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch go = new CountDownLatch(1);
+            AtomicReference<RacingUser> result1 = new AtomicReference<>();
+            AtomicReference<RacingUser> result2 = new AtomicReference<>();
+            AtomicReference<Throwable> failure1 = new AtomicReference<>();
+            AtomicReference<Throwable> failure2 = new AtomicReference<>();
+            Thread t1 = new Thread(() -> {
+                ready.countDown();
+                try {
+                    go.await();
+                    result1.set(runway
+                            .intern(new RacingUser("race@example.com", "One")));
+                }
+                catch (Throwable t) {
+                    failure1.set(t);
+                }
+            });
+            Thread t2 = new Thread(() -> {
+                ready.countDown();
+                try {
+                    go.await();
+                    result2.set(runway
+                            .intern(new RacingUser("race@example.com", "Two")));
+                }
+                catch (Throwable t) {
+                    failure2.set(t);
+                }
+            });
+            t1.start();
+            t2.start();
+            Assert.assertTrue(ready.await(5, TimeUnit.SECONDS));
+            go.countDown();
+            t1.join(10000);
+            t2.join(10000);
+            Assert.assertFalse("Worker 1 is still running", t1.isAlive());
+            Assert.assertFalse("Worker 2 is still running", t2.isAlive());
+            Assert.assertNull(failure1.get());
+            Assert.assertNull(failure2.get());
+            Assert.assertNotNull(result1.get());
+            Assert.assertNotNull(result2.get());
+            Assert.assertEquals(result1.get().id(), result2.get().id());
+            Assert.assertEquals(1, runway.count(RacingUser.class));
+        }
+        finally {
+            RacingUser.bothStagedCreate = null;
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a repeat {@code intern} of the same
+     * identity within the same {@link Transaction} observes the staged create
+     * instead of a second create, and that an abort discards the staged record.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link User Users}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * try-with-resources block.</li>
+     * <li>Call {@code intern} twice with two new {@link User Users} that share
+     * the same email but have different names.</li>
+     * <li>Leave the block without a commit, then load every {@link User}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both calls return the same record id, the
+     * second call returns the first {@link User User's} staged state, and no
+     * {@link User} exists after the abort.
+     */
+    @Test
+    public void testInternObservesStagedCreateWithinTransaction() {
+        try (Transaction transaction = runway.stage()) {
+            User first = transaction.intern(new User("ann@example.com", "Ann"));
+            User second = transaction
+                    .intern(new User("ann@example.com", "Other"));
+            Assert.assertEquals(first.id(), second.id());
+            Assert.assertEquals("Ann", second.name);
+        }
+        Assert.assertTrue(runway.load(User.class).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a partial identity collision within a
+     * caller-owned {@link Transaction} throws from the staged save and poisons
+     * the transaction, so the duplicate can never commit.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Account}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Account} with a distinct email and handle.</li>
+     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * try-with-resources block.</li>
+     * <li>Call {@code intern} with a new {@link Account} that has the same
+     * email but a different handle, and catch the expected exception.</li>
+     * <li>Attempt to {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a
+     * {@link ConstraintViolationException}, the commit attempt is refused with
+     * an {@link IllegalStateException}, and only the original {@link Account}
+     * exists after the abort.
+     */
+    @Test
+    public void testInternPartialCollisionPoisonsTransaction() {
+        runway.save(new Account("e@example.com", "handle1", "bio"));
+        try (Transaction transaction = runway.stage()) {
+            boolean threw = false;
+            try {
+                transaction
+                        .intern(new Account("e@example.com", "handle2", "x"));
+            }
+            catch (ConstraintViolationException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            boolean refused = false;
+            try {
+                transaction.commit();
+            }
+            catch (IllegalStateException e) {
+                refused = true;
+            }
+            Assert.assertTrue(refused);
+        }
+        Assert.assertEquals(1, runway.count(Account.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code intern} resumes against the
+     * enclosing {@link Runway} after the {@link Transaction} ends.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link User Users} and a committed
+     * {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * try-with-resources block and {@code commit()} it immediately.</li>
+     * <li>Call {@code intern} on the ended transaction with a new
+     * {@link User}.</li>
+     * <li>Query for the record through the enclosing {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The create persists directly through the
+     * {@link Runway}: the query returns the interned {@link User} with the same
+     * id.
+     */
+    @Test
+    public void testInternResumesAgainstRunwayAfterTransactionEnds() {
+        try (Transaction transaction = runway.stage()) {
+            Assert.assertTrue(transaction.commit());
+            User user = transaction.intern(new User("ann@example.com", "Ann"));
+            Assert.assertNotNull(user);
+            User visible = runway.findUnique(User.class,
+                    email("ann@example.com"));
+            Assert.assertNotNull(visible);
+            Assert.assertEquals(user.id(), visible.id());
+        }
+    }
+
+    /**
      * Return a {@link Criteria} that matches every {@link User} whose
      * {@code email} equals the given {@code value}.
      *
@@ -651,6 +884,65 @@ public class InternTest extends RunwayBaseClientServerTest {
          */
         public Profile(String... aliases) {
             this.aliases = Lists.newArrayList(aliases);
+        }
+    }
+
+    /**
+     * A {@link User}-like {@link Record} whose {@code beforeSave} hook blocks
+     * on {@link #bothStagedCreate} when the latch is set, so a test can force
+     * two workers to observe no match and stage a create before either commits.
+     *
+     * @author Jeff Nelson
+     */
+    public static class RacingUser extends Record {
+
+        /**
+         * When non-null, every save rendezvouses on this latch before it
+         * proceeds. The owning test must set the latch before it runs and clear
+         * it afterwards.
+         */
+        static volatile CountDownLatch bothStagedCreate = null;
+
+        /**
+         * The identity email.
+         */
+        @Unique
+        String email;
+
+        /**
+         * A non-identity display name.
+         */
+        String name;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param email the identity email
+         * @param name the display name
+         */
+        public RacingUser(String email, String name) {
+            this.email = email;
+            this.name = name;
+        }
+
+        @Override
+        protected void beforeSave() {
+            CountDownLatch latch = bothStagedCreate;
+            if(latch != null) {
+                latch.countDown();
+                try {
+                    if(!latch.await(5, TimeUnit.SECONDS)) {
+                        throw new AssertionError("Both workers should observe"
+                                + " no match before either creates");
+                    }
+                }
+                catch (InterruptedException e) {
+                    throw new AssertionError(e);
+                }
+            }
+            else {
+                // No rendezvous is active, so the save proceeds immediately.
+            }
         }
     }
 

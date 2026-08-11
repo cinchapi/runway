@@ -81,14 +81,13 @@ import com.google.common.collect.Sets;
  * {@link #afterAbort(Runnable)}.
  * </p>
  * <p>
- * If a save fails after its arguments are accepted, or if a created
- * {@link Record} fails {@link #findUniqueOrCreate(Class, Criteria, Supplier)
- * findUniqueOrCreate} verification, then the transaction is poisoned: the
- * staged writes can never commit. A poisoned transaction refuses every
- * operation except {@link #abort()} (or {@link #close()}) and
- * {@link #afterAbort(Runnable) afterAbort} registration. A save argument that
- * fails its checks is rejected before anything is staged, and the transaction
- * remains usable.
+ * If a save fails after its arguments are accepted, or if a {@link Record}
+ * created by {@link #intern(Record) intern} fails its verification, then the
+ * transaction is poisoned: the staged writes can never commit. A poisoned
+ * transaction refuses every operation except {@link #abort()} (or
+ * {@link #close()}) and {@link #afterAbort(Runnable) afterAbort} registration.
+ * A save argument that fails its checks is rejected before anything is staged,
+ * and the transaction remains usable.
  * </p>
  * <p>
  * A deletion staged within the transaction is final. A later save of an
@@ -420,67 +419,36 @@ public class Transaction extends Binding implements
     }
 
     /**
-     * Return the unique {@link Record} in the hierarchy of {@code clazz} that
-     * matches {@code criteria}, or create and save one from {@code factory}
-     * when none exists.
+     * Return the unique {@link Record} that agrees with every {@link Unique}
+     * constraint of {@code record}, or save {@code record} when none exists.
      * <p>
      * While the transaction is open, the lookup and the save stage within it.
      * After the transaction ends, the operation runs atomically against the
      * enclosing {@link Runway}.
      * </p>
      *
-     * @param clazz the {@link Record} type whose hierarchy is searched
-     * @param criteria the {@link Criteria} that identifies the record
-     * @param factory supplies the {@link Record} to create when none match
+     * @param record the {@link Record} whose identity is interned
      * @param <T> the type of {@link Record}
-     * @return the matched or created {@link Record}
-     * @throws DuplicateEntryException if more than one record in the hierarchy
-     *             matches
-     * @throws IllegalArgumentException if {@code factory} returns {@code null}
-     *             or a {@link Record} that does not match {@code criteria}
+     * @return the {@link Record} that claims the identity: the sole existing
+     *         match, or {@code record} once saved
+     * @throws DuplicateEntryException if more than one record shares the
+     *             identity
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint of {@code record} has a non-null value
      * @throws IllegalStateException if a save failed within the open
      *             transaction
      */
     @Override
-    public <T extends Record> T findAnyUniqueOrCreate(Class<T> clazz,
-            Criteria criteria, Supplier<T> factory) {
+    public <T extends Record> T intern(T record) {
         if(open) {
-            return findOrCreate(() -> findAnyUnique(clazz, criteria), factory);
+            @SuppressWarnings("unchecked") Class<T> clazz = (Class<T>) record
+                    .getClass();
+            Criteria criteria = record.uniqueCriteria();
+            return findOrCreate(() -> findUnique(clazz, criteria),
+                    () -> record);
         }
         else {
-            return database.findAnyUniqueOrCreate(clazz, criteria, factory);
-        }
-    }
-
-    /**
-     * Return the unique {@link Record} of type {@code clazz} that matches
-     * {@code criteria}, or create and save one from {@code factory} when none
-     * exists.
-     * <p>
-     * While the transaction is open, the lookup and the save stage within it.
-     * After the transaction ends, the operation runs atomically against the
-     * enclosing {@link Runway}.
-     * </p>
-     *
-     * @param clazz the {@link Record} class to query
-     * @param criteria the {@link Criteria} that identifies the record
-     * @param factory supplies the {@link Record} to create when none match
-     * @param <T> the type of {@link Record}
-     * @return the matched or created {@link Record}
-     * @throws DuplicateEntryException if more than one record matches
-     * @throws IllegalArgumentException if {@code factory} returns {@code null}
-     *             or a {@link Record} that does not match {@code criteria}
-     * @throws IllegalStateException if a save failed within the open
-     *             transaction
-     */
-    @Override
-    public <T extends Record> T findUniqueOrCreate(Class<T> clazz,
-            Criteria criteria, Supplier<T> factory) {
-        if(open) {
-            return findOrCreate(() -> findUnique(clazz, criteria), factory);
-        }
-        else {
-            return database.findUniqueOrCreate(clazz, criteria, factory);
+            return database.intern(record);
         }
     }
 

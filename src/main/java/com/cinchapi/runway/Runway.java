@@ -768,6 +768,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Override
     public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
@@ -809,36 +810,11 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Override
     public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
         return readAndUpdateAtomically(true, clazz, criteria, null, key,
                 update);
-    }
-
-    /**
-     * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
-     * that matches the {@code criteria}, or create one from {@code factory}
-     * when none exists. The find and the save commit as one transaction.
-     * <p>
-     * The contract of {@link #findUniqueOrCreate(Class, Criteria, Supplier)
-     * findUniqueOrCreate} applies across the {@code clazz} hierarchy, as
-     * {@link DatabaseInterface#findAnyUnique(Class, Criteria) findAnyUnique}
-     * does for {@code findUnique}.
-     *
-     * @param clazz the {@link Record} type whose hierarchy is searched
-     * @param criteria the {@link Criteria} the record must match
-     * @param factory supplies the {@link Record} to create when none match
-     * @return the matched or created {@link Record}
-     * @throws DuplicateEntryException if more than one record in the hierarchy
-     *             matches
-     * @throws RetryExhaustedException if the create cannot commit within the
-     *             bounds of the governing {@link AtomicRetryPolicy}
-     * @throws IllegalArgumentException if {@code factory} returns {@code null}
-     *             or a {@link Record} that does not match {@code criteria}
-     */
-    public <T extends Record> T findAnyUniqueOrCreate(Class<T> clazz,
-            Criteria criteria, Supplier<T> factory) {
-        return supply(tx -> tx.findAnyUniqueOrCreate(clazz, criteria, factory));
     }
 
     /**
@@ -882,6 +858,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Override
     public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
@@ -965,45 +942,11 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Override
     public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
         return readAndUpdateAtomically(false, clazz, criteria, null, key,
                 update);
-    }
-
-    /**
-     * Atomically find the one {@link Record} of type {@code clazz} that matches
-     * the {@code criteria}, or create one from {@code factory} when none
-     * exists. The find and the save commit as one transaction.
-     * <p>
-     * Concurrent callers for the same {@code criteria} converge on one record.
-     * The operation runs in its own transaction, independent of any
-     * {@link Transaction} the caller holds open. If more than one record
-     * matches, then the operation throws {@link DuplicateEntryException}; it
-     * creates nothing and commits nothing.
-     * <p>
-     * The {@code factory} runs only when no record matches. It may run more
-     * than once, so it must be free of side effects. It must return a new,
-     * unsaved {@link Record} that matches {@code criteria}. If the result does
-     * not match, then the operation aborts and persists nothing.
-     * <p>
-     * <strong>NOTE:</strong> This method operates solely on {@link Record
-     * Records} persisted in the database; records supplied by an attached
-     * {@link AdHocDataSource} are never matched.
-     *
-     * @param clazz the {@link Record} type to find
-     * @param criteria the {@link Criteria} the record must match
-     * @param factory supplies the {@link Record} to create when none match
-     * @return the matched or created {@link Record}
-     * @throws DuplicateEntryException if more than one record matches
-     * @throws RetryExhaustedException if the create cannot commit within the
-     *             bounds of the governing {@link AtomicRetryPolicy}
-     * @throws IllegalArgumentException if {@code factory} returns {@code null}
-     *             or a {@link Record} that does not match {@code criteria}
-     */
-    public <T extends Record> T findUniqueOrCreate(Class<T> clazz,
-            Criteria criteria, Supplier<T> factory) {
-        return supply(tx -> tx.findUniqueOrCreate(clazz, criteria, factory));
     }
 
     /**
@@ -1020,12 +963,15 @@ public final class Runway extends Binding implements AutoCloseable {
      * {@code record} fails {@link Unique} enforcement.
      * </p>
      * <p>
-     * The operation runs under the contract of
-     * {@link #findUniqueOrCreate(Class, Criteria, Supplier)
-     * findUniqueOrCreate}: it runs in its own transaction, independent of any
-     * {@link Transaction} the caller holds open, and concurrent callers for the
-     * same identity converge on one record.
+     * The operation runs in its own transaction, independent of any
+     * {@link Transaction} the caller holds open: concurrent callers for the
+     * same identity converge on one record, and the loser of a creation race
+     * retries and adopts the winner.
      * </p>
+     * <p>
+     * <strong>NOTE:</strong> This method operates solely on {@link Record
+     * Records} persisted in the database; records supplied by an attached
+     * {@link AdHocDataSource} are never matched.
      *
      * @param record the {@link Record} whose identity is interned
      * @param <T> the type of {@link Record}
@@ -1038,6 +984,7 @@ public final class Runway extends Binding implements AutoCloseable {
      * @throws IllegalArgumentException if no field under a {@link Unique}
      *             constraint of {@code record} has a non-null value
      */
+    @Override
     public <T extends Record> T intern(T record) {
         return supply(tx -> tx.intern(record));
     }

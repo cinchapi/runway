@@ -15,10 +15,7 @@
  */
 package com.cinchapi.runway;
 
-import java.util.function.Supplier;
-
 import com.cinchapi.concourse.DuplicateEntryException;
-import com.cinchapi.concourse.lang.Criteria;
 
 /**
  * A {@link TransactionInterface} is the {@link DatabaseInterface} view of an
@@ -92,60 +89,6 @@ public interface TransactionInterface extends DatabaseInterface {
     <T extends Record> T create(Class<T> clazz, Object... args);
 
     /**
-     * Return the unique {@link Record} in the hierarchy of {@code clazz} that
-     * matches {@code criteria}, or create and save one from {@code factory}
-     * when none exists.
-     * <p>
-     * The contract of {@link #findUniqueOrCreate(Class, Criteria, Supplier)
-     * findUniqueOrCreate} applies across the {@code clazz} hierarchy, as
-     * {@link DatabaseInterface#findAnyUnique(Class, Criteria) findAnyUnique}
-     * does for {@code findUnique}.
-     * </p>
-     *
-     * @param clazz the {@link Record} type whose hierarchy is searched
-     * @param criteria the {@link Criteria} that identifies the record
-     * @param factory supplies the {@link Record} to create when none match
-     * @param <T> the type of {@link Record}
-     * @return the matched or created {@link Record}
-     * @throws DuplicateEntryException if more than one record in the hierarchy
-     *             matches
-     * @throws IllegalArgumentException if {@code factory} returns {@code null}
-     *             or a {@link Record} that does not match {@code criteria}
-     * @throws IllegalStateException if a save failed within the open
-     *             transaction
-     */
-    <T extends Record> T findAnyUniqueOrCreate(Class<T> clazz,
-            Criteria criteria, Supplier<T> factory);
-
-    /**
-     * Return the unique {@link Record} of type {@code clazz} that matches
-     * {@code criteria}, or create and save one from {@code factory} when none
-     * exists.
-     * <p>
-     * The lookup and the save stage within the transaction, so at commit
-     * exactly one record matches {@code criteria}. The {@code factory} runs
-     * only when no record matches. It may run more than once, so it must be
-     * free of side effects. It must return a new, unsaved {@link Record} that
-     * matches {@code criteria}. If a created {@link Record} fails verification,
-     * then the transaction is poisoned: the staged save can never commit, and
-     * the view refuses every subsequent operation.
-     * </p>
-     *
-     * @param clazz the {@link Record} class to query
-     * @param criteria the {@link Criteria} that identifies the record
-     * @param factory supplies the {@link Record} to create when none match
-     * @param <T> the type of {@link Record}
-     * @return the matched or created {@link Record}
-     * @throws DuplicateEntryException if more than one record matches
-     * @throws IllegalArgumentException if {@code factory} returns {@code null}
-     *             or a {@link Record} that does not match {@code criteria}
-     * @throws IllegalStateException if a save failed within the open
-     *             transaction
-     */
-    <T extends Record> T findUniqueOrCreate(Class<T> clazz, Criteria criteria,
-            Supplier<T> factory);
-
-    /**
      * Return the unique {@link Record} that agrees with every {@link Unique}
      * constraint of {@code record}, or save {@code record} when none exists.
      * <p>
@@ -158,9 +101,11 @@ public interface TransactionInterface extends DatabaseInterface {
      * {@code record} fails {@link Unique} enforcement.
      * </p>
      * <p>
-     * The lookup and the save stage within the transaction, under the contract
-     * of {@link #findUniqueOrCreate(Class, Criteria, Supplier)
-     * findUniqueOrCreate}, so at commit exactly one record claims the identity.
+     * The lookup and the save stage within the transaction, so at commit
+     * exactly one record claims the identity. If the staged save of
+     * {@code record} fails (for example, a partial identity collision fails
+     * {@link Unique} enforcement), then the transaction is poisoned: the staged
+     * writes can never commit, and the view refuses every subsequent operation.
      * </p>
      *
      * @param record the {@link Record} whose identity is interned
@@ -174,11 +119,7 @@ public interface TransactionInterface extends DatabaseInterface {
      * @throws IllegalStateException if a save failed within the open
      *             transaction
      */
-    default <T extends Record> T intern(T record) {
-        @SuppressWarnings("unchecked") Class<T> clazz = (Class<T>) record
-                .getClass();
-        return findUniqueOrCreate(clazz, record.uniqueCriteria(), () -> record);
-    }
+    <T extends Record> T intern(T record);
 
     /**
      * Save all changes in the provided {@code records} within the transaction.
