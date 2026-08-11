@@ -638,6 +638,49 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@code null} factory result is
+     * rejected before anything is staged, so the caller-owned
+     * {@link Transaction} remains usable, in contrast to the mismatch that
+     * poisons it.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * try-with-resources block.</li>
+     * <li>Call {@code findUniqueOrCreate} with {@code code == 2} and a factory
+     * that returns {@code null}.</li>
+     * <li>Catch the expected rejection, then call {@code findUniqueOrCreate}
+     * with {@code code == 3} and a factory that returns a new {@link Item} with
+     * code 3.</li>
+     * <li>{@code commit()} the transaction, then query for the record through
+     * the enclosing {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The rejection is an
+     * {@link IllegalArgumentException}, the later operation and the commit
+     * succeed, and the {@link Item} with code 3 is durable.
+     */
+    @Test
+    public void testFindUniqueOrCreateNullFactoryLeavesTransactionUsable() {
+        try (Transaction transaction = runway.stage()) {
+            boolean threw = false;
+            try {
+                transaction.findUniqueOrCreate(Item.class, code(2), () -> null);
+            }
+            catch (IllegalArgumentException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            transaction.findUniqueOrCreate(Item.class, code(3),
+                    () -> new Item(3));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertNotNull(runway.findUnique(Item.class, code(3)));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findUniqueOrCreate} resumes
      * against the enclosing {@link Runway} after the {@link Transaction} ends.
      * <p>
