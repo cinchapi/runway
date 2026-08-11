@@ -439,6 +439,8 @@ public class Transaction extends Binding implements
      *             matches
      * @throws IllegalArgumentException if {@code factory} returns {@code null}
      *             or a {@link Record} that does not match {@code criteria}
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
      */
     @Override
     public <T extends Record> T findAnyUniqueOrCreate(Class<T> clazz,
@@ -469,6 +471,8 @@ public class Transaction extends Binding implements
      * @throws DuplicateEntryException if more than one record matches
      * @throws IllegalArgumentException if {@code factory} returns {@code null}
      *             or a {@link Record} that does not match {@code criteria}
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
      */
     @Override
     public <T extends Record> T findUniqueOrCreate(Class<T> clazz,
