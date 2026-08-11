@@ -36,14 +36,12 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 
 /**
- * Tests for
- * {@link Runway#findUniqueOrCreate(Class, Criteria, java.util.function.Supplier)
+ * Tests for {@link Runway#findUniqueOrCreate(Class, Criteria, Supplier)
  * findUniqueOrCreate} and
- * {@link Runway#findAnyUniqueOrCreate(Class, Criteria, java.util.function.Supplier)
+ * {@link Runway#findAnyUniqueOrCreate(Class, Criteria, Supplier)
  * findAnyUniqueOrCreate}, along with their {@link TransactionInterface}
  * counterparts. Each test runs under both Command-API modes (bulk enabled and
- * disabled), so the matrix drives the transactional find through both of its
- * read paths.
+ * disabled), so the tests exercise both read paths of the transactional find.
  *
  * @author Jeff Nelson
  */
@@ -51,8 +49,8 @@ import com.cinchapi.concourse.thrift.Operator;
 public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
 
     /**
-     * Return the parameter matrix that drives each test once per Command-API
-     * capability.
+     * Return the parameter matrix that runs each test once per Command-API
+     * mode.
      *
      * @return one row with bulk commands enabled and one with it disabled
      */
@@ -715,8 +713,8 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Return a {@link Criteria} matching every {@link Item} whose {@code code}
-     * equals the given {@code value}.
+     * Return a {@link Criteria} that matches every {@link Item} whose
+     * {@code code} equals the given {@code value}.
      *
      * @param value the code to match
      * @return the {@code code == value} {@link Criteria}

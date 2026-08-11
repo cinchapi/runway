@@ -81,12 +81,11 @@ import com.google.common.collect.Sets;
  * {@link #afterAbort(Runnable)}.
  * </p>
  * <p>
- * A failure that leaves staged writes that can never commit poisons the
- * transaction: a save that fails after its arguments are accepted, or a created
- * {@link Record} that fails
- * {@link #findUniqueOrCreate(Class, Criteria, Supplier) findUniqueOrCreate}
- * verification. Every subsequent operation on a poisoned transaction is refused
- * except {@link #abort()} (or {@link #close()}) and
+ * If a save fails after its arguments are accepted, or if a created
+ * {@link Record} fails {@link #findUniqueOrCreate(Class, Criteria, Supplier)
+ * findUniqueOrCreate} verification, then the transaction is poisoned: the
+ * staged writes can never commit. A poisoned transaction refuses every
+ * operation except {@link #abort()} (or {@link #close()}) and
  * {@link #afterAbort(Runnable) afterAbort} registration. A save argument that
  * fails its checks is rejected before anything is staged, and the transaction
  * remains usable.
@@ -138,8 +137,8 @@ public class Transaction extends Binding implements
     private volatile boolean open;
 
     /**
-     * Whether a failure left staged writes that can never {@link #commit()},
-     * poisoning the transaction. A poisoned transaction refuses every operation
+     * Whether a failure left staged writes that can never {@link #commit()} and
+     * poisoned the transaction. A poisoned transaction refuses every operation
      * except {@link #abort()} (or {@link #close()}) and
      * {@link #afterAbort(Runnable) afterAbort} registration.
      */
@@ -422,7 +421,7 @@ public class Transaction extends Binding implements
 
     /**
      * Return the unique {@link Record} in the hierarchy of {@code clazz} that
-     * matches {@code criteria}, creating and saving one from {@code factory}
+     * matches {@code criteria}, or create and save one from {@code factory}
      * when none exists.
      * <p>
      * While the transaction is open, the lookup and the save stage within it.
@@ -455,7 +454,7 @@ public class Transaction extends Binding implements
 
     /**
      * Return the unique {@link Record} of type {@code clazz} that matches
-     * {@code criteria}, creating and saving one from {@code factory} when none
+     * {@code criteria}, or create and save one from {@code factory} when none
      * exists.
      * <p>
      * While the transaction is open, the lookup and the save stage within it.
@@ -766,13 +765,12 @@ public class Transaction extends Binding implements
     }
 
     /**
-     * Return the unique {@link Record} that the {@code lookup} matches,
-     * creating and saving one from {@code factory} when none exists.
+     * Return the unique {@link Record} that the {@code lookup} matches, or
+     * create and save one from {@code factory} when none exists.
      * <p>
-     * The operation is in flight from the lookup through the verification, so
-     * the {@code factory} cannot end the transaction underneath it. A
-     * verification failure after the save poisons the transaction before the
-     * rejection propagates, so the staged save can never commit.
+     * If the {@code factory} tries to end the transaction, then the call is
+     * refused. If verification fails after the save, then the transaction is
+     * poisoned and the staged save can never commit.
      * </p>
      *
      * @param lookup performs the criteria lookup within the transaction

@@ -93,12 +93,11 @@ public interface TransactionInterface extends DatabaseInterface {
 
     /**
      * Return the unique {@link Record} in the hierarchy of {@code clazz} that
-     * matches {@code criteria}, creating and saving one from {@code factory}
+     * matches {@code criteria}, or create and save one from {@code factory}
      * when none exists.
      * <p>
-     * This method applies the contract of
-     * {@link #findUniqueOrCreate(Class, Criteria, Supplier) findUniqueOrCreate}
-     * across the {@code clazz} hierarchy, as
+     * The contract of {@link #findUniqueOrCreate(Class, Criteria, Supplier)
+     * findUniqueOrCreate} applies across the {@code clazz} hierarchy, as
      * {@link DatabaseInterface#findAnyUnique(Class, Criteria) findAnyUnique}
      * does for {@code findUnique}.
      * </p>
@@ -120,17 +119,16 @@ public interface TransactionInterface extends DatabaseInterface {
 
     /**
      * Return the unique {@link Record} of type {@code clazz} that matches
-     * {@code criteria}, creating and saving one from {@code factory} when none
+     * {@code criteria}, or create and save one from {@code factory} when none
      * exists.
      * <p>
      * The lookup and the save stage within the transaction, so at commit
      * exactly one record matches {@code criteria}. The {@code factory} runs
-     * only when no record matches. It must return a new, unsaved {@link Record}
-     * that matches {@code criteria}, and it must be free of side effects
-     * because an enclosing retry may run it again. When the verification of a
-     * created {@link Record} fails, the transaction is poisoned: the staged
-     * save can never commit, and every subsequent operation through the view is
-     * refused.
+     * only when no record matches. It may run more than once, so it must be
+     * free of side effects. It must return a new, unsaved {@link Record} that
+     * matches {@code criteria}. If a created {@link Record} fails verification,
+     * then the transaction is poisoned: the staged save can never commit, and
+     * the view refuses every subsequent operation.
      * </p>
      *
      * @param clazz the {@link Record} class to query

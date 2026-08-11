@@ -818,11 +818,10 @@ public final class Runway extends Binding implements AutoCloseable {
     /**
      * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
      * that matches the {@code criteria}, or create one from {@code factory}
-     * when none exists; the find and the save commit as one transaction.
+     * when none exists. The find and the save commit as one transaction.
      * <p>
-     * This method applies the contract of
-     * {@link #findUniqueOrCreate(Class, Criteria, Supplier) findUniqueOrCreate}
-     * across the {@code clazz} hierarchy, as
+     * The contract of {@link #findUniqueOrCreate(Class, Criteria, Supplier)
+     * findUniqueOrCreate} applies across the {@code clazz} hierarchy, as
      * {@link DatabaseInterface#findAnyUnique(Class, Criteria) findAnyUnique}
      * does for {@code findUnique}.
      *
@@ -975,20 +974,18 @@ public final class Runway extends Binding implements AutoCloseable {
     /**
      * Atomically find the one {@link Record} of type {@code clazz} that matches
      * the {@code criteria}, or create one from {@code factory} when none
-     * exists; the find and the save commit as one transaction.
+     * exists. The find and the save commit as one transaction.
      * <p>
-     * Concurrent callers for the same {@code criteria} converge on one record:
-     * the loser of a creation race retries and adopts the winner. The operation
-     * runs in its own transaction, independent of any {@link Transaction} the
-     * caller holds open. Throw {@link DuplicateEntryException} when more than
-     * one record matches, consistent with
-     * {@link DatabaseInterface#findUnique(Class, Criteria) findUnique}; a
-     * violation neither creates nor commits.
+     * Concurrent callers for the same {@code criteria} converge on one record.
+     * The operation runs in its own transaction, independent of any
+     * {@link Transaction} the caller holds open. If more than one record
+     * matches, then the operation throws {@link DuplicateEntryException}; it
+     * creates nothing and commits nothing.
      * <p>
-     * The {@code factory} runs only when no record matches; it may run more
-     * than once, so it must be free of side effects, and it must return a new,
-     * unsaved {@link Record} that matches {@code criteria}. A mismatch aborts
-     * instead of persisting a record the lookup cannot return.
+     * The {@code factory} runs only when no record matches. It may run more
+     * than once, so it must be free of side effects. It must return a new,
+     * unsaved {@link Record} that matches {@code criteria}. If the result does
+     * not match, then the operation aborts and persists nothing.
      * <p>
      * <strong>NOTE:</strong> This method operates solely on {@link Record
      * Records} persisted in the database; records supplied by an attached
