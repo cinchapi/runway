@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -37,12 +38,15 @@ import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
 import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.Computed;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
 import com.cinchapi.runway.SerializationOptions;
+import com.cinchapi.runway.Unique;
 import com.cinchapi.runway.util.KeySelection;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
@@ -111,10 +115,47 @@ public interface Audience extends DatabaseInterface {
     }
 
     /**
+     * Return {@code true} if an atomic update of {@code key} on {@code subject}
+     * may proceed on behalf of this {@link Audience}. The {@code subject} must
+     * exist and be visible to this {@link Audience}; a {@code subject} that is
+     * not visible behaves as no match.
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
+     *
+     * @param key the field to update
+     * @param subject the matched {@link Record}, or {@code null} when nothing
+     *            matched
+     * @return {@code true} if the update may proceed
+     * @throws RestrictedAccessException if {@code subject} is visible but this
+     *             {@link Audience} is not permitted to write to {@code key}
+     */
+    public default boolean $canUpdate(String key, @Nullable Record subject) {
+        // TODO: make private in Java 9+
+        if(subject == null || !$checkIfInScopeOrVisible().test(subject)) {
+            return false;
+        }
+        else if(subject instanceof AccessControl) {
+            AccessControl gated = (AccessControl) subject;
+            Set<String> rules = this instanceof Anonymous
+                    ? gated.$writableByAnonymous()
+                    : gated.$writableBy(this);
+            if(!isPermittedAccess(ImmutableSet.of(key), rules)) {
+                throw new RestrictedAccessException();
+            }
+            else {
+                return true;
+            }
+        }
+        else {
+            return true;
+        }
+    }
+
+    /**
      * Return a {@link Predicate} that tests whether a {@link Record} is visible
-     * to this {@link Audience}, using the registered {@link Scope} if one
-     * exists and is {@link Scope#isApplicable() applicable}, or falling back to
-     * {@link #$checkIfVisible()} otherwise.
+     * to this {@link Audience}, honoring any applicable {@link Scope} for the
+     * {@link Record Record's} class.
      * <p>
      * This is a framework-private method and should not be called directly.
      * </p>
@@ -267,6 +308,165 @@ public interface Audience extends DatabaseInterface {
             }
         }
         record.deleteOnSave();
+    }
+
+    /**
+     * Atomically find the first {@link Record} in the hierarchy of
+     * {@code clazz} that matches the {@code criteria} under the supplied
+     * {@code order} and update the value of {@code key} on behalf of this
+     * {@link Audience}.
+     * <p>
+     * The matched {@link Record} must be visible to this {@link Audience}; a
+     * match that is not visible behaves as no match. This {@link Audience} must
+     * be permitted to write to {@code key} on the matched {@link Record}. The
+     * access checks evaluate the matched {@link Record Record's} state when the
+     * operation begins.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if no match is
+     *         visible to this {@link Audience}
+     * @throws RestrictedAccessException if this {@link Audience} is not
+     *             permitted to write to {@code key} on the matched
+     *             {@link Record}
+     */
+    @Override
+    public default <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        T subject = $db().findAnyFirst(clazz, criteria, order);
+        if($canUpdate(key, subject)) {
+            return $db().findAnyFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+        else {
+            return null;
+        }
+    }
+
+    /**
+     * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
+     * that matches the {@code criteria} and update the value of {@code key} on
+     * behalf of this {@link Audience}.
+     * <p>
+     * The matched {@link Record} must be visible to this {@link Audience}; a
+     * match that is not visible behaves as no match. This {@link Audience} must
+     * be permitted to write to {@code key} on the matched {@link Record}. The
+     * access checks evaluate the matched {@link Record Record's} state when the
+     * operation begins.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if no match is
+     *         visible to this {@link Audience}
+     * @throws DuplicateEntryException if more than one record in the hierarchy
+     *             matches
+     * @throws RestrictedAccessException if this {@link Audience} is not
+     *             permitted to write to {@code key} on the matched
+     *             {@link Record}
+     */
+    @Override
+    public default <T extends Record, V> T findAnyUniqueAndUpdate(
+            Class<T> clazz, Criteria criteria, String key,
+            UnaryOperator<V> update) {
+        T subject = $db().findAnyUnique(clazz, criteria);
+        if($canUpdate(key, subject)) {
+            return $db().findAnyUniqueAndUpdate(clazz, criteria, key, update);
+        }
+        else {
+            return null;
+        }
+    }
+
+    /**
+     * Atomically find the first {@link Record} of type {@code clazz} that
+     * matches the {@code criteria} under the supplied {@code order} and update
+     * the value of {@code key} on behalf of this {@link Audience}.
+     * <p>
+     * The matched {@link Record} must be visible to this {@link Audience}; a
+     * match that is not visible behaves as no match. This {@link Audience} must
+     * be permitted to write to {@code key} on the matched {@link Record}. The
+     * access checks evaluate the matched {@link Record Record's} state when the
+     * operation begins.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if no match is
+     *         visible to this {@link Audience}
+     * @throws RestrictedAccessException if this {@link Audience} is not
+     *             permitted to write to {@code key} on the matched
+     *             {@link Record}
+     */
+    @Override
+    public default <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        T subject = $db().findFirst(clazz, criteria, order);
+        if($canUpdate(key, subject)) {
+            return $db().findFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+        else {
+            return null;
+        }
+    }
+
+    /**
+     * Atomically find the one {@link Record} of type {@code clazz} that matches
+     * the {@code criteria} and update the value of {@code key} on behalf of
+     * this {@link Audience}.
+     * <p>
+     * The matched {@link Record} must be visible to this {@link Audience}; a
+     * match that is not visible behaves as no match. This {@link Audience} must
+     * be permitted to write to {@code key} on the matched {@link Record}. The
+     * access checks evaluate the matched {@link Record Record's} state when the
+     * operation begins.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if no match is
+     *         visible to this {@link Audience}
+     * @throws DuplicateEntryException if more than one record matches
+     * @throws RestrictedAccessException if this {@link Audience} is not
+     *             permitted to write to {@code key} on the matched
+     *             {@link Record}
+     */
+    @Override
+    public default <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
+            Criteria criteria, String key, UnaryOperator<V> update) {
+        T subject = $db().findUnique(clazz, criteria);
+        if($canUpdate(key, subject)) {
+            return $db().findUniqueAndUpdate(clazz, criteria, key, update);
+        }
+        else {
+            return null;
+        }
     }
 
     /**
@@ -686,6 +886,52 @@ public interface Audience extends DatabaseInterface {
      */
     public default <T extends Record> Map<String, Object> frame(T record) {
         return frame(SerializationOptions.defaults(), ALL_KEYS, record);
+    }
+
+    /**
+     * Return the unique {@link Record} that agrees with every {@link Unique}
+     * constraint of {@code record}, or save {@code record} on behalf of this
+     * {@link Audience} when none exists.
+     * <p>
+     * This {@link Audience} must be permitted to create {@code record}, even
+     * when an existing {@link Record} claims the identity, and an existing
+     * match must be visible to this {@link Audience}.
+     * </p>
+     *
+     * @param record the {@link Record} whose identity is interned
+     * @param <T> the type of {@link Record}
+     * @return the {@link Record} that claims the identity: the sole existing
+     *         match, or {@code record} once saved
+     * @throws RestrictedAccessException if this {@link Audience} is not
+     *             permitted to create {@code record}, or if the identity is
+     *             claimed by a {@link Record} that is not visible to this
+     *             {@link Audience}
+     */
+    @Override
+    public default <T extends Record> T intern(T record)
+            throws RestrictedAccessException {
+        if(record instanceof AccessControl) {
+            AccessControl subject = (AccessControl) record;
+            if((this instanceof Anonymous && !subject.$isCreatableByAnonymous())
+                    || (!(this instanceof Anonymous)
+                            && !subject.$isCreatableBy(this))) {
+                throw new RestrictedAccessException();
+            }
+        }
+        else {
+            // The record is not access controlled, so any Audience may intern
+            // it.
+        }
+        if(this instanceof Record) {
+            Reflection.set("_author", (Record) this, record);
+        }
+        T interned = $db().intern(record);
+        if(interned != record && !$checkIfInScopeOrVisible().test(interned)) {
+            throw new RestrictedAccessException();
+        }
+        else {
+            return interned;
+        }
     }
 
     /**
