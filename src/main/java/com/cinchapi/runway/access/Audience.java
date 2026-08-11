@@ -34,6 +34,7 @@ import java.util.stream.Stream;
 import javax.annotation.Nullable;
 
 import com.cinchapi.common.base.Array;
+import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
@@ -46,6 +47,7 @@ import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
 import com.cinchapi.runway.SerializationOptions;
+import com.cinchapi.runway.TransactionInterface;
 import com.cinchapi.runway.Unique;
 import com.cinchapi.runway.util.KeySelection;
 import com.google.common.base.Preconditions;
@@ -267,16 +269,24 @@ public interface Audience extends DatabaseInterface {
 
     /**
      * Atomically find the first {@link Record} in the hierarchy of
-     * {@code clazz} that matches the {@code criteria} under the supplied
-     * {@code order} and update the value of {@code key} on behalf of this
-     * {@link Audience}.
+     * {@code clazz} that is visible to this {@link Audience} and matches the
+     * {@code criteria} under the supplied {@code order}, and update the value
+     * of {@code key} on behalf of this {@link Audience}.
      * <p>
-     * The update proceeds only if this {@link Audience} can write to
-     * {@code key} on the matched {@link Record}: the record must be visible to
-     * this {@link Audience} and {@code key} must be writable by it; otherwise
-     * the result is {@code null} and nothing is updated. The access checks
-     * evaluate the matched {@link Record Record's} state when the operation
-     * begins.
+     * The lookup only considers records that are visible to this
+     * {@link Audience}, so the first match is the first visible one under
+     * {@code order}. The update proceeds only if {@code key} is writable by
+     * this {@link Audience} on the match; otherwise the result is {@code null}
+     * and nothing is updated. The lookup, the access checks and the update run
+     * in this {@link Audience Audience's} transactional scope: within an open
+     * {@link TransactionInterface} they stage and commit with it; otherwise,
+     * they commit together in their own transaction. The write stages as a save
+     * of the match, so save-time validation applies to the whole record, and
+     * within an open transaction a failed save poisons it. The field
+     * eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}, and the {@code update} operator may run
+     * more than once, so it must be free of side effects.
      * </p>
      *
      * @param clazz the {@link Record} type whose hierarchy is searched
@@ -284,77 +294,103 @@ public interface Audience extends DatabaseInterface {
      * @param order the {@link Order} that defines "first"
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one
+     *            current one; it must not return {@code null}
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if there is no match
-     *         that this {@link Audience} can update
+     * @return the updated {@link Record}, or {@code null} if there is no
+     *         visible match that this {@link Audience} can update
+     * @throws IllegalArgumentException if {@code order} is {@code null}, if
+     *             {@code key} is not eligible for atomic operations, or if
+     *             {@code update} returns {@code null} or a value that is not an
+     *             instance of the field's type
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
      */
     @Nullable
     @Override
     public default <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
-        T subject = $db().findAnyFirst(clazz, criteria, order);
-        if(isWritableByAudience(this, ImmutableSet.of(key), subject)) {
-            return $db().findAnyFirstAndUpdate(clazz, criteria, order, key,
-                    update);
-        }
-        else {
-            return null;
-        }
+        Verify.thatArgument(order != null,
+                "findAnyFirstAndUpdate requires an Order");
+        return findAndUpdate(this, () -> findAnyFirst(clazz, criteria, order),
+                key, update);
     }
 
     /**
      * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
-     * that matches the {@code criteria} and update the value of {@code key} on
-     * behalf of this {@link Audience}.
+     * that is visible to this {@link Audience} and matches the
+     * {@code criteria}, and update the value of {@code key} on behalf of this
+     * {@link Audience}.
      * <p>
-     * The update proceeds only if this {@link Audience} can write to
-     * {@code key} on the matched {@link Record}: the record must be visible to
-     * this {@link Audience} and {@code key} must be writable by it; otherwise
-     * the result is {@code null} and nothing is updated. The access checks
-     * evaluate the matched {@link Record Record's} state when the operation
-     * begins.
+     * The lookup only considers records that are visible to this
+     * {@link Audience}, so a hidden record neither matches nor makes the result
+     * ambiguous. The update proceeds only if {@code key} is writable by this
+     * {@link Audience} on the match; otherwise the result is {@code null} and
+     * nothing is updated. The lookup, the access checks and the update run in
+     * this {@link Audience Audience's} transactional scope: within an open
+     * {@link TransactionInterface} they stage and commit with it; otherwise,
+     * they commit together in their own transaction. The write stages as a save
+     * of the match, so save-time validation applies to the whole record, and
+     * within an open transaction a failed save poisons it. The field
+     * eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}, and the {@code update} operator may run
+     * more than once, so it must be free of side effects.
      * </p>
      *
      * @param clazz the {@link Record} type whose hierarchy is searched
      * @param criteria the {@link Criteria} the record must match
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one
+     *            current one; it must not return {@code null}
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if there is no match
-     *         that this {@link Audience} can update
-     * @throws DuplicateEntryException if more than one record in the hierarchy
-     *             matches
+     * @return the updated {@link Record}, or {@code null} if there is no
+     *         visible match that this {@link Audience} can update
+     * @throws DuplicateEntryException if more than one visible record in the
+     *             hierarchy matches
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
      */
     @Nullable
     @Override
     public default <T extends Record, V> T findAnyUniqueAndUpdate(
             Class<T> clazz, Criteria criteria, String key,
             UnaryOperator<V> update) {
-        T subject = $db().findAnyUnique(clazz, criteria);
-        if(isWritableByAudience(this, ImmutableSet.of(key), subject)) {
-            return $db().findAnyUniqueAndUpdate(clazz, criteria, key, update);
-        }
-        else {
-            return null;
-        }
+        return findAndUpdate(this, () -> findAnyUnique(clazz, criteria), key,
+                update);
     }
 
     /**
-     * Atomically find the first {@link Record} of type {@code clazz} that
-     * matches the {@code criteria} under the supplied {@code order} and update
-     * the value of {@code key} on behalf of this {@link Audience}.
+     * Atomically find the first {@link Record} of type {@code clazz} that is
+     * visible to this {@link Audience} and matches the {@code criteria} under
+     * the supplied {@code order}, and update the value of {@code key} on behalf
+     * of this {@link Audience}.
      * <p>
-     * The update proceeds only if this {@link Audience} can write to
-     * {@code key} on the matched {@link Record}: the record must be visible to
-     * this {@link Audience} and {@code key} must be writable by it; otherwise
-     * the result is {@code null} and nothing is updated. The access checks
-     * evaluate the matched {@link Record Record's} state when the operation
-     * begins.
+     * The lookup only considers records that are visible to this
+     * {@link Audience}, so the first match is the first visible one under
+     * {@code order}. The update proceeds only if {@code key} is writable by
+     * this {@link Audience} on the match; otherwise the result is {@code null}
+     * and nothing is updated. The lookup, the access checks and the update run
+     * in this {@link Audience Audience's} transactional scope: within an open
+     * {@link TransactionInterface} they stage and commit with it; otherwise,
+     * they commit together in their own transaction. The write stages as a save
+     * of the match, so save-time validation applies to the whole record, and
+     * within an open transaction a failed save poisons it. The field
+     * eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}, and the {@code update} operator may run
+     * more than once, so it must be free of side effects.
      * </p>
      *
      * @param clazz the {@link Record} type to find
@@ -362,62 +398,78 @@ public interface Audience extends DatabaseInterface {
      * @param order the {@link Order} that defines "first"
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one
+     *            current one; it must not return {@code null}
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if there is no match
-     *         that this {@link Audience} can update
+     * @return the updated {@link Record}, or {@code null} if there is no
+     *         visible match that this {@link Audience} can update
+     * @throws IllegalArgumentException if {@code order} is {@code null}, if
+     *             {@code key} is not eligible for atomic operations, or if
+     *             {@code update} returns {@code null} or a value that is not an
+     *             instance of the field's type
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
      */
     @Nullable
     @Override
     public default <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
-        T subject = $db().findFirst(clazz, criteria, order);
-        if(isWritableByAudience(this, ImmutableSet.of(key), subject)) {
-            return $db().findFirstAndUpdate(clazz, criteria, order, key,
-                    update);
-        }
-        else {
-            return null;
-        }
+        Verify.thatArgument(order != null,
+                "findFirstAndUpdate requires an Order");
+        return findAndUpdate(this, () -> findFirst(clazz, criteria, order), key,
+                update);
     }
 
     /**
-     * Atomically find the one {@link Record} of type {@code clazz} that matches
-     * the {@code criteria} and update the value of {@code key} on behalf of
-     * this {@link Audience}.
+     * Atomically find the one {@link Record} of type {@code clazz} that is
+     * visible to this {@link Audience} and matches the {@code criteria}, and
+     * update the value of {@code key} on behalf of this {@link Audience}.
      * <p>
-     * The update proceeds only if this {@link Audience} can write to
-     * {@code key} on the matched {@link Record}: the record must be visible to
-     * this {@link Audience} and {@code key} must be writable by it; otherwise
-     * the result is {@code null} and nothing is updated. The access checks
-     * evaluate the matched {@link Record Record's} state when the operation
-     * begins.
+     * The lookup only considers records that are visible to this
+     * {@link Audience}, so a hidden record neither matches nor makes the result
+     * ambiguous. The update proceeds only if {@code key} is writable by this
+     * {@link Audience} on the match; otherwise the result is {@code null} and
+     * nothing is updated. The lookup, the access checks and the update run in
+     * this {@link Audience Audience's} transactional scope: within an open
+     * {@link TransactionInterface} they stage and commit with it; otherwise,
+     * they commit together in their own transaction. The write stages as a save
+     * of the match, so save-time validation applies to the whole record, and
+     * within an open transaction a failed save poisons it. The field
+     * eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}, and the {@code update} operator may run
+     * more than once, so it must be free of side effects.
      * </p>
      *
      * @param clazz the {@link Record} type to find
      * @param criteria the {@link Criteria} the record must match
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one
+     *            current one; it must not return {@code null}
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if there is no match
-     *         that this {@link Audience} can update
-     * @throws DuplicateEntryException if more than one record matches
+     * @return the updated {@link Record}, or {@code null} if there is no
+     *         visible match that this {@link Audience} can update
+     * @throws DuplicateEntryException if more than one visible record matches
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
      */
     @Nullable
     @Override
     public default <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
-        T subject = $db().findUnique(clazz, criteria);
-        if(isWritableByAudience(this, ImmutableSet.of(key), subject)) {
-            return $db().findUniqueAndUpdate(clazz, criteria, key, update);
-        }
-        else {
-            return null;
-        }
+        return findAndUpdate(this, () -> findUnique(clazz, criteria), key,
+                update);
     }
 
     /**
@@ -847,6 +899,11 @@ public interface Audience extends DatabaseInterface {
      * This {@link Audience} must be permitted to create {@code record}, even
      * when an existing {@link Record} claims the identity, and an existing
      * match must be visible to this {@link Audience}.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> A refusal of a hidden match still confirms that a
+     * {@link Record} with the identity exists, even though this
+     * {@link Audience} cannot see it.
      * </p>
      *
      * @param record the {@link Record} whose identity is interned
