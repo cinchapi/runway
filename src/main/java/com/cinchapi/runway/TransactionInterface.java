@@ -15,7 +15,14 @@
  */
 package com.cinchapi.runway;
 
+import java.util.function.UnaryOperator;
+
+import javax.annotation.Nullable;
+
+import com.cinchapi.common.base.Verify;
 import com.cinchapi.concourse.DuplicateEntryException;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 
 /**
  * A {@link TransactionInterface} is the {@link DatabaseInterface} view of an
@@ -87,6 +94,195 @@ public interface TransactionInterface extends DatabaseInterface {
      *             transaction
      */
     <T extends Record> T create(Class<T> clazz, Object... args);
+
+    /**
+     * Atomically find the first {@link Record} in the hierarchy of
+     * {@code clazz} that matches the {@code criteria} under the supplied
+     * {@code order} and update the value of {@code key} by applying the
+     * {@code update} operator; the find and the write stage within the
+     * transaction, so they commit or abort with it.
+     * <p>
+     * Return the updated {@link Record}, or {@code null} when nothing matches,
+     * in which case the {@code update} operator never runs and nothing is
+     * staged. The write stages as a save of the match, so save-time validation
+     * applies to the whole record and a failed save poisons the transaction.
+     * The field eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one, which is {@code null} when the field has no
+     *            value; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws IllegalArgumentException if {@code order} is {@code null}, if
+     *             {@code key} is not eligible for atomic operations, or if
+     *             {@code update} returns {@code null} or a value that is not an
+     *             instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction, or if the value produced by {@code update}
+     *             violates the field's constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
+     */
+    @Nullable
+    @Override
+    public default <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        Verify.thatArgument(order != null,
+                "findAnyFirstAndUpdate requires an Order");
+        return Record.stageAtomicUpdate(this,
+                findAnyFirst(clazz, criteria, order), key, update);
+    }
+
+    /**
+     * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
+     * that matches the {@code criteria} and update the value of {@code key} by
+     * applying the {@code update} operator; the find and the write stage within
+     * the transaction, so they commit or abort with it.
+     * <p>
+     * Return the updated {@link Record}, or {@code null} when nothing matches,
+     * in which case the {@code update} operator never runs and nothing is
+     * staged. The write stages as a save of the match, so save-time validation
+     * applies to the whole record and a failed save poisons the transaction.
+     * Throw {@link DuplicateEntryException} when more than one record in the
+     * hierarchy matches, consistent with
+     * {@link DatabaseInterface#findAnyUnique(Class, Criteria) findAnyUnique}.
+     * The field eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one, which is {@code null} when the field has no
+     *            value; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws DuplicateEntryException if more than one record in the hierarchy
+     *             matches
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction, or if the value produced by {@code update}
+     *             violates the field's constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
+     */
+    @Nullable
+    @Override
+    public default <T extends Record, V> T findAnyUniqueAndUpdate(
+            Class<T> clazz, Criteria criteria, String key,
+            UnaryOperator<V> update) {
+        return Record.stageAtomicUpdate(this, findAnyUnique(clazz, criteria),
+                key, update);
+    }
+
+    /**
+     * Atomically find the first {@link Record} of type {@code clazz} that
+     * matches the {@code criteria} under the supplied {@code order} and update
+     * the value of {@code key} by applying the {@code update} operator; the
+     * find and the write stage within the transaction, so they commit or abort
+     * with it.
+     * <p>
+     * Return the updated {@link Record}, or {@code null} when nothing matches,
+     * in which case the {@code update} operator never runs and nothing is
+     * staged. The write stages as a save of the match, so save-time validation
+     * applies to the whole record and a failed save poisons the transaction.
+     * The field eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one, which is {@code null} when the field has no
+     *            value; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws IllegalArgumentException if {@code order} is {@code null}, if
+     *             {@code key} is not eligible for atomic operations, or if
+     *             {@code update} returns {@code null} or a value that is not an
+     *             instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction, or if the value produced by {@code update}
+     *             violates the field's constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
+     */
+    @Nullable
+    @Override
+    public default <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        Verify.thatArgument(order != null,
+                "findFirstAndUpdate requires an Order");
+        return Record.stageAtomicUpdate(this, findFirst(clazz, criteria, order),
+                key, update);
+    }
+
+    /**
+     * Atomically find the one {@link Record} of type {@code clazz} that matches
+     * the {@code criteria} and update the value of {@code key} by applying the
+     * {@code update} operator; the find and the write stage within the
+     * transaction, so they commit or abort with it.
+     * <p>
+     * Return the updated {@link Record}, or {@code null} when nothing matches,
+     * in which case the {@code update} operator never runs and nothing is
+     * staged. The write stages as a save of the match, so save-time validation
+     * applies to the whole record and a failed save poisons the transaction.
+     * Throw {@link DuplicateEntryException} when more than one record matches,
+     * consistent with {@link DatabaseInterface#findUnique(Class, Criteria)
+     * findUnique}. The field eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one, which is {@code null} when the field has no
+     *            value; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws DuplicateEntryException if more than one record matches
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction, or if the value produced by {@code update}
+     *             violates the field's constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field named by {@code key}
+     */
+    @Nullable
+    @Override
+    public default <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
+            Criteria criteria, String key, UnaryOperator<V> update) {
+        return Record.stageAtomicUpdate(this, findUnique(clazz, criteria), key,
+                update);
+    }
 
     /**
      * Return the unique {@link Record} that agrees with every {@link Unique}

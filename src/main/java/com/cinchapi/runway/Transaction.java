@@ -22,7 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.common.base.Verify;
@@ -31,6 +33,7 @@ import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.ForwardingConcourse;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.TransactionToken;
 import com.cinchapi.runway.db.BatchReader;
 import com.cinchapi.runway.db.BatchSaver;
@@ -416,6 +419,167 @@ public class Transaction extends Binding implements
         T record = Reflection.newInstance(clazz, args);
         record.bind(this, provider);
         return record;
+    }
+
+    /**
+     * Atomically find the first {@link Record} in the hierarchy of
+     * {@code clazz} that matches the {@code criteria} under the supplied
+     * {@code order} and update the value of {@code key} by applying the
+     * {@code update} operator.
+     * <p>
+     * While the transaction is open, the lookup and the write stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws IllegalArgumentException if {@code order} is {@code null}, if
+     *             {@code key} is not eligible for atomic operations, or if
+     *             {@code update} returns {@code null} or a value that is not an
+     *             instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
+     */
+    @Nullable
+    @Override
+    public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        if(open) {
+            return TransactionInterface.super.findAnyFirstAndUpdate(clazz,
+                    criteria, order, key, update);
+        }
+        else {
+            return database.findAnyFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+    }
+
+    /**
+     * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
+     * that matches the {@code criteria} and update the value of {@code key} by
+     * applying the {@code update} operator.
+     * <p>
+     * While the transaction is open, the lookup and the write stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws DuplicateEntryException if more than one record in the hierarchy
+     *             matches
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
+     */
+    @Nullable
+    @Override
+    public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
+            Criteria criteria, String key, UnaryOperator<V> update) {
+        if(open) {
+            return TransactionInterface.super.findAnyUniqueAndUpdate(clazz,
+                    criteria, key, update);
+        }
+        else {
+            return database.findAnyUniqueAndUpdate(clazz, criteria, key,
+                    update);
+        }
+    }
+
+    /**
+     * Atomically find the first {@link Record} of type {@code clazz} that
+     * matches the {@code criteria} under the supplied {@code order} and update
+     * the value of {@code key} by applying the {@code update} operator.
+     * <p>
+     * While the transaction is open, the lookup and the write stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws IllegalArgumentException if {@code order} is {@code null}, if
+     *             {@code key} is not eligible for atomic operations, or if
+     *             {@code update} returns {@code null} or a value that is not an
+     *             instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
+     */
+    @Nullable
+    @Override
+    public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        if(open) {
+            return TransactionInterface.super.findFirstAndUpdate(clazz,
+                    criteria, order, key, update);
+        }
+        else {
+            return database.findFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+    }
+
+    /**
+     * Atomically find the one {@link Record} of type {@code clazz} that matches
+     * the {@code criteria} and update the value of {@code key} by applying the
+     * {@code update} operator.
+     * <p>
+     * While the transaction is open, the lookup and the write stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws DuplicateEntryException if more than one record matches
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
+     */
+    @Nullable
+    @Override
+    public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
+            Criteria criteria, String key, UnaryOperator<V> update) {
+        if(open) {
+            return TransactionInterface.super.findUniqueAndUpdate(clazz,
+                    criteria, key, update);
+        }
+        else {
+            return database.findUniqueAndUpdate(clazz, criteria, key, update);
+        }
     }
 
     /**
