@@ -17,7 +17,6 @@ package com.cinchapi.runway;
 
 import static com.cinchapi.runway.DatabaseInterface.duplicateEntryException;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
@@ -52,7 +51,6 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import com.cinchapi.common.base.CheckedExceptions;
-import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.concurrent.JoinableExecutorService;
 import com.cinchapi.common.function.TriConsumer;
@@ -93,7 +91,6 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-import com.google.common.primitives.Primitives;
 
 import gnu.trove.map.hash.TLongObjectHashMap;
 
@@ -3206,23 +3203,9 @@ public final class Runway extends Binding implements AutoCloseable {
                         return null;
                     }
                     else {
-                        Field field = Record.getAtomicableField(key, record);
-                        V current = Record.getAtomicableFieldValue(field,
-                                record);
-                        V next = update.apply(current);
-                        Verify.thatArgument(next != null,
-                                "The update operator cannot return null");
-                        Verify.thatArgument(
-                                Primitives.wrap(field.getType())
-                                        .isInstance(next),
-                                "Cannot atomically operate on {} in {} because"
-                                        + " the replacement is a {} and the"
-                                        + " field stores a {}",
-                                key, clazz.getSimpleName(),
-                                next.getClass().getSimpleName(),
-                                field.getType().getSimpleName());
-                        record.checkIsSavable(field, key, next);
-                        if(!Objects.equals(current, next)) {
+                        V next = Record.resolveAtomicUpdate(key, record,
+                                update);
+                        if(next != null) {
                             transaction.verifyOrSet(key,
                                     Record.serializeScalarValue(next),
                                     record.id());
@@ -3232,7 +3215,9 @@ public final class Runway extends Binding implements AutoCloseable {
                             // after its internal transaction ends, so the
                             // assignment follows the commit.
                             record.assign(this);
-                            record.applyValueChange(key, next);
+                            if(next != null) {
+                                record.applyValueChange(key, next);
+                            }
                             return record;
                         }
                         else {

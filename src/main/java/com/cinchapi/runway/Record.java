@@ -300,6 +300,89 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Apply {@code update} to the current value of {@code key} on
+     * {@code record} and return the validated replacement that a single-key
+     * atomic operation must write, or {@code null} when the produced value
+     * equals the current one and there is nothing to write.
+     *
+     * @param key the name of an intrinsic field
+     * @param record the {@link Record} that owns the field
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the replacement to write, or {@code null} when no write is needed
+     * @throws IllegalArgumentException if {@code key} is not
+     *             {@link #getAtomicableField(String, Record) eligible} for
+     *             single-key atomic operations, or if {@code update} returns
+     *             {@code null} or a value that is not an instance of the
+     *             field's type
+     * @throws IllegalStateException if the produced value violates the field's
+     *             constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field
+     */
+    @Nullable
+    static <V> V resolveAtomicUpdate(String key, Record record,
+            UnaryOperator<V> update) {
+        Field field = getAtomicableField(key, record);
+        V current = getAtomicableFieldValue(field, record);
+        V next = update.apply(current);
+        Verify.thatArgument(next != null,
+                "The update operator cannot return null");
+        Verify.thatArgument(Primitives.wrap(field.getType()).isInstance(next),
+                "Cannot atomically operate on {} in {} because the"
+                        + " replacement is a {} and the field stores a {}",
+                key, record.__, next.getClass().getSimpleName(),
+                field.getType().getSimpleName());
+        record.checkIsSavable(field, key, next);
+        return Objects.equals(current, next) ? null : next;
+    }
+
+    /**
+     * Stage a single-key atomic update of {@code key} on {@code record} within
+     * {@code transaction} and return the {@code record}, or {@code null} when
+     * there is no record to update.
+     *
+     * @param transaction the {@link TransactionInterface} the update stages
+     *            within
+     * @param record the {@link Record} to update, or {@code null} when there is
+     *            nothing to update
+     * @param key the name of an intrinsic field
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@code record}, or {@code null}
+     * @throws IllegalArgumentException if {@code key} is not
+     *             {@link #getAtomicableField(String, Record) eligible} for
+     *             single-key atomic operations, or if {@code update} returns
+     *             {@code null} or a value that is not an instance of the
+     *             field's type
+     * @throws IllegalStateException if the produced value violates the field's
+     *             constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field
+     */
+    @Nullable
+    static <T extends Record, V> T stageAtomicUpdate(
+            TransactionInterface transaction, @Nullable T record, String key,
+            UnaryOperator<V> update) {
+        if(record == null) {
+            return null;
+        }
+        else {
+            V next = resolveAtomicUpdate(key, record, update);
+            if(next != null) {
+                record.set(key, next);
+                transaction.save(record);
+            }
+            return record;
+        }
+    }
+
+    /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id} and bind it to {@code binding}.
      *
