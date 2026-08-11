@@ -765,7 +765,9 @@ public class Transaction extends Binding implements
      * Return the unique {@link Record} that the {@code lookup} matches,
      * creating and saving one from {@code factory} when none exists.
      * <p>
-     * A verification failure after the save poisons the transaction before the
+     * The operation is in flight from the lookup through the verification, so
+     * the {@code factory} cannot end the transaction underneath it. A
+     * verification failure after the save poisons the transaction before the
      * rejection propagates, so the staged save can never commit.
      * </p>
      *
@@ -776,23 +778,32 @@ public class Transaction extends Binding implements
      */
     private <T extends Record> T findOrCreate(Supplier<T> lookup,
             Supplier<T> factory) {
-        T record = lookup.get();
-        if(record == null) {
-            record = factory.get();
-            Verify.thatArgument(record != null,
-                    "The factory cannot return null");
-            save(record);
-            try {
-                T found = lookup.get();
-                Verify.thatArgument(found != null && record.id() == found.id(),
-                        "The created Record does not match the criteria");
+        verifyOwner();
+        verifyNotPoisoned();
+        operating++;
+        try {
+            T record = lookup.get();
+            if(record == null) {
+                record = factory.get();
+                Verify.thatArgument(record != null,
+                        "The factory cannot return null");
+                save(record);
+                try {
+                    T found = lookup.get();
+                    Verify.thatArgument(
+                            found != null && record.id() == found.id(),
+                            "The created Record does not match the criteria");
+                }
+                catch (Throwable t) {
+                    poisoned = true;
+                    throw t;
+                }
             }
-            catch (Throwable t) {
-                poisoned = true;
-                throw t;
-            }
+            return record;
         }
-        return record;
+        finally {
+            operating--;
+        }
     }
 
     /**

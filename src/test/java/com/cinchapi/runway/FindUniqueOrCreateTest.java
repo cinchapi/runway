@@ -556,6 +556,88 @@ public class FindUniqueOrCreateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a factory cannot {@code abort()} the
+     * {@link Transaction} that the operation is in flight on, so the create can
+     * never fall through to the database as an immediate durable write.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * try-with-resources block.</li>
+     * <li>Call {@code findUniqueOrCreate} with {@code code == 2} and a factory
+     * that calls {@code abort()} on the transaction before it returns a new
+     * {@link Item} with code 2.</li>
+     * <li>Catch the expected refusal, then {@code commit()} the transaction and
+     * load every {@link Item}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The refusal is an
+     * {@link IllegalStateException}, the transaction remains usable and
+     * commits, and no {@link Item} exists in the database.
+     */
+    @Test
+    public void testFindUniqueOrCreateRefusesFactoryThatAbortsTransaction() {
+        try (Transaction transaction = runway.stage()) {
+            boolean refused = false;
+            try {
+                transaction.findUniqueOrCreate(Item.class, code(2), () -> {
+                    transaction.abort();
+                    return new Item(2);
+                });
+            }
+            catch (IllegalStateException e) {
+                refused = true;
+            }
+            Assert.assertTrue(refused);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertTrue(runway.load(Item.class).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a factory cannot {@code commit()} the
+     * {@link Transaction} that the operation is in flight on, so the create can
+     * never fall through to the database as an immediate durable write.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * try-with-resources block.</li>
+     * <li>Call {@code findUniqueOrCreate} with {@code code == 2} and a factory
+     * that calls {@code commit()} on the transaction before it returns a new
+     * {@link Item} with code 2.</li>
+     * <li>Catch the expected refusal, then {@code commit()} the transaction and
+     * load every {@link Item}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The refusal is an
+     * {@link IllegalStateException}, the transaction remains usable and
+     * commits, and no {@link Item} exists in the database.
+     */
+    @Test
+    public void testFindUniqueOrCreateRefusesFactoryThatCommitsTransaction() {
+        try (Transaction transaction = runway.stage()) {
+            boolean refused = false;
+            try {
+                transaction.findUniqueOrCreate(Item.class, code(2), () -> {
+                    transaction.commit();
+                    return new Item(2);
+                });
+            }
+            catch (IllegalStateException e) {
+                refused = true;
+            }
+            Assert.assertTrue(refused);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertTrue(runway.load(Item.class).isEmpty());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findUniqueOrCreate} resumes
      * against the enclosing {@link Runway} after the {@link Transaction} ends.
      * <p>
