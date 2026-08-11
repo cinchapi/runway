@@ -72,8 +72,8 @@ public class AudienceAccessControlAtomicUpdateTest
 
     /**
      * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} through an
-     * {@link Audience} refuses a key the {@link Audience} may not write, and
-     * changes nothing.
+     * {@link Audience} returns {@code null} and changes nothing when the
+     * {@link Audience} may not write the key.
      * <p>
      * <strong>Start state:</strong> One saved {@link Employer} and an
      * {@link EmployerUser} of that {@link Employer} bound to the database.
@@ -82,15 +82,15 @@ public class AudienceAccessControlAtomicUpdateTest
      * <ul>
      * <li>Save an {@link Employer} with a distinct industry.</li>
      * <li>Call {@code findUniqueAndUpdate} on the {@link EmployerUser} for the
-     * {@code industry} key, and catch the expected exception.</li>
+     * {@code industry} key.</li>
      * <li>Re-load the {@link Employer} from the database.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
-     * and the industry is unchanged.
+     * <strong>Expected:</strong> The result is {@code null} and the industry is
+     * unchanged.
      */
     @Test
-    public void testFindUniqueAndUpdateRefusedWhenKeyNotWritable() {
+    public void testFindUniqueAndUpdateReturnsNullWhenKeyNotWritable() {
         Employer acme = new Employer();
         acme.name = "Acme";
         acme.industry = "manufacturing";
@@ -99,23 +99,16 @@ public class AudienceAccessControlAtomicUpdateTest
         user.name = "HR Manager";
         user.employer = acme;
         user.assign(runway);
-        boolean threw = false;
-        try {
-            user.findUniqueAndUpdate(Employer.class, name("Acme"), "industry",
-                    industry -> "software");
-        }
-        catch (RestrictedAccessException e) {
-            threw = true;
-        }
-        Assert.assertTrue(threw);
+        Assert.assertNull(user.findUniqueAndUpdate(Employer.class, name("Acme"),
+                "industry", industry -> "software"));
         Assert.assertEquals("manufacturing",
                 runway.load(Employer.class, acme.id()).industry);
     }
 
     /**
      * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} through an
-     * {@link Audience} refuses an {@link Audience} with no writable keys on the
-     * matched {@link Record}.
+     * {@link Audience} returns {@code null} and changes nothing when the
+     * {@link Audience} has no writable keys on the matched {@link Record}.
      * <p>
      * <strong>Start state:</strong> Two saved {@link Employer Employers} and an
      * {@link EmployerUser} of the second one bound to the database.
@@ -124,16 +117,15 @@ public class AudienceAccessControlAtomicUpdateTest
      * <ul>
      * <li>Save the {@link Employer Employers}.</li>
      * <li>Call {@code findUniqueAndUpdate} on the unrelated
-     * {@link EmployerUser} against the first {@link Employer}, and catch the
-     * expected exception.</li>
+     * {@link EmployerUser} against the first {@link Employer}.</li>
      * <li>Re-load the first {@link Employer} from the database.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
-     * and the description is unchanged.
+     * <strong>Expected:</strong> The result is {@code null} and the description
+     * is unchanged.
      */
     @Test
-    public void testFindUniqueAndUpdateRefusedForUnrelatedAudience() {
+    public void testFindUniqueAndUpdateReturnsNullForUnrelatedAudience() {
         Employer acme = new Employer();
         acme.name = "Acme";
         acme.description = "old";
@@ -144,15 +136,8 @@ public class AudienceAccessControlAtomicUpdateTest
         user.name = "Outsider";
         user.employer = other;
         user.assign(runway);
-        boolean threw = false;
-        try {
-            user.findUniqueAndUpdate(Employer.class, name("Acme"),
-                    "description", description -> "hijacked");
-        }
-        catch (RestrictedAccessException e) {
-            threw = true;
-        }
-        Assert.assertTrue(threw);
+        Assert.assertNull(user.findUniqueAndUpdate(Employer.class, name("Acme"),
+                "description", description -> "hijacked"));
         Assert.assertEquals("old",
                 runway.load(Employer.class, acme.id()).description);
     }

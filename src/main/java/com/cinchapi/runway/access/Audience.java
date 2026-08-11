@@ -115,44 +115,6 @@ public interface Audience extends DatabaseInterface {
     }
 
     /**
-     * Return {@code true} if an atomic update of {@code key} on {@code subject}
-     * may proceed on behalf of this {@link Audience}. The {@code subject} must
-     * exist and be visible to this {@link Audience}; a {@code subject} that is
-     * not visible behaves as no match.
-     * <p>
-     * This is a framework-private method and should not be called directly.
-     * </p>
-     *
-     * @param key the field to update
-     * @param subject the matched {@link Record}, or {@code null} when nothing
-     *            matched
-     * @return {@code true} if the update may proceed
-     * @throws RestrictedAccessException if {@code subject} is visible but this
-     *             {@link Audience} is not permitted to write to {@code key}
-     */
-    public default boolean $canUpdate(String key, @Nullable Record subject) {
-        // TODO: make private in Java 9+
-        if(subject == null || !$checkIfInScopeOrVisible().test(subject)) {
-            return false;
-        }
-        else if(subject instanceof AccessControl) {
-            AccessControl gated = (AccessControl) subject;
-            Set<String> rules = this instanceof Anonymous
-                    ? gated.$writableByAnonymous()
-                    : gated.$writableBy(this);
-            if(!isPermittedAccess(ImmutableSet.of(key), rules)) {
-                throw new RestrictedAccessException();
-            }
-            else {
-                return true;
-            }
-        }
-        else {
-            return true;
-        }
-    }
-
-    /**
      * Return a {@link Predicate} that tests whether a {@link Record} is visible
      * to this {@link Audience}, honoring any applicable {@link Scope} for the
      * {@link Record Record's} class.
@@ -273,14 +235,7 @@ public interface Audience extends DatabaseInterface {
                         Reflection.get("connections", this));
             }
         }
-        if(record instanceof AccessControl) {
-            AccessControl subject = (AccessControl) record;
-            if((this instanceof Anonymous && !subject.$isCreatableByAnonymous())
-                    || (!(this instanceof Anonymous)
-                            && !subject.$isCreatableBy(this))) {
-                throw new RestrictedAccessException();
-            }
-        }
+        verifyIsCreatableByAudience(this, record);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
         }
@@ -316,11 +271,12 @@ public interface Audience extends DatabaseInterface {
      * {@code order} and update the value of {@code key} on behalf of this
      * {@link Audience}.
      * <p>
-     * The matched {@link Record} must be visible to this {@link Audience}; a
-     * match that is not visible behaves as no match. This {@link Audience} must
-     * be permitted to write to {@code key} on the matched {@link Record}. The
-     * access checks evaluate the matched {@link Record Record's} state when the
-     * operation begins.
+     * The update proceeds only if this {@link Audience} can write to
+     * {@code key} on the matched {@link Record}: the record must be visible to
+     * this {@link Audience} and {@code key} must be writable by it; otherwise
+     * the result is {@code null} and nothing is updated. The access checks
+     * evaluate the matched {@link Record Record's} state when the operation
+     * begins.
      * </p>
      *
      * @param clazz the {@link Record} type whose hierarchy is searched
@@ -331,18 +287,16 @@ public interface Audience extends DatabaseInterface {
      *            current one
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if no match is
-     *         visible to this {@link Audience}
-     * @throws RestrictedAccessException if this {@link Audience} is not
-     *             permitted to write to {@code key} on the matched
-     *             {@link Record}
+     * @return the updated {@link Record}, or {@code null} if there is no match
+     *         that this {@link Audience} can update
      */
+    @Nullable
     @Override
     public default <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
         T subject = $db().findAnyFirst(clazz, criteria, order);
-        if($canUpdate(key, subject)) {
+        if(isWritableByAudience(this, ImmutableSet.of(key), subject)) {
             return $db().findAnyFirstAndUpdate(clazz, criteria, order, key,
                     update);
         }
@@ -356,11 +310,12 @@ public interface Audience extends DatabaseInterface {
      * that matches the {@code criteria} and update the value of {@code key} on
      * behalf of this {@link Audience}.
      * <p>
-     * The matched {@link Record} must be visible to this {@link Audience}; a
-     * match that is not visible behaves as no match. This {@link Audience} must
-     * be permitted to write to {@code key} on the matched {@link Record}. The
-     * access checks evaluate the matched {@link Record Record's} state when the
-     * operation begins.
+     * The update proceeds only if this {@link Audience} can write to
+     * {@code key} on the matched {@link Record}: the record must be visible to
+     * this {@link Audience} and {@code key} must be writable by it; otherwise
+     * the result is {@code null} and nothing is updated. The access checks
+     * evaluate the matched {@link Record Record's} state when the operation
+     * begins.
      * </p>
      *
      * @param clazz the {@link Record} type whose hierarchy is searched
@@ -370,20 +325,18 @@ public interface Audience extends DatabaseInterface {
      *            current one
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if no match is
-     *         visible to this {@link Audience}
+     * @return the updated {@link Record}, or {@code null} if there is no match
+     *         that this {@link Audience} can update
      * @throws DuplicateEntryException if more than one record in the hierarchy
      *             matches
-     * @throws RestrictedAccessException if this {@link Audience} is not
-     *             permitted to write to {@code key} on the matched
-     *             {@link Record}
      */
+    @Nullable
     @Override
     public default <T extends Record, V> T findAnyUniqueAndUpdate(
             Class<T> clazz, Criteria criteria, String key,
             UnaryOperator<V> update) {
         T subject = $db().findAnyUnique(clazz, criteria);
-        if($canUpdate(key, subject)) {
+        if(isWritableByAudience(this, ImmutableSet.of(key), subject)) {
             return $db().findAnyUniqueAndUpdate(clazz, criteria, key, update);
         }
         else {
@@ -396,11 +349,12 @@ public interface Audience extends DatabaseInterface {
      * matches the {@code criteria} under the supplied {@code order} and update
      * the value of {@code key} on behalf of this {@link Audience}.
      * <p>
-     * The matched {@link Record} must be visible to this {@link Audience}; a
-     * match that is not visible behaves as no match. This {@link Audience} must
-     * be permitted to write to {@code key} on the matched {@link Record}. The
-     * access checks evaluate the matched {@link Record Record's} state when the
-     * operation begins.
+     * The update proceeds only if this {@link Audience} can write to
+     * {@code key} on the matched {@link Record}: the record must be visible to
+     * this {@link Audience} and {@code key} must be writable by it; otherwise
+     * the result is {@code null} and nothing is updated. The access checks
+     * evaluate the matched {@link Record Record's} state when the operation
+     * begins.
      * </p>
      *
      * @param clazz the {@link Record} type to find
@@ -411,18 +365,16 @@ public interface Audience extends DatabaseInterface {
      *            current one
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if no match is
-     *         visible to this {@link Audience}
-     * @throws RestrictedAccessException if this {@link Audience} is not
-     *             permitted to write to {@code key} on the matched
-     *             {@link Record}
+     * @return the updated {@link Record}, or {@code null} if there is no match
+     *         that this {@link Audience} can update
      */
+    @Nullable
     @Override
     public default <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
         T subject = $db().findFirst(clazz, criteria, order);
-        if($canUpdate(key, subject)) {
+        if(isWritableByAudience(this, ImmutableSet.of(key), subject)) {
             return $db().findFirstAndUpdate(clazz, criteria, order, key,
                     update);
         }
@@ -436,11 +388,12 @@ public interface Audience extends DatabaseInterface {
      * the {@code criteria} and update the value of {@code key} on behalf of
      * this {@link Audience}.
      * <p>
-     * The matched {@link Record} must be visible to this {@link Audience}; a
-     * match that is not visible behaves as no match. This {@link Audience} must
-     * be permitted to write to {@code key} on the matched {@link Record}. The
-     * access checks evaluate the matched {@link Record Record's} state when the
-     * operation begins.
+     * The update proceeds only if this {@link Audience} can write to
+     * {@code key} on the matched {@link Record}: the record must be visible to
+     * this {@link Audience} and {@code key} must be writable by it; otherwise
+     * the result is {@code null} and nothing is updated. The access checks
+     * evaluate the matched {@link Record Record's} state when the operation
+     * begins.
      * </p>
      *
      * @param clazz the {@link Record} type to find
@@ -450,18 +403,16 @@ public interface Audience extends DatabaseInterface {
      *            current one
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if no match is
-     *         visible to this {@link Audience}
+     * @return the updated {@link Record}, or {@code null} if there is no match
+     *         that this {@link Audience} can update
      * @throws DuplicateEntryException if more than one record matches
-     * @throws RestrictedAccessException if this {@link Audience} is not
-     *             permitted to write to {@code key} on the matched
-     *             {@link Record}
      */
+    @Nullable
     @Override
     public default <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
         T subject = $db().findUnique(clazz, criteria);
-        if($canUpdate(key, subject)) {
+        if(isWritableByAudience(this, ImmutableSet.of(key), subject)) {
             return $db().findUniqueAndUpdate(clazz, criteria, key, update);
         }
         else {
@@ -910,18 +861,7 @@ public interface Audience extends DatabaseInterface {
     @Override
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
-        if(record instanceof AccessControl) {
-            AccessControl subject = (AccessControl) record;
-            if((this instanceof Anonymous && !subject.$isCreatableByAnonymous())
-                    || (!(this instanceof Anonymous)
-                            && !subject.$isCreatableBy(this))) {
-                throw new RestrictedAccessException();
-            }
-        }
-        else {
-            // The record is not access controlled, so any Audience may intern
-            // it.
-        }
+        verifyIsCreatableByAudience(this, record);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
         }
@@ -1021,15 +961,7 @@ public interface Audience extends DatabaseInterface {
      */
     public default <T extends Record> void write(Map<String, Object> data,
             T record) throws RestrictedAccessException {
-        if(record instanceof AccessControl) {
-            AccessControl subject = (AccessControl) record;
-            Set<String> rules = this instanceof Anonymous
-                    ? subject.$writableByAnonymous()
-                    : subject.$writableBy(this);
-            if(!isPermittedAccess(data.keySet(), rules)) {
-                throw new RestrictedAccessException();
-            }
-        }
+        verifyIsWritableByAudience(this, data.keySet(), record);
         record.set(data);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
@@ -1053,15 +985,7 @@ public interface Audience extends DatabaseInterface {
      */
     public default <T extends Record> void write(String key, Object value,
             T record) throws RestrictedAccessException {
-        if(record instanceof AccessControl) {
-            AccessControl subject = (AccessControl) record;
-            Set<String> rules = this instanceof Anonymous
-                    ? subject.$writableByAnonymous()
-                    : subject.$writableBy(this);
-            if(!isPermittedAccess(ImmutableSet.of(key), rules)) {
-                throw new RestrictedAccessException();
-            }
-        }
+        verifyIsWritableByAudience(this, ImmutableSet.of(key), record);
         record.set(key, value);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);

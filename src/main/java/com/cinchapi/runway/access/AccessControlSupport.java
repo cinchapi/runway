@@ -59,17 +59,26 @@ import com.google.common.collect.Multiset;
 class AccessControlSupport {
 
     /**
-     * Registry mapping each {@link AccessControl} class to a provider
-     * {@link Function} that, given an {@link Audience}, returns the
-     * {@link Scope} describing that audience's database-level visibility.
-     * <p>
-     * Populated via
-     * {@link AccessControl#registerVisibilityScope(Class, Function)} and
-     * consulted at query time by
-     * {@link Audience#select(com.cinchapi.runway.Selection[])}.
-     * </p>
+     * Return {@code true} if {@code audience} is permitted to create
+     * {@code record}.
+     *
+     * @param audience the {@link Audience} on whose behalf the create runs
+     * @param record the {@link Record} to create
+     * @return {@code true} if {@code record} is not {@link AccessControl access
+     *         controlled} or {@code audience} is permitted to create it
      */
-    static final Map<Class<?>, Function<Audience, Scope>> VISIBILITY_SCOPES = new ConcurrentHashMap<>();
+    public static boolean isCreatableByAudience(Audience audience,
+            Record record) {
+        if(record instanceof AccessControl) {
+            AccessControl subject = (AccessControl) record;
+            return audience instanceof Anonymous
+                    ? subject.$isCreatableByAnonymous()
+                    : subject.$isCreatableBy(audience);
+        }
+        else {
+            return true;
+        }
+    }
 
     /**
      * Check whether the {@code requested} keys are permitted by the access
@@ -124,6 +133,80 @@ class AccessControlSupport {
             return true;
         }
     }
+
+    /**
+     * Return {@code true} if {@code audience} is permitted to write to each of
+     * the {@code keys} on {@code subject}: the {@code subject} exists, it is
+     * visible to the {@code audience}, and every one of the {@code keys} is
+     * writable by the {@code audience}.
+     *
+     * @param audience the {@link Audience} on whose behalf the write runs
+     * @param keys the fields to write to
+     * @param subject the {@link Record} to modify, or {@code null} when there
+     *            is nothing to modify
+     * @return {@code true} if the write is permitted
+     */
+    public static boolean isWritableByAudience(Audience audience,
+            Collection<String> keys, @Nullable Record subject) {
+        if(subject == null
+                || !audience.$checkIfInScopeOrVisible().test(subject)) {
+            return false;
+        }
+        else if(subject instanceof AccessControl) {
+            AccessControl gated = (AccessControl) subject;
+            Set<String> rules = audience instanceof Anonymous
+                    ? gated.$writableByAnonymous()
+                    : gated.$writableBy(audience);
+            return isPermittedAccess(keys, rules);
+        }
+        else {
+            return true;
+        }
+    }
+
+    /**
+     * Verify that {@code audience} is permitted to create {@code record}.
+     *
+     * @param audience the {@link Audience} on whose behalf the create runs
+     * @param record the {@link Record} to create
+     * @throws RestrictedAccessException if the create is not permitted
+     */
+    public static void verifyIsCreatableByAudience(Audience audience,
+            Record record) {
+        if(!isCreatableByAudience(audience, record)) {
+            throw new RestrictedAccessException();
+        }
+    }
+
+    /**
+     * Verify that {@code audience} is permitted to write to each of the
+     * {@code keys} on {@code subject}.
+     *
+     * @param audience the {@link Audience} on whose behalf the write runs
+     * @param keys the fields to write to
+     * @param subject the {@link Record} to modify, or {@code null} when there
+     *            is nothing to modify
+     * @throws RestrictedAccessException if the write is not permitted
+     */
+    public static void verifyIsWritableByAudience(Audience audience,
+            Collection<String> keys, @Nullable Record subject) {
+        if(!isWritableByAudience(audience, keys, subject)) {
+            throw new RestrictedAccessException();
+        }
+    }
+
+    /**
+     * Registry mapping each {@link AccessControl} class to a provider
+     * {@link Function} that, given an {@link Audience}, returns the
+     * {@link Scope} describing that audience's database-level visibility.
+     * <p>
+     * Populated via
+     * {@link AccessControl#registerVisibilityScope(Class, Function)} and
+     * consulted at query time by
+     * {@link Audience#select(com.cinchapi.runway.Selection[])}.
+     * </p>
+     */
+    static final Map<Class<?>, Function<Audience, Scope>> VISIBILITY_SCOPES = new ConcurrentHashMap<>();
 
     /**
      * Return a {@link ThreadLocal} variable to keep track of processed records
