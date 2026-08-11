@@ -85,6 +85,7 @@ import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
@@ -6226,6 +6227,40 @@ public abstract class Record implements Comparable<Record> {
          */
         private ReactiveBinding(Record tracked) {
             this.tracked = tracked;
+        }
+
+        @Override
+        public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
+                Criteria criteria, Order order, String key,
+                UnaryOperator<V> update) {
+            return delegate().findAnyFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+
+        @Override
+        public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
+                Criteria criteria, String key, UnaryOperator<V> update) {
+            return delegate().findAnyUniqueAndUpdate(clazz, criteria, key,
+                    update);
+        }
+
+        @Override
+        public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
+                Criteria criteria, Order order, String key,
+                UnaryOperator<V> update) {
+            return delegate().findFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+
+        @Override
+        public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
+                Criteria criteria, String key, UnaryOperator<V> update) {
+            return delegate().findUniqueAndUpdate(clazz, criteria, key, update);
+        }
+
+        @Override
+        public <T extends Record> T intern(T record) {
+            return delegate().intern(record);
         }
 
         @Override
