@@ -1009,6 +1009,43 @@ public final class Runway extends Binding implements AutoCloseable {
         return supply(tx -> tx.findUniqueOrCreate(clazz, criteria, factory));
     }
 
+    /**
+     * Atomically return the unique {@link Record} that shares the identity of
+     * {@code record}, or save {@code record} when none exists, in the manner of
+     * {@link String#intern()}; the lookup and the save commit as one
+     * transaction.
+     * <p>
+     * A {@link Record Record's} identity is the current data under its
+     * {@link Unique} constraints, scoped to its class. Another record shares
+     * the identity only if it agrees with every constraint; a {@code null}
+     * value does not participate. If no record shares the identity, then
+     * {@code record} itself is saved and returned. If an existing record shares
+     * some but not all of the identity, then there is no match, and the save of
+     * {@code record} fails {@link Unique} enforcement.
+     * </p>
+     * <p>
+     * The operation runs under the contract of
+     * {@link #findUniqueOrCreate(Class, Criteria, Supplier)
+     * findUniqueOrCreate}: it runs in its own transaction, independent of any
+     * {@link Transaction} the caller holds open, and concurrent callers for the
+     * same identity converge on one record.
+     * </p>
+     *
+     * @param record the {@link Record} whose identity is interned
+     * @param <T> the type of {@link Record}
+     * @return the {@link Record} that claims the identity: the sole existing
+     *         match, or {@code record} once saved
+     * @throws DuplicateEntryException if more than one record shares the
+     *             identity
+     * @throws RetryExhaustedException if the operation cannot commit within the
+     *             bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint of {@code record} has a non-null value
+     */
+    public <T extends Record> T intern(T record) {
+        return supply(tx -> tx.intern(record));
+    }
+
     @SuppressWarnings("deprecation")
     @Override
     public Gateway gateway() {
