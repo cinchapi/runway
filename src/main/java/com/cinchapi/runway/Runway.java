@@ -768,6 +768,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Nullable
     @Override
     public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
@@ -810,6 +811,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Nullable
     @Override
     public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
@@ -858,6 +860,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Nullable
     @Override
     public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
@@ -942,6 +945,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Nullable
     @Override
     public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
@@ -3171,6 +3175,7 @@ public final class Runway extends Binding implements AutoCloseable {
      * @throws RetryExhaustedException if the update cannot commit within the
      *             bounds of the governing {@link AtomicRetryPolicy}
      */
+    @Nullable
     private <T extends Record, V> T readAndUpdateAtomically(boolean any,
             Class<T> clazz, Criteria criteria, @Nullable Order order,
             String key, UnaryOperator<V> update) {

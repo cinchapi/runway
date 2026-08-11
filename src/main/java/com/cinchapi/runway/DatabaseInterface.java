@@ -22,6 +22,8 @@ import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
+import javax.annotation.Nullable;
+
 import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
@@ -1179,6 +1181,7 @@ public interface DatabaseInterface {
      * @throws UnsupportedOperationException if the implementation does not
      *             support atomic read-and-update operations
      */
+    @Nullable
     public default <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
@@ -1235,6 +1238,7 @@ public interface DatabaseInterface {
      * @throws UnsupportedOperationException if the implementation does not
      *             support atomic read-and-update operations
      */
+    @Nullable
     public default <T extends Record, V> T findAnyUniqueAndUpdate(
             Class<T> clazz, Criteria criteria, String key,
             UnaryOperator<V> update) {
@@ -1353,6 +1357,7 @@ public interface DatabaseInterface {
      * @throws UnsupportedOperationException if the implementation does not
      *             support atomic read-and-update operations
      */
+    @Nullable
     public default <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
@@ -1411,6 +1416,7 @@ public interface DatabaseInterface {
      * @throws UnsupportedOperationException if the implementation does not
      *             support atomic read-and-update operations
      */
+    @Nullable
     public default <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
         throw new UnsupportedOperationException();

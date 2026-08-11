@@ -6229,6 +6229,7 @@ public abstract class Record implements Comparable<Record> {
             this.tracked = tracked;
         }
 
+        @Nullable
         @Override
         public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
                 Criteria criteria, Order order, String key,
@@ -6237,6 +6238,7 @@ public abstract class Record implements Comparable<Record> {
                     update);
         }
 
+        @Nullable
         @Override
         public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
                 Criteria criteria, String key, UnaryOperator<V> update) {
@@ -6244,6 +6246,7 @@ public abstract class Record implements Comparable<Record> {
                     update);
         }
 
+        @Nullable
         @Override
         public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
                 Criteria criteria, Order order, String key,
@@ -6252,6 +6255,7 @@ public abstract class Record implements Comparable<Record> {
                     update);
         }
 
+        @Nullable
         @Override
         public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
                 Criteria criteria, String key, UnaryOperator<V> update) {
