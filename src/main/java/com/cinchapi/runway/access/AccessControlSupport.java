@@ -69,11 +69,11 @@ class AccessControlSupport {
      * {@code audience}.
      * <p>
      * If the {@code audience} is bound to an open transaction, then the
-     * {@code lookup}, the access checks and the update stage within it;
+     * {@code supplier}, the access checks and the update stage within it;
      * otherwise, they commit together in their own transaction. The
-     * {@code lookup} runs within that scope, so a lookup through the
+     * {@code supplier} runs within that scope, so a lookup through the
      * {@code audience} matches among the records that are visible to it. The
-     * update proceeds only if the matched {@link Record}
+     * update proceeds only if the supplied {@link Record}
      * {@link #isWritableByAudience(Audience, Collection, Record) is writable}
      * by the {@code audience}; otherwise the result is {@code null} and nothing
      * is updated. The replacement is validated under the same rules as every
@@ -82,7 +82,8 @@ class AccessControlSupport {
      * </p>
      *
      * @param audience the {@link Audience} on whose behalf the update runs
-     * @param lookup performs the lookup within the transactional scope
+     * @param supplier supplies the {@link Record} to update within the
+     *            transactional scope
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
      *            current one; it must not return {@code null}
@@ -100,12 +101,12 @@ class AccessControlSupport {
      *             owns or that a failed save poisoned
      */
     @Nullable
-    public static <T extends Record, V> T findAndUpdate(Audience audience,
-            Supplier<T> lookup, String key, UnaryOperator<V> update) {
+    public static <T extends Record, V> T supplyAndUpdate(Audience audience,
+            Supplier<T> supplier, String key, UnaryOperator<V> update) {
         if(audience instanceof Record) {
             return Reflection.call(audience, "supply",
                     (Function<TransactionInterface, T>) transaction -> {
-                        T subject = lookup.get();
+                        T subject = supplier.get();
                         if(isWritableByAudience(audience, ImmutableSet.of(key),
                                 subject)) {
                             Reflection.set("_author", (Record) audience,

@@ -57,9 +57,9 @@ import com.google.common.collect.Multiset;
 /**
  * A {@link Record} that can "perform" database operations on other records
  * (e.g., a user) and is therefore subject to permissions and rules with respect
- * to {@link AccessControl access controlled} records. {@link Framing} are a key
- * component of the access control paradigm within the framework where granular
- * access rules for various operations can be defined.
+ * to {@link AccessControl access controlled} records. {@link Audience
+ * Audiences} are a key component of the access control paradigm within the
+ * framework, where granular access rules for various operations can be defined.
  * <p>
  * This interface extends {@link DatabaseInterface}, enabling idiomatic and
  * semantic database operations that are being "performed" by the
@@ -316,7 +316,7 @@ public interface Audience extends DatabaseInterface {
             UnaryOperator<V> update) {
         Verify.thatArgument(order != null,
                 "findAnyFirstAndUpdate requires an Order");
-        return findAndUpdate(this, () -> findAnyFirst(clazz, criteria, order),
+        return supplyAndUpdate(this, () -> findAnyFirst(clazz, criteria, order),
                 key, update);
     }
 
@@ -367,7 +367,7 @@ public interface Audience extends DatabaseInterface {
     public default <T extends Record, V> T findAnyUniqueAndUpdate(
             Class<T> clazz, Criteria criteria, String key,
             UnaryOperator<V> update) {
-        return findAndUpdate(this, () -> findAnyUnique(clazz, criteria), key,
+        return supplyAndUpdate(this, () -> findAnyUnique(clazz, criteria), key,
                 update);
     }
 
@@ -420,8 +420,8 @@ public interface Audience extends DatabaseInterface {
             UnaryOperator<V> update) {
         Verify.thatArgument(order != null,
                 "findFirstAndUpdate requires an Order");
-        return findAndUpdate(this, () -> findFirst(clazz, criteria, order), key,
-                update);
+        return supplyAndUpdate(this, () -> findFirst(clazz, criteria, order),
+                key, update);
     }
 
     /**
@@ -468,7 +468,7 @@ public interface Audience extends DatabaseInterface {
     @Override
     public default <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
-        return findAndUpdate(this, () -> findUnique(clazz, criteria), key,
+        return supplyAndUpdate(this, () -> findUnique(clazz, criteria), key,
                 update);
     }
 

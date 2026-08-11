@@ -301,7 +301,7 @@ public interface TransactionInterface extends DatabaseInterface {
      * exactly one record claims the identity. If the staged save of
      * {@code record} fails (for example, a partial identity collision fails
      * {@link Unique} enforcement), then the transaction is poisoned: the staged
-     * writes can never commit, and the view refuses every subsequent operation.
+     * writes can never commit, and the view refuses every later operation.
      * </p>
      *
      * @param record the {@link Record} whose identity is interned

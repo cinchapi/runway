@@ -966,8 +966,7 @@ public final class Runway extends Binding implements AutoCloseable {
      * <p>
      * The operation runs in its own transaction, independent of any
      * {@link Transaction} the caller holds open: concurrent callers for the
-     * same identity converge on one record, and the loser of a creation race
-     * retries and adopts the winner.
+     * same identity converge on one record.
      * </p>
      * <p>
      * <strong>NOTE:</strong> This method operates solely on {@link Record

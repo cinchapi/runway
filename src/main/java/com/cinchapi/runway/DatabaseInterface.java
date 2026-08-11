@@ -1174,7 +1174,7 @@ public interface DatabaseInterface {
      * @param order the {@link Order} that defines "first"
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one
+     *            current one; it must not return {@code null}
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
      * @return the updated {@link Record}, or {@code null} if none matches
@@ -1229,7 +1229,7 @@ public interface DatabaseInterface {
      * @param criteria the {@link Criteria} the record must match
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one
+     *            current one; it must not return {@code null}
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
      * @return the updated {@link Record}, or {@code null} if none matches
@@ -1350,7 +1350,7 @@ public interface DatabaseInterface {
      * @param order the {@link Order} that defines "first"
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one
+     *            current one; it must not return {@code null}
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
      * @return the updated {@link Record}, or {@code null} if none matches
@@ -1408,7 +1408,7 @@ public interface DatabaseInterface {
      * @param criteria the {@link Criteria} the record must match
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
-     *            current one
+     *            current one; it must not return {@code null}
      * @param <T> the type of {@link Record}
      * @param <V> the type of the value stored under {@code key}
      * @return the updated {@link Record}, or {@code null} if none matches
