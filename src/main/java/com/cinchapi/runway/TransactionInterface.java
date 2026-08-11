@@ -146,9 +146,8 @@ public interface TransactionInterface extends DatabaseInterface {
             Supplier<T> factory);
 
     /**
-     * Return the unique {@link Record} that shares the identity of
-     * {@code record}, or save {@code record} when none exists, in the manner of
-     * {@link String#intern()}.
+     * Return the unique {@link Record} that agrees with every {@link Unique}
+     * constraint of {@code record}, or save {@code record} when none exists.
      * <p>
      * A {@link Record Record's} identity is the current data under its
      * {@link Unique} constraints, scoped to its class. Another record shares

@@ -1622,9 +1622,8 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the unique {@link Record} that shares this record's identity, or
-     * save this record when none exists, in the manner of
-     * {@link String#intern()}.
+     * Return the unique {@link Record} that agrees with every {@link Unique}
+     * constraint of this record, or save this record when none exists.
      * <p>
      * The identity is the current data under this record's {@link Unique}
      * constraints, scoped to its class. Another record shares the identity only
