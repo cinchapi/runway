@@ -285,9 +285,12 @@ public interface AccessControl {
      * Authorize that the specified {@link Audience} is permitted to create this
      * {@link Record}.
      * <p>
-     * This method verifies creation permissions before allowing the
-     * {@link Record} to be considered valid. It should be called after
-     * instantiation but before saving.
+     * An anonymous {@link Audience}, given as either {@code null} or the
+     * {@link Audience#anonymous() anonymous} instance, is permitted when
+     * {@link #$isCreatableByAnonymous()} allows creation. Any other
+     * {@link Audience} is permitted when {@link #$isCreatableBy(Audience)}
+     * allows creation. These are the same rules that govern creation through an
+     * {@link Audience}.
      * </p>
      *
      * @param audience the {@link Audience} attempting to create the
@@ -297,11 +300,8 @@ public interface AccessControl {
      */
     public default void authorize(@Nullable Audience audience)
             throws RestrictedAccessException {
-        if(((audience == null || audience instanceof Anonymous)
-                && !$isCreatableByAnonymous())
-                || (audience != null && !$isCreatableBy(audience))) {
-            throw new RestrictedAccessException();
-        }
+        audience = audience == null ? Audience.anonymous() : audience;
+        AccessControlSupport.verifyIsCreatableByAudience(audience, $this());
     }
 
     /**
