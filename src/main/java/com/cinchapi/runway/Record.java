@@ -2330,6 +2330,12 @@ public abstract class Record implements Comparable<Record> {
      * absolutely, or derive it from a read through the transaction, rather than
      * increment what a prior attempt left behind.
      * </p>
+     * <p>
+     * If this {@link Record} is a {@link Transactional} (e.g., an
+     * {@link com.cinchapi.runway.access.Audience Audience}), then the work
+     * receives this {@link Transactional Transactional's}
+     * {@link Transactional#view(TransactionInterface) view} of the transaction.
+     * </p>
      *
      * @param work the work to run
      * @return the result of {@code work}
@@ -2340,9 +2346,17 @@ public abstract class Record implements Comparable<Record> {
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
     public final <T> T supply(Function<TransactionInterface, T> work) {
+        Function<TransactionInterface, T> scoped;
+        if(this instanceof Transactional) {
+            Transactional transactional = (Transactional) this;
+            scoped = transaction -> work.apply(transactional.view(transaction));
+        }
+        else {
+            scoped = work;
+        }
         if(isBoundToOpenTransaction()) {
-            Transaction transaction = (Transaction) binding;
-            return transaction.execute(() -> work.apply(transaction));
+            DatabaseTransaction transaction = (DatabaseTransaction) binding;
+            return transaction.execute(() -> scoped.apply(transaction));
         }
         else {
             Runway runway = harness();
@@ -2351,8 +2365,8 @@ public abstract class Record implements Comparable<Record> {
             return runway.supply(transaction -> {
                 // The lambda receives the Transaction that supply constructs,
                 // so the cast to reach the package-private join is safe.
-                ((Transaction) transaction).join(this);
-                return work.apply(transaction);
+                ((DatabaseTransaction) transaction).join(this);
+                return scoped.apply(transaction);
             });
         }
     }
@@ -2815,7 +2829,8 @@ public abstract class Record implements Comparable<Record> {
      * @return {@code true} if the binding is an open {@link Transaction}
      */
     boolean isBoundToOpenTransaction() {
-        return binding instanceof Transaction && ((Transaction) binding).open();
+        return binding instanceof DatabaseTransaction
+                && ((DatabaseTransaction) binding).open();
     }
 
     /**
@@ -4097,8 +4112,8 @@ public abstract class Record implements Comparable<Record> {
         if(binding instanceof Runway) {
             return (Runway) binding;
         }
-        else if(binding instanceof Transaction) {
-            return ((Transaction) binding).database();
+        else if(binding instanceof DatabaseTransaction) {
+            return ((DatabaseTransaction) binding).database();
         }
         else {
             return null;
@@ -4118,8 +4133,8 @@ public abstract class Record implements Comparable<Record> {
         if(binding instanceof Runway) {
             return true;
         }
-        else if(binding instanceof Transaction) {
-            return !((Transaction) binding).open();
+        else if(binding instanceof DatabaseTransaction) {
+            return !((DatabaseTransaction) binding).open();
         }
         else {
             return false;
@@ -4507,8 +4522,9 @@ public abstract class Record implements Comparable<Record> {
      * @return the staleness ceiling
      */
     private long stalenessCeiling() {
-        if(binding instanceof Transaction && ((Transaction) binding).open()) {
-            return ((Transaction) binding).startTimestamp();
+        if(binding instanceof DatabaseTransaction
+                && ((DatabaseTransaction) binding).open()) {
+            return ((DatabaseTransaction) binding).startTimestamp();
         }
         else {
             return Long.MAX_VALUE;

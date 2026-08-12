@@ -29,6 +29,11 @@ import java.util.function.Function;
  * {@link TransactionInterface} view and manage the lifecycle on the caller's
  * behalf.
  * </p>
+ * <p>
+ * Every transactional view this {@link Transactional} scopes passes through
+ * {@link #view(TransactionInterface)}, so operations on the view behave the
+ * same as operations on this {@link Transactional}.
+ * </p>
  *
  * @author Jeff Nelson
  */
@@ -60,6 +65,10 @@ public interface Transactional {
      * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
      * close} to abort whatever was not committed. Use a try-with-resources
      * block so the transaction always ends.
+     * </p>
+     * <p>
+     * Every operation on the returned view behaves the same as the operation on
+     * this {@link Transactional}, just within the confines of the transaction.
      * </p>
      *
      * @return an open {@link Transaction}
@@ -116,5 +125,20 @@ public interface Transactional {
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
     public <T> T supply(Function<TransactionInterface, T> work);
+
+    /**
+     * Return the {@link TransactionInterface} view of {@code transaction}
+     * through which work scoped by this {@link Transactional} operates.
+     * <p>
+     * Every operation on the returned view behaves the same as the operation on
+     * this {@link Transactional}, just within the confines of the transaction.
+     * </p>
+     *
+     * @param transaction the transaction that scopes the work
+     * @return the view the work receives
+     */
+    public default TransactionInterface view(TransactionInterface transaction) {
+        return transaction;
+    }
 
 }

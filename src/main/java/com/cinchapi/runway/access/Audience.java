@@ -938,7 +938,12 @@ public interface Audience extends DatabaseInterface, Transactional {
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
         if(this instanceof Record) {
-            return ((Record) this).supply(transaction -> {
+            return ((Record) this).supply(view -> {
+                // The checks below run against this Audience, so the raw
+                // transaction is the correct target for the staging
+                // operations; the Audience-scoped view would repeat them.
+                TransactionInterface transaction = AudienceTransaction
+                        .raw(view);
                 // Join the record and its reachable graph to the
                 // transactional scope before the permission check
                 // runs, so the check and the save both resolve within
@@ -1045,6 +1050,12 @@ public interface Audience extends DatabaseInterface, Transactional {
      * operations it performs, and the access checks that gate them, resolve
      * within the transaction.
      * <p>
+     * Every operation on the returned view behaves the same as the operation on
+     * this {@link Audience}, just within the confines of the transaction: reads
+     * observe this {@link Audience Audience's} visibility and the writes it
+     * permits are the ones that stage.
+     * </p>
+     * <p>
      * The caller owns the {@link Transaction Transaction's} lifecycle: end it
      * with exactly one of {@link Transaction#commit() commit} or
      * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
@@ -1079,7 +1090,7 @@ public interface Audience extends DatabaseInterface, Transactional {
                 transaction.close();
                 throw e;
             }
-            return transaction;
+            return new AudienceTransaction(this, transaction);
         }
         else {
             throw new UnsupportedOperationException();
@@ -1108,6 +1119,26 @@ public interface Audience extends DatabaseInterface, Transactional {
         }
         else {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    /**
+     * Return the {@link TransactionInterface} view of {@code transaction}
+     * through which work scoped by this {@link Audience} operates: every
+     * operation on the view behaves the same as the operation on this
+     * {@link Audience}, just within the confines of the transaction.
+     *
+     * @param transaction the transaction that scopes the work
+     * @return the view the work receives
+     */
+    @Override
+    public default TransactionInterface view(TransactionInterface transaction) {
+        if(transaction instanceof Transaction
+                && !(transaction instanceof AudienceTransaction)) {
+            return new AudienceTransaction(this, (Transaction) transaction);
+        }
+        else {
+            return transaction;
         }
     }
 

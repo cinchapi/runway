@@ -94,7 +94,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * transaction before the commit and visible after it.
      */
     @Test
-    public void testAudienceCreateAndSaveStageWithinStagedTransaction() {
+    public void testAudienceCreateAndSaveStageWithinTransaction() {
         Admin admin = createAdmin();
         try (Transaction transaction = admin.stage()) {
             Candidate candidate = admin.create(Candidate.class);
@@ -199,7 +199,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * transaction before the commit and visible after it.
      */
     @Test
-    public void testAudienceWriteStagesWithinStagedTransaction() {
+    public void testAudienceWriteStagesWithinTransaction() {
         Admin admin = createAdmin();
         Candidate candidate = createCandidate();
         try (Transaction transaction = admin.stage()) {
@@ -355,6 +355,157 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
         });
         Assert.assertEquals("Janet Developer",
                 runway.load(Candidate.class, candidate.id()).name);
+    }
+
+    /**
+     * Return a saved {@link Application} that belongs to the "Jane Developer"
+     * {@link Candidate}. Another {@link Candidate} cannot discover, read or
+     * write it, so it is invisible to the viewer audience.
+     *
+     * @return the {@link Application}
+     */
+    private Application createHiddenApplication() {
+        Employer employer = new Employer();
+        employer.name = "Acme Corp";
+        employer.assign(runway);
+        Assert.assertTrue(employer.save());
+        Job job = new Job();
+        job.title = "Engineer";
+        job.employer = employer;
+        job.assign(runway);
+        Assert.assertTrue(job.save());
+        Candidate jane = createCandidate();
+        Application application = new Application();
+        application.candidate = jane;
+        application.job = job;
+        application.assign(runway);
+        Assert.assertTrue(application.save());
+        return application;
+    }
+
+    /**
+     * Return a saved {@link Candidate} named "Victor Viewer" that is bound to
+     * the test {@link #runway}. A {@link Candidate} cannot see another
+     * {@link Candidate Candidate's} {@link Application} and cannot create
+     * {@link Job Jobs}, so this is the restricted audience for scoping tests.
+     *
+     * @return the {@link Candidate}
+     */
+    private Candidate createViewer() {
+        Candidate viewer = new Candidate();
+        viewer.email = "viewer@example.com";
+        viewer.name = "Victor Viewer";
+        viewer.assign(runway);
+        Assert.assertTrue(viewer.save());
+        return viewer;
+    }
+
+    /**
+     * Return a {@link Criteria} that matches records whose status is
+     * {@code submitted}.
+     *
+     * @return the {@link Criteria}
+     */
+    private Criteria submittedStatusCriteria() {
+        return Criteria.where().key("status").operator(Operator.EQUALS)
+                .value("submitted").build();
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that reads against the {@link Transaction}
+     * an {@link Audience} staged observe the {@link Audience Audience's}
+     * visibility, not the raw database.
+     * <p>
+     * <strong>Start state:</strong> A saved viewer {@link Candidate} and a
+     * saved {@link Application} that belongs to another {@link Candidate}, all
+     * bound to the {@link #runway}. The {@link Application} is invisible to the
+     * viewer.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage a {@link Transaction} from the viewer {@link Candidate}.</li>
+     * <li>Find the {@link Application} through the transaction and through the
+     * enclosing {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The find through the transaction returns
+     * nothing; the find through the {@link #runway} returns the
+     * {@link Application}.
+     */
+    @Test
+    public void testTransactionReadsFilterAudienceVisibility() {
+        Candidate viewer = createViewer();
+        createHiddenApplication();
+        try (Transaction transaction = viewer.stage()) {
+            Assert.assertTrue(transaction
+                    .find(Application.class, submittedStatusCriteria())
+                    .isEmpty());
+            Assert.assertEquals(1, runway
+                    .find(Application.class, submittedStatusCriteria()).size());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a create through the
+     * {@link Transaction} an {@link Audience} staged enforces the
+     * {@link Audience Audience's} create permission.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Candidate} bound to the
+     * {@link #runway}. A {@link Candidate} is not permitted to create a
+     * {@link Job}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage a {@link Transaction} from the {@link Candidate}.</li>
+     * <li>Call {@code transaction.create(Job.class)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws a
+     * {@link RestrictedAccessException}.
+     */
+    @Test
+    public void testTransactionCreateRequiresAudiencePermission() {
+        Candidate viewer = createViewer();
+        try (Transaction transaction = viewer.stage()) {
+            try {
+                transaction.create(Job.class);
+                Assert.fail("Expected a RestrictedAccessException");
+            }
+            catch (RestrictedAccessException e) {
+                // expected
+            }
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the view {@code supply} hands to work
+     * observes the {@link Audience Audience's} visibility, not the raw
+     * database.
+     * <p>
+     * <strong>Start state:</strong> A saved viewer {@link Candidate} and a
+     * saved {@link Application} that belongs to another {@link Candidate}, all
+     * bound to the {@link #runway}. The {@link Application} is invisible to the
+     * viewer.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code supply(...)} on the viewer {@link Candidate} with work
+     * that finds the {@link Application} through the view it receives.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The find through the view returns nothing; the
+     * same find through the enclosing {@link #runway} returns the
+     * {@link Application}.
+     */
+    @Test
+    public void testSupplyViewReadsFilterAudienceVisibility() {
+        Candidate viewer = createViewer();
+        createHiddenApplication();
+        boolean visible = viewer.supply(transaction -> !transaction
+                .find(Application.class, submittedStatusCriteria()).isEmpty());
+        Assert.assertFalse(visible);
+        Assert.assertEquals(1, runway
+                .find(Application.class, submittedStatusCriteria()).size());
     }
 
     /**
