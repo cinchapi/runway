@@ -952,6 +952,15 @@ public final class Runway extends Binding implements
                 update);
     }
 
+    @SuppressWarnings("deprecation")
+    @Override
+    public Gateway gateway() {
+        if(gateway == null) {
+            gateway = super.gateway();
+        }
+        return gateway;
+    }
+
     /**
      * Atomically return the unique {@link Record} that agrees with every
      * {@link Unique} constraint of {@code record}, or save {@code record} when
@@ -989,15 +998,6 @@ public final class Runway extends Binding implements
     @Override
     public <T extends Record> T intern(T record) {
         return supply(tx -> tx.intern(record));
-    }
-
-    @SuppressWarnings("deprecation")
-    @Override
-    public Gateway gateway() {
-        if(gateway == null) {
-            gateway = super.gateway();
-        }
-        return gateway;
     }
 
     @Override
