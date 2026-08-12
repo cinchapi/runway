@@ -23,6 +23,7 @@ import javax.annotation.Nonnull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
@@ -352,6 +353,156 @@ public class AudienceAccessControlInternTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code intern} through an
+     * {@link Audience} throws {@link DuplicateEntryException} when more than
+     * one record shares the identity, even though every one is hidden from the
+     * {@link Audience}.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Badge Badges}, which only
+     * an {@link Admin} may see, whose serials are rewritten to the same value
+     * through the raw client, bypassing the {@link Unique} enforcement that a
+     * save applies.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Badge Badges} with distinct serials.</li>
+     * <li>Set both serial values to the same one with
+     * {@code client.set(...)}.</li>
+     * <li>Call {@code intern} on a {@link Candidate} with a new {@link Badge}
+     * that has the shared serial, and catch the expected exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown
+     * and exactly the two original {@link Badge Badges} exist.
+     */
+    @Test
+    public void testInternThrowsWhenHiddenRecordsShareIdentity() {
+        Badge one = new Badge();
+        one.serial = "A";
+        Badge two = new Badge();
+        two.serial = "B";
+        runway.save(one, two);
+        client.set("serial", "X-1", one.id());
+        client.set("serial", "X-1", two.id());
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@example.com";
+        candidate.assign(runway);
+        Badge probe = new Badge();
+        probe.serial = "X-1";
+        boolean threw = false;
+        try {
+            candidate.intern(probe);
+        }
+        catch (DuplicateEntryException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals(2, runway.count(Badge.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the create-permission check of
+     * {@code intern} resolves within the {@link Audience Audience's}
+     * transactional scope, so a creation rule that reads through the probe's
+     * graph observes the staged state.
+     * <p>
+     * <strong>Start state:</strong> One saved open {@link Gate}, one saved
+     * {@link Admin}, and an open {@link Transaction} that stages the
+     * {@link Gate} closed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Admin} through the {@link Transaction} and stage
+     * {@code open = false} on the {@link Gate} within it.</li>
+     * <li>Build a {@link Vault} probe whose gate is a copy of the {@link Gate}
+     * that was loaded outside the {@link Transaction}.</li>
+     * <li>Call {@code intern} on the loaded {@link Admin} with the probe, and
+     * catch the expected exception.</li>
+     * <li>{@code commit()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * because the creation rule observes the staged closed {@link Gate}, the
+     * {@link Transaction} still commits, and no {@link Vault} exists.
+     */
+    @Test
+    public void testInternPermissionCheckResolvesWithinAudienceTransaction() {
+        Gate gate = new Gate();
+        gate.open = true;
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@example.com";
+        runway.save(gate, admin);
+        try (Transaction transaction = runway.stage()) {
+            Admin audience = transaction.load(Admin.class, admin.id());
+            Gate staged = transaction.load(Gate.class, gate.id());
+            staged.open = false;
+            transaction.save(staged);
+            Vault probe = new Vault();
+            probe.code = "V-1";
+            probe.gate = runway.load(Gate.class, gate.id());
+            boolean threw = false;
+            try {
+                audience.intern(probe);
+            }
+            catch (RestrictedAccessException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertTrue(runway.load(Vault.class).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a probe that {@code intern} does not
+     * save carries no author marker afterwards, so a later direct save of the
+     * probe is not attributed to the {@link Audience}.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Employer} and one saved
+     * {@link Admin}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code intern} on the {@link Admin} with a probe that shares the
+     * saved {@link Employer Employer's} identity, so the existing record is
+     * returned and the probe is never saved.</li>
+     * <li>Rename the probe to a new identity, assign it to the
+     * {@link com.cinchapi.runway.Runway Runway} and save it directly.</li>
+     * <li>Audit the probe and inspect the revision for the {@code name}
+     * key.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The revision is not attributed to the
+     * {@link Admin}.
+     */
+    @Test
+    public void testInternDoesNotAttributeLaterSaveOfUnsavedProbe() {
+        Employer existing = new Employer();
+        existing.name = "Acme";
+        existing.description = "widgets";
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@example.com";
+        runway.save(existing, admin);
+        Employer probe = new Employer();
+        probe.name = "Acme";
+        probe.description = "other";
+        Employer interned = admin.intern(probe);
+        Assert.assertEquals(existing.id(), interned.id());
+        probe.name = "Beta";
+        probe.assign(runway);
+        Assert.assertTrue(probe.save());
+        Map<Timestamp, Map<String, Revision>> audit = probe.audit();
+        Assert.assertFalse(audit.isEmpty());
+        Timestamp firstSave = audit.keySet().iterator().next();
+        Revision revision = audit.get(firstSave).get("name");
+        Assert.assertNotNull(revision);
+        Assert.assertFalse(revision.isAttributed());
+    }
+
+    /**
      * Return a {@link Criteria} that matches every {@link Employer} whose
      * {@code name} equals the given {@code value}.
      *
@@ -420,6 +571,113 @@ public class AudienceAccessControlInternTest
         @Override
         public Set<String> $writableByAnonymous() {
             return NO_KEYS;
+        }
+    }
+
+    /**
+     * A plain {@link Record} whose {@link #isOpen()} accessor reads through the
+     * record's transactional scope, so the answer reflects staged state when
+     * the record is bound to an open {@link Transaction}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Gate extends Record {
+
+        /**
+         * Whether the gate is open.
+         */
+        public boolean open;
+
+        /**
+         * Return whether this {@link Gate} is open, according to the data in
+         * its transactional scope.
+         *
+         * @return {@code true} if the gate is open
+         */
+        public boolean isOpen() {
+            return supply(tx -> tx.load(Gate.class, id()).open);
+        }
+    }
+
+    /**
+     * An access controlled {@link Record} with a {@link Unique} identity that
+     * an {@link Audience} may create only while the linked {@link Gate} is
+     * open, so the creation rule reads through the probe's graph.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Vault extends Record implements AccessControl {
+
+        /**
+         * The identity code.
+         */
+        @Unique
+        public String code;
+
+        /**
+         * The {@link Gate} that governs creation.
+         */
+        public Gate gate;
+
+        /**
+         * Construct a new instance.
+         */
+        public Vault() {/* no-init */}
+
+        /**
+         * Construct a new instance.
+         *
+         * @param code the identity code
+         * @param gate the {@link Gate} that governs creation
+         */
+        public Vault(String code, Gate gate) {
+            this.code = code;
+            this.gate = gate;
+        }
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            return gate != null && gate.isOpen();
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return false;
+        }
+
+        @Override
+        public boolean $isDeletableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableByAnonymous() {
+            return true;
+        }
+
+        @Override
+        public Set<String> $readableBy(@Nonnull Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableBy(@Nonnull Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableByAnonymous() {
+            return ALL_KEYS;
         }
     }
 

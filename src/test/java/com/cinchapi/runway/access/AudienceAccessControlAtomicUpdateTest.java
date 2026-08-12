@@ -15,15 +15,20 @@
  */
 package com.cinchapi.runway.access;
 
+import java.util.Map;
+
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.Record.Revision;
 import com.cinchapi.runway.Transaction;
 import com.cinchapi.runway.Unique;
+import com.google.common.collect.Iterables;
 
 /**
  * Tests for the atomic {@code find*AndUpdate} operations performed through an
@@ -755,6 +760,50 @@ public class AudienceAccessControlAtomicUpdateTest
         Assert.assertTrue(threw);
         Assert.assertEquals("old",
                 runway.load(Employer.class, acme.id()).description);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a no-op atomic update through an
+     * {@link Audience} leaves no author marker on the matched {@link Record},
+     * so a later direct save of it is not attributed to the {@link Audience}.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Memo} and one saved
+     * {@link Candidate}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findUniqueAndUpdate} on the {@link Candidate} with an
+     * operator that returns the current value, so nothing is staged.</li>
+     * <li>Change the body on the returned {@link Memo}, assign it to the
+     * {@link com.cinchapi.runway.Runway Runway} and save it directly.</li>
+     * <li>Audit the {@link Memo} and inspect the latest revision for the
+     * {@code body} key.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The revision is not attributed to the
+     * {@link Candidate}.
+     */
+    @Test
+    public void testFindUniqueAndUpdateNoOpDoesNotAttributeLaterSave() {
+        Memo memo = new Memo();
+        memo.slug = "m1";
+        memo.body = "old";
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@example.com";
+        runway.save(memo, candidate);
+        Memo result = candidate.findUniqueAndUpdate(Memo.class, slug("m1"),
+                "body", body -> body);
+        Assert.assertNotNull(result);
+        result.body = "changed";
+        result.assign(runway);
+        Assert.assertTrue(result.save());
+        Map<Timestamp, Map<String, Revision>> audit = result.audit();
+        Assert.assertFalse(audit.isEmpty());
+        Revision revision = audit.get(Iterables.getLast(audit.keySet()))
+                .get("body");
+        Assert.assertNotNull(revision);
+        Assert.assertFalse(revision.isAttributed());
     }
 
     /**

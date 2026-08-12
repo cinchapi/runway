@@ -109,11 +109,22 @@ class AccessControlSupport {
                         T subject = supplier.get();
                         if(isWritableByAudience(audience, ImmutableSet.of(key),
                                 subject)) {
+                            Record previous = Reflection.get("_author",
+                                    subject);
                             Reflection.set("_author", (Record) audience,
                                     subject);
-                            return Reflection.callStatic(Record.class,
+                            T result = Reflection.callStatic(Record.class,
                                     "stageAtomicUpdate", transaction, subject,
                                     key, update);
+                            Record marker = Reflection.get("_author", subject);
+                            if(marker == audience) {
+                                // A staged save consumes the author marker, so
+                                // one that survived proves the update was a
+                                // no-op; restore it so a later save is not
+                                // attributed to the audience.
+                                Reflection.set("_author", previous, subject);
+                            }
+                            return result;
                         }
                         else {
                             return null;

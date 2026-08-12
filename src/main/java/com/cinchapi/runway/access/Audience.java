@@ -54,6 +54,7 @@ import com.cinchapi.runway.util.KeySelection;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
+import com.google.common.collect.Sets;
 
 /**
  * A {@link Record} that can "perform" database operations on other records
@@ -223,19 +224,23 @@ public interface Audience extends DatabaseInterface {
      * @return the newly created {@link Record}, not yet saved
      * @throws RestrictedAccessException if this {@link Audience} is not
      *             permitted to create the {@link Record}
+     * @throws IllegalStateException if a {@link Record} reachable from the
+     *             {@code args} is bound to a different open
+     *             {@link com.cinchapi.runway.Transaction Transaction}
      */
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
         T record = Reflection.newInstance(clazz, args);
         if(this instanceof Record) {
-            // Bind the new record to the same database interface that this
-            // audience operates against before the permission check runs, so
-            // the check and a later save both resolve within that context
-            // (e.g., within a Transaction).
+            // Bind the new record, and its reachable graph, to the same
+            // database interface that this audience operates against before
+            // the permission check runs, so the check and a later save both
+            // resolve within that context (e.g., within a Transaction).
             Object binding = Reflection.get("binding", this);
             if(binding != null) {
-                Reflection.call(record, "bind", binding,
-                        Reflection.get("connections", this));
+                Reflection.call(record, "bindGraph", binding,
+                        Reflection.get("connections", this),
+                        Sets.newIdentityHashSet());
             }
         }
         verifyIsCreatableByAudience(this, record);
@@ -932,12 +937,26 @@ public interface Audience extends DatabaseInterface {
         if(this instanceof Record) {
             return Reflection.call(this, "supply",
                     (Function<TransactionInterface, T>) transaction -> {
+                        // Join the record and its reachable graph to the
+                        // transactional scope before the permission check
+                        // runs, so the check and the save both resolve within
+                        // it, consistent with #create.
+                        Reflection.call(transaction, "join", record);
                         verifyIsCreatableByAudience(this, record);
+                        Record previous = Reflection.get("_author", record);
                         Reflection.set("_author", (Record) this, record);
                         T interned = transaction.intern(record);
-                        if(interned != record
-                                && !$checkIfInScopeOrVisible().test(interned)) {
-                            throw new RestrictedAccessException();
+                        if(interned != record) {
+                            // The record was never saved, so nothing consumed
+                            // the author marker; restore it so a later save
+                            // is not attributed to this Audience.
+                            Reflection.set("_author", previous, record);
+                            if(!$checkIfInScopeOrVisible().test(interned)) {
+                                throw new RestrictedAccessException();
+                            }
+                            else {
+                                return interned;
+                            }
                         }
                         else {
                             return interned;
@@ -1023,14 +1042,16 @@ public interface Audience extends DatabaseInterface {
      * Write the {@code data} to the {@code record} on behalf of this
      * {@link Audience}.
      * <p>
-     * This method verifies that this {@link Audience} is permitted to write to
+     * This method verifies that the {@code record} is visible to this
+     * {@link Audience} and that this {@link Audience} is permitted to write to
      * all the keys in the {@code data} map before making the changes.
      * </p>
      *
      * @param data a map from keys to the values to write
      * @param record the {@link Record} to modify
      * @param <T> the type of the {@link Record}
-     * @throws RestrictedAccessException if this {@link Audience} is not
+     * @throws RestrictedAccessException if the {@code record} is not visible to
+     *             this {@link Audience}, or if this {@link Audience} is not
      *             permitted to write to one or more of the keys in the
      *             {@code data}
      */
@@ -1047,7 +1068,8 @@ public interface Audience extends DatabaseInterface {
      * Write the {@code value} to the {@code key} in the {@code record} on
      * behalf of this {@link Audience}.
      * <p>
-     * This method verifies that this {@link Audience} is permitted to write to
+     * This method verifies that the {@code record} is visible to this
+     * {@link Audience} and that this {@link Audience} is permitted to write to
      * the specified {@code key} before making the change.
      * </p>
      *
@@ -1055,7 +1077,8 @@ public interface Audience extends DatabaseInterface {
      * @param value the data to write
      * @param record the {@link Record} to modify
      * @param <T> the type of the {@link Record}
-     * @throws RestrictedAccessException if this {@link Audience} is not
+     * @throws RestrictedAccessException if the {@code record} is not visible to
+     *             this {@link Audience}, or if this {@link Audience} is not
      *             permitted to write to the {@code key}
      */
     public default <T extends Record> void write(String key, Object value,
