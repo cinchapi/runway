@@ -456,7 +456,7 @@ public class Transaction extends Binding implements
         Verify.thatArgument(order != null,
                 "findAnyFirstAndUpdate requires an Order");
         if(open) {
-            return operate(
+            return execute(
                     () -> TransactionInterface.super.findAnyFirstAndUpdate(
                             clazz, criteria, order, key, update));
         }
@@ -497,7 +497,7 @@ public class Transaction extends Binding implements
     public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
         if(open) {
-            return operate(
+            return execute(
                     () -> TransactionInterface.super.findAnyUniqueAndUpdate(
                             clazz, criteria, key, update));
         }
@@ -541,7 +541,7 @@ public class Transaction extends Binding implements
         Verify.thatArgument(order != null,
                 "findFirstAndUpdate requires an Order");
         if(open) {
-            return operate(() -> TransactionInterface.super.findFirstAndUpdate(
+            return execute(() -> TransactionInterface.super.findFirstAndUpdate(
                     clazz, criteria, order, key, update));
         }
         else {
@@ -580,7 +580,7 @@ public class Transaction extends Binding implements
     public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
         if(open) {
-            return operate(() -> TransactionInterface.super.findUniqueAndUpdate(
+            return execute(() -> TransactionInterface.super.findUniqueAndUpdate(
                     clazz, criteria, key, update));
         }
         else {
@@ -743,10 +743,7 @@ public class Transaction extends Binding implements
     @Override
     public Selections select(Selection<?>... options) {
         if(open) {
-            verifyOwner();
-            verifyNotPoisoned();
-            operating++;
-            try {
+            return execute(() -> {
                 DatabaseSelection<?>[] selections = DatabaseSelection
                         .resolve(options);
                 try (Reader reader = database.supportsBulkCommands
@@ -768,10 +765,7 @@ public class Transaction extends Binding implements
                     materialize(selection.get());
                 }
                 return new Selections(selections);
-            }
-            finally {
-                operating--;
-            }
+            });
         }
         else {
             return database.select(options);
@@ -822,18 +816,12 @@ public class Transaction extends Binding implements
     @Override
     <T extends Record> T load(long id) {
         if(open) {
-            verifyOwner();
-            verifyNotPoisoned();
-            operating++;
-            try {
+            return execute(() -> {
                 Set<Object> sections = concourse.select(Record.SECTION_KEY, id);
                 Class<T> clazz = Reflection
                         .getClassCasted((String) Iterables.getLast(sections));
                 return load(clazz, id);
-            }
-            finally {
-                operating--;
-            }
+            });
         }
         else {
             return database.load(id);
@@ -847,6 +835,26 @@ public class Transaction extends Binding implements
      */
     boolean open() {
         return open;
+    }
+
+    /**
+     * Run {@code operation} within this transaction's operation window, so the
+     * transaction cannot end while the operation is in flight.
+     *
+     * @param operation the work to run
+     * @param <T> the operation's result type
+     * @return the operation's result
+     */
+    <T> T execute(Supplier<T> operation) {
+        verifyOwner();
+        verifyNotPoisoned();
+        operating++;
+        try {
+            return operation.get();
+        }
+        finally {
+            operating--;
+        }
     }
 
     /**
@@ -890,6 +898,15 @@ public class Transaction extends Binding implements
     }
 
     /**
+     * Verify that the transaction is still {@link #open}, is not
+     * {@link #poisoned} and that the caller is the {@link #owner} thread.
+     */
+    void verify() {
+        verifyOpen();
+        verifyNotPoisoned();
+    }
+
+    /**
      * Execute {@link Concourse#verifyOrSet(String, Object, long) verifyOrSet}
      * within the transaction.
      *
@@ -900,84 +917,6 @@ public class Transaction extends Binding implements
      */
     void verifyOrSet(String key, Object value, long record) {
         concourse.verifyOrSet(key, value, record);
-    }
-
-    /**
-     * Run {@code operation} within this transaction's operation window, so the
-     * transaction cannot end while the operation is in flight.
-     *
-     * @param operation the work to run
-     * @param <T> the operation's result type
-     * @return the operation's result
-     */
-    <T> T operate(Supplier<T> operation) {
-        verifyOwner();
-        verifyNotPoisoned();
-        operating++;
-        try {
-            return operation.get();
-        }
-        finally {
-            operating--;
-        }
-    }
-
-    /**
-     * Return the unique {@link Record} that the {@code lookup} matches, or
-     * create and save one from {@code factory} when none exists.
-     * <p>
-     * If the {@code factory} tries to end the transaction, then the call is
-     * refused. If verification fails after the save, then the transaction is
-     * poisoned and the staged save can never commit.
-     * </p>
-     *
-     * @param lookup performs the criteria lookup within the transaction
-     * @param factory supplies the {@link Record} to create when none match
-     * @param <T> the type of {@link Record}
-     * @return the matched or created {@link Record}
-     */
-    private <T extends Record> T findOrCreate(Supplier<T> lookup,
-            Supplier<T> factory) {
-        return operate(() -> {
-            T record = lookup.get();
-            if(record == null) {
-                record = factory.get();
-                Verify.thatArgument(record != null,
-                        "The factory cannot return null");
-                save(record);
-                try {
-                    T found = lookup.get();
-                    Verify.thatArgument(
-                            found != null && record.id() == found.id(),
-                            "The created Record does not match the criteria");
-                }
-                catch (Throwable t) {
-                    poisoned = true;
-                    throw t;
-                }
-            }
-            return record;
-        });
-    }
-
-    /**
-     * Ensure that {@code result}, including every element of an
-     * {@link Iterable} result, is fully materialized while the transaction is
-     * open, so no part of a {@link Selection} result resolves after the
-     * transaction ends.
-     *
-     * @param result a resolved {@link Selection} result
-     */
-    private void materialize(Object result) {
-        if(result instanceof Iterable) {
-            for (Object item : (Iterable<?>) result) {
-                materialize(item);
-            }
-        }
-        else {
-            // A non-iterable result (a single Record, a count, or null) is
-            // already materialized.
-        }
     }
 
     /**
@@ -1050,12 +989,61 @@ public class Transaction extends Binding implements
     }
 
     /**
-     * Verify that the transaction is still {@link #open}, is not
-     * {@link #poisoned} and that the caller is the {@link #owner} thread.
+     * Return the unique {@link Record} that the {@code lookup} matches, or
+     * create and save one from {@code factory} when none exists.
+     * <p>
+     * If the {@code factory} tries to end the transaction, then the call is
+     * refused. If verification fails after the save, then the transaction is
+     * poisoned and the staged save can never commit.
+     * </p>
+     *
+     * @param lookup performs the criteria lookup within the transaction
+     * @param factory supplies the {@link Record} to create when none match
+     * @param <T> the type of {@link Record}
+     * @return the matched or created {@link Record}
      */
-    void verify() {
-        verifyOpen();
-        verifyNotPoisoned();
+    private <T extends Record> T findOrCreate(Supplier<T> lookup,
+            Supplier<T> factory) {
+        return execute(() -> {
+            T record = lookup.get();
+            if(record == null) {
+                record = factory.get();
+                Verify.thatArgument(record != null,
+                        "The factory cannot return null");
+                save(record);
+                try {
+                    T found = lookup.get();
+                    Verify.thatArgument(
+                            found != null && record.id() == found.id(),
+                            "The created Record does not match the criteria");
+                }
+                catch (Throwable t) {
+                    poisoned = true;
+                    throw t;
+                }
+            }
+            return record;
+        });
+    }
+
+    /**
+     * Ensure that {@code result}, including every element of an
+     * {@link Iterable} result, is fully materialized while the transaction is
+     * open, so no part of a {@link Selection} result resolves after the
+     * transaction ends.
+     *
+     * @param result a resolved {@link Selection} result
+     */
+    private void materialize(Object result) {
+        if(result instanceof Iterable) {
+            for (Object item : (Iterable<?>) result) {
+                materialize(item);
+            }
+        }
+        else {
+            // A non-iterable result (a single Record, a count, or null) is
+            // already materialized.
+        }
     }
 
     /**

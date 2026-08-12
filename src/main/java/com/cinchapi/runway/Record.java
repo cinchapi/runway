@@ -2590,8 +2590,7 @@ public abstract class Record implements Comparable<Record> {
     protected final <T> T supply(Function<TransactionInterface, T> work) {
         if(isBoundToOpenTransaction()) {
             Transaction transaction = (Transaction) binding;
-            transaction.verify();
-            return transaction.operate(() -> work.apply(transaction));
+            return transaction.execute(() -> work.apply(transaction));
         }
         else {
             Runway runway = harness();
