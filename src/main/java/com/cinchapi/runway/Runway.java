@@ -1104,18 +1104,6 @@ public final class Runway extends Binding implements
         reservations.set(new HashMap<>());
     }
 
-    /**
-     * Run {@code work} within a {@link Transaction} and commit it after the
-     * work completes.
-     * <p>
-     * This method behaves exactly like {@link #supply(Function)} for work that
-     * does not produce a result.
-     * </p>
-     *
-     * @param work the work to run
-     * @throws RetryExhaustedException if the transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
     @Override
     public void run(Consumer<TransactionInterface> work) {
         supply(transaction -> {
@@ -1539,19 +1527,6 @@ public final class Runway extends Binding implements
         }
     }
 
-    /**
-     * Start a {@link Transaction} that scopes reads and writes to a single ACID
-     * transaction.
-     * <p>
-     * The caller owns the {@link Transaction Transaction's} lifecycle: end it
-     * with exactly one of {@link Transaction#commit() commit} or
-     * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
-     * close} to abort whatever was not committed. Use a try-with-resources
-     * block so the transaction always ends.
-     * </p>
-     *
-     * @return an open {@link Transaction}
-     */
     @Override
     public Transaction stage() {
         Concourse concourse = connections.request();
@@ -1564,52 +1539,11 @@ public final class Runway extends Binding implements
         }
     }
 
-    /**
-     * Start a {@link Transaction} that scopes reads and writes to a single ACID
-     * transaction.
-     * <p>
-     * This method is an alias for {@link #stage()}.
-     * </p>
-     *
-     * @return an open {@link Transaction}
-     */
     @Override
     public Transaction startTransaction() {
         return stage();
     }
 
-    /**
-     * Run {@code work} within a {@link Transaction} and commit it after the
-     * work completes.
-     * <p>
-     * The work receives the transaction's {@link TransactionInterface} view:
-     * reads through it observe the transaction's isolated snapshot, and a
-     * {@link Record} loaded through it, saved through it, or
-     * {@link TransactionInterface#create(Class, Object...) created} by it saves
-     * within it, so everything becomes durable together when the commit
-     * succeeds. The transaction's lifecycle belongs to this method, so the work
-     * cannot commit, abort or close the transaction it joins. A {@link Record}
-     * bound elsewhere saves against its own binding, outside of the
-     * transaction.
-     * </p>
-     * <p>
-     * If the commit fails because of a conflict, then the transaction is
-     * discarded and {@code work} runs again against a fresh one, within the
-     * bounds of the governing {@link AtomicRetryPolicy}, so the work may run
-     * more than once. The work must therefore be free of side effects outside
-     * of the transaction; a {@link Record Record's} in-memory state is outside
-     * of it, so an edit to a record the work captured survives a discarded
-     * attempt and is visible to the next one. Set each value absolutely, or
-     * derive it from a read through the transaction, rather than increment what
-     * a prior attempt left behind. Any other exception thrown by {@code work}
-     * aborts the transaction and propagates to the caller.
-     * </p>
-     *
-     * @param work the work to run
-     * @return the result of {@code work}
-     * @throws RetryExhaustedException if the transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
     @Override
     public <T> T supply(Function<TransactionInterface, T> work) {
         AtomicRetryPolicy policy = properties().atomicRetryPolicy();
