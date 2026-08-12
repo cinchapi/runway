@@ -584,6 +584,62 @@ public class AudienceAccessControlAtomicUpdateTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an update operator running through an
+     * {@link Audience} cannot end the {@link Audience Audience's} open
+     * {@link Transaction}: the lifecycle call is refused, so the update can
+     * never escape the transaction and persist through the enclosing
+     * {@link com.cinchapi.runway.Runway Runway}.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Employer}, one saved
+     * {@link EmployerUser} of that {@link Employer} and an open
+     * {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link EmployerUser} through the {@link Transaction}.</li>
+     * <li>Call {@code findUniqueAndUpdate} on it with an operator that calls
+     * {@code abort()} on the {@link Transaction}, and catch the expected
+     * exception.</li>
+     * <li>{@code commit()} the same {@link Transaction}.</li>
+     * <li>Re-load the {@link Employer} from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown,
+     * the {@link Transaction} remains open and commits, and the description is
+     * unchanged.
+     */
+    @Test
+    public void testFindUniqueAndUpdateRefusesOperatorThatEndsTransaction() {
+        Employer acme = new Employer();
+        acme.name = "Acme";
+        acme.description = "old";
+        EmployerUser user = new EmployerUser();
+        user.name = "HR Manager";
+        user.email = "hr@acme.example.com";
+        user.employer = acme;
+        runway.save(acme, user);
+        try (Transaction transaction = runway.stage()) {
+            EmployerUser audience = transaction.load(EmployerUser.class,
+                    user.id());
+            boolean threw = false;
+            try {
+                audience.findUniqueAndUpdate(Employer.class, name("Acme"),
+                        "description", description -> {
+                            transaction.abort();
+                            return "new";
+                        });
+            }
+            catch (IllegalStateException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals("old",
+                runway.load(Employer.class, acme.id()).description);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a key that does not name an intrinsic
      * field is rejected instead of stored as a dynamic attribute.
      * <p>

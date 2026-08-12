@@ -453,9 +453,12 @@ public class Transaction extends Binding implements
     public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
+        Verify.thatArgument(order != null,
+                "findAnyFirstAndUpdate requires an Order");
         if(open) {
-            return TransactionInterface.super.findAnyFirstAndUpdate(clazz,
-                    criteria, order, key, update);
+            return operate(
+                    () -> TransactionInterface.super.findAnyFirstAndUpdate(
+                            clazz, criteria, order, key, update));
         }
         else {
             return database.findAnyFirstAndUpdate(clazz, criteria, order, key,
@@ -494,8 +497,9 @@ public class Transaction extends Binding implements
     public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
         if(open) {
-            return TransactionInterface.super.findAnyUniqueAndUpdate(clazz,
-                    criteria, key, update);
+            return operate(
+                    () -> TransactionInterface.super.findAnyUniqueAndUpdate(
+                            clazz, criteria, key, update));
         }
         else {
             return database.findAnyUniqueAndUpdate(clazz, criteria, key,
@@ -534,9 +538,11 @@ public class Transaction extends Binding implements
     public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
+        Verify.thatArgument(order != null,
+                "findFirstAndUpdate requires an Order");
         if(open) {
-            return TransactionInterface.super.findFirstAndUpdate(clazz,
-                    criteria, order, key, update);
+            return operate(() -> TransactionInterface.super.findFirstAndUpdate(
+                    clazz, criteria, order, key, update));
         }
         else {
             return database.findFirstAndUpdate(clazz, criteria, order, key,
@@ -574,8 +580,8 @@ public class Transaction extends Binding implements
     public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
         if(open) {
-            return TransactionInterface.super.findUniqueAndUpdate(clazz,
-                    criteria, key, update);
+            return operate(() -> TransactionInterface.super.findUniqueAndUpdate(
+                    clazz, criteria, key, update));
         }
         else {
             return database.findUniqueAndUpdate(clazz, criteria, key, update);
@@ -897,6 +903,26 @@ public class Transaction extends Binding implements
     }
 
     /**
+     * Run {@code operation} within this transaction's operation window, so the
+     * transaction cannot end while the operation is in flight.
+     *
+     * @param operation the work to run
+     * @param <T> the operation's result type
+     * @return the operation's result
+     */
+    <T> T operate(Supplier<T> operation) {
+        verifyOwner();
+        verifyNotPoisoned();
+        operating++;
+        try {
+            return operation.get();
+        }
+        finally {
+            operating--;
+        }
+    }
+
+    /**
      * Return the unique {@link Record} that the {@code lookup} matches, or
      * create and save one from {@code factory} when none exists.
      * <p>
@@ -912,10 +938,7 @@ public class Transaction extends Binding implements
      */
     private <T extends Record> T findOrCreate(Supplier<T> lookup,
             Supplier<T> factory) {
-        verifyOwner();
-        verifyNotPoisoned();
-        operating++;
-        try {
+        return operate(() -> {
             T record = lookup.get();
             if(record == null) {
                 record = factory.get();
@@ -934,10 +957,7 @@ public class Transaction extends Binding implements
                 }
             }
             return record;
-        }
-        finally {
-            operating--;
-        }
+        });
     }
 
     /**

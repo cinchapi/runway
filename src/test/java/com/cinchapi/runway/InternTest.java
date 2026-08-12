@@ -29,6 +29,7 @@ import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
 import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record.ConstraintViolationException;
@@ -245,6 +246,45 @@ public class InternTest extends RunwayBaseClientServerTest {
         }
         Assert.assertTrue(threw);
         Assert.assertEquals(1, runway.count(Account.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code intern} throws
+     * {@link DuplicateEntryException} when more than one record shares the
+     * identity, without creating another record.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link User Users} whose emails
+     * are rewritten to the same value through the raw client, bypassing the
+     * {@link Unique} enforcement that a save applies.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link User Users} with distinct emails.</li>
+     * <li>Set both email values to the same address with
+     * {@code client.set(...)}.</li>
+     * <li>Call {@code intern} with a new {@link User} that has the shared
+     * email, and catch the expected exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown
+     * and exactly the two original {@link User Users} exist.
+     */
+    @Test
+    public void testInternThrowsWhenMultipleRecordsShareIdentity() {
+        User one = new User("a@example.com", "Ann");
+        User two = new User("b@example.com", "Bea");
+        runway.save(one, two);
+        client.set("email", "dup@example.com", one.id());
+        client.set("email", "dup@example.com", two.id());
+        boolean threw = false;
+        try {
+            runway.intern(new User("dup@example.com", "Probe"));
+        }
+        catch (DuplicateEntryException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals(2, runway.count(User.class));
     }
 
     /**

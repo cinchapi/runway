@@ -265,6 +265,51 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an update operator cannot end the
+     * {@link Transaction}: a lifecycle call from within the operator is
+     * refused, so the update can never escape the transaction and persist
+     * through the enclosing {@link Runway}.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Item} that matches the
+     * criteria and an open {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findUniqueAndUpdate} on the {@link Transaction} with an
+     * operator that calls {@code abort()}, and catch the expected
+     * exception.</li>
+     * <li>{@code commit()} the same {@link Transaction}.</li>
+     * <li>Re-load the {@link Item} from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown,
+     * the {@link Transaction} remains open and commits, and the owner is
+     * unchanged.
+     */
+    @Test
+    public void testFindUniqueAndUpdateRefusesOperatorThatEndsTransaction() {
+        Item item = new Item(1);
+        runway.save(item);
+        try (Transaction transaction = runway.stage()) {
+            boolean threw = false;
+            try {
+                transaction.findUniqueAndUpdate(Item.class, code(1), "owner",
+                        owner -> {
+                            transaction.abort();
+                            return "worker";
+                        });
+            }
+            catch (IllegalStateException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, item.id()).owner);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} on a
      * {@link Transaction} that already ended runs atomically against the
      * enclosing {@link Runway} and is durable when the call returns.

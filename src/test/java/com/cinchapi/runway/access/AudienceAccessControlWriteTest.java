@@ -16,11 +16,16 @@
 package com.cinchapi.runway.access;
 
 import java.util.Map;
+import java.util.Set;
 
+import javax.annotation.Nonnull;
+
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.Timestamp;
+import com.cinchapi.runway.Record;
 import com.google.common.collect.ImmutableMap;
 
 /**
@@ -376,6 +381,184 @@ public class AudienceAccessControlWriteTest
         }
         catch (RestrictedAccessException e) {
             // Expected exception
+        }
+    }
+
+    /**
+     * Clear the visibility {@link Scope} registry after each test to prevent
+     * cross-test contamination.
+     */
+    @After
+    public void clearVisibilityScopeRegistry() {
+        AccessControlSupport.VISIBILITY_SCOPES.clear();
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code write} through an
+     * {@link Audience} refuses a {@link Record} that a visibility {@link Scope}
+     * hides, even though the field rules permit the key.
+     * <p>
+     * <strong>Start state:</strong> A {@link ScopedNote}, whose field rules
+     * permit every key to every {@link Audience}, and a registered visibility
+     * {@link Scope} that hides every {@link ScopedNote} from every
+     * {@link Audience}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register {@link Scope#none()} for {@link ScopedNote}.</li>
+     * <li>Call the single-key {@code write} on a {@link Candidate} against a
+     * {@link ScopedNote} and catch the expected exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * and the {@link ScopedNote} is unchanged.
+     */
+    @Test
+    public void testWriteRefusedWhenScopeHidesRecordFromAudience() {
+        AccessControl.registerVisibilityScope(ScopedNote.class,
+                audience -> Scope.none());
+        ScopedNote note = new ScopedNote();
+        note.text = "original";
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@email.com";
+        try {
+            candidate.write("text", "hijacked", note);
+            Assert.fail("Should have thrown RestrictedAccessException for a"
+                    + " write to a Scope-hidden record");
+        }
+        catch (RestrictedAccessException e) {
+            // Expected exception
+        }
+        Assert.assertEquals("original", note.text);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@link Map}-based {@code write}
+     * through an {@link Audience} refuses a {@link Record} that a visibility
+     * {@link Scope} hides, even though the field rules permit every key.
+     * <p>
+     * <strong>Start state:</strong> A {@link ScopedNote}, whose field rules
+     * permit every key to every {@link Audience}, and a registered visibility
+     * {@link Scope} that hides every {@link ScopedNote} from every
+     * {@link Audience}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register {@link Scope#none()} for {@link ScopedNote}.</li>
+     * <li>Call the {@link Map}-based {@code write} on a {@link Candidate}
+     * against a {@link ScopedNote} and catch the expected exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * and the {@link ScopedNote} is unchanged.
+     */
+    @Test
+    public void testWriteMapRefusedWhenScopeHidesRecordFromAudience() {
+        AccessControl.registerVisibilityScope(ScopedNote.class,
+                audience -> Scope.none());
+        ScopedNote note = new ScopedNote();
+        note.text = "original";
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@email.com";
+        try {
+            candidate.write(ImmutableMap.of("text", "hijacked"), note);
+            Assert.fail("Should have thrown RestrictedAccessException for a"
+                    + " write to a Scope-hidden record");
+        }
+        catch (RestrictedAccessException e) {
+            // Expected exception
+        }
+        Assert.assertEquals("original", note.text);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that, with no visibility {@link Scope}
+     * registered, the field rules of {@link ScopedNote} permit the same
+     * {@code write}, so the refusal in the {@link Scope}-hidden tests comes
+     * from the {@link Scope} alone.
+     * <p>
+     * <strong>Start state:</strong> A {@link ScopedNote} and an empty
+     * visibility {@link Scope} registry.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call the single-key {@code write} on a {@link Candidate} against a
+     * {@link ScopedNote}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The write succeeds and the {@link ScopedNote}
+     * carries the new text.
+     */
+    @Test
+    public void testWriteAllowedWhenNoScopeRegistered() {
+        ScopedNote note = new ScopedNote();
+        note.text = "original";
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@email.com";
+        candidate.write("text", "updated", note);
+        Assert.assertEquals("updated", note.text);
+    }
+
+    /**
+     * An {@link AccessControl access controlled} {@link Record} whose field
+     * rules permit everything to every {@link Audience}, so only a registered
+     * visibility {@link Scope} can hide it.
+     *
+     * @author Jeff Nelson
+     */
+    public static class ScopedNote extends Record implements AccessControl {
+
+        /**
+         * The body text.
+         */
+        public String text;
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return true;
+        }
+
+        @Override
+        public boolean $isDeletableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableByAnonymous() {
+            return true;
+        }
+
+        @Override
+        public Set<String> $readableBy(@Nonnull Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableBy(@Nonnull Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableByAnonymous() {
+            return ALL_KEYS;
         }
     }
 

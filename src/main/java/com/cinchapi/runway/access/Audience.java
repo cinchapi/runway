@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
@@ -914,20 +915,37 @@ public interface Audience extends DatabaseInterface {
      *             permitted to create {@code record}, or if the identity is
      *             claimed by a {@link Record} that is not visible to this
      *             {@link Audience}
+     * @throws DuplicateEntryException if more than one record shares the
+     *             identity, whether or not every one is visible to this
+     *             {@link Audience}
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint of {@code record} has a non-null value
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
      */
     @Override
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
-        verifyIsCreatableByAudience(this, record);
         if(this instanceof Record) {
-            Reflection.set("_author", (Record) this, record);
-        }
-        T interned = $db().intern(record);
-        if(interned != record && !$checkIfInScopeOrVisible().test(interned)) {
-            throw new RestrictedAccessException();
+            return Reflection.call(this, "supply",
+                    (Function<TransactionInterface, T>) transaction -> {
+                        verifyIsCreatableByAudience(this, record);
+                        Reflection.set("_author", (Record) this, record);
+                        T interned = transaction.intern(record);
+                        if(interned != record
+                                && !$checkIfInScopeOrVisible().test(interned)) {
+                            throw new RestrictedAccessException();
+                        }
+                        else {
+                            return interned;
+                        }
+                    });
         }
         else {
-            return interned;
+            throw new UnsupportedOperationException();
         }
     }
 

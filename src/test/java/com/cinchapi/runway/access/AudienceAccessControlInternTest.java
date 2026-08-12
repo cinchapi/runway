@@ -24,8 +24,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.Timestamp;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Record.Revision;
+import com.cinchapi.runway.Transaction;
 import com.cinchapi.runway.Unique;
 
 /**
@@ -129,6 +132,7 @@ public class AudienceAccessControlInternTest
     public void testInternRefusedWhenAudienceMayNotCreate() {
         Candidate candidate = new Candidate();
         candidate.name = "Jane Developer";
+        candidate.assign(runway);
         Employer probe = new Employer();
         probe.name = "Acme";
         boolean threw = false;
@@ -143,8 +147,9 @@ public class AudienceAccessControlInternTest
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the anonymous {@link Audience} cannot
-     * intern a {@link Record} that is not creatable by anonymous users.
+     * <strong>Goal:</strong> Verify that the anonymous {@link Audience}, which
+     * has no transactional scope, does not support {@code intern}, consistent
+     * with the atomic update operations.
      * <p>
      * <strong>Start state:</strong> No saved {@link Employer Employers}.
      * <p>
@@ -155,18 +160,18 @@ public class AudienceAccessControlInternTest
      * <li>Catch the expected exception, then load every {@link Employer}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
-     * and no {@link Employer} exists in the database.
+     * <strong>Expected:</strong> An {@link UnsupportedOperationException} is
+     * thrown and no {@link Employer} exists in the database.
      */
     @Test
-    public void testInternRefusedForAnonymousWhenNotCreatableByAnonymous() {
+    public void testInternUnsupportedForAnonymousAudience() {
         Employer probe = new Employer();
         probe.name = "Acme";
         boolean threw = false;
         try {
             Audience.anonymous().intern(probe);
         }
-        catch (RestrictedAccessException e) {
+        catch (UnsupportedOperationException e) {
             threw = true;
         }
         Assert.assertTrue(threw);
@@ -248,6 +253,114 @@ public class AudienceAccessControlInternTest
         Assert.assertNotNull(revision);
         Assert.assertTrue(revision.isAttributed());
         Assert.assertEquals(admin, revision.author());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code intern} through an
+     * {@link Audience} that is bound to an open {@link Transaction} stages the
+     * create within it, so the record is invisible outside the transaction
+     * until the commit and visible after it.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Admin} and no saved
+     * {@link Employer Employers}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with
+     * {@link com.cinchapi.runway.Runway#stage() stage} in a try-with-resources
+     * block and load the {@link Admin} through it.</li>
+     * <li>Call {@code intern} on the loaded {@link Admin} with a new
+     * {@link Employer}.</li>
+     * <li>Query for the {@link Employer} through the enclosing
+     * {@link com.cinchapi.runway.Runway Runway} before the commit, then
+     * {@code commit()} and query again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Employer} is the same
+     * instance, the pre-commit query observes no match, the commit succeeds,
+     * and the post-commit query returns the created {@link Employer}.
+     */
+    @Test
+    public void testInternStagesCreateWithinAudienceOpenTransaction() {
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@example.com";
+        runway.save(admin);
+        long id;
+        try (Transaction transaction = runway.stage()) {
+            Admin audience = transaction.load(Admin.class, admin.id());
+            Employer acme = new Employer();
+            acme.name = "Acme";
+            Employer interned = audience.intern(acme);
+            Assert.assertSame(acme, interned);
+            Assert.assertNull(runway.findUnique(Employer.class, name("Acme")));
+            Assert.assertTrue(transaction.commit());
+            id = interned.id();
+        }
+        Employer visible = runway.findUnique(Employer.class, name("Acme"));
+        Assert.assertNotNull(visible);
+        Assert.assertEquals(id, visible.id());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a hidden-match refusal of
+     * {@code intern} through an {@link Audience} that is bound to an open
+     * {@link Transaction} stages nothing, so the transaction remains usable.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Badge}, which only an
+     * {@link Admin} may see, and one saved {@link Candidate}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with
+     * {@link com.cinchapi.runway.Runway#stage() stage} in a try-with-resources
+     * block and load the {@link Candidate} through it.</li>
+     * <li>Call {@code intern} on the loaded {@link Candidate} with a new
+     * {@link Badge} that has the same serial, and catch the expected
+     * exception.</li>
+     * <li>{@code commit()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown,
+     * the {@link Transaction} still commits, and exactly the original
+     * {@link Badge} exists.
+     */
+    @Test
+    public void testInternHiddenMatchRefusalLeavesTransactionUsable() {
+        Badge existing = new Badge();
+        existing.serial = "X-1";
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@example.com";
+        runway.save(existing, candidate);
+        try (Transaction transaction = runway.stage()) {
+            Candidate audience = transaction.load(Candidate.class,
+                    candidate.id());
+            Badge probe = new Badge();
+            probe.serial = "X-1";
+            boolean threw = false;
+            try {
+                audience.intern(probe);
+            }
+            catch (RestrictedAccessException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(1, runway.count(Badge.class));
+    }
+
+    /**
+     * Return a {@link Criteria} that matches every {@link Employer} whose
+     * {@code name} equals the given {@code value}.
+     *
+     * @param value the name to match
+     * @return the {@code name == value} {@link Criteria}
+     */
+    private static Criteria name(String value) {
+        return Criteria.where().key("name").operator(Operator.EQUALS)
+                .value(value).build();
     }
 
     /**
