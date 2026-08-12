@@ -3284,7 +3284,7 @@ public abstract class Record implements Comparable<Record> {
      * @throws IllegalArgumentException if no field under a {@link Unique}
      *             constraint has a non-null value
      */
-    Criteria uniqueCriteria() {
+    Criteria uniqueConstraintsCriteria() {
         List<Map<String, Object>> constraints = Lists.newArrayList();
         Map<String, Map<String, Object>> named = Maps.newLinkedHashMap();
         for (Field field : fields()) {

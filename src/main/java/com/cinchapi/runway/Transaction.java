@@ -613,7 +613,7 @@ public class Transaction extends Binding implements
         if(open) {
             @SuppressWarnings("unchecked") Class<T> clazz = (Class<T>) record
                     .getClass();
-            Criteria criteria = record.uniqueCriteria();
+            Criteria criteria = record.uniqueConstraintsCriteria();
             return findOrCreate(() -> findUnique(clazz, criteria),
                     () -> record);
         }
