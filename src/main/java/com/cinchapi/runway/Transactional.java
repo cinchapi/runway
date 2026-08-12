@@ -89,9 +89,25 @@ public interface Transactional {
      * work receives the {@link TransactionInterface} view of a new
      * {@link Transaction} that commits after the work completes. Either way,
      * the work cannot commit, abort or close the transaction it joins.
-     * Conflicts retry within the bounds of the governing
+     * </p>
+     * <p>
+     * A {@link Record} loaded through the transaction, saved through it, or
+     * {@link TransactionInterface#create(Class, Object...) created} by it
+     * stages within it, so everything becomes durable together when the commit
+     * succeeds. A {@link Record} bound elsewhere saves against its own binding,
+     * outside of the transaction.
+     * </p>
+     * <p>
+     * When the work runs in its own transaction and the commit fails because of
+     * a conflict, the transaction is discarded and the work runs again against
+     * a fresh one, within the bounds of the governing
      * {@link AtomicRetryPolicy}, so the work may run more than once and must be
-     * free of side effects outside of the transaction.
+     * free of side effects outside of the transaction. A {@link Record
+     * Record's} in-memory state is outside of it, so an edit from a discarded
+     * attempt survives and is visible to the next one. Set each value
+     * absolutely, or derive it from a read through the transaction, rather than
+     * increment what a prior attempt left behind. Any other exception thrown by
+     * {@code work} aborts the transaction and propagates to the caller.
      * </p>
      *
      * @param work the work to run
