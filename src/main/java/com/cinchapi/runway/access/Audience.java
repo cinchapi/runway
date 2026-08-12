@@ -45,10 +45,13 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.Computed;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.Runway;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
 import com.cinchapi.runway.SerializationOptions;
+import com.cinchapi.runway.Transaction;
 import com.cinchapi.runway.TransactionInterface;
+import com.cinchapi.runway.Transactional;
 import com.cinchapi.runway.Unique;
 import com.cinchapi.runway.util.KeySelection;
 import com.google.common.base.Preconditions;
@@ -100,7 +103,7 @@ import com.google.common.collect.Sets;
  *
  * @author Jeff Nelson
  */
-public interface Audience extends DatabaseInterface {
+public interface Audience extends DatabaseInterface, Transactional {
 
     /**
      * Return a singleton {@link Audience} that represents an unauthenticated or
@@ -1036,6 +1039,77 @@ public interface Audience extends DatabaseInterface {
                     $checkIfVisible());
         }).toArray(Selection[]::new);
         return $db().select(selections);
+    }
+
+    /**
+     * Start a {@link Transaction} that this {@link Audience} joins, so the
+     * operations it performs, and the access checks that gate them, resolve
+     * within the transaction.
+     * <p>
+     * The caller owns the {@link Transaction Transaction's} lifecycle: end it
+     * with exactly one of {@link Transaction#commit() commit} or
+     * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
+     * close} to abort whatever was not committed. Use a try-with-resources
+     * block so the transaction always ends. After the transaction ends, this
+     * {@link Audience} operates against the enclosing {@link Runway} again.
+     * </p>
+     *
+     * @return an open {@link Transaction} that this {@link Audience} joined
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is already bound to an open {@link Transaction}
+     * @throws UnsupportedOperationException if this {@link Audience} is not a
+     *             {@link Record}
+     */
+    @Override
+    public default Transaction stage() {
+        if(this instanceof Record) {
+            Record record = (Record) this;
+            Runway harness = Reflection.call(record, "harness");
+            Verify.that(harness != null, "Cannot stage a Transaction because"
+                    + " this Audience has no binding");
+            boolean inOpenTransaction = Reflection.call(record,
+                    "isBoundToOpenTransaction");
+            Verify.that(!inOpenTransaction, "Cannot stage a Transaction"
+                    + " because this Audience is already bound to an open"
+                    + " Transaction");
+            Transaction transaction = harness.stage();
+            try {
+                Reflection.call(transaction, "join", record);
+            }
+            catch (RuntimeException e) {
+                transaction.close();
+                throw e;
+            }
+            return transaction;
+        }
+        else {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /**
+     * Execute {@code work} within this {@link Audience Audience's}
+     * transactional scope and return its result.
+     * <p>
+     * If this {@link Audience} is bound to an open {@link Transaction}, then
+     * the work joins it; otherwise, the work runs in its own managed
+     * transaction that commits after the work completes, per the
+     * {@link Transactional#supply(Function) Transactional} contract.
+     * </p>
+     *
+     * @param work the work to run
+     * @return the result of {@code work}
+     * @throws UnsupportedOperationException if this {@link Audience} is not a
+     *             {@link Record}
+     */
+    @Override
+    public default <T> T supply(Function<TransactionInterface, T> work) {
+        if(this instanceof Record) {
+            return ((Record) this).supply(work);
+        }
+        else {
+            throw new UnsupportedOperationException();
+        }
     }
 
     /**

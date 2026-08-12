@@ -129,7 +129,9 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  *
  * @author Jeff Nelson
  */
-public final class Runway extends Binding implements AutoCloseable {
+public final class Runway extends Binding implements
+        AutoCloseable,
+        Transactional {
 
     // NOTE: Internal methods within a $ prefix are ones that return raw
     // database results and are intended to be consumed by other methods in this
@@ -1114,6 +1116,7 @@ public final class Runway extends Binding implements AutoCloseable {
      * @throws RetryExhaustedException if the transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
+    @Override
     public void run(Consumer<TransactionInterface> work) {
         supply(transaction -> {
             work.accept(transaction);
@@ -1549,6 +1552,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *
      * @return an open {@link Transaction}
      */
+    @Override
     public Transaction stage() {
         Concourse concourse = connections.request();
         try {
@@ -1569,6 +1573,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *
      * @return an open {@link Transaction}
      */
+    @Override
     public Transaction startTransaction() {
         return stage();
     }
@@ -1605,6 +1610,7 @@ public final class Runway extends Binding implements AutoCloseable {
      * @throws RetryExhaustedException if the transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
+    @Override
     public <T> T supply(Function<TransactionInterface, T> work) {
         AtomicRetryPolicy policy = properties().atomicRetryPolicy();
         Concourse concourse = connections.request();

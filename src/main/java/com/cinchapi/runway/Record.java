@@ -2551,7 +2551,7 @@ public abstract class Record implements Comparable<Record> {
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    protected final void run(Consumer<TransactionInterface> work) {
+    public final void run(Consumer<TransactionInterface> work) {
         supply(transaction -> {
             work.accept(transaction);
             return null;
@@ -2587,7 +2587,7 @@ public abstract class Record implements Comparable<Record> {
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    protected final <T> T supply(Function<TransactionInterface, T> work) {
+    public final <T> T supply(Function<TransactionInterface, T> work) {
         if(isBoundToOpenTransaction()) {
             Transaction transaction = (Transaction) binding;
             return transaction.execute(() -> work.apply(transaction));
