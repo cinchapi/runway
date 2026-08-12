@@ -17,7 +17,6 @@ package com.cinchapi.runway;
 
 import static com.cinchapi.runway.DatabaseInterface.duplicateEntryException;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
@@ -52,7 +51,6 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import com.cinchapi.common.base.CheckedExceptions;
-import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.collect.lazy.LazyTransformSet;
 import com.cinchapi.common.concurrent.JoinableExecutorService;
 import com.cinchapi.common.function.TriConsumer;
@@ -93,7 +91,6 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-import com.google.common.primitives.Primitives;
 
 import gnu.trove.map.hash.TLongObjectHashMap;
 
@@ -768,6 +765,8 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Nullable
+    @Override
     public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
@@ -809,6 +808,8 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Nullable
+    @Override
     public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
         return readAndUpdateAtomically(true, clazz, criteria, null, key,
@@ -856,6 +857,8 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Nullable
+    @Override
     public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
             Criteria criteria, Order order, String key,
             UnaryOperator<V> update) {
@@ -939,10 +942,51 @@ public final class Runway extends Binding implements AutoCloseable {
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
+    @Nullable
+    @Override
     public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
         return readAndUpdateAtomically(false, clazz, criteria, null, key,
                 update);
+    }
+
+    /**
+     * Atomically return the unique {@link Record} that agrees with every
+     * {@link Unique} constraint of {@code record}, or save {@code record} when
+     * none exists. The lookup and the save commit as one transaction.
+     * <p>
+     * A {@link Record Record's} identity is the current data under its
+     * {@link Unique} constraints, scoped to its class. Another record shares
+     * the identity only if it agrees with every constraint; a {@code null}
+     * value does not participate. If no record shares the identity, then
+     * {@code record} itself is saved and returned. If an existing record shares
+     * some but not all of the identity, then there is no match, and the save of
+     * {@code record} fails {@link Unique} enforcement.
+     * </p>
+     * <p>
+     * The operation runs in its own transaction, independent of any
+     * {@link Transaction} the caller holds open: concurrent callers for the
+     * same identity converge on one record.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> This method operates solely on {@link Record
+     * Records} persisted in the database; records supplied by an attached
+     * {@link AdHocDataSource} are never matched.
+     *
+     * @param record the {@link Record} whose identity is interned
+     * @param <T> the type of {@link Record}
+     * @return the {@link Record} that claims the identity: the sole existing
+     *         match, or {@code record} once saved
+     * @throws DuplicateEntryException if more than one record shares the
+     *             identity
+     * @throws RetryExhaustedException if the operation cannot commit within the
+     *             bounds of the governing {@link AtomicRetryPolicy}
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint of {@code record} has a non-null value
+     */
+    @Override
+    public <T extends Record> T intern(T record) {
+        return supply(tx -> tx.intern(record));
     }
 
     @SuppressWarnings("deprecation")
@@ -3127,6 +3171,7 @@ public final class Runway extends Binding implements AutoCloseable {
      * @throws RetryExhaustedException if the update cannot commit within the
      *             bounds of the governing {@link AtomicRetryPolicy}
      */
+    @Nullable
     private <T extends Record, V> T readAndUpdateAtomically(boolean any,
             Class<T> clazz, Criteria criteria, @Nullable Order order,
             String key, UnaryOperator<V> update) {
@@ -3157,23 +3202,9 @@ public final class Runway extends Binding implements AutoCloseable {
                         return null;
                     }
                     else {
-                        Field field = Record.getAtomicableField(key, record);
-                        V current = Record.getAtomicableFieldValue(field,
-                                record);
-                        V next = update.apply(current);
-                        Verify.thatArgument(next != null,
-                                "The update operator cannot return null");
-                        Verify.thatArgument(
-                                Primitives.wrap(field.getType())
-                                        .isInstance(next),
-                                "Cannot atomically operate on {} in {} because"
-                                        + " the replacement is a {} and the"
-                                        + " field stores a {}",
-                                key, clazz.getSimpleName(),
-                                next.getClass().getSimpleName(),
-                                field.getType().getSimpleName());
-                        record.checkIsSavable(field, key, next);
-                        if(!Objects.equals(current, next)) {
+                        V next = Record.resolveAtomicUpdate(key, record,
+                                update);
+                        if(next != null) {
                             transaction.verifyOrSet(key,
                                     Record.serializeScalarValue(next),
                                     record.id());
@@ -3183,7 +3214,9 @@ public final class Runway extends Binding implements AutoCloseable {
                             // after its internal transaction ends, so the
                             // assignment follows the commit.
                             record.assign(this);
-                            record.applyValueChange(key, next);
+                            if(next != null) {
+                                record.applyValueChange(key, next);
+                            }
                             return record;
                         }
                         else {

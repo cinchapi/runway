@@ -21,13 +21,19 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.ForwardingConcourse;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.TransactionToken;
 import com.cinchapi.runway.db.BatchReader;
 import com.cinchapi.runway.db.BatchSaver;
@@ -78,12 +84,13 @@ import com.google.common.collect.Sets;
  * {@link #afterAbort(Runnable)}.
  * </p>
  * <p>
- * A save that fails after its arguments are accepted poisons the transaction:
- * the writes that were staged before the failure can never commit, so every
- * subsequent operation is refused except {@link #abort()} (or {@link #close()})
- * and {@link #afterAbort(Runnable) afterAbort} registration. A save argument
- * that fails its checks is rejected before anything is staged, and the
- * transaction remains usable.
+ * If a save fails after its arguments are accepted, or if a {@link Record}
+ * created by {@link #intern(Record) intern} fails its verification, then the
+ * transaction is poisoned: the staged writes can never commit. A poisoned
+ * transaction refuses every operation except {@link #abort()} (or
+ * {@link #close()}) and {@link #afterAbort(Runnable) afterAbort} registration.
+ * A save argument that fails its checks is rejected before anything is staged,
+ * and the transaction remains usable.
  * </p>
  * <p>
  * A deletion staged within the transaction is final. A later save of an
@@ -132,10 +139,10 @@ public class Transaction extends Binding implements
     private volatile boolean open;
 
     /**
-     * Whether a failed save poisoned the transaction. A poisoned transaction
-     * refuses every operation except {@link #abort()} (or {@link #close()}) and
-     * {@link #afterAbort(Runnable) afterAbort} registration, so the writes that
-     * were staged before the failure can never {@link #commit()}.
+     * Whether a failure left staged writes that can never {@link #commit()} and
+     * poisoned the transaction. A poisoned transaction refuses every operation
+     * except {@link #abort()} (or {@link #close()}) and
+     * {@link #afterAbort(Runnable) afterAbort} registration.
      */
     private boolean poisoned = false;
 
@@ -415,6 +422,207 @@ public class Transaction extends Binding implements
     }
 
     /**
+     * Atomically find the first {@link Record} in the hierarchy of
+     * {@code clazz} that matches the {@code criteria} under the supplied
+     * {@code order} and update the value of {@code key} by applying the
+     * {@code update} operator.
+     * <p>
+     * While the transaction is open, the lookup and the write stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws IllegalArgumentException if {@code order} is {@code null}, if
+     *             {@code key} is not eligible for atomic operations, or if
+     *             {@code update} returns {@code null} or a value that is not an
+     *             instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
+     */
+    @Nullable
+    @Override
+    public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        Verify.thatArgument(order != null,
+                "findAnyFirstAndUpdate requires an Order");
+        if(open) {
+            return execute(
+                    () -> TransactionInterface.super.findAnyFirstAndUpdate(
+                            clazz, criteria, order, key, update));
+        }
+        else {
+            return database.findAnyFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+    }
+
+    /**
+     * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
+     * that matches the {@code criteria} and update the value of {@code key} by
+     * applying the {@code update} operator.
+     * <p>
+     * While the transaction is open, the lookup and the write stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws DuplicateEntryException if more than one record in the hierarchy
+     *             matches
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
+     */
+    @Nullable
+    @Override
+    public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
+            Criteria criteria, String key, UnaryOperator<V> update) {
+        if(open) {
+            return execute(
+                    () -> TransactionInterface.super.findAnyUniqueAndUpdate(
+                            clazz, criteria, key, update));
+        }
+        else {
+            return database.findAnyUniqueAndUpdate(clazz, criteria, key,
+                    update);
+        }
+    }
+
+    /**
+     * Atomically find the first {@link Record} of type {@code clazz} that
+     * matches the {@code criteria} under the supplied {@code order} and update
+     * the value of {@code key} by applying the {@code update} operator.
+     * <p>
+     * While the transaction is open, the lookup and the write stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws IllegalArgumentException if {@code order} is {@code null}, if
+     *             {@code key} is not eligible for atomic operations, or if
+     *             {@code update} returns {@code null} or a value that is not an
+     *             instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
+     */
+    @Nullable
+    @Override
+    public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        Verify.thatArgument(order != null,
+                "findFirstAndUpdate requires an Order");
+        if(open) {
+            return execute(() -> TransactionInterface.super.findFirstAndUpdate(
+                    clazz, criteria, order, key, update));
+        }
+        else {
+            return database.findFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+    }
+
+    /**
+     * Atomically find the one {@link Record} of type {@code clazz} that matches
+     * the {@code criteria} and update the value of {@code key} by applying the
+     * {@code update} operator.
+     * <p>
+     * While the transaction is open, the lookup and the write stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws DuplicateEntryException if more than one record matches
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
+     */
+    @Nullable
+    @Override
+    public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
+            Criteria criteria, String key, UnaryOperator<V> update) {
+        if(open) {
+            return execute(() -> TransactionInterface.super.findUniqueAndUpdate(
+                    clazz, criteria, key, update));
+        }
+        else {
+            return database.findUniqueAndUpdate(clazz, criteria, key, update);
+        }
+    }
+
+    /**
+     * Return the unique {@link Record} that agrees with every {@link Unique}
+     * constraint of {@code record}, or save {@code record} when none exists.
+     * <p>
+     * While the transaction is open, the lookup and the save stage within it.
+     * After the transaction ends, the operation runs atomically against the
+     * enclosing {@link Runway}.
+     * </p>
+     *
+     * @param record the {@link Record} whose identity is interned
+     * @param <T> the type of {@link Record}
+     * @return the {@link Record} that claims the identity: the sole existing
+     *         match, or {@code record} once saved
+     * @throws DuplicateEntryException if more than one record shares the
+     *             identity
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint of {@code record} has a non-null value
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
+     */
+    @Override
+    public <T extends Record> T intern(T record) {
+        if(open) {
+            @SuppressWarnings("unchecked") Class<T> clazz = (Class<T>) record
+                    .getClass();
+            Criteria criteria = record.uniqueConstraintsCriteria();
+            return findOrCreate(() -> findUnique(clazz, criteria),
+                    () -> record);
+        }
+        else {
+            return database.intern(record);
+        }
+    }
+
+    /**
      * Save all changes in the provided {@code records} within this transaction.
      * <p>
      * The records, and every {@link Record} linked from them, are bound to this
@@ -535,10 +743,7 @@ public class Transaction extends Binding implements
     @Override
     public Selections select(Selection<?>... options) {
         if(open) {
-            verifyOwner();
-            verifyNotPoisoned();
-            operating++;
-            try {
+            return execute(() -> {
                 DatabaseSelection<?>[] selections = DatabaseSelection
                         .resolve(options);
                 try (Reader reader = database.supportsBulkCommands
@@ -560,10 +765,7 @@ public class Transaction extends Binding implements
                     materialize(selection.get());
                 }
                 return new Selections(selections);
-            }
-            finally {
-                operating--;
-            }
+            });
         }
         else {
             return database.select(options);
@@ -614,18 +816,12 @@ public class Transaction extends Binding implements
     @Override
     <T extends Record> T load(long id) {
         if(open) {
-            verifyOwner();
-            verifyNotPoisoned();
-            operating++;
-            try {
+            return execute(() -> {
                 Set<Object> sections = concourse.select(Record.SECTION_KEY, id);
                 Class<T> clazz = Reflection
                         .getClassCasted((String) Iterables.getLast(sections));
                 return load(clazz, id);
-            }
-            finally {
-                operating--;
-            }
+            });
         }
         else {
             return database.load(id);
@@ -639,6 +835,26 @@ public class Transaction extends Binding implements
      */
     boolean open() {
         return open;
+    }
+
+    /**
+     * Run {@code operation} within this transaction's operation window, so the
+     * transaction cannot end while the operation is in flight.
+     *
+     * @param operation the work to run
+     * @param <T> the operation's result type
+     * @return the operation's result
+     */
+    <T> T execute(Supplier<T> operation) {
+        verifyOwner();
+        verifyNotPoisoned();
+        operating++;
+        try {
+            return operation.get();
+        }
+        finally {
+            operating--;
+        }
     }
 
     /**
@@ -682,6 +898,15 @@ public class Transaction extends Binding implements
     }
 
     /**
+     * Verify that the transaction is still {@link #open}, is not
+     * {@link #poisoned} and that the caller is the {@link #owner} thread.
+     */
+    void verify() {
+        verifyOpen();
+        verifyNotPoisoned();
+    }
+
+    /**
      * Execute {@link Concourse#verifyOrSet(String, Object, long) verifyOrSet}
      * within the transaction.
      *
@@ -692,26 +917,6 @@ public class Transaction extends Binding implements
      */
     void verifyOrSet(String key, Object value, long record) {
         concourse.verifyOrSet(key, value, record);
-    }
-
-    /**
-     * Ensure that {@code result}, including every element of an
-     * {@link Iterable} result, is fully materialized while the transaction is
-     * open, so no part of a {@link Selection} result resolves after the
-     * transaction ends.
-     *
-     * @param result a resolved {@link Selection} result
-     */
-    private void materialize(Object result) {
-        if(result instanceof Iterable) {
-            for (Object item : (Iterable<?>) result) {
-                materialize(item);
-            }
-        }
-        else {
-            // A non-iterable result (a single Record, a count, or null) is
-            // already materialized.
-        }
     }
 
     /**
@@ -784,12 +989,61 @@ public class Transaction extends Binding implements
     }
 
     /**
-     * Verify that the transaction is still {@link #open}, is not
-     * {@link #poisoned} and that the caller is the {@link #owner} thread.
+     * Return the unique {@link Record} that the {@code lookup} matches, or
+     * create and save one from {@code factory} when none exists.
+     * <p>
+     * If the {@code factory} tries to end the transaction, then the call is
+     * refused. If verification fails after the save, then the transaction is
+     * poisoned and the staged save can never commit.
+     * </p>
+     *
+     * @param lookup performs the criteria lookup within the transaction
+     * @param factory supplies the {@link Record} to create when none match
+     * @param <T> the type of {@link Record}
+     * @return the matched or created {@link Record}
      */
-    void verify() {
-        verifyOpen();
-        verifyNotPoisoned();
+    private <T extends Record> T findOrCreate(Supplier<T> lookup,
+            Supplier<T> factory) {
+        return execute(() -> {
+            T record = lookup.get();
+            if(record == null) {
+                record = factory.get();
+                Verify.thatArgument(record != null,
+                        "The factory cannot return null");
+                save(record);
+                try {
+                    T found = lookup.get();
+                    Verify.thatArgument(
+                            found != null && record.id() == found.id(),
+                            "The created Record does not match the criteria");
+                }
+                catch (Throwable t) {
+                    poisoned = true;
+                    throw t;
+                }
+            }
+            return record;
+        });
+    }
+
+    /**
+     * Ensure that {@code result}, including every element of an
+     * {@link Iterable} result, is fully materialized while the transaction is
+     * open, so no part of a {@link Selection} result resolves after the
+     * transaction ends.
+     *
+     * @param result a resolved {@link Selection} result
+     */
+    private void materialize(Object result) {
+        if(result instanceof Iterable) {
+            for (Object item : (Iterable<?>) result) {
+                materialize(item);
+            }
+        }
+        else {
+            // A non-iterable result (a single Record, a count, or null) is
+            // already materialized.
+        }
     }
 
     /**
@@ -805,9 +1059,9 @@ public class Transaction extends Binding implements
      */
     private void verifyNotPoisoned() {
         Verify.that(!poisoned,
-                "The Transaction cannot continue because a save failed"
-                        + " within it; abort and retry the work in a new"
-                        + " Transaction");
+                "The Transaction cannot continue because a failure left"
+                        + " staged writes that can never commit; abort and"
+                        + " retry the work in a new Transaction");
     }
 
     /**

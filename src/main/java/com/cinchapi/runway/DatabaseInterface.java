@@ -19,7 +19,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
 
 import com.cinchapi.common.base.AnyStrings;
 import com.cinchapi.concourse.DuplicateEntryException;
@@ -56,18 +59,6 @@ public interface DatabaseInterface {
     }
 
     /**
-     * A {@link Page} that retrieves at most two results, used by unique-result
-     * queries to detect duplicates without fetching the entire result set.
-     */
-    static final Page UNIQUE_PAGINATION = Page.limit(2);
-
-    /**
-     * A {@link Page} that retrieves at most one result, used by first-result
-     * queries to fetch a single sorted row without the rest of the match set.
-     */
-    static final Page FIRST_PAGINATION = Page.limit(1);
-
-    /**
      * Return the {@code records} in sorted {@code order}.
      *
      * @param records
@@ -95,6 +86,18 @@ public interface DatabaseInterface {
                         .collect(Collectors.toCollection(LinkedHashSet::new))
                 : records;
     }
+
+    /**
+     * A {@link Page} that retrieves at most two results, used by unique-result
+     * queries to detect duplicates without fetching the entire result set.
+     */
+    static final Page UNIQUE_PAGINATION = Page.limit(2);
+
+    /**
+     * A {@link Page} that retrieves at most one result, used by first-result
+     * queries to fetch a single sorted row without the rest of the match set.
+     */
+    static final Page FIRST_PAGINATION = Page.limit(1);
 
     /**
      * Return the number of {@link Records} in the {@code clazz}.
@@ -323,6 +326,20 @@ public interface DatabaseInterface {
     public default <T extends Record> int countAny(Class<T> clazz,
             Realms realms) {
         return fetch(Selection.ofAny(clazz).count().realms(realms));
+    }
+
+    /**
+     * Execute a single {@link Selection} and return the result directly, cast
+     * to the appropriate type.
+     *
+     * @param selection the {@link Selection} to execute
+     * @param <R> the expected result type
+     * @return the result of the {@link Selection}
+     * @throws IllegalStateException if the {@link Selection} has already been
+     *             submitted
+     */
+    public default <R> R fetch(Selection<?> selection) {
+        return select(selection).next();
     }
 
     /**
@@ -1088,24 +1105,6 @@ public interface DatabaseInterface {
     }
 
     /**
-     * Execute the {@link #findFirst(Class, Criteria, Order, Realms)} query for
-     * {@code clazz} and all of its descendants among the provided
-     * {@code realms}.
-     *
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @param realms
-     * @return the first matching record, or {@code null} if none matches
-     * @throws NullPointerException if {@code order} is {@code null}
-     */
-    public default <T extends Record> T findAnyFirst(Class<T> clazz,
-            Criteria criteria, Order order, Realms realms) {
-        return fetch(Selection.ofAny(clazz).where(criteria).order(order).first()
-                .realms(realms));
-    }
-
-    /**
      * Execute the {@link #findFirst(Class, Criteria, Order, Predicate)} query
      * for {@code clazz} and all of its descendants.
      *
@@ -1143,6 +1142,53 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Execute the {@link #findFirst(Class, Criteria, Order, Realms)} query for
+     * {@code clazz} and all of its descendants among the provided
+     * {@code realms}.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param realms
+     * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
+     */
+    public default <T extends Record> T findAnyFirst(Class<T> clazz,
+            Criteria criteria, Order order, Realms realms) {
+        return fetch(Selection.ofAny(clazz).where(criteria).order(order).first()
+                .realms(realms));
+    }
+
+    /**
+     * Atomically find the first {@link Record} in the hierarchy of
+     * {@code clazz} that matches the {@code criteria} under the supplied
+     * {@code order} and update the value of {@code key} by applying the
+     * {@code update} operator.
+     * <p>
+     * This is an optional operation. The default implementation throws an
+     * {@link UnsupportedOperationException}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws UnsupportedOperationException if the implementation does not
+     *             support atomic read-and-update operations
+     */
+    @Nullable
+    public default <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Execute the {@link #findUnique(Class, Criteria)} query for {@code clazz}
      * and all of its descendants.
      *
@@ -1171,6 +1217,35 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
+     * that matches the {@code criteria} and update the value of {@code key} by
+     * applying the {@code update} operator.
+     * <p>
+     * This is an optional operation. The default implementation throws an
+     * {@link UnsupportedOperationException}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws DuplicateEntryException if more than one record in the hierarchy
+     *             matches
+     * @throws UnsupportedOperationException if the implementation does not
+     *             support atomic read-and-update operations
+     */
+    @Nullable
+    public default <T extends Record, V> T findAnyUniqueAndUpdate(
+            Class<T> clazz, Criteria criteria, String key,
+            UnaryOperator<V> update) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Find and return the first record of type {@code clazz} that matches the
      * {@code criteria} under the supplied {@code order}, or {@code null} if no
      * record matches.
@@ -1191,24 +1266,6 @@ public interface DatabaseInterface {
     public default <T extends Record> T findFirst(Class<T> clazz,
             Criteria criteria, Order order) {
         return fetch(Selection.of(clazz).where(criteria).order(order).first());
-    }
-
-    /**
-     * Find and return the first record of type {@code clazz} that matches the
-     * {@code criteria} under the supplied {@code order} among the provided
-     * {@code realms}, or {@code null} if no record matches.
-     *
-     * @param clazz
-     * @param criteria
-     * @param order
-     * @param realms
-     * @return the first matching record, or {@code null} if none matches
-     * @throws NullPointerException if {@code order} is {@code null}
-     */
-    public default <T extends Record> T findFirst(Class<T> clazz,
-            Criteria criteria, Order order, Realms realms) {
-        return fetch(Selection.of(clazz).where(criteria).order(order).first()
-                .realms(realms));
     }
 
     /**
@@ -1262,6 +1319,52 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Find and return the first record of type {@code clazz} that matches the
+     * {@code criteria} under the supplied {@code order} among the provided
+     * {@code realms}, or {@code null} if no record matches.
+     *
+     * @param clazz
+     * @param criteria
+     * @param order
+     * @param realms
+     * @return the first matching record, or {@code null} if none matches
+     * @throws NullPointerException if {@code order} is {@code null}
+     */
+    public default <T extends Record> T findFirst(Class<T> clazz,
+            Criteria criteria, Order order, Realms realms) {
+        return fetch(Selection.of(clazz).where(criteria).order(order).first()
+                .realms(realms));
+    }
+
+    /**
+     * Atomically find the first {@link Record} of type {@code clazz} that
+     * matches the {@code criteria} under the supplied {@code order} and update
+     * the value of {@code key} by applying the {@code update} operator.
+     * <p>
+     * This is an optional operation. The default implementation throws an
+     * {@link UnsupportedOperationException}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws UnsupportedOperationException if the implementation does not
+     *             support atomic read-and-update operations
+     */
+    @Nullable
+    public default <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Find the one record of type {@code clazz} that matches the
      * {@code criteria}. If more than one record matches, throw a
      * {@link DuplicateEntryException}.
@@ -1293,6 +1396,33 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Atomically find the one {@link Record} of type {@code clazz} that matches
+     * the {@code criteria} and update the value of {@code key} by applying the
+     * {@code update} operator.
+     * <p>
+     * This is an optional operation. The default implementation throws an
+     * {@link UnsupportedOperationException}.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if none matches
+     * @throws DuplicateEntryException if more than one record matches
+     * @throws UnsupportedOperationException if the implementation does not
+     *             support atomic read-and-update operations
+     */
+    @Nullable
+    public default <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
+            Criteria criteria, String key, UnaryOperator<V> update) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Create a {@link Gateway} instance that provides intelligent routing to
      * the appropriate database operations based on the parameters provided. The
      * gateway simplifies database access by automatically choosing between
@@ -1307,6 +1437,38 @@ public interface DatabaseInterface {
     @Deprecated
     public default Gateway gateway() {
         return Gateway.to(this);
+    }
+
+    /**
+     * Return the unique {@link Record} that agrees with every {@link Unique}
+     * constraint of {@code record}, or save {@code record} when none exists.
+     * <p>
+     * A {@link Record Record's} identity is the current data under its
+     * {@link Unique} constraints, scoped to its class. Another record shares
+     * the identity only if it agrees with every constraint; a {@code null}
+     * value does not participate. If no record shares the identity, then
+     * {@code record} itself is saved and returned. If an existing record shares
+     * some but not all of the identity, then there is no match, and the save of
+     * {@code record} fails {@link Unique} enforcement.
+     * </p>
+     * <p>
+     * This is an optional operation. The default implementation throws an
+     * {@link UnsupportedOperationException}.
+     * </p>
+     *
+     * @param record the {@link Record} whose identity is interned
+     * @param <T> the type of {@link Record}
+     * @return the {@link Record} that claims the identity: the sole existing
+     *         match, or {@code record} once saved
+     * @throws DuplicateEntryException if more than one record shares the
+     *             identity
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint of {@code record} has a non-null value
+     * @throws UnsupportedOperationException if the implementation does not
+     *             support persistence
+     */
+    public default <T extends Record> T intern(T record) {
+        throw new UnsupportedOperationException();
     }
 
     /**
@@ -2072,20 +2234,6 @@ public interface DatabaseInterface {
         else {
             throw new IllegalStateException();
         }
-    }
-
-    /**
-     * Execute a single {@link Selection} and return the result directly, cast
-     * to the appropriate type.
-     *
-     * @param selection the {@link Selection} to execute
-     * @param <R> the expected result type
-     * @return the result of the {@link Selection}
-     * @throws IllegalStateException if the {@link Selection} has already been
-     *             submitted
-     */
-    public default <R> R fetch(Selection<?> selection) {
-        return select(selection).next();
     }
 
     /**

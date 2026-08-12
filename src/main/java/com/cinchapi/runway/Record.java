@@ -78,12 +78,14 @@ import com.cinchapi.common.describe.Empty;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
+import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.Link;
 import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.server.io.Serializables;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
@@ -324,6 +326,46 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Apply {@code update} to the current value of {@code key} on
+     * {@code record} and return the validated replacement that a single-key
+     * atomic operation must write, or {@code null} when the produced value
+     * equals the current one and there is nothing to write.
+     *
+     * @param key the name of an intrinsic field
+     * @param record the {@link Record} that owns the field
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the replacement to write, or {@code null} when no write is needed
+     * @throws IllegalArgumentException if {@code key} is not
+     *             {@link #getAtomicableField(String, Record) eligible} for
+     *             single-key atomic operations, or if {@code update} returns
+     *             {@code null} or a value that is not an instance of the
+     *             field's type
+     * @throws IllegalStateException if the produced value violates the field's
+     *             constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field
+     */
+    @Nullable
+    static <V> V resolveAtomicUpdate(String key, Record record,
+            UnaryOperator<V> update) {
+        Field field = getAtomicableField(key, record);
+        V current = getAtomicableFieldValue(field, record);
+        V next = update.apply(current);
+        Verify.thatArgument(next != null,
+                "The update operator cannot return null");
+        Verify.thatArgument(Primitives.wrap(field.getType()).isInstance(next),
+                "Cannot atomically operate on {} in {} because the"
+                        + " replacement is a {} and the field stores a {}",
+                key, record.__, next.getClass().getSimpleName(),
+                field.getType().getSimpleName());
+        record.checkIsSavable(field, key, next);
+        return Objects.equals(current, next) ? null : next;
+    }
+
+    /**
      * Serialize {@code value} by converting it to an object that can be stored
      * within the database. This method assumes that {@code value} is a scalar
      * (e.g. not a {@link Sequences#isSequence(Object)}).
@@ -362,6 +404,113 @@ public abstract class Record implements Comparable<Record> {
         else {
             return Tag.create(new Gson().toJson(value));
         }
+    }
+
+    /**
+     * Stage a single-key atomic update of {@code key} on {@code record} within
+     * {@code transaction} and return the {@code record}, or {@code null} when
+     * there is no record to update.
+     *
+     * @param transaction the {@link TransactionInterface} the update stages
+     *            within
+     * @param record the {@link Record} to update, or {@code null} when there is
+     *            nothing to update
+     * @param key the name of an intrinsic field
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@code record}, or {@code null} when {@code record}
+     *         is {@code null}
+     * @throws IllegalArgumentException if {@code key} is not
+     *             {@link #getAtomicableField(String, Record) eligible} for
+     *             single-key atomic operations, or if {@code update} returns
+     *             {@code null} or a value that is not an instance of the
+     *             field's type
+     * @throws IllegalStateException if the produced value violates the field's
+     *             constraints
+     * @throws NonWritableFieldException if the governing
+     *             {@link DynamicWritePolicy} does not permit writing to the
+     *             field
+     */
+    @Nullable
+    static <T extends Record, V> T stageAtomicUpdate(
+            TransactionInterface transaction, @Nullable T record, String key,
+            UnaryOperator<V> update) {
+        if(record == null) {
+            return null;
+        }
+        else {
+            V next = resolveAtomicUpdate(key, record, update);
+            if(next != null) {
+                record.set(key, next);
+                transaction.save(record);
+            }
+            return record;
+        }
+    }
+
+    /**
+     * Return a {@link BuildableState} that extends {@code criteria} with a
+     * conjoined equality clause for each non-null entry in {@code data}, or
+     * {@code criteria} itself when {@code data} adds nothing.
+     * <p>
+     * A {@link Sequences#isSequence(Object) sequence}-valued entry matches
+     * element-wise: its clause is satisfied by a record that stores any one of
+     * the elements.
+     * </p>
+     *
+     * @param criteria the {@link BuildableState} to extend, or {@code null} to
+     *            start from the first clause
+     * @param data the (key, value) pairs to conjoin
+     * @return the extended {@link BuildableState}, or {@code null} when
+     *         {@code criteria} is {@code null} and every entry is skipped
+     */
+    @Nullable
+    private static BuildableState conjoinEqualityClauses(
+            @Nullable BuildableState criteria, Map<String, Object> data) {
+        for (Entry<String, Object> entry : data.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            if(value == null) {
+                continue; // A null value does not affect uniqueness.
+            }
+            else if(Sequences.isSequence(value)) {
+                AtomicReference<BuildableState> $sub = new AtomicReference<>(
+                        null);
+                Sequences.forEach(value, item -> {
+                    item = serializeScalarValue(item);
+                    if($sub.get() == null) {
+                        $sub.set(Criteria.where().key(key)
+                                .operator(Operator.EQUALS).value(item));
+                    }
+                    else {
+                        $sub.set($sub.get().or().key(key)
+                                .operator(Operator.EQUALS).value(item));
+                    }
+                });
+                if($sub.get() == null) {
+                    // An empty sequence stores no values, so it does not
+                    // affect uniqueness.
+                }
+                else if(criteria == null) {
+                    criteria = Criteria.where().group($sub.get());
+                }
+                else {
+                    criteria = Criteria.where()
+                            .group(criteria.and().group($sub.get()));
+                }
+            }
+            else {
+                value = serializeScalarValue(value);
+                criteria = criteria == null
+                        ? Criteria.where().key(key).operator(Operator.EQUALS)
+                                .value(value)
+                        : criteria.and().key(key).operator(Operator.EQUALS)
+                                .value(value);
+            }
+        }
+        return criteria;
     }
 
     /**
@@ -1558,6 +1707,44 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the unique {@link Record} that agrees with every {@link Unique}
+     * constraint of this record, or save this record when none exists.
+     * <p>
+     * The identity is the current data under this record's {@link Unique}
+     * constraints, scoped to its class. Another record shares the identity only
+     * if it agrees with every constraint; a {@code null} value does not
+     * participate. If no record shares the identity, then this record itself is
+     * saved and returned. If an existing record shares some but not all of the
+     * identity, then there is no match, and the save fails {@link Unique}
+     * enforcement.
+     * </p>
+     * <p>
+     * The operation runs in this record's transactional scope: if this record
+     * is bound to an open {@link Transaction}, then the lookup and the save
+     * stage within it; otherwise, the lookup and the save commit as one
+     * transaction, under the contract of {@link Runway#intern(Record) intern}
+     * on the bound {@link Runway}.
+     * </p>
+     *
+     * @param <T> the type of {@link Record}
+     * @return the {@link Record} that claims the identity: the sole existing
+     *         match, or this record once saved
+     * @throws DuplicateEntryException if more than one record shares the
+     *             identity
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint has a non-null value
+     * @throws IllegalStateException if this {@link Record} has no binding, or
+     *             if it is bound to an open {@link Transaction} that another
+     *             thread owns or that a failed save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    @SuppressWarnings("unchecked")
+    public final <T extends Record> T intern() {
+        return supply(tx -> tx.intern((T) this));
+    }
+
+    /**
      * Return the "readable" intrinsic (i.e. neither {@link #derived() derived}
      * nor {@link #computed() computed}) data from this {@link Record} as a
      * {@link Map}.
@@ -2403,8 +2590,7 @@ public abstract class Record implements Comparable<Record> {
     protected final <T> T supply(Function<TransactionInterface, T> work) {
         if(isBoundToOpenTransaction()) {
             Transaction transaction = (Transaction) binding;
-            transaction.verify();
-            return work.apply(transaction);
+            return transaction.execute(() -> work.apply(transaction));
         }
         else {
             Runway runway = harness();
@@ -3084,6 +3270,57 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the {@link Criteria} that identifies this {@link Record} by the
+     * current data under its {@link Unique} constraints.
+     * <p>
+     * A record matches the {@link Criteria} only if it agrees with every
+     * constraint: each unnamed {@link Unique} field individually and each named
+     * constraint across all of its fields. A {@code null} value does not
+     * participate, consistent with {@link Unique} enforcement, and the
+     * {@link Criteria} does not constrain the record's class.
+     * </p>
+     *
+     * @return the identity {@link Criteria}
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint has a non-null value
+     */
+    Criteria uniqueConstraintsCriteria() {
+        List<Map<String, Object>> constraints = Lists.newArrayList();
+        Map<String, Map<String, Object>> named = Maps.newLinkedHashMap();
+        for (Field field : fields()) {
+            Unique constraint = field.getAnnotation(Unique.class);
+            if(constraint != null
+                    && !Modifier.isTransient(field.getModifiers())) {
+                String name = constraint.name();
+                Map<String, Object> data;
+                if(name.length() == 0) {
+                    data = Maps.newLinkedHashMap();
+                    constraints.add(data);
+                }
+                else {
+                    data = named.computeIfAbsent(name, $name -> {
+                        Map<String, Object> $data = Maps.newLinkedHashMap();
+                        constraints.add($data);
+                        return $data;
+                    });
+                }
+                data.put(field.getName(), getFieldValue(field, this));
+            }
+            else {
+                // The field is not part of the Record's persistent unique
+                // identity.
+            }
+        }
+        BuildableState criteria = null;
+        for (Map<String, Object> data : constraints) {
+            criteria = conjoinEqualityClauses(criteria, data);
+        }
+        Verify.thatArgument(criteria != null,
+                "{} has no non-null value under a Unique constraint", __);
+        return criteria.build();
+    }
+
+    /**
      * Verify that a save of this {@link Record} through {@code scope} does not
      * cross the boundary of an open {@link Transaction}: the save must resolve
      * against the transaction this {@link Record} is bound to, or this
@@ -3702,39 +3939,10 @@ public abstract class Record implements Comparable<Record> {
      */
     private void enqueueUniquenessCheck(Saver saver, Map<String, Object> data,
             String errorName) {
-        AtomicReference<BuildableState> $criteria = new AtomicReference<>(
+        Criteria criteria = conjoinEqualityClauses(
                 Criteria.where().key(SECTION_KEY).operator(Operator.EQUALS)
-                        .value(getClass().getName()));
-        for (Entry<String, Object> entry : data.entrySet()) {
-            String key = entry.getKey();
-            Object value = entry.getValue();
-            if(value == null) {
-                continue; // A null value does not affect uniqueness.
-            }
-            else if(Sequences.isSequence(value)) {
-                AtomicReference<BuildableState> $sub = new AtomicReference<>(
-                        null);
-                Sequences.forEach(value, item -> {
-                    item = serializeScalarValue(item);
-                    if($sub.get() == null) {
-                        $sub.set(Criteria.where().key(key)
-                                .operator(Operator.EQUALS).value(item));
-                    }
-                    else {
-                        $sub.set($sub.get().or().key(key)
-                                .operator(Operator.EQUALS).value(item));
-                    }
-                });
-                $criteria.set(Criteria.where()
-                        .group($criteria.get().and().group($sub.get())));
-            }
-            else {
-                value = serializeScalarValue(value);
-                $criteria.set($criteria.get().and().key(key)
-                        .operator(Operator.EQUALS).value(value));
-            }
-        }
-        Criteria criteria = $criteria.get();
+                        .value(getClass().getName()),
+                data);
         String errorMessage = AnyStrings.format("{} must be unique in {}",
                 errorName, __);
         saver.find(criteria, records -> {
@@ -6104,6 +6312,44 @@ public abstract class Record implements Comparable<Record> {
          */
         private ReactiveBinding(Record tracked) {
             this.tracked = tracked;
+        }
+
+        @Nullable
+        @Override
+        public <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
+                Criteria criteria, Order order, String key,
+                UnaryOperator<V> update) {
+            return delegate().findAnyFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+
+        @Nullable
+        @Override
+        public <T extends Record, V> T findAnyUniqueAndUpdate(Class<T> clazz,
+                Criteria criteria, String key, UnaryOperator<V> update) {
+            return delegate().findAnyUniqueAndUpdate(clazz, criteria, key,
+                    update);
+        }
+
+        @Nullable
+        @Override
+        public <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
+                Criteria criteria, Order order, String key,
+                UnaryOperator<V> update) {
+            return delegate().findFirstAndUpdate(clazz, criteria, order, key,
+                    update);
+        }
+
+        @Nullable
+        @Override
+        public <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
+                Criteria criteria, String key, UnaryOperator<V> update) {
+            return delegate().findUniqueAndUpdate(clazz, criteria, key, update);
+        }
+
+        @Override
+        public <T extends Record> T intern(T record) {
+            return delegate().intern(record);
         }
 
         @Override

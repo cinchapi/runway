@@ -16,17 +16,17 @@
 package com.cinchapi.runway;
 
 /**
- * A {@link Binding} is a {@link DatabaseInterface} that can also persist
- * {@link Record} changes, so it is the contract that a {@link Record} binds to:
- * reads and saves both resolve against the same scope.
+ * A {@link Binding} is a {@link DatabaseInterface} that can persist
+ * {@link Record} changes. A {@link Record} binds to a {@link Binding}, and its
+ * reads and saves resolve against the bound scope.
  *
  * @author Jeff Nelson
  */
 abstract class Binding implements DatabaseInterface {
 
     /**
-     * Load the {@link Record} that is identified by {@code id} without knowing
-     * its {@link Class} in advance.
+     * Load the {@link Record} identified by {@code id} and resolve its actual
+     * type.
      *
      * @param id the record id
      * @return the loaded {@link Record}

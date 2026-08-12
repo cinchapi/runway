@@ -21,11 +21,16 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
 import javax.annotation.Nullable;
 
+import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.TransactionInterface;
 import com.google.common.collect.HashMultiset;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
 
 /**
@@ -59,17 +64,99 @@ import com.google.common.collect.Multiset;
 class AccessControlSupport {
 
     /**
-     * Registry mapping each {@link AccessControl} class to a provider
-     * {@link Function} that, given an {@link Audience}, returns the
-     * {@link Scope} describing that audience's database-level visibility.
+     * Atomically find a {@link Record} on behalf of {@code audience} and update
+     * the value of {@code key} within the transactional scope of the
+     * {@code audience}.
      * <p>
-     * Populated via
-     * {@link AccessControl#registerVisibilityScope(Class, Function)} and
-     * consulted at query time by
-     * {@link Audience#select(com.cinchapi.runway.Selection[])}.
+     * If the {@code audience} is bound to an open transaction, then the
+     * {@code supplier}, the access checks and the update stage within it;
+     * otherwise, they commit together in their own transaction. The
+     * {@code supplier} runs within that scope, so a lookup through the
+     * {@code audience} matches among the records that are visible to it. The
+     * update proceeds only if the supplied {@link Record}
+     * {@link #isWritableByAudience(Audience, Collection, Record) is writable}
+     * by the {@code audience}; otherwise the result is {@code null} and nothing
+     * is updated. The replacement is validated under the same rules as every
+     * single-key atomic operation, and the {@code update} operator may run more
+     * than once, so it must be free of side effects.
      * </p>
+     *
+     * @param audience the {@link Audience} on whose behalf the update runs
+     * @param supplier supplies the {@link Record} to update within the
+     *            transactional scope
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if there is no match
+     *         that the {@code audience} can update
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws UnsupportedOperationException if the {@code audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if the {@code audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
      */
-    static final Map<Class<?>, Function<Audience, Scope>> VISIBILITY_SCOPES = new ConcurrentHashMap<>();
+    @Nullable
+    public static <T extends Record, V> T supplyAndUpdate(Audience audience,
+            Supplier<T> supplier, String key, UnaryOperator<V> update) {
+        if(audience instanceof Record) {
+            return Reflection.call(audience, "supply",
+                    (Function<TransactionInterface, T>) transaction -> {
+                        T subject = supplier.get();
+                        if(isWritableByAudience(audience, ImmutableSet.of(key),
+                                subject)) {
+                            Record previous = Reflection.get("_author",
+                                    subject);
+                            Reflection.set("_author", (Record) audience,
+                                    subject);
+                            T result = Reflection.callStatic(Record.class,
+                                    "stageAtomicUpdate", transaction, subject,
+                                    key, update);
+                            Record marker = Reflection.get("_author", subject);
+                            if(marker == audience) {
+                                // A staged save consumes the author marker, so
+                                // one that survived proves the update was a
+                                // no-op; restore it so a later save is not
+                                // attributed to the audience.
+                                Reflection.set("_author", previous, subject);
+                            }
+                            return result;
+                        }
+                        else {
+                            return null;
+                        }
+                    });
+        }
+        else {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /**
+     * Return {@code true} if {@code audience} is permitted to create
+     * {@code record}.
+     *
+     * @param audience the {@link Audience} on whose behalf the create runs
+     * @param record the {@link Record} to create
+     * @return {@code true} if {@code record} is not {@link AccessControl access
+     *         controlled} or {@code audience} is permitted to create it
+     */
+    public static boolean isCreatableByAudience(Audience audience,
+            Record record) {
+        if(record instanceof AccessControl) {
+            AccessControl subject = (AccessControl) record;
+            return audience instanceof Anonymous
+                    ? subject.$isCreatableByAnonymous()
+                    : subject.$isCreatableBy(audience);
+        }
+        else {
+            return true;
+        }
+    }
 
     /**
      * Check whether the {@code requested} keys are permitted by the access
@@ -124,6 +211,80 @@ class AccessControlSupport {
             return true;
         }
     }
+
+    /**
+     * Return {@code true} if {@code audience} is permitted to write to each of
+     * the {@code keys} on {@code subject}: the {@code subject} exists, it is
+     * visible to the {@code audience}, and every one of the {@code keys} is
+     * writable by the {@code audience}.
+     *
+     * @param audience the {@link Audience} on whose behalf the write runs
+     * @param keys the fields to write to
+     * @param subject the {@link Record} to modify, or {@code null} when there
+     *            is nothing to modify
+     * @return {@code true} if the write is permitted
+     */
+    public static boolean isWritableByAudience(Audience audience,
+            Collection<String> keys, @Nullable Record subject) {
+        if(subject == null
+                || !audience.$checkIfInScopeOrVisible().test(subject)) {
+            return false;
+        }
+        else if(subject instanceof AccessControl) {
+            AccessControl gated = (AccessControl) subject;
+            Set<String> rules = audience instanceof Anonymous
+                    ? gated.$writableByAnonymous()
+                    : gated.$writableBy(audience);
+            return isPermittedAccess(keys, rules);
+        }
+        else {
+            return true;
+        }
+    }
+
+    /**
+     * Verify that {@code audience} is permitted to create {@code record}.
+     *
+     * @param audience the {@link Audience} on whose behalf the create runs
+     * @param record the {@link Record} to create
+     * @throws RestrictedAccessException if the create is not permitted
+     */
+    public static void verifyIsCreatableByAudience(Audience audience,
+            Record record) {
+        if(!isCreatableByAudience(audience, record)) {
+            throw new RestrictedAccessException();
+        }
+    }
+
+    /**
+     * Verify that {@code audience} is permitted to write to each of the
+     * {@code keys} on {@code subject}.
+     *
+     * @param audience the {@link Audience} on whose behalf the write runs
+     * @param keys the fields to write to
+     * @param subject the {@link Record} to modify, or {@code null} when there
+     *            is nothing to modify
+     * @throws RestrictedAccessException if the write is not permitted
+     */
+    public static void verifyIsWritableByAudience(Audience audience,
+            Collection<String> keys, @Nullable Record subject) {
+        if(!isWritableByAudience(audience, keys, subject)) {
+            throw new RestrictedAccessException();
+        }
+    }
+
+    /**
+     * Registry mapping each {@link AccessControl} class to a provider
+     * {@link Function} that, given an {@link Audience}, returns the
+     * {@link Scope} describing that audience's database-level visibility.
+     * <p>
+     * Populated via
+     * {@link AccessControl#registerVisibilityScope(Class, Function)} and
+     * consulted at query time by
+     * {@link Audience#select(com.cinchapi.runway.Selection[])}.
+     * </p>
+     */
+    static final Map<Class<?>, Function<Audience, Scope>> VISIBILITY_SCOPES = new ConcurrentHashMap<>();
 
     /**
      * Return a {@link ThreadLocal} variable to keep track of processed records

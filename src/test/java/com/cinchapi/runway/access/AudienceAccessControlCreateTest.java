@@ -18,6 +18,10 @@ package com.cinchapi.runway.access;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.runway.Transaction;
+import com.cinchapi.runway.access.AudienceAccessControlInternTest.Gate;
+import com.cinchapi.runway.access.AudienceAccessControlInternTest.Vault;
+
 /**
  * Unit tests for the {@link Audience#create} method and related access control
  * behaviors.
@@ -486,6 +490,56 @@ public class AudienceAccessControlCreateTest
 
         Offer offer = employerUser.create(Offer.class);
         Assert.assertNotNull("EmployerUser should create offer", offer);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the create-permission check of
+     * {@code create} resolves within the {@link Audience Audience's}
+     * transactional scope, so a creation rule that reads through a linked
+     * constructor argument observes the staged state.
+     * <p>
+     * <strong>Start state:</strong> One saved open {@link Gate}, one saved
+     * {@link Admin}, and an open {@link Transaction} that stages the
+     * {@link Gate} closed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Admin} through the {@link Transaction} and stage
+     * {@code open = false} on the {@link Gate} within it.</li>
+     * <li>Call {@code create} on the loaded {@link Admin} for a {@link Vault}
+     * whose gate argument is a copy of the {@link Gate} that was loaded outside
+     * the {@link Transaction}, and catch the expected exception.</li>
+     * <li>{@code commit()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * because the creation rule observes the staged closed {@link Gate}, and
+     * the {@link Transaction} still commits.
+     */
+    @Test
+    public void testCreatePermissionCheckResolvesWithinAudienceTransaction() {
+        Gate gate = new Gate();
+        gate.open = true;
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@example.com";
+        runway.save(gate, admin);
+        try (Transaction transaction = runway.stage()) {
+            Admin audience = transaction.load(Admin.class, admin.id());
+            Gate staged = transaction.load(Gate.class, gate.id());
+            staged.open = false;
+            transaction.save(staged);
+            Gate outside = runway.load(Gate.class, gate.id());
+            boolean threw = false;
+            try {
+                audience.create(Vault.class, "V-1", outside);
+            }
+            catch (RestrictedAccessException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            Assert.assertTrue(transaction.commit());
+        }
     }
 
 }

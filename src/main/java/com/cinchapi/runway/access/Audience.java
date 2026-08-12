@@ -26,34 +26,42 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import javax.annotation.Nullable;
 
 import com.cinchapi.common.base.Array;
+import com.cinchapi.common.base.Verify;
 import com.cinchapi.common.collect.Association;
 import com.cinchapi.common.collect.MergeStrategies;
 import com.cinchapi.common.collect.Sequences;
 import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.Computed;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
 import com.cinchapi.runway.SerializationOptions;
+import com.cinchapi.runway.TransactionInterface;
+import com.cinchapi.runway.Unique;
 import com.cinchapi.runway.util.KeySelection;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
+import com.google.common.collect.Sets;
 
 /**
  * A {@link Record} that can "perform" database operations on other records
  * (e.g., a user) and is therefore subject to permissions and rules with respect
- * to {@link AccessControl access controlled} records. {@link Framing} are a key
- * component of the access control paradigm within the framework where granular
- * access rules for various operations can be defined.
+ * to {@link AccessControl access controlled} records. {@link Audience
+ * Audiences} are a key component of the access control paradigm within the
+ * framework, where granular access rules for various operations can be defined.
  * <p>
  * This interface extends {@link DatabaseInterface}, enabling idiomatic and
  * semantic database operations that are being "performed" by the
@@ -112,9 +120,8 @@ public interface Audience extends DatabaseInterface {
 
     /**
      * Return a {@link Predicate} that tests whether a {@link Record} is visible
-     * to this {@link Audience}, using the registered {@link Scope} if one
-     * exists and is {@link Scope#isApplicable() applicable}, or falling back to
-     * {@link #$checkIfVisible()} otherwise.
+     * to this {@link Audience}, honoring any applicable {@link Scope} for the
+     * {@link Record Record's} class.
      * <p>
      * This is a framework-private method and should not be called directly.
      * </p>
@@ -217,29 +224,26 @@ public interface Audience extends DatabaseInterface {
      * @return the newly created {@link Record}, not yet saved
      * @throws RestrictedAccessException if this {@link Audience} is not
      *             permitted to create the {@link Record}
+     * @throws IllegalStateException if a {@link Record} reachable from the
+     *             {@code args} is bound to a different open
+     *             {@link com.cinchapi.runway.Transaction Transaction}
      */
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
         T record = Reflection.newInstance(clazz, args);
         if(this instanceof Record) {
-            // Bind the new record to the same database interface that this
-            // audience operates against before the permission check runs, so
-            // the check and a later save both resolve within that context
-            // (e.g., within a Transaction).
+            // Bind the new record, and its reachable graph, to the same
+            // database interface that this audience operates against before
+            // the permission check runs, so the check and a later save both
+            // resolve within that context (e.g., within a Transaction).
             Object binding = Reflection.get("binding", this);
             if(binding != null) {
-                Reflection.call(record, "bind", binding,
-                        Reflection.get("connections", this));
+                Reflection.call(record, "bindGraph", binding,
+                        Reflection.get("connections", this),
+                        Sets.newIdentityHashSet());
             }
         }
-        if(record instanceof AccessControl) {
-            AccessControl subject = (AccessControl) record;
-            if((this instanceof Anonymous && !subject.$isCreatableByAnonymous())
-                    || (!(this instanceof Anonymous)
-                            && !subject.$isCreatableBy(this))) {
-                throw new RestrictedAccessException();
-            }
-        }
+        verifyIsCreatableByAudience(this, record);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
         }
@@ -267,6 +271,211 @@ public interface Audience extends DatabaseInterface {
             }
         }
         record.deleteOnSave();
+    }
+
+    /**
+     * Atomically find the first {@link Record} in the hierarchy of
+     * {@code clazz} that is visible to this {@link Audience} and matches the
+     * {@code criteria} under the supplied {@code order}, and update the value
+     * of {@code key} on behalf of this {@link Audience}.
+     * <p>
+     * The lookup only considers records that are visible to this
+     * {@link Audience}, so the first match is the first visible one under
+     * {@code order}. The update proceeds only if {@code key} is writable by
+     * this {@link Audience} on the match; otherwise the result is {@code null}
+     * and nothing is updated. The lookup, the access checks and the update run
+     * in this {@link Audience Audience's} transactional scope: within an open
+     * {@link TransactionInterface} they stage and commit with it; otherwise,
+     * they commit together in their own transaction. The write stages as a save
+     * of the match, so save-time validation applies to the whole record, and
+     * within an open transaction a failed save poisons it. The field
+     * eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}, and the {@code update} operator may run
+     * more than once, so it must be free of side effects.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if there is no
+     *         visible match that this {@link Audience} can update
+     * @throws IllegalArgumentException if {@code order} is {@code null}, if
+     *             {@code key} is not eligible for atomic operations, or if
+     *             {@code update} returns {@code null} or a value that is not an
+     *             instance of the field's type
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
+     */
+    @Nullable
+    @Override
+    public default <T extends Record, V> T findAnyFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        Verify.thatArgument(order != null,
+                "findAnyFirstAndUpdate requires an Order");
+        return supplyAndUpdate(this, () -> findAnyFirst(clazz, criteria, order),
+                key, update);
+    }
+
+    /**
+     * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
+     * that is visible to this {@link Audience} and matches the
+     * {@code criteria}, and update the value of {@code key} on behalf of this
+     * {@link Audience}.
+     * <p>
+     * The lookup only considers records that are visible to this
+     * {@link Audience}, so a hidden record neither matches nor makes the result
+     * ambiguous. The update proceeds only if {@code key} is writable by this
+     * {@link Audience} on the match; otherwise the result is {@code null} and
+     * nothing is updated. The lookup, the access checks and the update run in
+     * this {@link Audience Audience's} transactional scope: within an open
+     * {@link TransactionInterface} they stage and commit with it; otherwise,
+     * they commit together in their own transaction. The write stages as a save
+     * of the match, so save-time validation applies to the whole record, and
+     * within an open transaction a failed save poisons it. The field
+     * eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}, and the {@code update} operator may run
+     * more than once, so it must be free of side effects.
+     * </p>
+     *
+     * @param clazz the {@link Record} type whose hierarchy is searched
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if there is no
+     *         visible match that this {@link Audience} can update
+     * @throws DuplicateEntryException if more than one visible record in the
+     *             hierarchy matches
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
+     */
+    @Nullable
+    @Override
+    public default <T extends Record, V> T findAnyUniqueAndUpdate(
+            Class<T> clazz, Criteria criteria, String key,
+            UnaryOperator<V> update) {
+        return supplyAndUpdate(this, () -> findAnyUnique(clazz, criteria), key,
+                update);
+    }
+
+    /**
+     * Atomically find the first {@link Record} of type {@code clazz} that is
+     * visible to this {@link Audience} and matches the {@code criteria} under
+     * the supplied {@code order}, and update the value of {@code key} on behalf
+     * of this {@link Audience}.
+     * <p>
+     * The lookup only considers records that are visible to this
+     * {@link Audience}, so the first match is the first visible one under
+     * {@code order}. The update proceeds only if {@code key} is writable by
+     * this {@link Audience} on the match; otherwise the result is {@code null}
+     * and nothing is updated. The lookup, the access checks and the update run
+     * in this {@link Audience Audience's} transactional scope: within an open
+     * {@link TransactionInterface} they stage and commit with it; otherwise,
+     * they commit together in their own transaction. The write stages as a save
+     * of the match, so save-time validation applies to the whole record, and
+     * within an open transaction a failed save poisons it. The field
+     * eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}, and the {@code update} operator may run
+     * more than once, so it must be free of side effects.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param order the {@link Order} that defines "first"
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if there is no
+     *         visible match that this {@link Audience} can update
+     * @throws IllegalArgumentException if {@code order} is {@code null}, if
+     *             {@code key} is not eligible for atomic operations, or if
+     *             {@code update} returns {@code null} or a value that is not an
+     *             instance of the field's type
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
+     */
+    @Nullable
+    @Override
+    public default <T extends Record, V> T findFirstAndUpdate(Class<T> clazz,
+            Criteria criteria, Order order, String key,
+            UnaryOperator<V> update) {
+        Verify.thatArgument(order != null,
+                "findFirstAndUpdate requires an Order");
+        return supplyAndUpdate(this, () -> findFirst(clazz, criteria, order),
+                key, update);
+    }
+
+    /**
+     * Atomically find the one {@link Record} of type {@code clazz} that is
+     * visible to this {@link Audience} and matches the {@code criteria}, and
+     * update the value of {@code key} on behalf of this {@link Audience}.
+     * <p>
+     * The lookup only considers records that are visible to this
+     * {@link Audience}, so a hidden record neither matches nor makes the result
+     * ambiguous. The update proceeds only if {@code key} is writable by this
+     * {@link Audience} on the match; otherwise the result is {@code null} and
+     * nothing is updated. The lookup, the access checks and the update run in
+     * this {@link Audience Audience's} transactional scope: within an open
+     * {@link TransactionInterface} they stage and commit with it; otherwise,
+     * they commit together in their own transaction. The write stages as a save
+     * of the match, so save-time validation applies to the whole record, and
+     * within an open transaction a failed save poisons it. The field
+     * eligibility rules and value constraints of
+     * {@link Record#getAndUpdate(String, UnaryOperator) getAndUpdate} apply to
+     * {@code key} and {@code update}, and the {@code update} operator may run
+     * more than once, so it must be free of side effects.
+     * </p>
+     *
+     * @param clazz the {@link Record} type to find
+     * @param criteria the {@link Criteria} the record must match
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if there is no
+     *         visible match that this {@link Audience} can update
+     * @throws DuplicateEntryException if more than one visible record matches
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
+     */
+    @Nullable
+    @Override
+    public default <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
+            Criteria criteria, String key, UnaryOperator<V> update) {
+        return supplyAndUpdate(this, () -> findUnique(clazz, criteria), key,
+                update);
     }
 
     /**
@@ -689,6 +898,77 @@ public interface Audience extends DatabaseInterface {
     }
 
     /**
+     * Return the unique {@link Record} that agrees with every {@link Unique}
+     * constraint of {@code record}, or save {@code record} on behalf of this
+     * {@link Audience} when none exists.
+     * <p>
+     * This {@link Audience} must be permitted to create {@code record}, even
+     * when an existing {@link Record} claims the identity, and an existing
+     * match must be visible to this {@link Audience}.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> A refusal of a hidden match still confirms that a
+     * {@link Record} with the identity exists, even though this
+     * {@link Audience} cannot see it.
+     * </p>
+     *
+     * @param record the {@link Record} whose identity is interned
+     * @param <T> the type of {@link Record}
+     * @return the {@link Record} that claims the identity: the sole existing
+     *         match, or {@code record} once saved
+     * @throws RestrictedAccessException if this {@link Audience} is not
+     *             permitted to create {@code record}, or if the identity is
+     *             claimed by a {@link Record} that is not visible to this
+     *             {@link Audience}
+     * @throws DuplicateEntryException if more than one record shares the
+     *             identity, whether or not every one is visible to this
+     *             {@link Audience}
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint of {@code record} has a non-null value
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             transactional scope
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
+     */
+    @Override
+    public default <T extends Record> T intern(T record)
+            throws RestrictedAccessException {
+        if(this instanceof Record) {
+            return Reflection.call(this, "supply",
+                    (Function<TransactionInterface, T>) transaction -> {
+                        // Join the record and its reachable graph to the
+                        // transactional scope before the permission check
+                        // runs, so the check and the save both resolve within
+                        // it, consistent with #create.
+                        Reflection.call(transaction, "join", record);
+                        verifyIsCreatableByAudience(this, record);
+                        Record previous = Reflection.get("_author", record);
+                        Reflection.set("_author", (Record) this, record);
+                        T interned = transaction.intern(record);
+                        if(interned != record) {
+                            // The record was never saved, so nothing consumed
+                            // the author marker; restore it so a later save
+                            // is not attributed to this Audience.
+                            Reflection.set("_author", previous, record);
+                            if(!$checkIfInScopeOrVisible().test(interned)) {
+                                throw new RestrictedAccessException();
+                            }
+                            else {
+                                return interned;
+                            }
+                        }
+                        else {
+                            return interned;
+                        }
+                    });
+        }
+        else {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /**
      * Read the values from the specified {@code keys} in the {@code record} on
      * behalf of this {@link Audience}.
      * <p>
@@ -762,28 +1042,22 @@ public interface Audience extends DatabaseInterface {
      * Write the {@code data} to the {@code record} on behalf of this
      * {@link Audience}.
      * <p>
-     * This method verifies that this {@link Audience} is permitted to write to
+     * This method verifies that the {@code record} is visible to this
+     * {@link Audience} and that this {@link Audience} is permitted to write to
      * all the keys in the {@code data} map before making the changes.
      * </p>
      *
      * @param data a map from keys to the values to write
      * @param record the {@link Record} to modify
      * @param <T> the type of the {@link Record}
-     * @throws RestrictedAccessException if this {@link Audience} is not
+     * @throws RestrictedAccessException if the {@code record} is not visible to
+     *             this {@link Audience}, or if this {@link Audience} is not
      *             permitted to write to one or more of the keys in the
      *             {@code data}
      */
     public default <T extends Record> void write(Map<String, Object> data,
             T record) throws RestrictedAccessException {
-        if(record instanceof AccessControl) {
-            AccessControl subject = (AccessControl) record;
-            Set<String> rules = this instanceof Anonymous
-                    ? subject.$writableByAnonymous()
-                    : subject.$writableBy(this);
-            if(!isPermittedAccess(data.keySet(), rules)) {
-                throw new RestrictedAccessException();
-            }
-        }
+        verifyIsWritableByAudience(this, data.keySet(), record);
         record.set(data);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
@@ -794,7 +1068,8 @@ public interface Audience extends DatabaseInterface {
      * Write the {@code value} to the {@code key} in the {@code record} on
      * behalf of this {@link Audience}.
      * <p>
-     * This method verifies that this {@link Audience} is permitted to write to
+     * This method verifies that the {@code record} is visible to this
+     * {@link Audience} and that this {@link Audience} is permitted to write to
      * the specified {@code key} before making the change.
      * </p>
      *
@@ -802,20 +1077,13 @@ public interface Audience extends DatabaseInterface {
      * @param value the data to write
      * @param record the {@link Record} to modify
      * @param <T> the type of the {@link Record}
-     * @throws RestrictedAccessException if this {@link Audience} is not
+     * @throws RestrictedAccessException if the {@code record} is not visible to
+     *             this {@link Audience}, or if this {@link Audience} is not
      *             permitted to write to the {@code key}
      */
     public default <T extends Record> void write(String key, Object value,
             T record) throws RestrictedAccessException {
-        if(record instanceof AccessControl) {
-            AccessControl subject = (AccessControl) record;
-            Set<String> rules = this instanceof Anonymous
-                    ? subject.$writableByAnonymous()
-                    : subject.$writableBy(this);
-            if(!isPermittedAccess(ImmutableSet.of(key), rules)) {
-                throw new RestrictedAccessException();
-            }
-        }
+        verifyIsWritableByAudience(this, ImmutableSet.of(key), record);
         record.set(key, value);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
