@@ -938,33 +938,32 @@ public interface Audience extends DatabaseInterface, Transactional {
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
         if(this instanceof Record) {
-            return Reflection.call(this, "supply",
-                    (Function<TransactionInterface, T>) transaction -> {
-                        // Join the record and its reachable graph to the
-                        // transactional scope before the permission check
-                        // runs, so the check and the save both resolve within
-                        // it, consistent with #create.
-                        Reflection.call(transaction, "join", record);
-                        verifyIsCreatableByAudience(this, record);
-                        Record previous = Reflection.get("_author", record);
-                        Reflection.set("_author", (Record) this, record);
-                        T interned = transaction.intern(record);
-                        if(interned != record) {
-                            // The record was never saved, so nothing consumed
-                            // the author marker; restore it so a later save
-                            // is not attributed to this Audience.
-                            Reflection.set("_author", previous, record);
-                            if(!$checkIfInScopeOrVisible().test(interned)) {
-                                throw new RestrictedAccessException();
-                            }
-                            else {
-                                return interned;
-                            }
-                        }
-                        else {
-                            return interned;
-                        }
-                    });
+            return ((Record) this).supply(transaction -> {
+                // Join the record and its reachable graph to the
+                // transactional scope before the permission check
+                // runs, so the check and the save both resolve within
+                // it, consistent with #create.
+                Reflection.call(transaction, "join", record);
+                verifyIsCreatableByAudience(this, record);
+                Record previous = Reflection.get("_author", record);
+                Reflection.set("_author", (Record) this, record);
+                T interned = transaction.intern(record);
+                if(interned != record) {
+                    // The record was never saved, so nothing consumed
+                    // the author marker; restore it so a later save
+                    // is not attributed to this Audience.
+                    Reflection.set("_author", previous, record);
+                    if(!$checkIfInScopeOrVisible().test(interned)) {
+                        throw new RestrictedAccessException();
+                    }
+                    else {
+                        return interned;
+                    }
+                }
+                else {
+                    return interned;
+                }
+            });
         }
         else {
             throw new UnsupportedOperationException();

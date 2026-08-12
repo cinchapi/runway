@@ -358,6 +358,44 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an {@link Audience} operates against
+     * the enclosing {@link com.cinchapi.runway.Runway Runway} again after the
+     * {@link Transaction} it staged ends.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Admin} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage a {@link Transaction} with {@code admin.stage()} and
+     * {@code commit()} it.</li>
+     * <li>Create a {@link Candidate} through the {@link Admin} and
+     * {@code save()} it outside of any transaction.</li>
+     * <li>Call {@code admin.stage()} a second time.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save is immediately visible through the
+     * enclosing {@link #runway}, and the second {@code stage()} returns an open
+     * {@link Transaction} instead of throwing an {@link IllegalStateException}.
+     */
+    @Test
+    public void testAudienceOperatesAgainstRunwayAfterTransactionEnds() {
+        Admin admin = createAdmin();
+        try (Transaction transaction = admin.stage()) {
+            Assert.assertTrue(transaction.commit());
+        }
+        Candidate candidate = admin.create(Candidate.class);
+        candidate.email = "jane@example.com";
+        candidate.name = "Jane Developer";
+        Assert.assertTrue(candidate.save());
+        Assert.assertEquals(1,
+                runway.find(Candidate.class, janeEmailCriteria()).size());
+        try (Transaction transaction = admin.stage()) {
+            Assert.assertTrue(transaction.commit());
+        }
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that the anonymous {@link Audience} refuses
      * every transactional operation.
      * <p>
