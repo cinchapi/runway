@@ -301,11 +301,7 @@ public interface AccessControl {
     public default void authorize(@Nullable Audience audience)
             throws RestrictedAccessException {
         audience = audience == null ? Audience.anonymous() : audience;
-        if((audience instanceof Anonymous && !$isCreatableByAnonymous())
-                || (!(audience instanceof Anonymous)
-                        && !$isCreatableBy(audience))) {
-            throw new RestrictedAccessException();
-        }
+        AccessControlSupport.verifyIsCreatableByAudience(audience, $this());
     }
 
     /**

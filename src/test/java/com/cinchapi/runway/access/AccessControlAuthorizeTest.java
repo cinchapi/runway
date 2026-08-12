@@ -56,15 +56,8 @@ public class AccessControlAuthorizeTest extends AudienceAccessControlBaseTest {
     public void testAuthorizePermitsAnonymousWhenCreatableByAnonymous() {
         Inquiry inquiry = new Inquiry();
         inquiry.message = "Is the posted role still open?";
-        boolean threw = false;
-        try {
-            inquiry.authorize(Audience.anonymous());
-            inquiry.authorize(null);
-        }
-        catch (RestrictedAccessException e) {
-            threw = true;
-        }
-        Assert.assertFalse(threw);
+        inquiry.authorize(Audience.anonymous());
+        inquiry.authorize(null);
     }
 
     /**
@@ -89,14 +82,7 @@ public class AccessControlAuthorizeTest extends AudienceAccessControlBaseTest {
     public void testAuthorizeAgreesWithAudienceCreateGateForAnonymous() {
         Inquiry inquiry = Audience.anonymous().create(Inquiry.class);
         Assert.assertNotNull(inquiry);
-        boolean threw = false;
-        try {
-            inquiry.authorize(Audience.anonymous());
-        }
-        catch (RestrictedAccessException e) {
-            threw = true;
-        }
-        Assert.assertFalse(threw);
+        inquiry.authorize(Audience.anonymous());
     }
 
     /**
@@ -123,22 +109,20 @@ public class AccessControlAuthorizeTest extends AudienceAccessControlBaseTest {
     public void testAuthorizeRefusesAnonymousWhenNotCreatableByAnonymous() {
         Feedback feedback = new Feedback();
         feedback.comments = "The interview process was smooth";
-        boolean threw = false;
         try {
             feedback.authorize(Audience.anonymous());
+            Assert.fail("Anonymous should not be able to create feedback");
         }
         catch (RestrictedAccessException e) {
-            threw = true;
+            // Expected exception
         }
-        Assert.assertTrue(threw);
-        threw = false;
         try {
             feedback.authorize(null);
+            Assert.fail("Anonymous should not be able to create feedback");
         }
         catch (RestrictedAccessException e) {
-            threw = true;
+            // Expected exception
         }
-        Assert.assertTrue(threw);
     }
 
     /**
@@ -165,14 +149,7 @@ public class AccessControlAuthorizeTest extends AudienceAccessControlBaseTest {
         Candidate candidate = new Candidate();
         candidate.name = "Jane Developer";
         Application application = new Application();
-        boolean threw = false;
-        try {
-            application.authorize(candidate);
-        }
-        catch (RestrictedAccessException e) {
-            threw = true;
-        }
-        Assert.assertFalse(threw);
+        application.authorize(candidate);
     }
 
     /**
@@ -199,14 +176,13 @@ public class AccessControlAuthorizeTest extends AudienceAccessControlBaseTest {
         Candidate candidate = new Candidate();
         candidate.name = "Jane Developer";
         Inquiry inquiry = new Inquiry();
-        boolean threw = false;
         try {
             inquiry.authorize(candidate);
+            Assert.fail("Candidate should not be able to create inquiries");
         }
         catch (RestrictedAccessException e) {
-            threw = true;
+            // Expected exception
         }
-        Assert.assertTrue(threw);
     }
 
     /**
