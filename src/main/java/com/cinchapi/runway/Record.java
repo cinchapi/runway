@@ -2334,7 +2334,8 @@ public abstract class Record implements Comparable<Record> {
      * If this {@link Record} is a {@link Transactional} (e.g., an
      * {@link com.cinchapi.runway.access.Audience Audience}), then the work
      * receives this {@link Transactional Transactional's}
-     * {@link Transactional#view(TransactionInterface) view} of the transaction.
+     * {@link Transactional#scope(TransactionInterface) scoped view} of the
+     * transaction.
      * </p>
      *
      * @param work the work to run
@@ -2349,7 +2350,8 @@ public abstract class Record implements Comparable<Record> {
         Function<TransactionInterface, T> scoped;
         if(this instanceof Transactional) {
             Transactional transactional = (Transactional) this;
-            scoped = transaction -> work.apply(transactional.view(transaction));
+            scoped = transaction -> work
+                    .apply(transactional.scope(transaction));
         }
         else {
             scoped = work;

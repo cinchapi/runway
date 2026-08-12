@@ -30,9 +30,9 @@ import java.util.function.Function;
  * behalf.
  * </p>
  * <p>
- * Every transactional view this {@link Transactional} scopes passes through
- * {@link #view(TransactionInterface)}, so operations on the view behave the
- * same as operations on this {@link Transactional}.
+ * The view that scoped work receives passes through
+ * {@link #scope(TransactionInterface)}, so operations on it behave the same as
+ * operations on this {@link Transactional}.
  * </p>
  *
  * @author Jeff Nelson
@@ -54,6 +54,22 @@ public interface Transactional {
             work.accept(transaction);
             return null;
         });
+    }
+
+    /**
+     * Return the {@link TransactionInterface} view of {@code transaction}
+     * through which work scoped by this {@link Transactional} operates.
+     * <p>
+     * Every operation on the returned view behaves the same as the operation on
+     * this {@link Transactional}, just within the confines of the transaction.
+     * </p>
+     *
+     * @param transaction the transaction that scopes the work
+     * @return the view the work receives
+     */
+    public default TransactionInterface scope(
+            TransactionInterface transaction) {
+        return transaction;
     }
 
     /**
@@ -125,20 +141,5 @@ public interface Transactional {
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
     public <T> T supply(Function<TransactionInterface, T> work);
-
-    /**
-     * Return the {@link TransactionInterface} view of {@code transaction}
-     * through which work scoped by this {@link Transactional} operates.
-     * <p>
-     * Every operation on the returned view behaves the same as the operation on
-     * this {@link Transactional}, just within the confines of the transaction.
-     * </p>
-     *
-     * @param transaction the transaction that scopes the work
-     * @return the view the work receives
-     */
-    public default TransactionInterface view(TransactionInterface transaction) {
-        return transaction;
-    }
 
 }

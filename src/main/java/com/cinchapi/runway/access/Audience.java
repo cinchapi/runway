@@ -1046,6 +1046,27 @@ public interface Audience extends DatabaseInterface, Transactional {
     }
 
     /**
+     * Return the {@link TransactionInterface} view of {@code transaction}
+     * through which work scoped by this {@link Audience} operates: every
+     * operation on the view behaves the same as the operation on this
+     * {@link Audience}, just within the confines of the transaction.
+     *
+     * @param transaction the transaction that scopes the work
+     * @return the view the work receives
+     */
+    @Override
+    public default TransactionInterface scope(
+            TransactionInterface transaction) {
+        if(transaction instanceof Transaction
+                && !(transaction instanceof AudienceTransaction)) {
+            return new AudienceTransaction(this, (Transaction) transaction);
+        }
+        else {
+            return transaction;
+        }
+    }
+
+    /**
      * Start a {@link Transaction} that this {@link Audience} joins, so the
      * operations it performs, and the access checks that gate them, resolve
      * within the transaction.
@@ -1119,26 +1140,6 @@ public interface Audience extends DatabaseInterface, Transactional {
         }
         else {
             throw new UnsupportedOperationException();
-        }
-    }
-
-    /**
-     * Return the {@link TransactionInterface} view of {@code transaction}
-     * through which work scoped by this {@link Audience} operates: every
-     * operation on the view behaves the same as the operation on this
-     * {@link Audience}, just within the confines of the transaction.
-     *
-     * @param transaction the transaction that scopes the work
-     * @return the view the work receives
-     */
-    @Override
-    public default TransactionInterface view(TransactionInterface transaction) {
-        if(transaction instanceof Transaction
-                && !(transaction instanceof AudienceTransaction)) {
-            return new AudienceTransaction(this, (Transaction) transaction);
-        }
-        else {
-            return transaction;
         }
     }
 
