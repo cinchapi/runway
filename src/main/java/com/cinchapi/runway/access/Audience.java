@@ -229,22 +229,36 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             permitted to create the {@link Record}
      * @throws IllegalStateException if a {@link Record} reachable from the
      *             {@code args} is bound to a different open
-     *             {@link com.cinchapi.runway.Transaction Transaction}
+     *             {@link com.cinchapi.runway.Transaction Transaction}, or if
+     *             this {@link Audience} is bound to an open
+     *             {@link com.cinchapi.runway.Transaction Transaction} that
+     *             another thread owns or that a failed save poisoned
      */
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
-        T record = Reflection.newInstance(clazz, args);
+        T record;
         if(this instanceof Record) {
+            Object binding = Reflection.get("binding", this);
+            if(binding instanceof TransactionInterface) {
+                // Create through the transaction so its state checks gate a
+                // mediated create the same as an unmediated one.
+                record = ((TransactionInterface) binding).create(clazz, args);
+            }
+            else {
+                record = Reflection.newInstance(clazz, args);
+            }
             // Bind the new record, and its reachable graph, to the same
             // database interface that this audience operates against before
             // the permission check runs, so the check and a later save both
             // resolve within that context (e.g., within a Transaction).
-            Object binding = Reflection.get("binding", this);
             if(binding != null) {
                 Reflection.call(record, "bindGraph", binding,
                         Reflection.get("connections", this),
                         Sets.newIdentityHashSet());
             }
+        }
+        else {
+            record = Reflection.newInstance(clazz, args);
         }
         verifyIsCreatableByAudience(this, record);
         if(this instanceof Record) {

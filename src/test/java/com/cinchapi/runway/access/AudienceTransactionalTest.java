@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway.access;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -478,6 +480,88 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
             catch (RestrictedAccessException e) {
                 // expected
             }
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a create through the
+     * {@link Transaction} an {@link Audience} staged is refused after a failed
+     * save poisons the transaction, the same as an unmediated create.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Admin} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage a {@link Transaction} from the {@link Admin}.</li>
+     * <li>Save a {@link Candidate} whose {@code Required} name is {@code null},
+     * so the save throws and poisons the transaction.</li>
+     * <li>Call {@code transaction.create(Candidate.class)}.</li>
+     * <li>Call {@code abort()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The create throws an
+     * {@link IllegalStateException} and the abort succeeds.
+     */
+    @Test
+    public void testTransactionCreateRefusedAfterFailedSavePoisons() {
+        Admin admin = createAdmin();
+        try (Transaction transaction = admin.stage()) {
+            Candidate invalid = admin.create(Candidate.class);
+            invalid.email = "jane@example.com";
+            try {
+                transaction.save(invalid);
+                Assert.fail("Expected the save to throw");
+            }
+            catch (IllegalStateException e) {
+                // expected
+            }
+            try {
+                transaction.create(Candidate.class);
+                Assert.fail("Expected the create to be refused");
+            }
+            catch (IllegalStateException e) {
+                // expected
+            }
+            transaction.abort();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a create through the
+     * {@link Transaction} an {@link Audience} staged is refused on a thread
+     * that does not own the transaction, the same as an unmediated create.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Admin} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage a {@link Transaction} from the {@link Admin}.</li>
+     * <li>Call {@code transaction.create(Candidate.class)} from a second thread
+     * and {@code join()} it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call on the second thread throws an
+     * {@link IllegalStateException}.
+     */
+    @Test
+    public void testTransactionCreateRefusedFromNonOwnerThread()
+            throws InterruptedException {
+        Admin admin = createAdmin();
+        try (Transaction transaction = admin.stage()) {
+            AtomicBoolean refused = new AtomicBoolean(false);
+            Thread thread = new Thread(() -> {
+                try {
+                    transaction.create(Candidate.class);
+                }
+                catch (IllegalStateException e) {
+                    refused.set(true);
+                }
+            });
+            thread.start();
+            thread.join(10000);
+            Assert.assertTrue(refused.get());
         }
     }
 
