@@ -907,7 +907,10 @@ public interface Audience extends DatabaseInterface, Transactional {
      * <p>
      * This {@link Audience} must be permitted to create {@code record}, even
      * when an existing {@link Record} claims the identity, and an existing
-     * match must be visible to this {@link Audience}.
+     * match must be visible to this {@link Audience}. The checks apply to
+     * whatever {@code record} is interned, including this {@link Audience}
+     * itself; {@link Record#intern()} is the identity operation that no
+     * audience mediates.
      * </p>
      * <p>
      * <strong>NOTE:</strong> A refusal of a hidden match still confirms that a

@@ -15,8 +15,6 @@
  */
 package com.cinchapi.runway.access;
 
-import javax.annotation.Nonnull;
-
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -671,24 +669,6 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
             RestrictedUser interned = inside.intern();
             Assert.assertEquals(user.id(), interned.id());
         }
-    }
-
-    /**
-     * A {@link User} that only an {@link Admin} may create, so a self-intern
-     * fails if it is audience-mediated instead of an identity operation.
-     */
-    protected static class RestrictedUser extends User {
-
-        @Override
-        public boolean $isCreatableBy(@Nonnull Audience audience) {
-            return audience instanceof Admin;
-        }
-
-        @Override
-        public boolean $isCreatableByAnonymous() {
-            return false;
-        }
-
     }
 
 }

@@ -148,6 +148,40 @@ public class AudienceAccessControlInternTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code intern} through an
+     * {@link Audience} enforces the create permission even when the interned
+     * {@link Record} is the {@link Audience} itself, unlike the unmediated
+     * {@code Record#intern()}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link RestrictedUser} bound to the
+     * database. Only an {@link Admin} may create a {@link RestrictedUser}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code intern} on the {@link RestrictedUser} with itself as the
+     * argument.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown.
+     */
+    @Test
+    public void testInternRefusedWhenAudienceInternsItself() {
+        RestrictedUser user = new RestrictedUser();
+        user.email = "restricted@example.com";
+        user.name = "Restricted User";
+        user.assign(runway);
+        Assert.assertTrue(user.save());
+        boolean threw = false;
+        try {
+            user.intern(user);
+        }
+        catch (RestrictedAccessException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that the anonymous {@link Audience}, which
      * has no transactional scope, does not support {@code intern}, consistent
      * with the atomic update operations.

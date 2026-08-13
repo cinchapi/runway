@@ -43,6 +43,7 @@ Runway previously offered no way to guarantee atomicity or full ACID compliance 
     * `DuplicateEntryException` propagates when more than one record shares the identity, consistent with `findUnique`.
 * **An `Audience` performs `intern` and the atomic `find*AndUpdate` methods under its access rules.**
     * `intern` requires permission to create the record, even when an existing record already claims the identity, and refuses an existing match that is not visible to the `Audience`. The refusal of a hidden match still confirms that a record with the identity exists.
+    * The rules apply to whatever record the `Audience` interns, including itself; `Record#intern()` remains the unmediated identity operation.
     * The `Audience` is recorded as the author of a record that `intern` saves.
     * A `find*AndUpdate` call matches among the records that are visible to the `Audience`, so "first" and "unique" are evaluated over the visible matches.
     * The call updates the match only if the key is writable by the `Audience`; otherwise, it returns `null` and changes nothing.
