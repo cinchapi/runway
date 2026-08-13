@@ -3974,19 +3974,8 @@ public abstract class Record implements Comparable<Record> {
             String errorName, boolean any, Class<? extends Record> window) {
         BuildableState scope;
         if(any) {
-            BuildableState subtree = null;
-            for (Class<? extends Record> type : Runway.getKnownRecordTypes()) {
-                if(window.isAssignableFrom(type)) {
-                    subtree = subtree == null
-                            ? Criteria.where().key(SECTION_KEY)
-                                    .operator(Operator.EQUALS)
-                                    .value(type.getName())
-                            : subtree.or().key(SECTION_KEY)
-                                    .operator(Operator.EQUALS)
-                                    .value(type.getName());
-                }
-            }
-            scope = Criteria.where().group(subtree);
+            scope = Criteria.where()
+                    .group(Runway.$Criteria.forClassHierarchy(window));
         }
         else {
             scope = Criteria.where().key(SECTION_KEY).operator(Operator.EQUALS)

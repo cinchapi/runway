@@ -37,7 +37,7 @@ Runway previously offered no way to guarantee atomicity or full ACID compliance 
     * A record shares the identity only if it agrees with every `@Unique` constraint; a `null` value does not participate. An existing record that shares some but not all of the identity is not a match; the save then fails `@Unique` enforcement rather than adopt that record silently. Within a caller-owned transaction, that failed save poisons the transaction, so the staged writes can never commit.
     * Each `@Unique` constraint is matched within its declared scope, so a constraint with `any = true` looks across the declaring class's hierarchy. `intern` adopts only a record that shares the given record's concrete class; an identity that a record of another class claims is never adopted, and the save fails `@Unique` enforcement, which surfaces the conflict.
     * A record with no non-null value under any `@Unique` constraint is rejected with `IllegalArgumentException`.
-    * `DuplicateEntryException` propagates when more than one record shares the identity, consistent with `findUnique`.
+    * `DuplicateEntryException` propagates when more than one record matches a single constraint within its scope, consistent with `findUnique`.
 * **An `Audience` performs `intern` and the atomic `find*AndUpdate` methods under its access rules.**
     * `intern` requires permission to create the record, even when an existing record already claims the identity, and refuses an existing match that is not visible to the `Audience`. The refusal of a hidden match still confirms that a record with the identity exists.
     * The `Audience` is recorded as the author of a record that `intern` saves.

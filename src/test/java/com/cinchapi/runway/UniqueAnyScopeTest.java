@@ -29,6 +29,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
 import com.cinchapi.runway.Record.ConstraintViolationException;
+import com.google.common.collect.Iterables;
 
 /**
  * Tests for hierarchy-scoped {@link Unique} constraints declared with
@@ -383,6 +384,34 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a named {@code any} group whose
+     * members are declared in different classes of one lineage is bounded by
+     * the least-derived declarer.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct an {@link ExtendedComposite} whose group members are both
+     * non-null.</li>
+     * <li>Call {@code uniqueIdentities()} and inspect the single
+     * {@link UniqueIdentity}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The identity is hierarchy-scoped and its
+     * window is {@link Composite}, the least-derived class that declares one of
+     * the group's members.
+     */
+    @Test
+    public void testAnyGroupWindowIsLeastDerivedDeclarer() {
+        ExtendedComposite record = new ExtendedComposite("head", "tail");
+        UniqueIdentity identity = Iterables
+                .getOnlyElement(record.uniqueIdentities());
+        Assert.assertTrue(identity.any());
+        Assert.assertEquals(Composite.class, identity.window());
+    }
+
+    /**
      * Return a {@link Criteria} that matches every {@link File} whose
      * {@code locator} equals the given {@code value}.
      *
@@ -643,6 +672,56 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
         public Mismatch(String first, String second) {
             this.first = first;
             this.second = second;
+        }
+    }
+
+    /**
+     * An abstract {@link Record} that declares the first member of a named
+     * {@link Unique} group that spans the class hierarchy.
+     *
+     * @author Jeff Nelson
+     */
+    public static abstract class Composite extends Record {
+
+        /**
+         * The member of the group that the least-derived class declares.
+         */
+        @Unique(name = "whole", any = true)
+        String head;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param head the first member of the group
+         */
+        public Composite(String head) {
+            this.head = head;
+        }
+    }
+
+    /**
+     * A concrete {@link Composite} subclass that declares the second member of
+     * the named group, so the group's members span two classes of one lineage.
+     *
+     * @author Jeff Nelson
+     */
+    public static class ExtendedComposite extends Composite {
+
+        /**
+         * The member of the group that the subclass declares.
+         */
+        @Unique(name = "whole", any = true)
+        String tail;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param head the first member of the group
+         * @param tail the second member of the group
+         */
+        public ExtendedComposite(String head, String tail) {
+            super(head);
+            this.tail = tail;
         }
     }
 

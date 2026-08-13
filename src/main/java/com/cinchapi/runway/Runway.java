@@ -3897,7 +3897,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *
      * @author Jeff Nelson
      */
-    private static class $Criteria {
+    static class $Criteria {
 
         /**
          * Utility method do ensure that the {@code criteria} is limited to
