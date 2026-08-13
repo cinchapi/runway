@@ -289,11 +289,15 @@ public interface TransactionInterface extends DatabaseInterface {
      * constraint of {@code record}, or save {@code record} when none exists.
      * <p>
      * A {@link Record Record's} identity is the current data under its
-     * {@link Unique} constraints, scoped to its class. Another record shares
-     * the identity only if it agrees with every constraint; a {@code null}
-     * value does not participate. If no record shares the identity, then
-     * {@code record} itself is saved and returned. If an existing record shares
-     * some but not all of the identity, then there is no match, and the save of
+     * {@link Unique} constraints, each scoped by its declaration: a
+     * {@link Unique#any() hierarchy-scoped} constraint applies across the class
+     * that declares it and every descendant, and a class-scoped constraint
+     * applies among records of the record's concrete class. Another record
+     * shares the identity only if it agrees with every constraint and has the
+     * same concrete class; a {@code null} value does not participate. If no
+     * record shares the identity, then {@code record} itself is saved and
+     * returned. If an existing record shares some but not all of the identity,
+     * or claims it from another class, then there is no match, and the save of
      * {@code record} fails {@link Unique} enforcement.
      * </p>
      * <p>

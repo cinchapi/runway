@@ -42,11 +42,25 @@ public @interface Unique {
     /**
      * The name of {@link Unique} constraint. Use the same name for
      * {@link Unique} constraints on multiple fields to enforce combined
-     * uniqueness.
-     * 
+     * uniqueness. Every field under the same name must declare the same
+     * {@link #any()} value. When {@code any} is {@code true}, every field under
+     * the same name must also be declared by the same class.
+     *
      * @return the name of the {@link Unique} constraint
      */
     String name() default "";
+
+    /**
+     * Whether the constraint applies across the class hierarchy, in the same
+     * sense that {@link DatabaseInterface#findAnyUnique(Class, Criteria)
+     * findAnyUnique} matches across it: the class that declares the annotated
+     * field, and every descendant, share one identity space. When
+     * {@code false}, the constraint applies among records of the same concrete
+     * class.
+     *
+     * @return {@code true} if the constraint applies across the hierarchy
+     */
+    boolean any() default false;
 
     // TODO: In future, add a field String[] names to allow a field to be a part
     // of multiple unique constraints

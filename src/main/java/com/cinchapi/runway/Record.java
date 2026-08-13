@@ -1711,11 +1711,15 @@ public abstract class Record implements Comparable<Record> {
      * constraint of this record, or save this record when none exists.
      * <p>
      * The identity is the current data under this record's {@link Unique}
-     * constraints, scoped to its class. Another record shares the identity only
-     * if it agrees with every constraint; a {@code null} value does not
-     * participate. If no record shares the identity, then this record itself is
-     * saved and returned. If an existing record shares some but not all of the
-     * identity, then there is no match, and the save fails {@link Unique}
+     * constraints, each scoped by its declaration: a {@link Unique#any()
+     * hierarchy-scoped} constraint applies across the class that declares it
+     * and every descendant, and a class-scoped constraint applies among records
+     * of this record's concrete class. Another record shares the identity only
+     * if it agrees with every constraint and has the same concrete class; a
+     * {@code null} value does not participate. If no record shares the
+     * identity, then this record itself is saved and returned. If an existing
+     * record shares some but not all of the identity, or claims it from another
+     * class, then there is no match, and the save fails {@link Unique}
      * enforcement.
      * </p>
      * <p>
@@ -3282,54 +3286,75 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the {@link Criteria} that identifies this {@link Record} by the
-     * current data under its {@link Unique} constraints.
+     * Return a {@link UniqueIdentity} for each of this {@link Record Record's}
+     * participating {@link Unique} constraints, resolved against its current
+     * data.
      * <p>
-     * A record matches the {@link Criteria} only if it agrees with every
-     * constraint: each unnamed {@link Unique} field individually and each named
-     * constraint across all of its fields. A {@code null} value does not
-     * participate, consistent with {@link Unique} enforcement, and the
-     * {@link Criteria} does not constrain the record's class.
+     * Each unnamed {@link Unique} field forms its own constraint, and each
+     * named constraint spans all of the fields that share the name. A
+     * {@code null} value does not participate, consistent with {@link Unique}
+     * enforcement, so a constraint whose every value is {@code null} is
+     * omitted. Each {@link UniqueIdentity UniqueIdentity's} {@link Criteria}
+     * does not constrain the record's class; its scope is carried separately.
      * </p>
      *
-     * @return the identity {@link Criteria}
+     * @return a {@link UniqueIdentity} for each participating constraint
      * @throws IllegalArgumentException if no field under a {@link Unique}
-     *             constraint has a non-null value
+     *             constraint has a non-null value, or if the fields of a named
+     *             constraint disagree on {@link Unique#any() any}, or if
+     *             hierarchy-scoped members are declared by different classes
      */
-    Criteria uniqueConstraintsCriteria() {
-        List<Map<String, Object>> constraints = Lists.newArrayList();
-        Map<String, Map<String, Object>> named = Maps.newLinkedHashMap();
+    List<UniqueIdentity> uniqueIdentities() {
+        List<Collection<Field>> constraints = Lists.newArrayList();
+        Map<String, Collection<Field>> named = Maps.newLinkedHashMap();
         for (Field field : fields()) {
             Unique constraint = field.getAnnotation(Unique.class);
             if(constraint != null
                     && !Modifier.isTransient(field.getModifiers())) {
                 String name = constraint.name();
-                Map<String, Object> data;
+                Collection<Field> members;
                 if(name.length() == 0) {
-                    data = Maps.newLinkedHashMap();
-                    constraints.add(data);
+                    members = Lists.newArrayList();
+                    constraints.add(members);
                 }
                 else {
-                    data = named.computeIfAbsent(name, $name -> {
-                        Map<String, Object> $data = Maps.newLinkedHashMap();
-                        constraints.add($data);
-                        return $data;
+                    members = named.computeIfAbsent(name, $name -> {
+                        Collection<Field> $members = Lists.newArrayList();
+                        constraints.add($members);
+                        return $members;
                     });
                 }
-                data.put(field.getName(), getFieldValue(field, this));
+                members.add(field);
             }
             else {
                 // The field is not part of the Record's persistent unique
                 // identity.
             }
         }
-        BuildableState criteria = null;
-        for (Map<String, Object> data : constraints) {
-            criteria = conjoinEqualityClauses(criteria, data);
+        List<UniqueIdentity> identities = Lists.newArrayList();
+        for (Collection<Field> members : constraints) {
+            Field first = Iterables.getFirst(members, null);
+            Unique constraint = first.getAnnotation(Unique.class);
+            String name = constraint.name();
+            Class<? extends Record> window = uniqueConstraintWindow(
+                    name.length() == 0 ? first.getName() : name, members);
+            Map<String, Object> data = Maps.newLinkedHashMap();
+            for (Field member : members) {
+                data.put(member.getName(), getFieldValue(member, this));
+            }
+            BuildableState criteria = conjoinEqualityClauses(null, data);
+            if(criteria != null) {
+                identities.add(new UniqueIdentity(constraint.any(), window,
+                        criteria.build()));
+            }
+            else {
+                // Every value under the constraint is null, so the constraint
+                // does not participate in the identity.
+            }
         }
-        Verify.thatArgument(criteria != null,
+        Verify.thatArgument(!identities.isEmpty(),
                 "{} has no non-null value under a Unique constraint", __);
-        return criteria.build();
+        return identities;
     }
 
     /**
@@ -3588,12 +3613,14 @@ public abstract class Record implements Comparable<Record> {
         String name = constraint.name();
         String errorName = name.length() == 0 ? key : name;
         if(name.length() == 0) {
-            enqueueUniquenessCheck(saver, AnyMaps.create(key, value),
-                    errorName);
+            enqueueUniquenessCheck(saver, AnyMaps.create(key, value), errorName,
+                    constraint.any(),
+                    uniqueConstraintWindow(errorName, ImmutableList.of(field)));
         }
         else if(!alreadyVerifiedUniqueConstraints.contains(name)) {
             // Find all the fields that have this constraint and
             // check for uniqueness.
+            List<Field> members = Lists.newArrayList(field);
             Map<String, Object> values = Maps.newHashMap();
             values.put(key, value);
             fields().stream().filter($field -> $field != field)
@@ -3601,10 +3628,12 @@ public abstract class Record implements Comparable<Record> {
                     .filter($field -> $field.getAnnotation(Unique.class).name()
                             .equals(name))
                     .forEach($field -> {
+                        members.add($field);
                         values.put($field.getName(),
                                 Reflection.get($field.getName(), this));
                     });
-            enqueueUniquenessCheck(saver, values, errorName);
+            enqueueUniquenessCheck(saver, values, errorName, constraint.any(),
+                    uniqueConstraintWindow(name, members));
             alreadyVerifiedUniqueConstraints.add(name);
         }
     }
@@ -3972,7 +4001,9 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Record on {@code saver} the uniqueness check for the (key, value) pairs
      * in {@code data}, treating them as a single compound constraint that must
-     * not collide with any other {@link Record} in this class. A
+     * not collide with any other {@link Record} in the constraint's scope: this
+     * class when {@code any} is {@code false}, or the {@code window} and every
+     * descendant when {@code any} is {@code true}. A
      * {@link Sequences#isSequence(Object) sequence}-valued entry is treated
      * element-wise: a collision on any single element is a violation.
      *
@@ -3981,13 +4012,22 @@ public abstract class Record implements Comparable<Record> {
      *            constraint being asserted
      * @param errorName the human-readable name attached to the
      *            {@link ConstraintViolationException} thrown on a violation
+     * @param any whether the constraint applies across the {@code window}'s
+     *            class hierarchy
+     * @param window the class that bounds the constraint's identity space
      */
     private void enqueueUniquenessCheck(Saver saver, Map<String, Object> data,
-            String errorName) {
-        Criteria criteria = conjoinEqualityClauses(
-                Criteria.where().key(SECTION_KEY).operator(Operator.EQUALS)
-                        .value(getClass().getName()),
-                data);
+            String errorName, boolean any, Class<? extends Record> window) {
+        BuildableState scope;
+        if(any) {
+            scope = Criteria.where()
+                    .group(Runway.$Criteria.forClassHierarchy(window));
+        }
+        else {
+            scope = Criteria.where().key(SECTION_KEY).operator(Operator.EQUALS)
+                    .value(getClass().getName());
+        }
+        Criteria criteria = conjoinEqualityClauses(scope, data);
         String errorMessage = AnyStrings.format("{} must be unique in {}",
                 errorName, __);
         saver.find(criteria, records -> {
@@ -4621,6 +4661,60 @@ public abstract class Record implements Comparable<Record> {
 
             return primitive;
         }
+    }
+
+    /**
+     * Return the class that bounds the identity space of the {@link Unique}
+     * constraint that spans {@code members}, and verify that the members
+     * declare the constraint's scope consistently.
+     * <p>
+     * A hierarchy-scoped ({@link Unique#any() any}) constraint must declare all
+     * of its {@code members} on one class, which bounds its identity space. A
+     * class-scoped constraint is bounded by this {@link Record Record's}
+     * concrete class.
+     * </p>
+     *
+     * @param name the constraint's name, or the field's name for an unnamed
+     *            constraint
+     * @param members the fields the constraint spans
+     * @return the class that bounds the constraint's identity space
+     * @throws IllegalArgumentException if the {@code members} disagree on
+     *             {@link Unique#any() any}, or if hierarchy-scoped members are
+     *             declared by different classes
+     */
+    @SuppressWarnings("unchecked")
+    private Class<? extends Record> uniqueConstraintWindow(String name,
+            Collection<Field> members) {
+        Boolean any = null;
+        Class<? extends Record> window = null;
+        boolean hasOneDeclarer = true;
+        for (Field member : members) {
+            Unique constraint = member.getAnnotation(Unique.class);
+            if(any == null) {
+                any = constraint.any();
+            }
+            else {
+                Verify.thatArgument(any == constraint.any(),
+                        "The fields of the {} Unique constraint in {} disagree"
+                                + " on whether it applies across the class"
+                                + " hierarchy",
+                        name, __);
+            }
+            Class<? extends Record> declarer = (Class<? extends Record>) member
+                    .getDeclaringClass();
+            if(window == null) {
+                window = declarer;
+            }
+            else if(window != declarer) {
+                hasOneDeclarer = false;
+            }
+        }
+        Verify.thatArgument(!any || hasOneDeclarer,
+                "The fields of the {} Unique constraint in {} must be"
+                        + " declared by one class when it applies across the"
+                        + " class hierarchy",
+                name, __);
+        return any ? window : getClass();
     }
 
     /**
