@@ -566,6 +566,87 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an ended {@link Transaction} view
+     * refuses database operations after its {@link Audience} joins another
+     * {@link Transaction}, instead of following the new scope.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Admin} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage a first {@link Transaction} from the {@link Admin} and
+     * {@code commit()} it.</li>
+     * <li>Stage a second {@link Transaction} from the {@link Admin} and save a
+     * {@link Candidate} within it, without a commit.</li>
+     * <li>Call {@code find(...)} and {@code create(...)} on the ended first
+     * view.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Each call on the ended view throws an
+     * {@link IllegalStateException}; neither observes the second
+     * {@link Transaction Transaction's} staged state.
+     */
+    @Test
+    public void testEndedTransactionViewRefusedWhenAudienceJoinsAnotherTransaction() {
+        Admin admin = createAdmin();
+        Transaction first = admin.stage();
+        Assert.assertTrue(first.commit());
+        try (Transaction second = admin.stage()) {
+            Candidate candidate = second.create(Candidate.class);
+            candidate.email = "jane@example.com";
+            candidate.name = "Jane Developer";
+            Assert.assertTrue(candidate.save());
+            try {
+                first.find(Candidate.class, janeEmailCriteria());
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (IllegalStateException e) {
+                // expected
+            }
+            try {
+                first.create(Candidate.class);
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (IllegalStateException e) {
+                // expected
+            }
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an ended {@link Transaction} view
+     * falls through to the enclosing {@link com.cinchapi.runway.Runway Runway}
+     * while its {@link Audience} has not joined another {@link Transaction}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Admin} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage a {@link Transaction} from the {@link Admin}, save a
+     * {@link Candidate} within it and {@code commit()}.</li>
+     * <li>Call {@code find(...)} on the ended view.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The find resolves against the enclosing
+     * {@link com.cinchapi.runway.Runway Runway} and returns the committed
+     * {@link Candidate}.
+     */
+    @Test
+    public void testEndedTransactionViewFallsThroughToRunway() {
+        Admin admin = createAdmin();
+        Transaction transaction = admin.stage();
+        Candidate candidate = transaction.create(Candidate.class);
+        candidate.email = "jane@example.com";
+        candidate.name = "Jane Developer";
+        Assert.assertTrue(candidate.save());
+        Assert.assertTrue(transaction.commit());
+        Assert.assertEquals(1,
+                transaction.find(Candidate.class, janeEmailCriteria()).size());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that the view {@code supply} hands to work
      * observes the {@link Audience Audience's} visibility, not the raw
      * database.

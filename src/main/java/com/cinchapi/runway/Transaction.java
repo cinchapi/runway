@@ -49,8 +49,12 @@ package com.cinchapi.runway;
  * and saves to the enclosing {@link Runway}, so a {@link Record} bound to it
  * unwinds to the database scope; only another {@link #commit()} and new
  * {@link #afterCommit(Runnable) afterCommit}/{@link #afterAbort(Runnable)
- * afterAbort} registrations are refused. Side effects that depend on the
- * outcome can be registered with {@link #afterCommit(Runnable)} and
+ * afterAbort} registrations are refused. One exception: after the
+ * {@link com.cinchapi.runway.access.Audience Audience} that
+ * {@link com.cinchapi.runway.access.Audience#stage() staged} the transaction
+ * joins a different {@link Transaction}, a database operation on the ended view
+ * is refused instead of following the new scope. Side effects that depend on
+ * the outcome can be registered with {@link #afterCommit(Runnable)} and
  * {@link #afterAbort(Runnable)}.
  * </p>
  * <p>

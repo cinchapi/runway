@@ -1117,7 +1117,11 @@ public interface Audience extends DatabaseInterface, Transactional {
      * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
      * close} to abort whatever was not committed. Use a try-with-resources
      * block so the transaction always ends. After the transaction ends, this
-     * {@link Audience} operates against the enclosing {@link Runway} again.
+     * {@link Audience} operates against the enclosing {@link Runway} again, and
+     * the ended view falls through to the {@link Runway} the same way. If this
+     * {@link Audience} later joins a different {@link Transaction}, then a
+     * database operation on the ended view is refused with an
+     * {@link IllegalStateException} instead of following the new scope.
      * </p>
      *
      * @return an open {@link Transaction} that this {@link Audience} joined
