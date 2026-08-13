@@ -1725,6 +1725,15 @@ public abstract class Record implements Comparable<Record> {
      * transaction, under the contract of {@link Runway#intern(Record) intern}
      * on the bound {@link Runway}.
      * </p>
+     * <p>
+     * This is an identity operation, not an audience-mediated action: even when
+     * this record is an {@link com.cinchapi.runway.access.Audience Audience},
+     * no access checks apply. Use
+     * {@link com.cinchapi.runway.access.Audience#intern(Record)
+     * Audience#intern} to intern a record on an
+     * {@link com.cinchapi.runway.access.Audience Audience's} behalf, subject to
+     * its permissions and visibility.
+     * </p>
      *
      * @param <T> the type of {@link Record}
      * @return the {@link Record} that claims the identity: the sole existing
@@ -1741,7 +1750,7 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("unchecked")
     public final <T extends Record> T intern() {
-        return supply(tx -> tx.intern((T) this));
+        return $supply(tx -> tx.intern((T) this));
     }
 
     /**
@@ -2356,21 +2365,7 @@ public abstract class Record implements Comparable<Record> {
         else {
             scoped = work;
         }
-        if(isBoundToOpenTransaction()) {
-            DatabaseTransaction transaction = (DatabaseTransaction) binding;
-            return transaction.execute(() -> scoped.apply(transaction));
-        }
-        else {
-            Runway runway = harness();
-            Verify.that(runway != null, "Cannot execute transactional work"
-                    + " because this Record has no binding");
-            return runway.supply(transaction -> {
-                // The lambda receives the Transaction that supply constructs,
-                // so the cast to reach the package-private join is safe.
-                ((DatabaseTransaction) transaction).join(this);
-                return scoped.apply(transaction);
-            });
-        }
+        return $supply(scoped);
     }
 
     /**
@@ -3456,6 +3451,39 @@ public abstract class Record implements Comparable<Record> {
             });
         }
         return derived;
+    }
+
+    /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope, against the raw transaction view: the work does not receive the
+     * {@link Transactional#scope(TransactionInterface) scoped view} that
+     * {@link #supply(Function)} applies when this {@link Record} is a
+     * {@link Transactional}.
+     *
+     * @param work the work to run
+     * @return the result of {@code work}
+     * @throws IllegalStateException if this {@link Record} has no binding, or
+     *             if it is bound to an open {@link Transaction} that another
+     *             thread owns or that a failed save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    private <T> T $supply(Function<TransactionInterface, T> work) {
+        if(isBoundToOpenTransaction()) {
+            DatabaseTransaction transaction = (DatabaseTransaction) binding;
+            return transaction.execute(() -> work.apply(transaction));
+        }
+        else {
+            Runway runway = harness();
+            Verify.that(runway != null, "Cannot execute transactional work"
+                    + " because this Record has no binding");
+            return runway.supply(transaction -> {
+                // The lambda receives the Transaction that supply constructs,
+                // so the cast to reach the package-private join is safe.
+                ((DatabaseTransaction) transaction).join(this);
+                return work.apply(transaction);
+            });
+        }
     }
 
     /**

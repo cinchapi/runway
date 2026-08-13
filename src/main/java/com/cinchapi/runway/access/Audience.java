@@ -1130,6 +1130,9 @@ public interface Audience extends DatabaseInterface, Transactional {
      *
      * @param work the work to run
      * @return the result of {@code work}
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
      * @throws UnsupportedOperationException if this {@link Audience} is not a
      *             {@link Record}
      */

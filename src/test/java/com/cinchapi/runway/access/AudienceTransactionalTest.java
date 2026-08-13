@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway.access;
 
+import javax.annotation.Nonnull;
+
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -593,6 +595,100 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
         catch (UnsupportedOperationException e) {
             // expected
         }
+    }
+
+    /**
+     * Return a {@link Criteria} that matches records whose email is
+     * {@code restricted@example.com}.
+     *
+     * @return the {@link Criteria}
+     */
+    private Criteria restrictedEmailCriteria() {
+        return Criteria.where().key("email").operator(Operator.EQUALS)
+                .value("restricted@example.com").build();
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code intern()} on an
+     * {@link Audience} record is an identity operation that does not apply the
+     * audience's own create permission.
+     * <p>
+     * <strong>Start state:</strong> An unsaved {@link RestrictedUser} bound to
+     * the {@link #runway}. Only an {@link Admin} may create a
+     * {@link RestrictedUser}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link RestrictedUser}, {@code assign(...)} it to the
+     * {@link #runway} and call {@code intern()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns the record itself, saved and
+     * durable, instead of throwing a {@link RestrictedAccessException}.
+     */
+    @Test
+    public void testInternDoesNotRequireAudienceCreatePermission() {
+        RestrictedUser user = new RestrictedUser();
+        user.email = "restricted@example.com";
+        user.name = "Restricted User";
+        user.assign(runway);
+        RestrictedUser interned = user.intern();
+        Assert.assertSame(user, interned);
+        Assert.assertEquals(1, runway
+                .find(RestrictedUser.class, restrictedEmailCriteria()).size());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code intern()} on an
+     * {@link Audience} record that is bound to an open {@link Transaction}
+     * resolves within it as an identity operation, without the audience's own
+     * create permission.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link RestrictedUser} bound to the
+     * {@link #runway}. Only an {@link Admin} may create a
+     * {@link RestrictedUser}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with {@code runway.stage()}.</li>
+     * <li>Load the {@link RestrictedUser} through the transaction and call
+     * {@code intern()} on it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns the record that claims the
+     * identity instead of throwing a {@link RestrictedAccessException}.
+     */
+    @Test
+    public void testInternWithinTransactionDoesNotRequireAudienceCreatePermission() {
+        RestrictedUser user = new RestrictedUser();
+        user.email = "restricted@example.com";
+        user.name = "Restricted User";
+        user.assign(runway);
+        Assert.assertTrue(user.save());
+        try (Transaction transaction = runway.stage()) {
+            RestrictedUser inside = transaction.load(RestrictedUser.class,
+                    user.id());
+            RestrictedUser interned = inside.intern();
+            Assert.assertEquals(user.id(), interned.id());
+        }
+    }
+
+    /**
+     * A {@link User} that only an {@link Admin} may create, so a self-intern
+     * fails if it is audience-mediated instead of an identity operation.
+     */
+    protected static class RestrictedUser extends User {
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            return audience instanceof Admin;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return false;
+        }
+
     }
 
 }

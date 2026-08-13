@@ -18,6 +18,7 @@ package com.cinchapi.runway.access;
 import java.util.function.UnaryOperator;
 
 import javax.annotation.Nullable;
+import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -39,6 +40,7 @@ import com.cinchapi.runway.TransactionInterface;
  *
  * @author Jeff Nelson
  */
+@NotThreadSafe
 final class AudienceTransaction implements Transaction {
 
     /**
