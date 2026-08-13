@@ -3289,7 +3289,8 @@ public abstract class Record implements Comparable<Record> {
      * @return a {@link UniqueIdentity} for each participating constraint
      * @throws IllegalArgumentException if no field under a {@link Unique}
      *             constraint has a non-null value, or if the fields of a named
-     *             constraint disagree on {@link Unique#any() any}
+     *             constraint disagree on {@link Unique#any() any}, or if
+     *             hierarchy-scoped members are declared by different classes
      */
     List<UniqueIdentity> uniqueIdentities() {
         List<Collection<Field>> constraints = Lists.newArrayList();
@@ -4621,8 +4622,8 @@ public abstract class Record implements Comparable<Record> {
      * constraint that spans {@code members}, and verify that the members
      * declare the constraint's scope consistently.
      * <p>
-     * A hierarchy-scoped ({@link Unique#any() any}) constraint is bounded by
-     * the least-derived class that declares one of its {@code members}; a
+     * A hierarchy-scoped ({@link Unique#any() any}) constraint must declare all
+     * of its {@code members} on one class, which bounds its identity space. A
      * class-scoped constraint is bounded by this {@link Record Record's}
      * concrete class.
      * </p>
@@ -4632,13 +4633,15 @@ public abstract class Record implements Comparable<Record> {
      * @param members the fields the constraint spans
      * @return the class that bounds the constraint's identity space
      * @throws IllegalArgumentException if the {@code members} disagree on
-     *             {@link Unique#any() any}
+     *             {@link Unique#any() any}, or if hierarchy-scoped members are
+     *             declared by different classes
      */
     @SuppressWarnings("unchecked")
     private Class<? extends Record> uniqueConstraintWindow(String name,
             Collection<Field> members) {
         Boolean any = null;
         Class<? extends Record> window = null;
+        boolean hasOneDeclarer = true;
         for (Field member : members) {
             Unique constraint = member.getAnnotation(Unique.class);
             if(any == null) {
@@ -4653,10 +4656,18 @@ public abstract class Record implements Comparable<Record> {
             }
             Class<? extends Record> declarer = (Class<? extends Record>) member
                     .getDeclaringClass();
-            if(window == null || declarer.isAssignableFrom(window)) {
+            if(window == null) {
                 window = declarer;
             }
+            else if(window != declarer) {
+                hasOneDeclarer = false;
+            }
         }
+        Verify.thatArgument(!any || hasOneDeclarer,
+                "The fields of the {} Unique constraint in {} must be"
+                        + " declared by one class when it applies across the"
+                        + " class hierarchy",
+                name, __);
         return any ? window : getClass();
     }
 

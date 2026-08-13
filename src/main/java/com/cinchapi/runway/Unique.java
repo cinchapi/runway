@@ -43,7 +43,8 @@ public @interface Unique {
      * The name of {@link Unique} constraint. Use the same name for
      * {@link Unique} constraints on multiple fields to enforce combined
      * uniqueness. Every field under the same name must declare the same
-     * {@link #any()} value.
+     * {@link #any()} value. When {@code any} is {@code true}, every field under
+     * the same name must also be declared by the same class.
      *
      * @return the name of the {@link Unique} constraint
      */

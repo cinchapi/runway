@@ -29,7 +29,6 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
 import com.cinchapi.runway.Record.ConstraintViolationException;
-import com.google.common.collect.Iterables;
 
 /**
  * Tests for hierarchy-scoped {@link Unique} constraints declared with
@@ -385,30 +384,36 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that a named {@code any} group whose
-     * members are declared in different classes of one lineage is bounded by
-     * the least-derived declarer.
+     * members are declared by different classes is rejected as a
+     * misdeclaration.
      * <p>
-     * <strong>Start state:</strong> No prior state needed.
+     * <strong>Start state:</strong> No saved {@link Composite Composites}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Construct an {@link ExtendedComposite} whose group members are both
-     * non-null.</li>
-     * <li>Call {@code uniqueIdentities()} and inspect the single
-     * {@link UniqueIdentity}.</li>
+     * <li>Call {@code intern} with a new {@link ExtendedComposite} and catch
+     * the expected exception.</li>
+     * <li>Save another new {@link ExtendedComposite}, then load every
+     * {@link Composite}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The identity is hierarchy-scoped and its
-     * window is {@link Composite}, the least-derived class that declares one of
-     * the group's members.
+     * <strong>Expected:</strong> The {@code intern} rejection is an
+     * {@link IllegalArgumentException}, the save returns {@code false}, and no
+     * {@link Composite} exists in the database.
      */
     @Test
-    public void testAnyGroupWindowIsLeastDerivedDeclarer() {
-        ExtendedComposite record = new ExtendedComposite("head", "tail");
-        UniqueIdentity identity = Iterables
-                .getOnlyElement(record.uniqueIdentities());
-        Assert.assertTrue(identity.any());
-        Assert.assertEquals(Composite.class, identity.window());
+    public void testRejectsAnyGroupWhoseMembersHaveDifferentDeclarers() {
+        boolean threw = false;
+        try {
+            runway.intern(new ExtendedComposite("head", "tail"));
+        }
+        catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertFalse(
+                runway.save(new ExtendedComposite("other", "value")));
+        Assert.assertTrue(runway.loadAny(Composite.class).isEmpty());
     }
 
     /**
