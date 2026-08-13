@@ -220,6 +220,137 @@ player.set("score", 99);
 player.set(Map.of("name", "New Name", "score", 100));
 ```
 
+## Concurrency and Atomicity
+
+Runway offers four mechanisms that make concurrent writes safe. Use the narrowest mechanism that covers the situation. A narrower mechanism asks less of the caller, holds less open, and fails in fewer ways.
+
+| Situation | Mechanism |
+|---|---|
+| You change one field on one record, and a concurrent change to that field must not be lost | `exchange`, `getAndUpdate`, `updateAndGet` |
+| Several records must persist together, or not at all | `save(...)`, which is already one ACID transaction |
+| You loaded records, edited them in memory, and a concurrent edit must not be silently overwritten | `save(true)` |
+| You want the one record that holds a unique identity, and a new record when none holds it | `intern` |
+| You want to update whichever record matches a criteria | `findUniqueAndUpdate` and its siblings |
+| You read, especially with a `find`, and then write a decision that depends on what you read | `Transaction` |
+| You handle a request, a route, or a service call | None of these. Atomicity belongs to the operation, not to the request |
+
+### Single-Key Atomic Operations
+
+Use these when one field on one record changes, and a concurrent change to that same field must not be lost. A counter, a status flag, and a claim on a single value all fit here.
+
+```java
+Player player = db.load(Player.class, 42);
+boolean swapped = player.exchange("score", 100);
+int next = player.updateAndGet("score", (Integer score) -> score + 1);
+```
+
+`exchange` is a compare-and-swap. The expected value is the value the instance last observed for that field, so the write lands only if no other writer changed the stored value in the meantime. A `null` in-memory value expects absence. `getAndUpdate` and `updateAndGet` run the same compare-and-swap in a retry loop. They apply your function to the current value and retry on contention, within the bounds of the `AtomicRetryPolicy` on the `Runway` instance. `getAndUpdate` returns the replaced value and `updateAndGet` returns the replacement. When the retries run out, they throw `RetryExhaustedException` and write nothing.
+
+Limits:
+
+- Only a single-value intrinsic field is eligible. Transient fields, `@Unique` fields, collections, arrays, and links are not eligible.
+- `exchange` never succeeds against a record that does not exist in the database. Nothing is written in that case.
+- These are targeted writes, not saves. The `beforeSave()` hook and the save listeners do not run.
+- Runway refuses them on a record that is bound to an open `Transaction`, and on a record that is staged for deletion. `getAndUpdate` and `updateAndGet` also require a record with no unsaved changes.
+- The update function can run more than once, so it must be free of side effects.
+- One call covers one field on one record. Two fields that must change together are outside its reach.
+
+### Preventing Stale Writes
+
+Use `save(true)` when you loaded records, changed them in memory, and a concurrent edit to that data must not be silently overwritten. This is the read-modify-write case: an edit form, an import that patches existing records, or any flow where two writers can hold the same record at once.
+
+```java
+try {
+    db.save(true, player, team);
+}
+catch (StaleDataException e) {
+    // Another writer changed a record in the graph. Reload and try again.
+}
+```
+
+Inside the save's transaction, Runway audits every record in the saved graph, including the linked records it reaches. If any of them changed in the database since it was loaded or last saved, the save throws `StaleDataException` and persists nothing.
+
+A save is already all-or-nothing across the records it touches. `db.save(a, b, c)` commits in a single ACID transaction, and so does `a.save()` for `a` and every record linked from it. "These records must commit together" is therefore not by itself a reason to open a transaction.
+
+Limits:
+
+- Stale-write prevention detects a conflict. It does not merge one. The caller reloads and decides what to do.
+- Genuine staleness never retries automatically.
+- A commit conflict that no stale root record explains is spurious. Runway retries a spurious conflict automatically, up to an internal attempt limit, when the `SpuriousSaveFailureStrategy` is `RETRY`. The default strategy is `FAIL_FAST`, which propagates the failure instead.
+- The audit costs a query for each record in the saved graph, so a large graph pays more.
+- This protects the data you loaded. It does not make a `find` and a later write atomic, because the records a `find` did not return are outside the saved graph.
+
+### Find-Then-Write Primitives
+
+Use these when the decision is "create the record if none exists" or "update whichever record matches". They already do the atomic work, so they need no transaction around them.
+
+`intern` returns the one record that agrees with every `@Unique` constraint of the record you pass, and saves that record when none exists:
+
+```java
+Player player = new Player();
+player.email = "serena@example.com";
+player = db.intern(player);
+```
+
+`findUniqueAndUpdate` updates one field on the single record that matches a criteria, and returns `null` when nothing matches:
+
+```java
+Player updated = db.findUniqueAndUpdate(Player.class,
+        Criteria.where().key("email")
+                .operator(Operator.EQUALS)
+                .value("serena@example.com").build(),
+        "score", (Integer score) -> score + 1);
+```
+
+The siblings `findAnyUniqueAndUpdate`, `findFirstAndUpdate`, and `findAnyFirstAndUpdate` follow the polymorphic and ordered conventions described above.
+
+In each case the lookup and the write commit as one transaction, and conflicts retry within the bounds of the `AtomicRetryPolicy`. Concurrent callers converge on one record instead of racing to create or update two.
+
+Limits:
+
+- `intern` derives the identity from the `@Unique` constraints, so the record must carry a non-null value under at least one of them. A record that agrees with some but not all of the identity is not a match, and the save then fails `@Unique` enforcement.
+- `intern` and the unique variants throw `DuplicateEntryException` when more than one record matches.
+- A `find*AndUpdate` call updates one field, under the same eligibility rules as `getAndUpdate`.
+- The update operator can run more than once, so it must be free of side effects.
+- On `Runway`, `intern` runs in its own transaction, independent of a transaction the caller holds open. Call it on the transaction view to stage it within that transaction instead.
+
+### Transaction
+
+Use a `Transaction` only when a read and a write that depends on it must commit together, and none of the mechanisms above covers the case. The read that makes this necessary is usually a `find`: you search for the records that qualify, decide something from the result, and write that decision.
+
+`run` and `supply` manage the lifecycle for you:
+
+```java
+Seat reserved = db.supply(transaction -> {
+    Seat seat = transaction.findUnique(Seat.class, criteria);
+    seat.taken = true;
+    seat.save();
+    return seat;
+});
+```
+
+`stage` (or its alias `startTransaction`) hands you a transaction whose lifecycle you own:
+
+```java
+try (Transaction transaction = db.stage()) {
+    Seat seat = transaction.findUnique(Seat.class, criteria);
+    seat.taken = true;
+    seat.save();
+    transaction.commit();
+}
+```
+
+Every read observes the transaction's isolated snapshot, including the transaction's own uncommitted writes, and joins its conflict footprint. If a concurrent writer changes data the transaction read, then the commit fails instead of persisting a decision that no longer holds. Every record loaded or created through the transaction is bound to it, along with the records reachable from it, so each `save()` stages within the transaction and becomes durable only when the commit succeeds. Save and delete notifications fire after the commit.
+
+Limits and costs:
+
+- A transaction is confined to the thread that starts it, and it holds one pooled connection for its whole life.
+- `run` and `supply` replay their work when the commit conflicts, so that work must be idempotent. A transaction from `stage` never retries on its own, because a retry would mean replaying the caller's own code.
+- A read joins the conflict footprint only when it runs through the transaction. A read on a record that is bound elsewhere does not.
+- A `find` reads an index range, so a concurrent write anywhere in that range can fail the commit. A load by id is scoped to that one record, and writes to other records do not affect it.
+- Enforcement of a `@Unique` constraint performs a `find` as part of the save. A save of a record with a `@Unique` field therefore carries a range read, and holding such a save inside a long transaction widens the exposure to conflict.
+- Do not wrap a request, a route, or a service call in a transaction. Scope it to the read and the write that must agree.
+
 ## Record Linking
 
 Fields whose type is another `Record` subclass are automatically stored as Links in Concourse. When a Record is loaded, its linked Records are loaded too.
@@ -659,6 +790,7 @@ Runway db = Runway.builder()
 | Virtual properties | `@Derived`, `@Computed` |
 | Multi-tenancy | `Realms` |
 | Access control | `AccessControl` + `Audience` |
+| Concurrency and atomicity | `exchange`, `save(true)`, `intern`, `Transaction` |
 | Temporal metadata | `Metadata` interface |
 | Serialization | `json()`, `map()`, `SerializationOptions` |
 | Lifecycle hooks | `beforeSave()`, `onSave()` listeners |
