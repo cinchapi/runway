@@ -1128,9 +1128,9 @@ public interface Audience extends DatabaseInterface, Transactional {
             try {
                 Reflection.call(transaction, "join", record);
             }
-            catch (RuntimeException e) {
+            catch (Throwable t) {
                 transaction.close();
-                throw e;
+                throw t;
             }
             return new AudienceTransaction(this, transaction);
         }
