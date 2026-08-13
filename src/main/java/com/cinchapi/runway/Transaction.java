@@ -592,6 +592,16 @@ public class Transaction extends Binding implements
      * Return the unique {@link Record} that agrees with every {@link Unique}
      * constraint of {@code record}, or save {@code record} when none exists.
      * <p>
+     * Each constraint is evaluated within its declared scope: a
+     * {@link Unique#any() hierarchy-scoped} constraint matches across the class
+     * that declares it and every descendant, and a class-scoped constraint
+     * matches among records of {@code record}'s concrete class. Only a record
+     * that agrees with every participating constraint and shares
+     * {@code record}'s concrete class is adopted; otherwise there is no match,
+     * and the save of {@code record} fails {@link Unique} enforcement, which
+     * surfaces the conflict.
+     * </p>
+     * <p>
      * While the transaction is open, the lookup and the save stage within it.
      * After the transaction ends, the operation runs atomically against the
      * enclosing {@link Runway}.
@@ -611,10 +621,7 @@ public class Transaction extends Binding implements
     @Override
     public <T extends Record> T intern(T record) {
         if(open) {
-            @SuppressWarnings("unchecked") Class<T> clazz = (Class<T>) record
-                    .getClass();
-            Criteria criteria = record.uniqueConstraintsCriteria();
-            return findOrCreate(() -> findUnique(clazz, criteria),
+            return findOrCreate(() -> resolveFullIdentityMatch(record),
                     () -> record);
         }
         else {
@@ -1043,6 +1050,51 @@ public class Transaction extends Binding implements
         else {
             // A non-iterable result (a single Record, a count, or null) is
             // already materialized.
+        }
+    }
+
+    /**
+     * Return the one {@link Record} that fully claims {@code record}'s unique
+     * identity, or {@code null} when no record does.
+     * <p>
+     * Each {@link Unique} constraint is evaluated within its declared scope. A
+     * match is a record that agrees with every participating constraint and
+     * shares {@code record}'s concrete class. A partial claim, two different
+     * claimants, or a claimant of another class yields {@code null}, so the
+     * caller's subsequent save fails the scoped {@link Unique} enforcement,
+     * which surfaces the conflict instead of a silent adoption.
+     * </p>
+     *
+     * @param record the {@link Record} whose identity is resolved
+     * @param <T> the type of {@link Record}
+     * @return the full-identity match, or {@code null} when none exists
+     * @throws DuplicateEntryException if more than one record matches a single
+     *             constraint
+     * @throws IllegalArgumentException if no field under a {@link Unique}
+     *             constraint of {@code record} has a non-null value
+     */
+    @Nullable
+    private <T extends Record> T resolveFullIdentityMatch(T record) {
+        Class<?> clazz = record.getClass();
+        Record match = null;
+        for (UniqueIdentity identity : record.uniqueIdentities()) {
+            Record candidate = identity.any()
+                    ? findAnyUnique(identity.window(), identity.criteria())
+                    : findUnique(record.getClass(), identity.criteria());
+            if(candidate == null
+                    || (match != null && !candidate.equals(match))) {
+                return null;
+            }
+            else {
+                match = candidate;
+            }
+        }
+        if(match != null && match.getClass() == clazz) {
+            @SuppressWarnings("unchecked") T adopted = (T) match;
+            return adopted;
+        }
+        else {
+            return null;
         }
     }
 
