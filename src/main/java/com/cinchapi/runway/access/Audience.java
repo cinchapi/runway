@@ -1053,16 +1053,35 @@ public interface Audience extends DatabaseInterface, Transactional {
      * through which work scoped by this {@link Audience} operates: every
      * operation on the view behaves the same as the operation on this
      * {@link Audience}, just within the confines of the transaction.
+     * <p>
+     * This {@link Audience} must have joined the transaction, which the
+     * framework guarantees when it invokes this method during
+     * {@link #run(java.util.function.Consumer) run} and
+     * {@link #supply(Function) supply}. Use {@link #stage()} to start a
+     * {@link Transaction} that this {@link Audience} joins.
+     * </p>
      *
      * @param transaction the transaction that scopes the work
      * @return the view the work receives
+     * @throws IllegalStateException if this {@link Audience} has not joined
+     *             {@code transaction}
+     * @throws UnsupportedOperationException if this {@link Audience} is not a
+     *             {@link Record}
      */
     @Override
     public default TransactionInterface scope(
             TransactionInterface transaction) {
-        if(transaction instanceof Transaction
-                && !(transaction instanceof AudienceTransaction)) {
-            return new AudienceTransaction(this, (Transaction) transaction);
+        if(transaction instanceof Transaction) {
+            if(this instanceof Record) {
+                TransactionInterface raw = AudienceTransaction.raw(transaction);
+                Verify.that(Reflection.get("binding", this) == raw,
+                        "An Audience can only scope a Transaction it has"
+                                + " joined; use stage() to start one");
+                return new AudienceTransaction(this, (Transaction) raw);
+            }
+            else {
+                throw new UnsupportedOperationException();
+            }
         }
         else {
             return transaction;

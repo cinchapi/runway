@@ -21,6 +21,7 @@ import org.junit.Test;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Transaction;
+import com.cinchapi.runway.TransactionInterface;
 
 /**
  * Tests for the {@link com.cinchapi.runway.Transactional Transactional}
@@ -592,6 +593,87 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
         }
         catch (UnsupportedOperationException e) {
             // expected
+        }
+        try (Transaction transaction = runway.stage()) {
+            anonymous.scope(transaction);
+            Assert.fail("Expected an UnsupportedOperationException");
+        }
+        catch (UnsupportedOperationException e) {
+            // expected
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code scope} refuses a
+     * {@link Transaction} that the {@link Audience} has not joined, instead of
+     * returning a view whose reads and writes resolve in different scopes.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Admin} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with {@code runway.stage()}, without a
+     * load of the {@link Admin} through it.</li>
+     * <li>Call {@code admin.scope(transaction)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws an
+     * {@link IllegalStateException}.
+     */
+    @Test
+    public void testScopeThrowsWhenAudienceHasNotJoinedTransaction() {
+        Admin admin = createAdmin();
+        try (Transaction transaction = runway.stage()) {
+            try {
+                admin.scope(transaction);
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (IllegalStateException e) {
+                // expected
+            }
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code scope} re-scopes another
+     * {@link Audience Audience's} view of the same {@link Transaction} to the
+     * calling {@link Audience}, so the returned view never carries the wrong
+     * audience.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Admin}, a saved viewer
+     * {@link Candidate} and a saved {@link Application} that is invisible to
+     * the viewer, all bound to the {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} with {@code runway.stage()} and load the
+     * {@link Admin} and the viewer {@link Candidate} through it.</li>
+     * <li>Build the viewer's view with {@code viewer.scope(transaction)}.</li>
+     * <li>Call {@code admin.scope(...)} with the viewer's view.</li>
+     * <li>Find the {@link Application} through the returned view.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The find returns the {@link Application},
+     * because the returned view observes the {@link Admin Admin's} visibility,
+     * not the viewer's.
+     */
+    @Test
+    public void testScopeRewrapsAnotherAudiencesViewForThisAudience() {
+        Admin admin = createAdmin();
+        Candidate viewer = createViewer();
+        createHiddenApplication();
+        try (Transaction transaction = runway.stage()) {
+            Admin adminInside = transaction.load(Admin.class, admin.id());
+            Candidate viewerInside = transaction.load(Candidate.class,
+                    viewer.id());
+            TransactionInterface viewerView = viewerInside.scope(transaction);
+            Assert.assertTrue(viewerView
+                    .find(Application.class, submittedStatusCriteria())
+                    .isEmpty());
+            TransactionInterface adminView = adminInside.scope(viewerView);
+            Assert.assertEquals(1, adminView
+                    .find(Application.class, submittedStatusCriteria()).size());
         }
     }
 
