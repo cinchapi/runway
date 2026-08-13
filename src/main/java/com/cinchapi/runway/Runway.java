@@ -1105,14 +1105,6 @@ public final class Runway extends Binding implements
         reservations.set(new HashMap<>());
     }
 
-    @Override
-    public void run(Consumer<TransactionInterface> work) {
-        supply(transaction -> {
-            work.accept(transaction);
-            return null;
-        });
-    }
-
     /**
      * Save all changes in the provided {@code records} using a single ACID
      * transaction.
@@ -1538,11 +1530,6 @@ public final class Runway extends Binding implements
             connections.release(concourse);
             throw t;
         }
-    }
-
-    @Override
-    public Transaction startTransaction() {
-        return stage();
     }
 
     @Override
