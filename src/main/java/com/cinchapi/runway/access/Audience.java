@@ -1063,6 +1063,8 @@ public interface Audience extends DatabaseInterface, Transactional {
      *
      * @param transaction the transaction that scopes the work
      * @return the view the work receives
+     * @throws IllegalArgumentException if {@code transaction} is not a
+     *             {@link Transaction}
      * @throws IllegalStateException if this {@link Audience} has not joined
      *             {@code transaction}
      * @throws UnsupportedOperationException if this {@link Audience} is not a
@@ -1071,20 +1073,17 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default TransactionInterface scope(
             TransactionInterface transaction) {
-        if(transaction instanceof Transaction) {
-            if(this instanceof Record) {
-                TransactionInterface raw = AudienceTransaction.raw(transaction);
-                Verify.that(Reflection.get("binding", this) == raw,
-                        "An Audience can only scope a Transaction it has"
-                                + " joined; use stage() to start one");
-                return new AudienceTransaction(this, (Transaction) raw);
-            }
-            else {
-                throw new UnsupportedOperationException();
-            }
+        Verify.thatArgument(transaction instanceof Transaction,
+                "An Audience can only scope a Transaction");
+        if(this instanceof Record) {
+            TransactionInterface raw = AudienceTransaction.raw(transaction);
+            Verify.that(Reflection.get("binding", this) == raw,
+                    "An Audience can only scope a Transaction it has"
+                            + " joined; use stage() to start one");
+            return new AudienceTransaction(this, (Transaction) raw);
         }
         else {
-            return transaction;
+            throw new UnsupportedOperationException();
         }
     }
 

@@ -20,6 +20,9 @@ import org.junit.Test;
 
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.Record;
+import com.cinchapi.runway.Selection;
+import com.cinchapi.runway.Selections;
 import com.cinchapi.runway.Transaction;
 import com.cinchapi.runway.TransactionInterface;
 
@@ -674,6 +677,69 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
             TransactionInterface adminView = adminInside.scope(viewerView);
             Assert.assertEquals(1, adminView
                     .find(Application.class, submittedStatusCriteria()).size());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code scope} refuses a
+     * {@link TransactionInterface} view that is not a {@link Transaction},
+     * instead of returning it with no audience mediation.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Admin} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Construct a {@link TransactionInterface} stub that is not a
+     * {@link Transaction}.</li>
+     * <li>Call {@code admin.scope(...)} with the stub.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws an
+     * {@link IllegalArgumentException}.
+     */
+    @Test
+    public void testScopeRefusesViewThatIsNotATransaction() {
+        Admin admin = createAdmin();
+        TransactionInterface view = new TransactionInterface() {
+
+            @Override
+            public void afterAbort(Runnable hook) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void afterCommit(Runnable hook) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T extends Record> T create(Class<T> clazz, Object... args) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T extends Record> T intern(T record) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean save(boolean preventStaleWrites, Record... records) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Selections select(Selection<?>... selections) {
+                throw new UnsupportedOperationException();
+            }
+
+        };
+        try {
+            admin.scope(view);
+            Assert.fail("Expected an IllegalArgumentException");
+        }
+        catch (IllegalArgumentException e) {
+            // expected
         }
     }
 
