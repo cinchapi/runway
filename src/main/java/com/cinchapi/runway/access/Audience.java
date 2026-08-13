@@ -45,10 +45,13 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.Computed;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.Runway;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
 import com.cinchapi.runway.SerializationOptions;
+import com.cinchapi.runway.Transaction;
 import com.cinchapi.runway.TransactionInterface;
+import com.cinchapi.runway.Transactional;
 import com.cinchapi.runway.Unique;
 import com.cinchapi.runway.util.KeySelection;
 import com.google.common.base.Preconditions;
@@ -100,7 +103,7 @@ import com.google.common.collect.Sets;
  *
  * @author Jeff Nelson
  */
-public interface Audience extends DatabaseInterface {
+public interface Audience extends DatabaseInterface, Transactional {
 
     /**
      * Return a singleton {@link Audience} that represents an unauthenticated or
@@ -226,22 +229,36 @@ public interface Audience extends DatabaseInterface {
      *             permitted to create the {@link Record}
      * @throws IllegalStateException if a {@link Record} reachable from the
      *             {@code args} is bound to a different open
-     *             {@link com.cinchapi.runway.Transaction Transaction}
+     *             {@link com.cinchapi.runway.Transaction Transaction}, or if
+     *             this {@link Audience} is bound to an open
+     *             {@link com.cinchapi.runway.Transaction Transaction} that
+     *             another thread owns or that a failed save poisoned
      */
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
-        T record = Reflection.newInstance(clazz, args);
+        T record;
         if(this instanceof Record) {
+            Object binding = Reflection.get("binding", this);
+            if(binding instanceof TransactionInterface) {
+                // Create through the transaction so its state checks gate a
+                // mediated create the same as an unmediated one.
+                record = ((TransactionInterface) binding).create(clazz, args);
+            }
+            else {
+                record = Reflection.newInstance(clazz, args);
+            }
             // Bind the new record, and its reachable graph, to the same
             // database interface that this audience operates against before
             // the permission check runs, so the check and a later save both
             // resolve within that context (e.g., within a Transaction).
-            Object binding = Reflection.get("binding", this);
             if(binding != null) {
                 Reflection.call(record, "bindGraph", binding,
                         Reflection.get("connections", this),
                         Sets.newIdentityHashSet());
             }
+        }
+        else {
+            record = Reflection.newInstance(clazz, args);
         }
         verifyIsCreatableByAudience(this, record);
         if(this instanceof Record) {
@@ -904,7 +921,10 @@ public interface Audience extends DatabaseInterface {
      * <p>
      * This {@link Audience} must be permitted to create {@code record}, even
      * when an existing {@link Record} claims the identity, and an existing
-     * match must be visible to this {@link Audience}.
+     * match must be visible to this {@link Audience}. The checks apply to
+     * whatever {@code record} is interned, including this {@link Audience}
+     * itself; {@link Record#intern()} is the identity operation that no
+     * audience mediates.
      * </p>
      * <p>
      * <strong>NOTE:</strong> A refusal of a hidden match still confirms that a
@@ -935,33 +955,37 @@ public interface Audience extends DatabaseInterface {
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
         if(this instanceof Record) {
-            return Reflection.call(this, "supply",
-                    (Function<TransactionInterface, T>) transaction -> {
-                        // Join the record and its reachable graph to the
-                        // transactional scope before the permission check
-                        // runs, so the check and the save both resolve within
-                        // it, consistent with #create.
-                        Reflection.call(transaction, "join", record);
-                        verifyIsCreatableByAudience(this, record);
-                        Record previous = Reflection.get("_author", record);
-                        Reflection.set("_author", (Record) this, record);
-                        T interned = transaction.intern(record);
-                        if(interned != record) {
-                            // The record was never saved, so nothing consumed
-                            // the author marker; restore it so a later save
-                            // is not attributed to this Audience.
-                            Reflection.set("_author", previous, record);
-                            if(!$checkIfInScopeOrVisible().test(interned)) {
-                                throw new RestrictedAccessException();
-                            }
-                            else {
-                                return interned;
-                            }
-                        }
-                        else {
-                            return interned;
-                        }
-                    });
+            return ((Record) this).supply(view -> {
+                // The checks below run against this Audience, so the raw
+                // transaction is the correct target for the staging
+                // operations; the Audience-scoped view would repeat them.
+                TransactionInterface transaction = AudienceTransaction
+                        .raw(view);
+                // Join the record and its reachable graph to the
+                // transactional scope before the permission check
+                // runs, so the check and the save both resolve within
+                // it, consistent with #create.
+                Reflection.call(transaction, "join", record);
+                verifyIsCreatableByAudience(this, record);
+                Record previous = Reflection.get("_author", record);
+                Reflection.set("_author", (Record) this, record);
+                T interned = transaction.intern(record);
+                if(interned != record) {
+                    // The record was never saved, so nothing consumed
+                    // the author marker; restore it so a later save
+                    // is not attributed to this Audience.
+                    Reflection.set("_author", previous, record);
+                    if(!$checkIfInScopeOrVisible().test(interned)) {
+                        throw new RestrictedAccessException();
+                    }
+                    else {
+                        return interned;
+                    }
+                }
+                else {
+                    return interned;
+                }
+            });
         }
         else {
             throw new UnsupportedOperationException();
@@ -1036,6 +1060,129 @@ public interface Audience extends DatabaseInterface {
                     $checkIfVisible());
         }).toArray(Selection[]::new);
         return $db().select(selections);
+    }
+
+    /**
+     * Return the {@link TransactionInterface} view of {@code transaction}
+     * through which work scoped by this {@link Audience} operates: every
+     * operation on the view behaves the same as the operation on this
+     * {@link Audience}, just within the confines of the transaction.
+     * <p>
+     * This {@link Audience} must have joined the transaction, which the
+     * framework guarantees when it invokes this method during
+     * {@link #run(java.util.function.Consumer) run} and
+     * {@link #supply(Function) supply}. Use {@link #stage()} to start a
+     * {@link Transaction} that this {@link Audience} joins.
+     * </p>
+     *
+     * @param transaction the transaction that scopes the work
+     * @return the view the work receives
+     * @throws IllegalArgumentException if {@code transaction} is not a
+     *             {@link Transaction}
+     * @throws IllegalStateException if this {@link Audience} has not joined
+     *             {@code transaction}
+     * @throws UnsupportedOperationException if this {@link Audience} is not a
+     *             {@link Record}
+     */
+    @Override
+    public default TransactionInterface scope(
+            TransactionInterface transaction) {
+        Verify.thatArgument(transaction instanceof Transaction,
+                "An Audience can only scope a Transaction");
+        if(this instanceof Record) {
+            TransactionInterface raw = AudienceTransaction.raw(transaction);
+            Verify.that(Reflection.get("binding", this) == raw,
+                    "An Audience can only scope a Transaction it has"
+                            + " joined; use stage() to start one");
+            return new AudienceTransaction(this, (Transaction) raw);
+        }
+        else {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /**
+     * Start a {@link Transaction} that this {@link Audience} joins, so the
+     * operations it performs, and the access checks that gate them, resolve
+     * within the transaction.
+     * <p>
+     * Every operation on the returned view behaves the same as the operation on
+     * this {@link Audience}, just within the confines of the transaction: reads
+     * observe this {@link Audience Audience's} visibility and the writes it
+     * permits are the ones that stage.
+     * </p>
+     * <p>
+     * The caller owns the {@link Transaction Transaction's} lifecycle: end it
+     * with exactly one of {@link Transaction#commit() commit} or
+     * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
+     * close} to abort whatever was not committed. Use a try-with-resources
+     * block so the transaction always ends. After the transaction ends, this
+     * {@link Audience} operates against the enclosing {@link Runway} again, and
+     * the ended view falls through to the {@link Runway} the same way. If this
+     * {@link Audience} later joins a different {@link Transaction}, then a
+     * database operation on the ended view is refused with an
+     * {@link IllegalStateException} instead of following the new scope.
+     * </p>
+     *
+     * @return an open {@link Transaction} that this {@link Audience} joined
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is already bound to an open {@link Transaction}
+     * @throws UnsupportedOperationException if this {@link Audience} is not a
+     *             {@link Record}
+     */
+    @Override
+    public default Transaction stage() {
+        if(this instanceof Record) {
+            Record record = (Record) this;
+            Runway harness = Reflection.call(record, "harness");
+            Verify.that(harness != null, "Cannot stage a Transaction because"
+                    + " this Audience has no binding");
+            boolean inOpenTransaction = Reflection.call(record,
+                    "isBoundToOpenTransaction");
+            Verify.that(!inOpenTransaction, "Cannot stage a Transaction"
+                    + " because this Audience is already bound to an open"
+                    + " Transaction");
+            Transaction transaction = harness.stage();
+            try {
+                Reflection.call(transaction, "join", record);
+            }
+            catch (Throwable t) {
+                transaction.close();
+                throw t;
+            }
+            return new AudienceTransaction(this, transaction);
+        }
+        else {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /**
+     * Execute {@code work} within this {@link Audience Audience's}
+     * transactional scope and return its result.
+     * <p>
+     * If this {@link Audience} is bound to an open {@link Transaction}, then
+     * the work joins it; otherwise, the work runs in its own managed
+     * transaction that commits after the work completes, per the
+     * {@link Transactional#supply(Function) Transactional} contract.
+     * </p>
+     *
+     * @param work the work to run
+     * @return the result of {@code work}
+     * @throws IllegalStateException if this {@link Audience} has no binding, or
+     *             if it is bound to an open transaction that another thread
+     *             owns or that a failed save poisoned
+     * @throws UnsupportedOperationException if this {@link Audience} is not a
+     *             {@link Record}
+     */
+    @Override
+    public default <T> T supply(Function<TransactionInterface, T> work) {
+        if(this instanceof Record) {
+            return ((Record) this).supply(work);
+        }
+        else {
+            throw new UnsupportedOperationException();
+        }
     }
 
     /**

@@ -1729,6 +1729,15 @@ public abstract class Record implements Comparable<Record> {
      * transaction, under the contract of {@link Runway#intern(Record) intern}
      * on the bound {@link Runway}.
      * </p>
+     * <p>
+     * No access checks apply. This method canonicalizes the record itself, so
+     * no audience mediates the operation, even when this record is an
+     * {@link com.cinchapi.runway.access.Audience Audience}. The
+     * audience-mediated form is
+     * {@link com.cinchapi.runway.access.Audience#intern(Record)
+     * Audience#intern}, which enforces the audience's permissions and
+     * visibility on whatever record it interns, including the audience itself.
+     * </p>
      *
      * @param <T> the type of {@link Record}
      * @return the {@link Record} that claims the identity: the sole existing
@@ -1745,7 +1754,7 @@ public abstract class Record implements Comparable<Record> {
      */
     @SuppressWarnings("unchecked")
     public final <T extends Record> T intern() {
-        return supply(tx -> tx.intern((T) this));
+        return $supply(tx -> tx.intern((T) this));
     }
 
     /**
@@ -2171,6 +2180,28 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope.
+     * <p>
+     * This method behaves exactly like {@link #supply(Function)} for work that
+     * does not produce a result.
+     * </p>
+     *
+     * @param work the work to run
+     * @throws IllegalStateException if this {@link Record} has no binding, or
+     *             if it is bound to an open {@link Transaction} that another
+     *             thread owns or that a failed save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    public final void run(Consumer<TransactionInterface> work) {
+        supply(transaction -> {
+            work.accept(transaction);
+            return null;
+        });
+    }
+
+    /**
      * Save any changes made to this {@link Record}.
      * <p>
      * <strong>NOTE:</strong> This method recursively saves any linked
@@ -2290,6 +2321,55 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
         }
+    }
+
+    /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope and return its result.
+     * <p>
+     * If this {@link Record} is bound to an open {@link Transaction}, then the
+     * work joins it: everything the work stages becomes durable when that
+     * transaction's owner commits it. Otherwise, the work runs the same as
+     * {@link Runway#supply(Function)}: it receives the
+     * {@link TransactionInterface} view of a new {@link Transaction} that
+     * commits after the work completes, and this {@link Record} joins each
+     * attempt's transaction, so a direct {@link #save() save} stages within it.
+     * Either way, the work cannot commit, abort or close the transaction it
+     * joins. Conflicts retry within the bounds of the governing
+     * {@link AtomicRetryPolicy}, so the work may run more than once and must be
+     * free of side effects outside of the transaction; this {@link Record
+     * Record's} in-memory state is outside of it, so an edit survives a
+     * discarded attempt and is visible to the next one. Set each value
+     * absolutely, or derive it from a read through the transaction, rather than
+     * increment what a prior attempt left behind.
+     * </p>
+     * <p>
+     * If this {@link Record} is a {@link Transactional} (e.g., an
+     * {@link com.cinchapi.runway.access.Audience Audience}), then the work
+     * receives this {@link Transactional Transactional's}
+     * {@link Transactional#scope(TransactionInterface) scoped view} of the
+     * transaction.
+     * </p>
+     *
+     * @param work the work to run
+     * @return the result of {@code work}
+     * @throws IllegalStateException if this {@link Record} has no binding, or
+     *             if it is bound to an open {@link Transaction} that another
+     *             thread owns or that a failed save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    public final <T> T supply(Function<TransactionInterface, T> work) {
+        Function<TransactionInterface, T> scoped;
+        if(this instanceof Transactional) {
+            Transactional transactional = (Transactional) this;
+            scoped = transaction -> work
+                    .apply(transactional.scope(transaction));
+        }
+        else {
+            scoped = work;
+        }
+        return $supply(scoped);
     }
 
     /**
@@ -2541,75 +2621,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Execute {@code work} within this {@link Record Record's} transactional
-     * scope.
-     * <p>
-     * This method behaves exactly like {@link #supply(Function)} for work that
-     * does not produce a result.
-     * </p>
-     *
-     * @param work the work to run
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
-     * @throws RetryExhaustedException if a new transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
-    protected final void run(Consumer<TransactionInterface> work) {
-        supply(transaction -> {
-            work.accept(transaction);
-            return null;
-        });
-    }
-
-    /**
-     * Execute {@code work} within this {@link Record Record's} transactional
-     * scope and return its result.
-     * <p>
-     * If this {@link Record} is bound to an open {@link Transaction}, then the
-     * work joins it: everything the work stages becomes durable when that
-     * transaction's owner commits it. Otherwise, the work runs the same as
-     * {@link Runway#supply(Function)}: it receives the
-     * {@link TransactionInterface} view of a new {@link Transaction} that
-     * commits after the work completes, and this {@link Record} joins each
-     * attempt's transaction, so a direct {@link #save() save} stages within it.
-     * Either way, the work cannot commit, abort or close the transaction it
-     * joins. Conflicts retry within the bounds of the governing
-     * {@link AtomicRetryPolicy}, so the work may run more than once and must be
-     * free of side effects outside of the transaction; this {@link Record
-     * Record's} in-memory state is outside of it, so an edit survives a
-     * discarded attempt and is visible to the next one. Set each value
-     * absolutely, or derive it from a read through the transaction, rather than
-     * increment what a prior attempt left behind.
-     * </p>
-     *
-     * @param work the work to run
-     * @return the result of {@code work}
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
-     * @throws RetryExhaustedException if a new transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
-    protected final <T> T supply(Function<TransactionInterface, T> work) {
-        if(isBoundToOpenTransaction()) {
-            Transaction transaction = (Transaction) binding;
-            return transaction.execute(() -> work.apply(transaction));
-        }
-        else {
-            Runway runway = harness();
-            Verify.that(runway != null, "Cannot execute transactional work"
-                    + " because this Record has no binding");
-            return runway.supply(transaction -> {
-                // The lambda receives the Transaction that supply constructs,
-                // so the cast to reach the package-private join is safe.
-                ((Transaction) transaction).join(this);
-                return work.apply(transaction);
-            });
-        }
-    }
-
-    /**
      * Return additional {@link TypeAdapter TypeAdapters} that should be used
      * when generating the {@link #json()} for this {@link Record}.
      * <p>
@@ -2819,7 +2830,8 @@ public abstract class Record implements Comparable<Record> {
      * @return {@code true} if the binding is an open {@link Transaction}
      */
     boolean isBoundToOpenTransaction() {
-        return binding instanceof Transaction && ((Transaction) binding).open();
+        return binding instanceof DatabaseTransaction
+                && ((DatabaseTransaction) binding).open();
     }
 
     /**
@@ -3464,6 +3476,39 @@ public abstract class Record implements Comparable<Record> {
             });
         }
         return derived;
+    }
+
+    /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope, against the raw transaction view: the work does not receive the
+     * {@link Transactional#scope(TransactionInterface) scoped view} that
+     * {@link #supply(Function)} applies when this {@link Record} is a
+     * {@link Transactional}.
+     *
+     * @param work the work to run
+     * @return the result of {@code work}
+     * @throws IllegalStateException if this {@link Record} has no binding, or
+     *             if it is bound to an open {@link Transaction} that another
+     *             thread owns or that a failed save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    private <T> T $supply(Function<TransactionInterface, T> work) {
+        if(isBoundToOpenTransaction()) {
+            DatabaseTransaction transaction = (DatabaseTransaction) binding;
+            return transaction.execute(() -> work.apply(transaction));
+        }
+        else {
+            Runway runway = harness();
+            Verify.that(runway != null, "Cannot execute transactional work"
+                    + " because this Record has no binding");
+            return runway.supply(transaction -> {
+                // The lambda receives the Transaction that supply constructs,
+                // so the cast to reach the package-private join is safe.
+                ((DatabaseTransaction) transaction).join(this);
+                return work.apply(transaction);
+            });
+        }
     }
 
     /**
@@ -4137,8 +4182,8 @@ public abstract class Record implements Comparable<Record> {
         if(binding instanceof Runway) {
             return (Runway) binding;
         }
-        else if(binding instanceof Transaction) {
-            return ((Transaction) binding).database();
+        else if(binding instanceof DatabaseTransaction) {
+            return ((DatabaseTransaction) binding).database();
         }
         else {
             return null;
@@ -4158,8 +4203,8 @@ public abstract class Record implements Comparable<Record> {
         if(binding instanceof Runway) {
             return true;
         }
-        else if(binding instanceof Transaction) {
-            return !((Transaction) binding).open();
+        else if(binding instanceof DatabaseTransaction) {
+            return !((DatabaseTransaction) binding).open();
         }
         else {
             return false;
@@ -4547,8 +4592,9 @@ public abstract class Record implements Comparable<Record> {
      * @return the staleness ceiling
      */
     private long stalenessCeiling() {
-        if(binding instanceof Transaction && ((Transaction) binding).open()) {
-            return ((Transaction) binding).startTimestamp();
+        if(binding instanceof DatabaseTransaction
+                && ((DatabaseTransaction) binding).open()) {
+            return ((DatabaseTransaction) binding).startTimestamp();
         }
         else {
             return Long.MAX_VALUE;

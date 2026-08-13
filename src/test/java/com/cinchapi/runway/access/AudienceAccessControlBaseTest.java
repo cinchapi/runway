@@ -140,6 +140,24 @@ public abstract class AudienceAccessControlBaseTest
     }
 
     /**
+     * A {@link User} that only an {@link Admin} may create, so every other
+     * audience, including a {@link RestrictedUser} itself, is refused.
+     */
+    protected static class RestrictedUser extends User {
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            return audience instanceof Admin;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return false;
+        }
+
+    }
+
+    /**
      * Base user class that implements both AccessControl and Audience. All
      * users can perform operations and have access controls applied to them.
      */

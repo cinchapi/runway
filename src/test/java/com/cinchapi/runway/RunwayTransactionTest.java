@@ -695,7 +695,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             catch (RuntimeException e) {
                 Assert.assertEquals("dispatch failure", e.getMessage());
             }
-            Assert.assertTrue(transaction.committed());
+            Assert.assertTrue(((DatabaseTransaction) transaction).committed());
         }
         Assert.assertEquals(0, commits.get());
         Assert.assertEquals("pulled",
