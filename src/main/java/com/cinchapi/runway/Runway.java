@@ -129,7 +129,9 @@ import gnu.trove.map.hash.TLongObjectHashMap;
  *
  * @author Jeff Nelson
  */
-public final class Runway extends Binding implements AutoCloseable {
+public final class Runway extends Binding implements
+        AutoCloseable,
+        Transactional {
 
     // NOTE: Internal methods within a $ prefix are ones that return raw
     // database results and are intended to be consumed by other methods in this
@@ -368,7 +370,8 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     private static <T extends Record> T loadWithErrorHandling(Class<T> clazz,
             long id, ConcurrentMap<Long, Record> loaded,
-            Transaction transaction, @Nullable Map<String, Set<Object>> data,
+            DatabaseTransaction transaction,
+            @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets) {
         Runway runway = transaction.database();
         try {
@@ -472,7 +475,7 @@ public final class Runway extends Binding implements AutoCloseable {
      * The {@link NullTransaction} that represents resolution outside of any
      * transaction.
      */
-    private final Transaction noTransaction = new NullTransaction();
+    private final DatabaseTransaction noTransaction = new NullTransaction();
 
     /**
      * Whenever an exception is thrown during a {@link Runway#load(long) load}
@@ -950,6 +953,15 @@ public final class Runway extends Binding implements AutoCloseable {
                 update);
     }
 
+    @SuppressWarnings("deprecation")
+    @Override
+    public Gateway gateway() {
+        if(gateway == null) {
+            gateway = super.gateway();
+        }
+        return gateway;
+    }
+
     /**
      * Atomically return the unique {@link Record} that agrees with every
      * {@link Unique} constraint of {@code record}, or save {@code record} when
@@ -987,15 +999,6 @@ public final class Runway extends Binding implements AutoCloseable {
     @Override
     public <T extends Record> T intern(T record) {
         return supply(tx -> tx.intern(record));
-    }
-
-    @SuppressWarnings("deprecation")
-    @Override
-    public Gateway gateway() {
-        if(gateway == null) {
-            gateway = super.gateway();
-        }
-        return gateway;
     }
 
     @Override
@@ -1100,25 +1103,6 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     public void reserve() {
         reservations.set(new HashMap<>());
-    }
-
-    /**
-     * Run {@code work} within a {@link Transaction} and commit it after the
-     * work completes.
-     * <p>
-     * This method behaves exactly like {@link #supply(Function)} for work that
-     * does not produce a result.
-     * </p>
-     *
-     * @param work the work to run
-     * @throws RetryExhaustedException if the transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
-    public void run(Consumer<TransactionInterface> work) {
-        supply(transaction -> {
-            work.accept(transaction);
-            return null;
-        });
     }
 
     /**
@@ -1536,23 +1520,11 @@ public final class Runway extends Binding implements AutoCloseable {
         }
     }
 
-    /**
-     * Start a {@link Transaction} that scopes reads and writes to a single ACID
-     * transaction.
-     * <p>
-     * The caller owns the {@link Transaction Transaction's} lifecycle: end it
-     * with exactly one of {@link Transaction#commit() commit} or
-     * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
-     * close} to abort whatever was not committed. Use a try-with-resources
-     * block so the transaction always ends.
-     * </p>
-     *
-     * @return an open {@link Transaction}
-     */
+    @Override
     public Transaction stage() {
         Concourse concourse = connections.request();
         try {
-            return new Transaction(this, concourse, true);
+            return new DatabaseTransaction(this, concourse, true);
         }
         catch (Throwable t) {
             connections.release(concourse);
@@ -1560,51 +1532,7 @@ public final class Runway extends Binding implements AutoCloseable {
         }
     }
 
-    /**
-     * Start a {@link Transaction} that scopes reads and writes to a single ACID
-     * transaction.
-     * <p>
-     * This method is an alias for {@link #stage()}.
-     * </p>
-     *
-     * @return an open {@link Transaction}
-     */
-    public Transaction startTransaction() {
-        return stage();
-    }
-
-    /**
-     * Run {@code work} within a {@link Transaction} and commit it after the
-     * work completes.
-     * <p>
-     * The work receives the transaction's {@link TransactionInterface} view:
-     * reads through it observe the transaction's isolated snapshot, and a
-     * {@link Record} loaded through it, saved through it, or
-     * {@link TransactionInterface#create(Class, Object...) created} by it saves
-     * within it, so everything becomes durable together when the commit
-     * succeeds. The transaction's lifecycle belongs to this method, so the work
-     * cannot commit, abort or close the transaction it joins. A {@link Record}
-     * bound elsewhere saves against its own binding, outside of the
-     * transaction.
-     * </p>
-     * <p>
-     * If the commit fails because of a conflict, then the transaction is
-     * discarded and {@code work} runs again against a fresh one, within the
-     * bounds of the governing {@link AtomicRetryPolicy}, so the work may run
-     * more than once. The work must therefore be free of side effects outside
-     * of the transaction; a {@link Record Record's} in-memory state is outside
-     * of it, so an edit to a record the work captured survives a discarded
-     * attempt and is visible to the next one. Set each value absolutely, or
-     * derive it from a read through the transaction, rather than increment what
-     * a prior attempt left behind. Any other exception thrown by {@code work}
-     * aborts the transaction and propagates to the caller.
-     * </p>
-     *
-     * @param work the work to run
-     * @return the result of {@code work}
-     * @throws RetryExhaustedException if the transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
+    @Override
     public <T> T supply(Function<TransactionInterface, T> work) {
         AtomicRetryPolicy policy = properties().atomicRetryPolicy();
         Concourse concourse = connections.request();
@@ -1614,8 +1542,8 @@ public final class Runway extends Binding implements AutoCloseable {
             int attempts = 0;
             TransactionException conflict = null;
             for (;;) {
-                Transaction transaction = new Transaction(this, concourse,
-                        false);
+                DatabaseTransaction transaction = new DatabaseTransaction(this,
+                        concourse, false);
                 try {
                     T result = work.apply(transaction);
                     if(transaction.commit()) {
@@ -1693,7 +1621,7 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     @SuppressWarnings({ "rawtypes" })
     <T extends Record> void $selectFromDatabase(Reader reader,
-            DatabaseSelection<T> selection, Transaction transaction) {
+            DatabaseSelection<T> selection, DatabaseTransaction transaction) {
         Pending<? extends SelectResult<?>> pending;
         if(selection instanceof CountSelection) {
             pending = $selectCount(reader, (CountSelection<T>) selection,
@@ -1970,7 +1898,7 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     private <T extends Record> Pending<SelectResult<Set<T>>> $selectClass(
             Reader reader, LoadClassSelection<T> selection,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Order order = selection.order;
@@ -2053,7 +1981,7 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     private <T extends Record> Pending<SelectResult<Integer>> $selectCount(
             Reader reader, CountSelection<T> selection,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Criteria criteria = selection.criteria;
@@ -2112,7 +2040,7 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     private <T extends Record> Pending<SelectResult<Set<T>>> $selectCriteria(
             Reader reader, FindSelection<T> selection,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         Class<T> clazz = selection.clazz;
         boolean any = selection.any;
         Criteria criteria = selection.criteria;
@@ -2223,7 +2151,7 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     private <T extends Record> Pending<SelectResult<T>> $selectFirst(
             Reader reader, FirstSelection<T> selection,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
                 selection.clazz, selection.any);
         state.criteria = selection.criteria;
@@ -2360,7 +2288,7 @@ public final class Runway extends Binding implements AutoCloseable {
     @SuppressWarnings("unchecked")
     private <T extends Record> Pending<SelectResult<T>> $selectRecord(
             Reader reader, LoadRecordSelection<T> selection,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         Class<T> initialClazz = selection.clazz;
         long id = selection.id;
         Realms realms = selection.realms;
@@ -2448,7 +2376,7 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     private <T extends Record> Pending<SelectResult<T>> $selectUnique(
             Reader reader, UniqueSelection<T> selection,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         DatabaseSelection.BuilderState<T> state = new DatabaseSelection.BuilderState<>(
                 selection.clazz, selection.any);
         state.criteria = selection.criteria;
@@ -2717,7 +2645,7 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     private <T extends Record> Set<T> filter(Class<T> clazz, Criteria criteria,
             @Nullable Order order, @Nullable Page page, @Nonnull Realms realms,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         return transaction.fetch(Selection.of(clazz).order(order).page(page)
                 .filter(record -> record
                         .matches($Criteria.amongRealms(realms, criteria))));
@@ -2739,7 +2667,7 @@ public final class Runway extends Binding implements AutoCloseable {
      */
     private <T extends Record> Set<T> filterAny(Class<T> clazz,
             Criteria criteria, @Nullable Order order, @Nullable Page page,
-            @Nonnull Realms realms, Transaction transaction) {
+            @Nonnull Realms realms, DatabaseTransaction transaction) {
         return transaction.fetch(Selection.ofAny(clazz).order(order).page(page)
                 .filter(record -> record
                         .matches($Criteria.amongRealms(realms, criteria))));
@@ -2765,7 +2693,7 @@ public final class Runway extends Binding implements AutoCloseable {
     private <T extends Record> SelectResult<Set<T>> finalizeSet(Class<T> clazz,
             boolean any, Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets, boolean hasFilter,
-            Predicate<T> filter, Transaction transaction) {
+            Predicate<T> filter, DatabaseTransaction transaction) {
         Set<T> records = instantiateAll(clazz, any, data, targets, transaction);
         if(hasFilter) {
             return new SelectResult<>(
@@ -2846,7 +2774,7 @@ public final class Runway extends Binding implements AutoCloseable {
     private <T extends Record> T instantiate(Class<T> clazz, long id,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         return loadWithErrorHandling(clazz, id, new ConcurrentHashMap<>(),
                 transaction, data, targets);
     }
@@ -2874,7 +2802,7 @@ public final class Runway extends Binding implements AutoCloseable {
             ConcurrentMap<Long, Record> loaded,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         if(data == null) {
             // Since the desired class isn't specified, we must
             // prematurely select the record's data to determine it.
@@ -2915,7 +2843,7 @@ public final class Runway extends Binding implements AutoCloseable {
     private <T extends Record> T instantiate(long id,
             @Nullable Map<String, Set<Object>> data,
             @Nullable Map<Long, Map<String, Set<Object>>> targets,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         return instantiate(id, new ConcurrentHashMap<>(), data, targets,
                 transaction);
     }
@@ -2937,7 +2865,7 @@ public final class Runway extends Binding implements AutoCloseable {
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             boolean any, Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         return any ? instantiateAll(data, targets, transaction)
                 : instantiateAll(clazz, data, targets, transaction);
     }
@@ -2957,7 +2885,7 @@ public final class Runway extends Binding implements AutoCloseable {
     private <T extends Record> Set<T> instantiateAll(Class<T> clazz,
             Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         // NOTE: The lazy set does not cache a slot that resolves to null, so
         // without the scope check a null slot would re-resolve through the
@@ -2984,7 +2912,7 @@ public final class Runway extends Binding implements AutoCloseable {
     private <T extends Record> Set<T> instantiateAll(
             Map<Long, Map<String, Set<Object>>> data,
             Map<Long, Map<String, Set<Object>>> targets,
-            Transaction transaction) {
+            DatabaseTransaction transaction) {
         ConcurrentMap<Long, Record> loaded = new ConcurrentHashMap<>();
         // NOTE: The lazy set does not cache a slot that resolves to null, so
         // without the scope check a null slot would re-resolve through the
@@ -3182,8 +3110,8 @@ public final class Runway extends Binding implements AutoCloseable {
             // so the retry loop does not churn the pool.
             int attempts = 0;
             for (;;) {
-                Transaction transaction = new Transaction(this, concourse,
-                        false);
+                DatabaseTransaction transaction = new DatabaseTransaction(this,
+                        concourse, false);
                 try {
                     T record;
                     if(order != null) {
@@ -4017,7 +3945,7 @@ public final class Runway extends Binding implements AutoCloseable {
      *
      * @author Jeff Nelson
      */
-    private class NullTransaction extends Transaction {
+    private class NullTransaction extends DatabaseTransaction {
 
         /**
          * Construct a new instance.
