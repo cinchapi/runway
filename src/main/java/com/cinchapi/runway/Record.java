@@ -1726,13 +1726,13 @@ public abstract class Record implements Comparable<Record> {
      * on the bound {@link Runway}.
      * </p>
      * <p>
-     * This is an identity operation, not an audience-mediated action: even when
-     * this record is an {@link com.cinchapi.runway.access.Audience Audience},
-     * no access checks apply. Use
+     * No access checks apply. This method canonicalizes the record itself, so
+     * no audience mediates the operation, even when this record is an
+     * {@link com.cinchapi.runway.access.Audience Audience}. The
+     * audience-mediated form is
      * {@link com.cinchapi.runway.access.Audience#intern(Record)
-     * Audience#intern} to intern a record on an
-     * {@link com.cinchapi.runway.access.Audience Audience's} behalf, subject to
-     * its permissions and visibility.
+     * Audience#intern}, which enforces the audience's permissions and
+     * visibility on whatever record it interns, including the audience itself.
      * </p>
      *
      * @param <T> the type of {@link Record}
