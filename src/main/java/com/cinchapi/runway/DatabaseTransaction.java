@@ -998,7 +998,7 @@ class DatabaseTransaction extends Binding implements Transaction {
         for (UniqueIdentity identity : record.uniqueIdentities()) {
             Record candidate = identity.any()
                     ? findAnyUnique(identity.window(), identity.criteria())
-                    : findUnique(record.getClass(), identity.criteria());
+                    : findUnique(identity.window(), identity.criteria());
             if(candidate == null
                     || (match != null && !candidate.equals(match))) {
                 return null;

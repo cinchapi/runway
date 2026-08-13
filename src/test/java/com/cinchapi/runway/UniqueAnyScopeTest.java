@@ -417,6 +417,56 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a re-save of a record under a
+     * hierarchy-scoped {@link Unique} constraint does not collide with the
+     * record itself.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link ImageFile}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link ImageFile} with a locator.</li>
+     * <li>Change the non-identity label on the same instance.</li>
+     * <li>Save the instance again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both saves succeed and one {@link File} exists
+     * in the hierarchy.
+     */
+    @Test
+    public void testResaveDoesNotCollideWithItselfUnderAnyConstraint() {
+        ImageFile file = new ImageFile(Random.getSimpleString(), "before");
+        Assert.assertTrue(runway.save(file));
+        file.label = "after";
+        Assert.assertTrue(runway.save(file));
+        Assert.assertEquals(1, runway.countAny(File.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a hierarchy-scoped {@link Unique}
+     * constraint declared by a concrete class is enforced between the declarer
+     * itself and its descendants.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link Asset Assets}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Asset} with a locator.</li>
+     * <li>Save a {@link DerivedAsset} with the same locator.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first save succeeds, the second save
+     * fails, and one {@link Asset} exists in the hierarchy.
+     */
+    @Test
+    public void testSaveFailsWhenAnyConstraintValueExistsInAncestorClass() {
+        String locator = Random.getSimpleString();
+        Assert.assertTrue(runway.save(new Asset(locator)));
+        Assert.assertFalse(runway.save(new DerivedAsset(locator)));
+        Assert.assertEquals(1, runway.countAny(Asset.class));
+    }
+
+    /**
      * Return a {@link Criteria} that matches every {@link File} whose
      * {@code locator} equals the given {@code value}.
      *
@@ -727,6 +777,48 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
         public ExtendedComposite(String head, String tail) {
             super(head);
             this.tail = tail;
+        }
+    }
+
+    /**
+     * A concrete {@link Record} that declares a hierarchy-scoped {@link Unique}
+     * locator, so the identity space includes the declarer itself.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Asset extends Record {
+
+        /**
+         * The identity locator, shared between {@link Asset} and every
+         * descendant.
+         */
+        @Unique(any = true)
+        String locator;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param locator the identity locator
+         */
+        public Asset(String locator) {
+            this.locator = locator;
+        }
+    }
+
+    /**
+     * A concrete {@link Asset} subclass, a descendant of the concrete declarer.
+     *
+     * @author Jeff Nelson
+     */
+    public static class DerivedAsset extends Asset {
+
+        /**
+         * Construct a new instance.
+         *
+         * @param locator the identity locator
+         */
+        public DerivedAsset(String locator) {
+            super(locator);
         }
     }
 
