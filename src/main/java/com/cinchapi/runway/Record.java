@@ -719,37 +719,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if any of the {@code changed} values makes a
-     * {@link Record} stale.
-     *
-     * @param changed the keys whose stored values differ from the state the
-     *            {@link Record} last loaded or saved
-     * @return {@code true} if the data is stale
-     */
-    private static boolean isStale(Set<String> changed) {
-        return isStale(changed, null);
-    }
-
-    /**
-     * Return {@code true} if any of the {@code changed} values that
-     * {@code scope} covers makes a {@link Record} stale.
-     *
-     * @param changed the keys whose stored values differ from the state the
-     *            {@link Record} last loaded or saved
-     * @param scope the keys that matter, or {@code null} if every key matters
-     * @return {@code true} if the data is stale
-     */
-    private static boolean isStale(Set<String> changed,
-            @Nullable Set<String> scope) {
-        if(scope == null) {
-            return !changed.isEmpty();
-        }
-        else {
-            return !Collections.disjoint(changed, scope);
-        }
-    }
-
-    /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
      *
@@ -2799,8 +2768,8 @@ public abstract class Record implements Comparable<Record> {
             return false;
         }
         else {
-            return isStale(concourse
-                    .diff(id, Timestamp.fromMicros(checkpointTs)).keySet());
+            return !concourse.diff(id, Timestamp.fromMicros(checkpointTs))
+                    .isEmpty();
         }
     }
 
@@ -4627,7 +4596,14 @@ public abstract class Record implements Comparable<Record> {
         if(!writesNothing && !hasNoWindow) {
             saver.diff(id, Timestamp.fromMicros(checkpointTs), ceiling,
                     diff -> {
-                        if(isStale(diff.keySet(), scope)) {
+                        boolean stale;
+                        if(scope == null) {
+                            stale = !diff.isEmpty();
+                        }
+                        else {
+                            stale = !Collections.disjoint(diff.keySet(), scope);
+                        }
+                        if(stale) {
                             throw new StaleDataException(id);
                         }
                     });
