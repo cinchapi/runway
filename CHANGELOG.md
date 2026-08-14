@@ -16,8 +16,7 @@
     * Changing a value and then restoring its loaded value does not cause a
       conflict because the save would not overwrite anything.
     * The flag checks writes, not reads. If a write depends on a value read
-      earlier, use a `Transaction`. Transactions also check for conflicts in the
-      data they read.
+      earlier, use a `Transaction`.
 
 ##### Transaction API
 Runway previously offered no way to guarantee atomicity or full ACID compliance across an ad hoc combination of reads and writes: each save committed atomically, but a decision made on loaded data could not be guaranteed to still hold when it was written. The Transaction API provides that guarantee and opens a window to the full power of Concourse transactions, including serializable isolation and atomic multi-operation commits, without a raw Concourse connection.
