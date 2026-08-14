@@ -30,10 +30,9 @@ import com.cinchapi.runway.TransactionInterface;
 
 /**
  * Tests for the {@link com.cinchapi.runway.Transactional Transactional}
- * operations on an {@link Audience}: {@link Audience#transaction()
- * transaction}, {@link Audience#transaction() transaction},
- * {@link Audience#transact(java.util.function.Consumer) transact} and
- * {@link Audience#transactAndSupply(java.util.function.Function)
+ * operations on an {@link Audience}: {@link Audience#startTransaction()
+ * startTransaction}, {@link Audience#transact(java.util.function.Consumer)
+ * transact} and {@link Audience#transactAndSupply(java.util.function.Function)
  * transactAndSupply}.
  *
  * @author Jeff Nelson
@@ -90,7 +89,8 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code admin.transaction()} to start a {@link Transaction}.</li>
+     * <li>Call {@code admin.startTransaction()} to start a
+     * {@link Transaction}.</li>
      * <li>Create a {@link Candidate} through the {@link Admin} and
      * {@code save()} it.</li>
      * <li>Search for the {@link Candidate} through the enclosing
@@ -103,7 +103,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     @Test
     public void testAudienceCreateAndSaveStageWithinTransaction() {
         Admin admin = createAdmin();
-        try (Transaction transaction = admin.transaction()) {
+        try (Transaction transaction = admin.startTransaction()) {
             Candidate candidate = admin.create(Candidate.class);
             candidate.email = "jane@example.com";
             candidate.name = "Jane Developer";
@@ -126,8 +126,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code admin.transaction()} (the {@code transaction()}
-     * alias).</li>
+     * <li>Call {@code admin.startTransaction()}.</li>
      * <li>Load the {@link Candidate} through the transaction, change its name
      * and {@code save()}.</li>
      * <li>Load the {@link Candidate} through the {@link Admin} and through the
@@ -142,7 +141,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     public void testAudienceOperationsObserveStagedWritesWithinTransaction() {
         Admin admin = createAdmin();
         Candidate candidate = createCandidate();
-        try (Transaction transaction = admin.transaction()) {
+        try (Transaction transaction = admin.startTransaction()) {
             Candidate inside = transaction.load(Candidate.class,
                     candidate.id());
             inside.name = "Janet Developer";
@@ -164,7 +163,8 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code admin.transaction()} in a try-with-resources block.</li>
+     * <li>Call {@code admin.startTransaction()} in a try-with-resources
+     * block.</li>
      * <li>Create a {@link Candidate} through the {@link Admin} and
      * {@code save()} it.</li>
      * <li>Exit the block without a {@code commit()}.</li>
@@ -176,7 +176,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     @Test
     public void testCloseWithoutCommitDiscardsAudienceStagedWrites() {
         Admin admin = createAdmin();
-        try (Transaction transaction = admin.transaction()) {
+        try (Transaction transaction = admin.startTransaction()) {
             Candidate candidate = admin.create(Candidate.class);
             candidate.email = "jane@example.com";
             candidate.name = "Jane Developer";
@@ -195,7 +195,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code admin.transaction()}.</li>
+     * <li>Call {@code admin.startTransaction()}.</li>
      * <li>Load the {@link Candidate} through the {@link Admin} and change its
      * name with {@code admin.write(...)}, then {@code save()}.</li>
      * <li>Load the {@link Candidate} through the enclosing {@link #runway}
@@ -209,7 +209,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     public void testAudienceWriteStagesWithinTransaction() {
         Admin admin = createAdmin();
         Candidate candidate = createCandidate();
-        try (Transaction transaction = admin.transaction()) {
+        try (Transaction transaction = admin.startTransaction()) {
             Candidate inside = admin.load(Candidate.class, candidate.id());
             admin.write("name", "Janet Developer", inside);
             Assert.assertTrue(inside.save());
@@ -230,21 +230,22 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@code runway.transaction()}.</li>
+     * <li>Start a {@link Transaction} with
+     * {@code runway.startTransaction()}.</li>
      * <li>Load the {@link Admin} through the transaction.</li>
-     * <li>Call {@code transaction()} on the loaded {@link Admin}.</li>
+     * <li>Call {@code startTransaction()} on the loaded {@link Admin}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The call throws an
      * {@link IllegalStateException}.
      */
     @Test
-    public void testStageThrowsWhenAudienceBoundToOpenTransaction() {
+    public void testStartTransactionThrowsWhenAudienceBoundToOpenTransaction() {
         Admin admin = createAdmin();
-        try (Transaction outer = runway.transaction()) {
+        try (Transaction outer = runway.startTransaction()) {
             Admin inside = outer.load(Admin.class, admin.id());
             try {
-                inside.transaction();
+                inside.startTransaction();
                 Assert.fail("Expected an IllegalStateException");
             }
             catch (IllegalStateException e) {
@@ -274,7 +275,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * change is durable.
      */
     @Test
-    public void testSupplyCommitsOwnTransactionWhenAudienceNotInTransaction() {
+    public void testTransactAndSupplyCommitsOwnTransactionWhenAudienceNotInTransaction() {
         Admin admin = createAdmin();
         Candidate candidate = createCandidate();
         String name = admin.transactAndSupply(transaction -> {
@@ -299,8 +300,8 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@code runway.transaction()} and
-     * load the {@link Admin} through it.</li>
+     * <li>Start a {@link Transaction} with {@code runway.startTransaction()}
+     * and load the {@link Admin} through it.</li>
      * <li>Call {@code transactAndSupply(...)} on the loaded {@link Admin} with
      * work that changes the {@link Candidate Candidate's} name and
      * {@code save()}s it.</li>
@@ -312,10 +313,10 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * transaction before the commit and visible after it.
      */
     @Test
-    public void testSupplyJoinsOpenTransactionWhenAudienceBound() {
+    public void testTransactAndSupplyJoinsOpenTransactionWhenAudienceBound() {
         Admin admin = createAdmin();
         Candidate candidate = createCandidate();
-        try (Transaction outer = runway.transaction()) {
+        try (Transaction outer = runway.startTransaction()) {
             Admin inside = outer.load(Admin.class, admin.id());
             inside.transactAndSupply(transaction -> {
                 Candidate subject = transaction.load(Candidate.class,
@@ -352,7 +353,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <strong>Expected:</strong> The name change is durable.
      */
     @Test
-    public void testRunExecutesWorkInAudienceScope() {
+    public void testTransactExecutesWorkInAudienceScope() {
         Admin admin = createAdmin();
         Candidate candidate = createCandidate();
         admin.transact(transaction -> {
@@ -444,7 +445,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     public void testTransactionReadsFilterAudienceVisibility() {
         Candidate viewer = createViewer();
         createHiddenApplication();
-        try (Transaction transaction = viewer.transaction()) {
+        try (Transaction transaction = viewer.startTransaction()) {
             Assert.assertTrue(transaction
                     .find(Application.class, submittedStatusCriteria())
                     .isEmpty());
@@ -474,7 +475,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     @Test
     public void testTransactionCreateRequiresAudiencePermission() {
         Candidate viewer = createViewer();
-        try (Transaction transaction = viewer.transaction()) {
+        try (Transaction transaction = viewer.startTransaction()) {
             try {
                 transaction.create(Job.class);
                 Assert.fail("Expected a RestrictedAccessException");
@@ -508,7 +509,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     @Test
     public void testTransactionCreateRefusedAfterFailedSavePoisons() {
         Admin admin = createAdmin();
-        try (Transaction transaction = admin.transaction()) {
+        try (Transaction transaction = admin.startTransaction()) {
             Candidate invalid = admin.create(Candidate.class);
             invalid.email = "jane@example.com";
             try {
@@ -551,7 +552,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     public void testTransactionCreateRefusedFromNonOwnerThread()
             throws InterruptedException {
         Admin admin = createAdmin();
-        try (Transaction transaction = admin.transaction()) {
+        try (Transaction transaction = admin.startTransaction()) {
             AtomicBoolean refused = new AtomicBoolean(false);
             Thread thread = new Thread(() -> {
                 try {
@@ -592,9 +593,9 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     @Test
     public void testEndedTransactionViewRefusedWhenAudienceJoinsAnotherTransaction() {
         Admin admin = createAdmin();
-        Transaction first = admin.transaction();
+        Transaction first = admin.startTransaction();
         Assert.assertTrue(first.commit());
-        try (Transaction second = admin.transaction()) {
+        try (Transaction second = admin.startTransaction()) {
             Candidate candidate = second.create(Candidate.class);
             candidate.email = "jane@example.com";
             candidate.name = "Jane Developer";
@@ -638,7 +639,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     @Test
     public void testEndedTransactionViewFallsThroughToRunway() {
         Admin admin = createAdmin();
-        Transaction transaction = admin.transaction();
+        Transaction transaction = admin.startTransaction();
         Candidate candidate = transaction.create(Candidate.class);
         candidate.email = "jane@example.com";
         candidate.name = "Jane Developer";
@@ -670,7 +671,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * {@link Application}.
      */
     @Test
-    public void testSupplyViewReadsFilterAudienceVisibility() {
+    public void testTransactAndSupplyViewReadsFilterAudienceVisibility() {
         Candidate viewer = createViewer();
         createHiddenApplication();
         boolean visible = viewer.transactAndSupply(transaction -> !transaction
@@ -690,22 +691,22 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Stage a {@link Transaction} with {@code admin.transaction()} and
+     * <li>Stage a {@link Transaction} with {@code admin.startTransaction()} and
      * {@code commit()} it.</li>
      * <li>Create a {@link Candidate} through the {@link Admin} and
      * {@code save()} it outside of any transaction.</li>
-     * <li>Call {@code admin.transaction()} a second time.</li>
+     * <li>Call {@code admin.startTransaction()} a second time.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save is immediately visible through the
-     * enclosing {@link #runway}, and the second {@code transaction()} returns
-     * an open {@link Transaction} instead of throwing an
+     * enclosing {@link #runway}, and the second {@code startTransaction()}
+     * returns an open {@link Transaction} instead of throwing an
      * {@link IllegalStateException}.
      */
     @Test
     public void testAudienceOperatesAgainstRunwayAfterTransactionEnds() {
         Admin admin = createAdmin();
-        try (Transaction transaction = admin.transaction()) {
+        try (Transaction transaction = admin.startTransaction()) {
             Assert.assertTrue(transaction.commit());
         }
         Candidate candidate = admin.create(Candidate.class);
@@ -714,7 +715,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
         Assert.assertTrue(candidate.save());
         Assert.assertEquals(1,
                 runway.find(Candidate.class, janeEmailCriteria()).size());
-        try (Transaction transaction = admin.transaction()) {
+        try (Transaction transaction = admin.startTransaction()) {
             Assert.assertTrue(transaction.commit());
         }
     }
@@ -728,8 +729,8 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Get {@link Audience#anonymous()}.</li>
-     * <li>Call {@code transaction()} and {@code transactAndSupply(...)} and
-     * {@code transact(...)} on it.</li>
+     * <li>Call {@code startTransaction()}, {@code transactAndSupply(...)},
+     * {@code transact(...)} and {@code scope(...)} on it.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> Every call throws an
@@ -739,14 +740,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     public void testAnonymousAudienceRefusesTransactionalOperations() {
         Audience anonymous = Audience.anonymous();
         try {
-            anonymous.transaction();
-            Assert.fail("Expected an UnsupportedOperationException");
-        }
-        catch (UnsupportedOperationException e) {
-            // expected
-        }
-        try {
-            anonymous.transaction();
+            anonymous.startTransaction();
             Assert.fail("Expected an UnsupportedOperationException");
         }
         catch (UnsupportedOperationException e) {
@@ -766,7 +760,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
         catch (UnsupportedOperationException e) {
             // expected
         }
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             anonymous.scope(transaction);
             Assert.fail("Expected an UnsupportedOperationException");
         }
@@ -785,7 +779,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@code runway.transaction()},
+     * <li>Start a {@link Transaction} with {@code runway.startTransaction()},
      * without a load of the {@link Admin} through it.</li>
      * <li>Call {@code admin.scope(transaction)}.</li>
      * </ul>
@@ -796,7 +790,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     @Test
     public void testScopeThrowsWhenAudienceHasNotJoinedTransaction() {
         Admin admin = createAdmin();
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             try {
                 admin.scope(transaction);
                 Assert.fail("Expected an IllegalStateException");
@@ -819,8 +813,9 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@code runway.transaction()} and
-     * load the {@link Admin} and the viewer {@link Candidate} through it.</li>
+     * <li>Start a {@link Transaction} with {@code runway.startTransaction()}
+     * and load the {@link Admin} and the viewer {@link Candidate} through
+     * it.</li>
      * <li>Build the viewer's view with {@code viewer.scope(transaction)}.</li>
      * <li>Call {@code admin.scope(...)} with the viewer's view.</li>
      * <li>Find the {@link Application} through the returned view.</li>
@@ -835,7 +830,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
         Admin admin = createAdmin();
         Candidate viewer = createViewer();
         createHiddenApplication();
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Admin adminInside = transaction.load(Admin.class, admin.id());
             Candidate viewerInside = transaction.load(Candidate.class,
                     viewer.id());
@@ -965,7 +960,8 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@code runway.transaction()}.</li>
+     * <li>Start a {@link Transaction} with
+     * {@code runway.startTransaction()}.</li>
      * <li>Load the {@link RestrictedUser} through the transaction and call
      * {@code intern()} on it.</li>
      * </ul>
@@ -980,7 +976,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
         user.name = "Restricted User";
         user.assign(runway);
         Assert.assertTrue(user.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             RestrictedUser inside = transaction.load(RestrictedUser.class,
                     user.id());
             RestrictedUser interned = inside.intern();

@@ -103,7 +103,7 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
     public void testFindUniqueAndUpdateStagesWithinTransaction() {
         runway.save(new Item(1), new Item(2), new Item(3));
         Item item;
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             item = transaction.findUniqueAndUpdate(Item.class, code(2), "owner",
                     owner -> "worker");
             Assert.assertNotNull(item);
@@ -137,7 +137,7 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
     public void testFindUniqueAndUpdateReturnsNullAndSkipsOperatorWhenNoMatch() {
         runway.save(new Item(1), new Item(2), new Item(3));
         AtomicBoolean ran = new AtomicBoolean(false);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item item = transaction.findUniqueAndUpdate(Item.class, code(99),
                     "owner", owner -> {
                         ran.set(true);
@@ -173,7 +173,7 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
         Item one = new Item(7);
         Item two = new Item(7);
         runway.save(one, two);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             boolean threw = false;
             try {
                 transaction.findUniqueAndUpdate(Item.class, code(7), "owner",
@@ -213,7 +213,7 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
     @Test
     public void testFindUniqueAndUpdateSeesRecordStagedWithinTransaction() {
         Item staged = new Item(9);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             transaction.save(staged);
             Item item = transaction.findUniqueAndUpdate(Item.class, code(9),
                     "owner", owner -> "worker");
@@ -248,7 +248,7 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
     public void testFindUniqueAndUpdateRejectsNullReplacement() {
         Item item = new Item(1);
         runway.save(item);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             boolean threw = false;
             try {
                 transaction.findUniqueAndUpdate(Item.class, code(1), "owner",
@@ -290,7 +290,7 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
     public void testFindUniqueAndUpdateRefusesOperatorThatEndsTransaction() {
         Item item = new Item(1);
         runway.save(item);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             boolean threw = false;
             try {
                 transaction.findUniqueAndUpdate(Item.class, code(1), "owner",
@@ -331,7 +331,7 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
     @Test
     public void testFindUniqueAndUpdateResumesAgainstRunwayAfterTransactionEnds() {
         runway.save(new Item(1), new Item(2), new Item(3));
-        Transaction transaction = runway.transaction();
+        Transaction transaction = runway.startTransaction();
         Assert.assertTrue(transaction.commit());
         Item item = transaction.findUniqueAndUpdate(Item.class, code(2),
                 "owner", owner -> "worker");
@@ -365,7 +365,7 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
         Item two = new Item(2);
         Item three = new Item(3);
         runway.save(one, two, three);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item item = transaction.findFirstAndUpdate(Item.class,
                     owner("unassigned"), Order.by("code").ascending(), "owner",
                     owner -> "worker");
@@ -402,7 +402,7 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
     public void testFindAnyUniqueAndUpdateMatchesAcrossHierarchy() {
         SpecialItem special = new SpecialItem(5);
         runway.save(special);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item item = transaction.findAnyUniqueAndUpdate(Item.class, code(5),
                     "owner", owner -> "worker");
             Assert.assertNotNull(item);
@@ -437,7 +437,7 @@ public class TransactionFindAndUpdateTest extends RunwayBaseClientServerTest {
         SpecialItem special = new SpecialItem(1);
         Item item = new Item(2);
         runway.save(special, item);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item updated = transaction.findAnyFirstAndUpdate(Item.class,
                     owner("unassigned"), Order.by("code").ascending(), "owner",
                     owner -> "worker");

@@ -407,7 +407,7 @@ public class GH163 extends RunwayBaseClientServerTest {
         fresh.members.add(b);
         Assert.assertTrue(runway.save(fresh, b));
 
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             stale.name = "Renamed";
             Assert.assertTrue(transaction.save(stale));
             Assert.assertTrue(transaction.commit());

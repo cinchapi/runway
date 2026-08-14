@@ -95,7 +95,7 @@ public class UniqueSaveScopeTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testCommitSucceedsWhenUnrelatedRecordOfSameClassIsCreatedConcurrently() {
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             transaction.save(new Account(Random.getSimpleString()));
             Account unrelated = new Account(Random.getSimpleString());
             unrelated.assign(runway);

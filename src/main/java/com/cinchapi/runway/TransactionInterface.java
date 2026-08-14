@@ -37,7 +37,7 @@ import com.cinchapi.concourse.lang.sort.Order;
  * {@link Record#transact(java.util.function.Consumer) Record}
  * {@link Record#transactAndSupply(java.util.function.Function) counterparts},
  * hand work this view, so the work cannot commit, abort or close the
- * transaction it joins. {@link Runway#transaction()} returns the full
+ * transaction it joins. {@link Runway#startTransaction()} returns the full
  * {@link Transaction}, which adds the lifecycle verbs for the caller that owns
  * them.
  * </p>

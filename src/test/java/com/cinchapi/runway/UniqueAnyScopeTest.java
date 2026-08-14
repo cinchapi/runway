@@ -353,8 +353,8 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@link Runway#transaction()} in a
-     * try-with-resources block.</li>
+     * <li>Start a {@link Transaction} with {@link Runway#startTransaction()} in
+     * a try-with-resources block.</li>
      * <li>Call {@code intern} on the transaction with a new
      * {@link ImageFile}.</li>
      * <li>Query the {@link File} hierarchy through the enclosing {@link Runway}
@@ -369,7 +369,7 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
     public void testInternStagesAnyCreateWithinOpenTransaction() {
         String value = Random.getSimpleString();
         long id;
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             ImageFile file = new ImageFile(value, "image");
             ImageFile interned = transaction.intern(file);
             Assert.assertSame(file, interned);

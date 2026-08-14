@@ -1072,7 +1072,7 @@ public interface Audience extends DatabaseInterface, Transactional {
      * framework guarantees when it invokes this method during
      * {@link #transact(java.util.function.Consumer) transact} and
      * {@link #transactAndSupply(Function) transactAndSupply}. Use
-     * {@link #transaction()} to start a {@link Transaction} that this
+     * {@link #startTransaction()} to start a {@link Transaction} that this
      * {@link Audience} joins.
      * </p>
      *
@@ -1132,7 +1132,7 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             {@link Record}
      */
     @Override
-    public default Transaction transaction() {
+    public default Transaction startTransaction() {
         if(this instanceof Record) {
             Record record = (Record) this;
             Runway harness = Reflection.call(record, "harness");
@@ -1143,7 +1143,7 @@ public interface Audience extends DatabaseInterface, Transactional {
             Verify.that(!inOpenTransaction, "Cannot start a Transaction"
                     + " because this Audience is already bound to an open"
                     + " Transaction");
-            Transaction transaction = harness.transaction();
+            Transaction transaction = harness.startTransaction();
             try {
                 Reflection.call(transaction, "join", record);
             }

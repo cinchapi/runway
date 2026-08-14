@@ -51,7 +51,7 @@ package com.cinchapi.runway;
  * {@link #afterCommit(Runnable) afterCommit}/{@link #afterAbort(Runnable)
  * afterAbort} registrations are refused. One exception: after the
  * {@link com.cinchapi.runway.access.Audience Audience} that
- * {@link com.cinchapi.runway.access.Audience#transaction() staged} the
+ * {@link com.cinchapi.runway.access.Audience#startTransaction() started} the
  * transaction joins a different {@link Transaction}, a database operation on
  * the ended view is refused instead of following the new scope. Side effects
  * that depend on the outcome can be registered with

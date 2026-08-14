@@ -42,7 +42,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 /**
- * Tests for {@link Runway#transaction()},
+ * Tests for {@link Runway#startTransaction()},
  * {@link Runway#transact(java.util.function.Consumer) transact} and
  * {@link Runway#transactAndSupply(java.util.function.Function)
  * transactAndSupply}: the {@link Transaction} view that scopes reads and writes
@@ -76,7 +76,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -109,7 +109,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -141,7 +141,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -171,43 +171,12 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
         }
         Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@link Runway#transaction()} is an
-     * alias for {@link Runway#transaction()} that starts an open
-     * {@link Transaction}.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Call {@code transaction()}, load the {@link Item}, set the score to 2
-     * and {@code save()}.</li>
-     * <li>Call {@code commit()}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@code commit()} returns {@code true} and the
-     * stored score is 2.
-     */
-    @Test
-    public void testStartTransactionIsAnAliasForStage() {
-        Item item = new Item("widget", 1);
-        item.assign(runway);
-        Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
-            Item txItem = transaction.load(Item.class, item.id());
-            txItem.score = 2;
-            Assert.assertTrue(txItem.save());
-            Assert.assertTrue(transaction.commit());
-        }
-        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
     }
 
     /**
@@ -234,7 +203,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        Transaction transaction = runway.transaction();
+        Transaction transaction = runway.startTransaction();
         boolean conflicted;
         try {
             Item txItem = transaction.load(Item.class, item.id());
@@ -273,7 +242,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testNewRecordSavedThroughTransactionIsInvisibleUntilCommit() {
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item item = new Item("widget", 1);
             Assert.assertTrue(transaction.save(item));
             Assert.assertEquals(0, runway.count(Item.class));
@@ -303,7 +272,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testCreatedRecordIsBoundToTheTransaction() {
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item item = transaction.create(Item.class, "widget", 1);
             Assert.assertTrue(item.save());
             Assert.assertEquals(1, transaction.count(Item.class));
@@ -335,7 +304,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             try {
                 txItem.getAndUpdate("score", (Integer score) -> score + 1);
@@ -373,7 +342,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -410,7 +379,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             Assert.assertTrue(transaction.commit());
             Assert.assertEquals(1, (int) txItem.getAndUpdate("score",
@@ -446,7 +415,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Registration invalid = new Registration(null);
@@ -491,7 +460,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Registration invalid = new Registration(null);
@@ -551,7 +520,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Registration invalid = new Registration(null);
@@ -595,7 +564,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Handle handle = new Handle("alpha");
         handle.assign(runway);
         Assert.assertTrue(handle.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Handle duplicate = transaction.create(Handle.class, "alpha");
             try {
                 duplicate.save();
@@ -637,7 +606,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         handle.assign(runway);
         Assert.assertTrue(handle.save());
         AtomicInteger aborts = new AtomicInteger(0);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Handle duplicate = transaction.create(Handle.class, "alpha");
             try {
                 duplicate.save();
@@ -680,7 +649,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         grenade.assign(runway);
         Assert.assertTrue(runway.save(grenade, item));
         AtomicInteger commits = new AtomicInteger(0);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Grenade txGrenade = transaction.load(Grenade.class, grenade.id());
             Item txItem = transaction.load(Item.class, item.id());
             txGrenade.name = "pulled";
@@ -732,7 +701,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         recruiter.assign(runway);
         Assert.assertTrue(runway.save(recruiter, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             recruiter.target = transaction;
             recruiter.recruit = item;
             recruiter.name = "poacher";
@@ -771,7 +740,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Sleeper sleeper = new Sleeper("agent");
         sleeper.assign(runway);
         Assert.assertTrue(sleeper.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Sleeper txSleeper = transaction.load(Sleeper.class, sleeper.id());
             txSleeper.target = transaction;
             try {
@@ -807,7 +776,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.refresh();
             txItem.score = 2;
@@ -845,7 +814,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 .operator(Operator.GREATER_THAN).value(0).build();
         Set<Item> result;
         List<Long> before = Lists.newArrayList();
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txOne = transaction.load(Item.class, one.id());
             txOne.score = 10;
             Assert.assertTrue(txOne.save());
@@ -888,7 +857,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Ledger ledger = new Ledger("book");
         ledger.assign(runway);
         Assert.assertTrue(ledger.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Ledger txLedger = transaction.load(Ledger.class, ledger.id());
             Posting posting = transaction.create(Posting.class, "line",
                     txLedger);
@@ -927,7 +896,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -964,7 +933,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(item.save());
         Item loaded = runway.load(Item.class, item.id());
         client.set("score", 99, item.id());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             loaded.score = 50;
             try {
                 transaction.save(true, loaded);
@@ -1003,7 +972,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Basket basket = new Basket("tote", item);
         basket.assign(runway);
         Assert.assertTrue(runway.save(basket, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Basket txBasket = transaction.load(Basket.class, basket.id());
             txBasket.item.score = 5;
             Assert.assertTrue(txBasket.save());
@@ -1046,7 +1015,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(runway.save(basket, item));
         Basket loaded = runway.load(Basket.class, basket.id());
         client.set("score", 99, item.id());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             loaded.name = "satchel";
             Assert.assertTrue(transaction.save(loaded));
             loaded.item.score = 50;
@@ -1087,7 +1056,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(item.save());
         Item first = runway.load(Item.class, item.id());
         Item second = runway.load(Item.class, item.id());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             first.score = 2;
             Assert.assertTrue(transaction.save(first));
             second.score = 3;
@@ -1123,7 +1092,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Bypass bypass = new Bypass("shortcut");
@@ -1162,7 +1131,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * and the stored score is 7.
      */
     @Test
-    public void testRecordSupplyStartsAndCommitsATransactionWhenRunwayBound() {
+    public void testRecordTransactAndSupplyStartsAndCommitsATransactionWhenRunwayBound() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -1198,11 +1167,11 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * is 7.
      */
     @Test
-    public void testRecordSupplyJoinsTheOpenTransactionWhenTransactionBound() {
+    public void testRecordTransactAndSupplyJoinsTheOpenTransactionWhenTransactionBound() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             Assert.assertTrue(txItem.claimScore(7));
             Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
@@ -1233,7 +1202,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * {@code transact} returns, the stored score is 9.
      */
     @Test
-    public void testRecordRunCommitsWorkWhenRunwayBound() {
+    public void testRecordTransactCommitsWorkWhenRunwayBound() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -1269,7 +1238,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * {@code transact} returns, the stored score is 9.
      */
     @Test
-    public void testRecordRunReceiverJoinsTheManagedTransaction() {
+    public void testRecordTransactReceiverJoinsTheManagedTransaction() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -1305,7 +1274,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         item.assign(runway);
         Assert.assertTrue(item.save());
         AtomicInteger effects = new AtomicInteger(0);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -1340,7 +1309,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     public void testAfterAbortHookRunsWhenTransactionEndsWithoutCommit() {
         AtomicInteger commits = new AtomicInteger(0);
         AtomicInteger aborts = new AtomicInteger(0);
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             transaction.afterCommit(commits::incrementAndGet);
             transaction.afterAbort(aborts::incrementAndGet);
         }
@@ -1413,7 +1382,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * exactly once and the {@link Item} is durable.
      */
     @Test
-    public void testRunDoesNotRetryWhenAfterCommitHookThrowsTransactionException() {
+    public void testTransactDoesNotRetryWhenAfterCommitHookThrowsTransactionException() {
         AtomicInteger runs = new AtomicInteger(0);
         try {
             runway.transact(transaction -> {
@@ -1456,7 +1425,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * exactly once and the staged change is discarded.
      */
     @Test
-    public void testRunDoesNotRetryWhenAfterAbortHookThrowsTransactionException() {
+    public void testTransactDoesNotRetryWhenAfterAbortHookThrowsTransactionException() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -1503,7 +1472,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * the hook's exception is attached to it as a suppressed exception.
      */
     @Test
-    public void testRunPreservesTheWorkExceptionWhenAnAfterAbortHookThrows() {
+    public void testTransactPreservesTheWorkExceptionWhenAnAfterAbortHookThrows() {
         try {
             runway.transact(transaction -> {
                 transaction.afterAbort(() -> {
@@ -1546,7 +1515,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         AtomicInteger notified = new AtomicInteger(0);
         runway.properties().onSave(Item.class,
                 record -> notified.incrementAndGet());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -1581,7 +1550,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * {@code transact} returns, the stored score is 2.
      */
     @Test
-    public void testRunCommitsWorkAtomically() {
+    public void testTransactCommitsWorkAtomically() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -1611,7 +1580,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <strong>Expected:</strong> The call returns 2 and the stored score is 2.
      */
     @Test
-    public void testSupplyReturnsTheWorkResult() {
+    public void testTransactAndSupplyReturnsTheWorkResult() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -1646,7 +1615,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * is bound to the transaction and the commit made it durable.
      */
     @Test
-    public void testRecordCreatedDuringRunJoinsTheTransaction() {
+    public void testRecordCreatedDuringTransactJoinsTheTransaction() {
         runway.transact(transaction -> {
             Item item = transaction.create(Item.class, "widget", 1);
             Assert.assertTrue(item.save());
@@ -1676,7 +1645,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * the transaction.
      */
     @Test
-    public void testRunwayBoundRecordSavesOutsideTheRunTransaction() {
+    public void testRunwayBoundRecordSavesOutsideTheManagedTransaction() {
         runway.transact(transaction -> {
             Item item = new Item("widget", 1);
             item.assign(runway);
@@ -1704,7 +1673,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * remains 1.
      */
     @Test
-    public void testRunAbortsWhenWorkThrows() {
+    public void testTransactAbortsWhenWorkThrows() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -1745,7 +1714,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         item.assign(runway);
         Assert.assertTrue(item.save());
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Future<?> future = executor
                     .submit(() -> transaction.load(Item.class, item.id()));
             try {
@@ -1788,7 +1757,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Basket basket = new Basket("bin", item);
         basket.assign(runway);
         Assert.assertTrue(basket.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Basket txBasket = transaction.load(Basket.class, basket.id());
             txBasket.item.score = 2;
             Assert.assertTrue(txBasket.item.save());
@@ -1827,7 +1796,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Basket basket = new Basket("bin", item);
         basket.assign(runway);
         Assert.assertTrue(basket.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Assert.assertTrue(transaction.save(basket));
             item.score = 2;
             Assert.assertTrue(item.save());
@@ -1859,7 +1828,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -1899,7 +1868,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Viewer viewer = new Viewer("alice");
         viewer.assign(runway);
         Assert.assertTrue(viewer.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -1938,7 +1907,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Secret secret = new Secret("classified", alice);
         secret.assign(runway);
         Assert.assertTrue(secret.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Viewer txAlice = transaction.load(Viewer.class, alice.id());
             Viewer txBob = transaction.load(Viewer.class, bob.id());
             Assert.assertNotNull(txAlice.load(Secret.class, secret.id()));
@@ -1974,7 +1943,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Viewer viewer = new Viewer("alice");
         viewer.assign(runway);
         Assert.assertTrue(viewer.save());
-        Transaction transaction = runway.transaction();
+        Transaction transaction = runway.startTransaction();
         boolean conflicted;
         try {
             Viewer txViewer = transaction.load(Viewer.class, viewer.id());
@@ -2019,7 +1988,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Viewer viewer = new Viewer("alice");
         viewer.assign(runway);
         Assert.assertTrue(viewer.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Viewer txViewer = transaction.load(Viewer.class, viewer.id());
             Item item = txViewer.create(Item.class, "widget", 1);
             Assert.assertTrue(item.save());
@@ -2056,7 +2025,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Crate crate = new Crate("bin", item);
         crate.assign(runway);
         Assert.assertTrue(runway.save(crate, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -2093,7 +2062,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Crate crate = new Crate("bin", item);
         crate.assign(runway);
         Assert.assertTrue(runway.save(crate, item));
-        Transaction transaction = runway.transaction();
+        Transaction transaction = runway.startTransaction();
         boolean conflicted;
         try {
             Crate txCrate = transaction.load(Crate.class, crate.id());
@@ -2139,7 +2108,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Crate crate = new Crate("bin", item);
         crate.assign(runway);
         Assert.assertTrue(runway.save(crate, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Crate txCrate = transaction.load(Crate.class, crate.id());
             Assert.assertTrue(transaction.commit());
             Item lazy = txCrate.item.get();
@@ -2180,7 +2149,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(runway.save(crate, item));
         Crate loaded = runway.load(Crate.class, crate.id());
         Item lazy = loaded.item.get();
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Assert.assertTrue(transaction.save(loaded));
             lazy.score = 7;
             Assert.assertTrue(lazy.save());
@@ -2217,7 +2186,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Probe probe = new Probe(item.id());
         probe.assign(runway);
         Assert.assertTrue(probe.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -2254,7 +2223,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Crate crate = new Crate("bin", item);
         crate.assign(runway);
         Assert.assertTrue(runway.save(crate, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -2289,7 +2258,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.deleteOnSave();
             Assert.assertTrue(txItem.save());
@@ -2325,7 +2294,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         AtomicInteger deletes = new AtomicInteger(0);
         runway.properties().onDelete(Item.class,
                 record -> deletes.incrementAndGet());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.deleteOnSave();
             Assert.assertTrue(txItem.save());
@@ -2362,7 +2331,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         AtomicInteger deletes = new AtomicInteger(0);
         runway.properties().onDelete(Item.class,
                 record -> deletes.incrementAndGet());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.deleteOnSave();
             Assert.assertTrue(txItem.save());
@@ -2402,7 +2371,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Kit kit = new Kit("toolkit", part);
         kit.assign(runway);
         Assert.assertTrue(runway.save(kit, part));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Kit txKit = transaction.load(Kit.class, kit.id());
             txKit.deleteOnSave();
             Assert.assertTrue(txKit.save());
@@ -2439,7 +2408,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Coupon coupon = new Coupon("promo", item);
         coupon.assign(runway);
         Assert.assertTrue(runway.save(coupon, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.deleteOnSave();
             Assert.assertTrue(txItem.save());
@@ -2476,7 +2445,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Shelf shelf = new Shelf("front", item);
         shelf.assign(runway);
         Assert.assertTrue(runway.save(shelf, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.deleteOnSave();
             Assert.assertTrue(txItem.save());
@@ -2514,7 +2483,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item doomed = transaction.load(Item.class, item.id());
             Item copy = transaction.load(Item.class, item.id());
             doomed.deleteOnSave();
@@ -2561,7 +2530,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 record -> saves.incrementAndGet());
         runway.properties().onDelete(Item.class,
                 record -> deletes.incrementAndGet());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item changed = transaction.load(Item.class, item.id());
             Item doomed = transaction.load(Item.class, item.id());
             changed.score = 2;
@@ -2610,7 +2579,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         shelf.assign(runway);
         Assert.assertTrue(runway.save(shelf, item));
         Shelf txShelf;
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             txShelf = transaction.load(Shelf.class, shelf.id());
             Item copy = transaction.load(Item.class, item.id());
             Item doomed = transaction.load(Item.class, item.id());
@@ -2652,7 +2621,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         receipt.assign(runway);
         Assert.assertTrue(receipt.save());
         Timestamp before = receipt.lastUpdatedAt();
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Receipt txReceipt = transaction.load(Receipt.class, receipt.id());
             txReceipt.memo = "staged";
             Assert.assertTrue(txReceipt.save());
@@ -2738,7 +2707,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Viewer viewer = new Viewer("alice");
         viewer.assign(runway);
         Assert.assertTrue(viewer.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Viewer txViewer = transaction.load(Viewer.class, viewer.id());
             Item item = transaction.create(Item.class, "widget", 1);
             Assert.assertTrue(item.save());
@@ -2776,9 +2745,9 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction tx1 = runway.transaction()) {
+        try (Transaction tx1 = runway.startTransaction()) {
             Item txItem = tx1.load(Item.class, item.id());
-            try (Transaction tx2 = runway.transaction()) {
+            try (Transaction tx2 = runway.startTransaction()) {
                 try {
                     tx2.save(txItem);
                     Assert.fail("Expected the save to be refused");
@@ -2820,7 +2789,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             try {
@@ -2865,7 +2834,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Basket basket = new Basket("caddy", item);
         basket.assign(runway);
         Assert.assertTrue(runway.save(basket, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 99;
             Basket parent = runway.load(Basket.class, basket.id());
@@ -2912,7 +2881,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Satchel satchel = new Satchel("bag");
         satchel.assign(runway);
         Assert.assertTrue(runway.save(satchel, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 99;
             Satchel holder = runway.load(Satchel.class, satchel.id());
@@ -2956,10 +2925,10 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Locker locker = new Locker("cabinet");
         locker.assign(runway);
         Assert.assertTrue(runway.save(locker, item));
-        try (Transaction tx1 = runway.transaction()) {
+        try (Transaction tx1 = runway.startTransaction()) {
             Item txItem = tx1.load(Item.class, item.id());
             txItem.score = 99;
-            try (Transaction tx2 = runway.transaction()) {
+            try (Transaction tx2 = runway.startTransaction()) {
                 Locker txLocker = tx2.load(Locker.class, locker.id());
                 txLocker.name = "renamed";
                 txLocker.pending = txItem;
@@ -3011,7 +2980,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Locker locker = new Locker("cabinet");
         locker.assign(runway);
         Assert.assertTrue(runway.save(locker, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 99;
             Locker holder = runway.load(Locker.class, locker.id());
@@ -3057,7 +3026,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Locker locker = new Locker("cabinet");
         locker.assign(runway);
         Assert.assertTrue(locker.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Locker txLocker = transaction.load(Locker.class, locker.id());
             txLocker.name = "renamed";
             txLocker.pending = new Item("spawned", 7);
@@ -3101,7 +3070,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Bomb bomb = new Bomb("crate");
         bomb.assign(runway);
         Assert.assertTrue(runway.save(bomb, item));
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 99;
             Bomb holder = runway.load(Bomb.class, bomb.id());
@@ -3149,9 +3118,9 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Bomb bomb = new Bomb("crate");
         bomb.assign(runway);
         Assert.assertTrue(runway.save(bomb, item));
-        try (Transaction tx1 = runway.transaction()) {
+        try (Transaction tx1 = runway.startTransaction()) {
             Item txItem = tx1.load(Item.class, item.id());
-            try (Transaction tx2 = runway.transaction()) {
+            try (Transaction tx2 = runway.startTransaction()) {
                 Bomb holder = tx2.load(Bomb.class, bomb.id());
                 holder.fuse = txItem;
                 holder.deleteOnSave();
@@ -3199,7 +3168,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Saboteur saboteur = new Saboteur("mole");
         saboteur.assign(runway);
         Assert.assertTrue(saboteur.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Saboteur bound = transaction.load(Saboteur.class, saboteur.id());
             bound.name = "renamed";
             bound.target = transaction;
@@ -3243,7 +3212,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Saboteur saboteur = new Saboteur("mole");
         saboteur.assign(runway);
         Assert.assertTrue(saboteur.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Saboteur bound = transaction.load(Saboteur.class, saboteur.id());
             bound.name = "renamed";
             bound.target = transaction;
@@ -3281,7 +3250,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testCommitIsRefusedAfterTheTransactionEnds() {
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Assert.assertTrue(transaction.commit());
             try {
                 transaction.commit();
@@ -3289,7 +3258,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             }
             catch (IllegalStateException e) {/* expected */}
         }
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             transaction.abort();
             try {
                 transaction.commit();
@@ -3321,7 +3290,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     public void testAfterCommitHooksRunInOrderAndStopAfterAThrow() {
         List<Integer> order = Lists.newArrayList();
         Item item;
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             item = transaction.create(Item.class, "widget", 1);
             Assert.assertTrue(item.save());
             transaction.afterCommit(() -> order.add(1));
@@ -3369,7 +3338,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Criteria positive = Criteria.where().key("rank")
                     .operator(Operator.GREATER_THAN).value(0).build();
             Assert.assertEquals(1, runway.find(Memo.class, positive).size());
-            try (Transaction transaction = runway.transaction()) {
+            try (Transaction transaction = runway.startTransaction()) {
                 Assert.assertTrue(
                         transaction.find(Memo.class, positive).isEmpty());
                 transaction.abort();
@@ -3410,7 +3379,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 .operator(Operator.GREATER_THAN).value(0).build();
         Set<Item> result;
         List<Long> before = Lists.newArrayList();
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txOne = transaction.load(Item.class, one.id());
             txOne.score = 10;
             Assert.assertTrue(txOne.save());
@@ -3459,9 +3428,9 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Basket basket = new Basket("caddy", hostage);
         basket.assign(runway);
         Assert.assertTrue(runway.save(basket, hostage, bystander));
-        try (Transaction tx1 = runway.transaction()) {
+        try (Transaction tx1 = runway.startTransaction()) {
             Item txHostage = tx1.load(Item.class, hostage.id());
-            try (Transaction tx2 = runway.transaction()) {
+            try (Transaction tx2 = runway.startTransaction()) {
                 Basket parent = tx2.load(Basket.class, basket.id());
                 parent.item = txHostage;
                 try {
@@ -3515,7 +3484,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             try {
@@ -3554,7 +3523,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Counter counter = new Counter(0);
         counter.assign(runway);
         Assert.assertTrue(counter.save());
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Counter txCounter = transaction.load(Counter.class, counter.id());
             Registration invalid = new Registration(null);
             try {
@@ -3598,7 +3567,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         counter.assign(runway);
         Assert.assertTrue(counter.save());
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Counter txCounter = transaction.load(Counter.class, counter.id());
             Future<?> future = executor.submit(() -> txCounter.bump());
             try {
@@ -3650,7 +3619,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         runway.properties().onSave(Item.class, notified::set);
         Item stale;
         Item changed;
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             stale = transaction.load(Item.class, item.id());
             changed = transaction.load(Item.class, item.id());
             changed.score = 2;
@@ -3705,7 +3674,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         runway.properties().onSave(Item.class, notified::set);
         Item stale;
         Item changed;
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             stale = transaction.load(Item.class, item.id());
             changed = transaction.load(Item.class, item.id());
             changed.score = 2;
@@ -3754,7 +3723,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         AtomicReference<Item> notified = new AtomicReference<>();
         runway.properties().onSave(Item.class, notified::set);
         Item second;
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item first = transaction.load(Item.class, item.id());
             second = transaction.load(Item.class, item.id());
             first.score = 2;
@@ -3884,7 +3853,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      */
     private Entry<Item, WeakReference<Item>> stageAndCommit(long keptId,
             long otherId) {
-        try (Transaction transaction = runway.transaction()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Item kept = transaction.load(Item.class, keptId);
             Item other = transaction.load(Item.class, otherId);
             kept.score = 10;

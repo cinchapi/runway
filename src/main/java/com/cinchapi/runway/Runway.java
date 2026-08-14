@@ -1525,7 +1525,7 @@ public final class Runway extends Binding implements
     }
 
     @Override
-    public Transaction transaction() {
+    public Transaction startTransaction() {
         Concourse concourse = connections.request();
         try {
             return new DatabaseTransaction(this, concourse, true);

@@ -22,9 +22,9 @@ import java.util.function.Function;
  * A {@link Transactional} construct can scope database operations to a single
  * ACID {@link Transaction}.
  * <p>
- * There are two ways to use a transaction. {@link #transaction()} returns an
- * open {@link Transaction} whose lifecycle the caller owns, and whose work runs
- * exactly once. {@link #transact(Consumer) transact} and
+ * There are two ways to use a transaction. {@link #startTransaction()} returns
+ * an open {@link Transaction} whose lifecycle the caller owns, and whose work
+ * runs exactly once. {@link #transact(Consumer) transact} and
  * {@link #transactAndSupply(Function) transactAndSupply} execute work against a
  * {@link TransactionInterface} view, manage the lifecycle on the caller's
  * behalf, and may run the work more than once.
@@ -89,7 +89,7 @@ public interface Transactional {
      *
      * @return an open {@link Transaction}
      */
-    public Transaction transaction();
+    public Transaction startTransaction();
 
     /**
      * Execute {@code work} within this {@link Transactional Transactional's}
