@@ -5,10 +5,19 @@
     * A named compound constraint declares one `any` for all of its members. A hierarchy-scoped group also declares all of its members in one class. A group that violates either rule is rejected as a misdeclaration.
 * **Breaking change: by default, a save now writes only what changed.** Every `Record` tracks its changes granularly, and a save writes precisely the values the instance added, changed, or removed since it last loaded or saved. Previously, a save wrote the record's entire state, so a save from an instance with a stale view erased changes that other writers committed after the instance loaded; now those changes survive. Declare the new `@MergeStrategy(OVERWRITE)` annotation on a field to opt that field into the legacy behavior: whenever the record saves, the field writes its full current state and overwrites concurrent changes. ([GH-163](https://github.com/cinchapi/runway/issues/163))
     * This primarily changes the semantics of collections. A save merges the instance's added and removed elements into the stored collection instead of replacing it, so when other writers change the stored collection concurrently, storage is not guaranteed to exactly match the in-memory collection after a save. A mutation with no serialized effect, such as reordering a `List` (the database stores an unordered set of values), is no longer an unsaved change: a save of it writes nothing and fires no save notification.
-* **Breaking change: `preventStaleWrites` now only surfaces conflicts on the data a save would overwrite.** A linked record the save leaves alone never blocks it, no matter what another writer did to that record. Previously any change to any record in the saved object graph surfaced a conflict, even a change to a field the save never touched, so two callers who updated different fields of the same record could not both set the flag. ([GH-179](https://github.com/cinchapi/runway/issues/179))
-    * Deleting a record clears all of its data, so saving a record staged for deletion still surfaces a conflict on any change another writer made to it.
-    * Changing a value and changing it back is not a conflict. What is stored is what the record loaded, so the save takes nothing away.
-    * The flag covers what a save writes, not what it reads. To read one value and decide what to write from it, use a `Transaction`, which also surfaces conflicts on the data it reads.
+* **Breaking change: `preventStaleWrites` now checks only the data a save could
+  overwrite.** Changes to records or fields that the save does not touch no
+  longer cause a conflict. Previously, any change in the saved object graph
+  caused a conflict. This prevented two callers from using the flag while
+  updating different fields on the same record.
+  ([GH-179](https://github.com/cinchapi/runway/issues/179))
+    * Deletion remains stricter. Deleting a record removes all of its data, so
+      any concurrent change to that record causes a conflict.
+    * Changing a value and then restoring its loaded value does not cause a
+      conflict because the save would not overwrite anything.
+    * The flag checks writes, not reads. If a write depends on a value read
+      earlier, use a `Transaction`. Transactions also check for conflicts in the
+      data they read.
 
 ##### Transaction API
 Runway previously offered no way to guarantee atomicity or full ACID compliance across an ad hoc combination of reads and writes: each save committed atomically, but a decision made on loaded data could not be guaranteed to still hold when it was written. The Transaction API provides that guarantee and opens a window to the full power of Concourse transactions, including serializable isolation and atomic multi-operation commits, without a raw Concourse connection.
