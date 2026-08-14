@@ -299,6 +299,55 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@link Record} reports an external
+     * modification, which is what stops
+     * {@link SpuriousSaveFailureStrategy#RETRY RETRY} from retrying a
+     * {@code TransactionException} that a real conflict caused.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} whose name another
+     * writer then changed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with name "eve".</li>
+     * <li>Change the name to "conflict" through a separate {@link Concourse}
+     * connection.</li>
+     * <li>Call {@code hasExternalModifications} on the in-memory
+     * {@link TUser}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> {@code hasExternalModifications} returns
+     * {@code true}.
+     */
+    @Test
+    public void testHasExternalModificationsReturnsTrueAfterExternalModification() {
+        // NOTE: This calls the package-private method directly because the
+        // retry decision it governs is only reachable through the public API
+        // by winning a race against a concurrent writer.
+        TUser user = new TUser("eve");
+        Assert.assertTrue(runway.save(user));
+
+        Concourse writer = runway.connections.request();
+        try {
+            writer.set("name", "conflict", user.id());
+        }
+        finally {
+            runway.connections.release(writer);
+        }
+
+        Concourse check = runway.connections.request();
+        try {
+            Assert.assertTrue(
+                    "A record whose stored name another writer changed must"
+                            + " report an external modification",
+                    user.hasExternalModifications(check));
+        }
+        finally {
+            runway.connections.release(check);
+        }
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that the default
      * {@link SpuriousSaveFailureStrategy#FAIL_FAST} strategy does not retry on
      * {@code TransactionException} and returns {@code false} immediately.

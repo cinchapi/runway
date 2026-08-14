@@ -115,34 +115,41 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
-     * save(true, ...)} throws a {@link StaleDataException} when the
-     * {@link Record} has been externally modified since it was last saved.
+     * save(true, ...)} throws a {@link StaleDataException} when another writer
+     * changed the realm membership that the save writes.
      * <p>
-     * <strong>Start state:</strong> A {@link TUser} that has been saved and
-     * then externally modified in the database.
+     * <strong>Start state:</strong> A {@link TUser} saved in one realm whose
+     * stored realm membership another writer then replaced.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Save a {@link TUser} with name "alice".</li>
-     * <li>Externally modify the name to "conflict" directly in the database via
-     * a separate {@link Concourse} connection.</li>
-     * <li>Modify the in-memory name to "local_change".</li>
-     * <li>Call {@code runway.save(true, user)}.</li>
+     * <li>Save a {@link TUser} that belongs to realm "a".</li>
+     * <li>Externally replace the stored realm membership with "c".</li>
+     * <li>Add realm "b" in memory and call
+     * {@code runway.save(true, user)}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link StaleDataException} is thrown because
-     * the {@link Record} has stale data relative to the database.
+     * <strong>Expected:</strong> A {@link StaleDataException} that names the
+     * {@link TUser} is thrown, because the save writes the realm membership and
+     * that value changed externally.
      */
-    @Test(expected = StaleDataException.class)
-    public void testPreventStaleWriteThrowsWhenStale() {
-        TUser user = new TUser("alice");
+    @Test
+    public void testPreventStaleWriteThrowsWhenRealmsChangedExternally() {
+        TUser user = new TUser("sasha");
+        user.addRealm("a");
         Assert.assertTrue(runway.save(user));
 
         externallyWrite(
-                connection -> connection.set("name", "conflict", user.id()));
+                connection -> connection.set("_realms", "c", user.id()));
 
-        user.name = "local_change";
-        runway.save(true, user);
+        user.addRealm("b");
+        try {
+            runway.save(true, user);
+            Assert.fail("Expected StaleDataException");
+        }
+        catch (StaleDataException e) {
+            Assert.assertEquals(user.id(), e.id());
+        }
     }
 
     /**
