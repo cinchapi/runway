@@ -28,7 +28,6 @@ import javax.annotation.Nullable;
 
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.runway.Record;
-import com.cinchapi.runway.TransactionInterface;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
@@ -104,32 +103,28 @@ class AccessControlSupport {
     public static <T extends Record, V> T supplyAndUpdate(Audience audience,
             Supplier<T> supplier, String key, UnaryOperator<V> update) {
         if(audience instanceof Record) {
-            return Reflection.call(audience, "supply",
-                    (Function<TransactionInterface, T>) transaction -> {
-                        T subject = supplier.get();
-                        if(isWritableByAudience(audience, ImmutableSet.of(key),
-                                subject)) {
-                            Record previous = Reflection.get("_author",
-                                    subject);
-                            Reflection.set("_author", (Record) audience,
-                                    subject);
-                            T result = Reflection.callStatic(Record.class,
-                                    "stageAtomicUpdate", transaction, subject,
-                                    key, update);
-                            Record marker = Reflection.get("_author", subject);
-                            if(marker == audience) {
-                                // A staged save consumes the author marker, so
-                                // one that survived proves the update was a
-                                // no-op; restore it so a later save is not
-                                // attributed to the audience.
-                                Reflection.set("_author", previous, subject);
-                            }
-                            return result;
-                        }
-                        else {
-                            return null;
-                        }
-                    });
+            return ((Record) audience).transactAndSupply(transaction -> {
+                T subject = supplier.get();
+                if(isWritableByAudience(audience, ImmutableSet.of(key),
+                        subject)) {
+                    Record previous = Reflection.get("_author", subject);
+                    Reflection.set("_author", (Record) audience, subject);
+                    T result = Reflection.callStatic(Record.class,
+                            "stageAtomicUpdate", transaction, subject, key,
+                            update);
+                    Record marker = Reflection.get("_author", subject);
+                    if(marker == audience) {
+                        // A staged save consumes the author marker, so one that
+                        // survived proves the update was a no-op; restore it so
+                        // a later save is not attributed to the audience.
+                        Reflection.set("_author", previous, subject);
+                    }
+                    return result;
+                }
+                else {
+                    return null;
+                }
+            });
         }
         else {
             throw new UnsupportedOperationException();
