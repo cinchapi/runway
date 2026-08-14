@@ -968,16 +968,13 @@ public abstract class Record implements Comparable<Record> {
     @Nullable
     private static Set<Object> stagedValues(@Nullable Object current,
             @Nullable Object stored) {
-        if(current instanceof Set) {
+        boolean sequence = current instanceof Set
+                || (current == null && stored instanceof Set);
+        if(sequence) {
+            Set<?> elements = current instanceof Set ? (Set<?>) current
+                    : ImmutableSet.of();
             Set<Object> values = Sets.newLinkedHashSet();
-            forEachSequenceDelta((Set<?>) current, stored, values::add,
-                    values::add);
-            return values;
-        }
-        else if(current == null && stored instanceof Set) {
-            Set<Object> values = Sets.newLinkedHashSet();
-            forEachSequenceDelta(ImmutableSet.of(), stored, values::add,
-                    values::add);
+            forEachSequenceDelta(elements, stored, values::add, values::add);
             return values;
         }
         else {
@@ -3242,7 +3239,8 @@ public abstract class Record implements Comparable<Record> {
             // aligned with the notification it receives.
             deleted = true;
         }
-        if(!deleted && hasUnsavedChanges()) {
+        boolean changed = !deleted && hasUnsavedChanges();
+        if(changed) {
             // NOTE: The hook may add fields to what the save writes, so it runs
             // before the write set is computed.
             beforeSave();
@@ -3275,7 +3273,7 @@ public abstract class Record implements Comparable<Record> {
                 companion.deleteWithinTransaction(saver, context);
             }
         }
-        else if(!hasUnsavedChanges()) {
+        else if(!changed) {
             stageRealmsDelta(saver);
             // This Record hasn't been modified, so simply go through each
             // persistent field and try to save any outgoing Record references
