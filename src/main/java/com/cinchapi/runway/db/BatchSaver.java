@@ -74,9 +74,9 @@ public final class BatchSaver implements Saver {
 
     /**
      * Deferred read recordings that must observe the pre-save snapshot. Applied
-     * to the active {@link CommandGroup} before the deferred writes so the
-     * difference-based stale-write check sees only state that existed before
-     * this save began. Each entry records its own slot position when it runs.
+     * to the active {@link CommandGroup} before the deferred writes, so they
+     * see only state that existed before this save began. Each entry records
+     * its own slot position when it runs.
      */
     private final List<Consumer<CommandGroup>> preWriteReadOps;
 

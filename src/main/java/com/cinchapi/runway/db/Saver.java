@@ -135,10 +135,9 @@ public interface Saver {
      * </p>
      *
      * @param record the record id whose difference is being inspected
-     * @param start the timestamp whose state the difference is measured from
-     * @param end the timestamp whose state the difference is measured to, or
-     *            {@code null} for the state the {@link Saver} observes when the
-     *            read runs
+     * @param start the timestamp to compare from
+     * @param end the timestamp to compare to, or {@code null} to compare
+     *            against whatever the {@link Saver} sees when the read runs
      * @param validator a {@link Consumer} that receives the difference and may
      *            throw to reject the save
      */

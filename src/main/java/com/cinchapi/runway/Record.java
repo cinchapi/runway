@@ -129,9 +129,9 @@ import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
 
 /**
- * A {@link Record} is a a wrapper around the same in {@link Concourse} that
- * facilitates object-oriented interaction while automatically preserving
- * transactional security.
+ * A {@link Record} is a wrapper around a {@link Concourse} record that supports
+ * object-oriented interaction while automatically preserving transactional
+ * security.
  * <p>
  * Each subclass defines its "schema" through {@code non-transient} member
  * variables. When a Record is loaded from Concourse, the member variables are
@@ -2204,26 +2204,25 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * <p>
-     * When {@code preventStaleWrite} is {@code true}, the save is rejected if a
-     * value the save writes changed in the database since the {@link Record}
-     * that holds it last loaded or saved it. The test applies to this
-     * {@link Record} and to every linked {@link Record} the save reaches, each
-     * against its own writes: a {@link Record} the save writes nothing to never
-     * fails it.
+     * When {@code preventStaleWrite} is {@code true}, the save fails if it
+     * would overwrite a value that another writer changed. This {@link Record}
+     * and every linked {@link Record} the save reaches are judged only on the
+     * values each would write, so a {@link Record} that would write nothing can
+     * never fail the save.
      * </p>
      * <p>
-     * <strong>NOTE:</strong> The guarantee covers writes, not reads. A caller
-     * that reads one value to decide another, or that needs the guarantee
-     * enforced structurally, uses a {@link Transaction} instead, because a
-     * transaction's reads join its conflict footprint.
+     * <strong>NOTE:</strong> This covers writes, not reads. A caller that reads
+     * one value to decide another, or that wants the guarantee enforced
+     * structurally, should use a {@link Transaction} instead, which conflicts
+     * on what it reads as well.
      * </p>
      *
-     * @param preventStaleWrite if {@code true}, reject the save when a value it
-     *            writes changed externally
+     * @param preventStaleWrite if {@code true}, reject the save if it would
+     *            overwrite a value that another writer changed
      * @return {@code true} if this {@link Record} is successfully saved
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
-     *             and a value the save writes changed in the database since the
-     *             {@link Record} that holds it last loaded or saved it
+     *             and the save would overwrite a value that another writer
+     *             changed
      * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save(boolean preventStaleWrite) {
@@ -2751,15 +2750,9 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if any value of this {@link Record} changed in the
-     * database since this {@link Record} was last loaded or saved.
-     * <p>
-     * This asks what the stale-write check that {@link #save(boolean)
-     * save(preventStaleWrite)} applies asks, and differs only in scope: it
-     * spans the whole record, because a transaction conflicts over everything
-     * it read as well as everything it wrote. A {@link Record} with no
-     * checkpoint has nothing to compare, so the result is {@code false}.
-     * </p>
+     * Return {@code true} if another writer changed any value of this
+     * {@link Record} after it was last loaded or saved. If this {@link Record}
+     * was never synchronized, return {@code false}.
      *
      * @param concourse the {@link Concourse} connection to use
      * @return {@code true} if any value changed externally
@@ -3163,8 +3156,8 @@ public abstract class Record implements Comparable<Record> {
         }
         if(context.shouldPreventStaleWrite() && checkpointTs != 0) {
             // NOTE: This runs before anything is staged because a synchronous
-            // Saver reads at the recording call, and the audit must observe
-            // the state that preceded this save's own writes.
+            // Saver reads at the recording call, and the read must observe the
+            // state that preceded this save's own writes.
             stageStaleWriteCheck(saver);
         }
         if(_author != null) {
@@ -4567,15 +4560,12 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Record the stale-write check for this {@link Record} on {@code saver}: a
-     * read that rejects the save when a value in this {@link Record Record's}
-     * {@link #writeSet() write set} differs from what this {@link Record} last
-     * loaded or saved. A {@link Record} with an empty write set, or with no
-     * window in which another writer could have changed anything, is not read.
+     * Record the stale-write check for this {@link Record} on {@code saver}.
+     * The check fails the save if it would overwrite a value that another
+     * writer changed.
      * <p>
-     * The comparison is between two states, not over the revisions between
-     * them, so a value that another writer changed and changed back holds what
-     * this {@link Record} loaded and does not reject the save.
+     * A value that another writer changed and changed back does not fail the
+     * save, because the stored value is the one this {@link Record} loaded.
      * </p>
      *
      * @param saver the {@link Saver} for the attempt's transaction
@@ -4584,10 +4574,6 @@ public abstract class Record implements Comparable<Record> {
         Set<String> writeSet = writeSet();
         Timestamp ceiling = stalenessCeiling();
         boolean writesAnyValue = writeSet == null || !writeSet.isEmpty();
-        // NOTE: The conflict window spans the checkpoint to the ceiling, which
-        // is when another writer could have changed something. A Record loaded
-        // within the Transaction that bounds the check has no window, because
-        // it took its checkpoint after the transaction began.
         boolean hasConflictWindow = ceiling == null
                 || ceiling.getMicros() > checkpointTs;
         if(writesAnyValue && hasConflictWindow) {
@@ -4907,24 +4893,11 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the keys whose stored values a {@link #saveWithinTransaction save}
-     * of this {@link Record} writes, or {@code null} if the save writes every
-     * stored value.
-     * <p>
-     * A save writes a key when the field's current state differs from the state
-     * this {@link Record} last loaded or saved, and it writes a
-     * {@link MergeStrategy}{@code (OVERWRITE)} key whenever it writes the
-     * record at all. A save of a {@link Record} with no changes writes nothing,
-     * so the write set is empty. A staged deletion removes every stored value,
-     * so its write set is unbounded and this method returns {@code null}.
-     * </p>
-     * <p>
-     * The framework metadata that every save re-asserts, the section marker and
-     * the unset author, is not a written value: neither carries state that this
-     * instance changed since it loaded.
-     * </p>
+     * Return the keys that would be written or modified if this {@link Record}
+     * were {@link #save() saved}. If every key would be impacted, return
+     * {@code null}.
      *
-     * @return the keys the save writes, or {@code null} for every key
+     * @return the keys that would be written, or {@code null} for every key
      */
     @Nullable
     private Set<String> writeSet() {

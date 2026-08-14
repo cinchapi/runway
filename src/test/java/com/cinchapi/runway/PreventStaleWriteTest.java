@@ -80,11 +80,11 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     /**
      * Wait for the wall clock to advance one millisecond.
      * <p>
-     * A {@link Record Record's} checkpoint carries the test JVM's clock and a
-     * revision carries the server's, and the two clocks agree only to the
-     * millisecond, so neither of two events in one millisecond is provably
-     * older than the other ({@code GH-123}). Waiting between an external write
-     * and whatever a test orders around it removes that ambiguity.
+     * A {@link Record Record's} checkpoint comes from the test JVM's clock and
+     * a revision comes from the server's. The two clocks agree only to the
+     * millisecond, so two events in the same millisecond cannot be ordered
+     * ({@code GH-123}). Waiting gives an external write a millisecond of its
+     * own, which removes the ambiguity.
      * </p>
      */
     private static void tick() {
@@ -96,7 +96,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
 
     /**
      * Apply {@code write} directly to the database, as a writer outside of this
-     * {@link Runway} would, in a millisecond of its own.
+     * {@link Runway} would. The write gets a millisecond of its own, so the
+     * test can order events around it.
      *
      * @param write the write to apply
      */

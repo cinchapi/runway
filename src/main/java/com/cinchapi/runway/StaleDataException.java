@@ -17,12 +17,11 @@ package com.cinchapi.runway;
 
 /**
  * A {@link StaleDataException} is thrown when a save with stale-write
- * prevention is rejected because a value the save writes changed in the
- * database since the {@link Record} that holds it last loaded or saved it.
+ * prevention would overwrite a value that another writer changed.
  * <p>
- * The {@link #id()} names the {@link Record} that holds the changed value,
- * which is not necessarily one of the records the caller passed to the save: a
- * linked {@link Record} that the save writes is subject to the same test.
+ * The {@link #id()} names the {@link Record} that holds the changed value. That
+ * is not always one of the records passed to the save, because a linked
+ * {@link Record} that the save writes is checked the same way.
  * </p>
  *
  * @author Jeff Nelson

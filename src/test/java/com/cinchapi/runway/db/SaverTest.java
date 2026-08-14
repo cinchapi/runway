@@ -312,10 +312,10 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
      * field and reports the values it held at the baseline as
      * {@link Diff#REMOVED}.
      */
-    // TODO: un-ignore once the fixed Concourse release is adopted. The server's
-    // record-scoped diff reads the removed values out of the end state, which
-    // does not hold the key, so it answers with a null set that it then cannot
-    // serialize and the connection drops. See cinchapi/concourse#<issue>.
+    // TODO: un-ignore once the fixed Concourse release is adopted. The
+    // server's record-scoped diff looks for the removed values in the end
+    // state, which no longer holds the key. It answers with a null set that
+    // it cannot serialize, and the connection drops.
     @Ignore
     @Test
     public void testDiffReportsValuesRemovedBetweenTheTimestamps() {
