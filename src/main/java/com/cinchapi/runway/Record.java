@@ -2238,7 +2238,8 @@ public abstract class Record implements Comparable<Record> {
      * scope.
      * <p>
      * This method behaves exactly like {@link #transactAndSupply(Function)} for
-     * work that does not produce a result.
+     * work that does not produce a result. The work may therefore run more than
+     * once, so it must be free of side effects outside of the transaction.
      * </p>
      *
      * @param work the work to run
@@ -2399,20 +2400,27 @@ public abstract class Record implements Comparable<Record> {
      * scope and return its result.
      * <p>
      * If this {@link Record} is bound to an open {@link Transaction}, then the
-     * work joins it: everything the work stages becomes durable when that
-     * transaction's owner commits it. Otherwise, the work runs the same as
-     * {@link Runway#transactAndSupply(Function)}: it receives the
-     * {@link TransactionInterface} view of a new {@link Transaction} that
-     * commits after the work completes, and this {@link Record} joins each
-     * attempt's transaction, so a direct {@link #save() save} stages within it.
+     * work joins it. Everything the work stages becomes durable when that
+     * transaction's owner commits it.
+     * </p>
+     * <p>
+     * Otherwise, the work runs in a new managed transaction, the same as
+     * {@link Runway#transactAndSupply(Function)}. This {@link Record} joins
+     * each attempt's transaction, so a direct {@link #save() save} stages
+     * within it. A conflict retries the work within the bounds of the governing
+     * {@link AtomicRetryPolicy}.
+     * </p>
+     * <p>
      * Either way, the work cannot commit, abort or close the transaction it
-     * joins. Conflicts retry within the bounds of the governing
-     * {@link AtomicRetryPolicy}, so the work may run more than once and must be
-     * free of side effects outside of the transaction; this {@link Record
-     * Record's} in-memory state is outside of it, so an edit survives a
-     * discarded attempt and is visible to the next one. Set each value
-     * absolutely, or derive it from a read through the transaction, rather than
-     * increment what a prior attempt left behind.
+     * joins.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> The work may run more than once, so it must be
+     * free of side effects outside of the transaction. This {@link Record
+     * Record's} in-memory state is outside of it, so an edit from a discarded
+     * attempt survives into the next one. Set each value absolutely, or derive
+     * it from a read through the transaction. Do not increment what a prior
+     * attempt left behind.
      * </p>
      * <p>
      * If this {@link Record} is a {@link Transactional} (e.g., an
