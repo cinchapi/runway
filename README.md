@@ -228,7 +228,7 @@ A Record is a detached snapshot: you load it, change it in memory, and save it l
 |---|---|
 | Save my changes. | `save()` |
 | Fail if a value I write moved. | `save(true)` |
-| Fail if a value I read moved. | `touch(key)` |
+| Fail if a value I read moved. | `verifyOnSave(key)` |
 | Change one field, right now. | `exchange`, `getAndUpdate`, `updateAndGet` |
 | Commit several records together. | `db.save(a, b, c)` |
 | Keep everything I read valid until I commit. | a transaction |
@@ -257,18 +257,18 @@ The check covers what the save writes. A change to a field this save does not wr
 
 ### Fail if a value I read moved
 
-A decision often rests on a value the save never writes. Declare that value with `touch` and every later save verifies it, whether or not the save prevents stale writes.
+A decision often rests on a value the save never writes. Declare that value with `verifyOnSave` and every later save verifies it, whether or not the save prevents stale writes.
 
 ```java
 Team team = db.load(Team.class, id);
 if(team.roster.size() < 12) {
-    team.touch("roster"); // the decision rests on this
+    team.verifyOnSave("roster"); // the decision rests on this
     team.captain = player;
     team.save();          // fails if the roster changed since the load
 }
 ```
 
-`touch` covers fields of that record. When the decision rests on another record, use a transaction.
+`verifyOnSave` covers fields of that record. When the decision rests on another record, use a transaction.
 
 ### Change one field, right now
 

@@ -1256,11 +1256,11 @@ public abstract class Record implements Comparable<Record> {
     private transient long checkpointTs = 0;
 
     /**
-     * The names of the fields that {@link #touch(String...) touch} declared, or
-     * {@code null} if none were declared.
+     * The names of the fields that {@link #verifyOnSave(String...)
+     * verifyOnSave} declared, or {@code null} if none were declared.
      */
     @Nullable
-    private transient Set<String> touched = null;
+    private transient Set<String> verifyKeys = null;
 
     /**
      * Cached copy of audit data used by some {@link Metadata} operations.
@@ -2296,7 +2296,7 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      * <p>
      * <strong>NOTE:</strong> A save also verifies every value that
-     * {@link #touch(String...) touch} declared, whether or not
+     * {@link #verifyOnSave(String...) verifyOnSave} declared, whether or not
      * {@code preventStaleWrite} is {@code true}.
      * </p>
      *
@@ -2516,10 +2516,10 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Verify, whenever this {@link Record} saves, that the database still holds
-     * the value that each of the {@code keys} had when this {@link Record} last
-     * loaded or saved, and reject the save with a {@link StaleDataException}
-     * when it does not.
+     * Declare that a save must verify that the database still holds the value
+     * each of the {@code keys} had when this {@link Record} last loaded or
+     * saved, and reject the save with a {@link StaleDataException} when it does
+     * not.
      * <p>
      * The verification applies whether or not the save prevents stale writes,
      * and it covers the fields of this {@link Record} only. A caller whose
@@ -2537,20 +2537,20 @@ public abstract class Record implements Comparable<Record> {
      *             an intrinsic field of this {@link Record}, or names one that
      *             is transient
      */
-    public final void touch(String... keys) {
+    public final void verifyOnSave(String... keys) {
         for (String key : keys) {
             Field field = StaticAnalysis.instance().getField(this, key);
             Verify.thatArgument(field != null,
                     "{} is not an intrinsic field of {}", key, __);
             Verify.thatArgument(!Modifier.isTransient(field.getModifiers()),
-                    "Cannot touch {} in {} because it is transient and never"
+                    "Cannot verify {} in {} because it is transient and never"
                             + " stored",
                     key, __);
         }
-        if(touched == null) {
-            touched = Sets.newLinkedHashSet();
+        if(verifyKeys == null) {
+            verifyKeys = Sets.newLinkedHashSet();
         }
-        touched.addAll(Arrays.asList(keys));
+        verifyKeys.addAll(Arrays.asList(keys));
     }
 
     /**
@@ -3300,7 +3300,7 @@ public abstract class Record implements Comparable<Record> {
             beforeSave();
         }
         if(checkpointTs != 0
-                && (context.shouldPreventStaleWrite() || touched != null)) {
+                && (context.shouldPreventStaleWrite() || verifyKeys != null)) {
             // NOTE: This runs before anything is staged because a synchronous
             // Saver reads at the recording call, and the read must observe the
             // state that preceded this save's own writes.
@@ -4685,7 +4685,7 @@ public abstract class Record implements Comparable<Record> {
      * Record the stale-write check for this {@link Record} on {@code saver}.
      * The check fails the save if it would overwrite a value that another
      * writer changed, or if another writer changed a value that
-     * {@link #touch(String...) touch} declared.
+     * {@link #verifyOnSave(String...) verifyOnSave} declared.
      * <p>
      * A value that another writer changed and changed back does not fail the
      * save, because the stored value is the one this {@link Record} loaded.
@@ -4695,7 +4695,7 @@ public abstract class Record implements Comparable<Record> {
      * @param changed whether the save stages this {@link Record Record's}
      *            fields
      * @param preventStaleWrite whether the values that the save writes are
-     *            checked in addition to the touched ones
+     *            checked in addition to the declared ones
      */
     private void stageStaleWriteCheck(Saver saver, boolean changed,
             boolean preventStaleWrite) {
@@ -4703,7 +4703,7 @@ public abstract class Record implements Comparable<Record> {
                 : ImmutableMap.of();
         Timestamp ceiling = stalenessCeiling();
         boolean checksAnyValue = writes == null || !writes.isEmpty()
-                || touched != null;
+                || verifyKeys != null;
         boolean hasConflictWindow = ceiling == null
                 || ceiling.getMicros() > checkpointTs;
         if(checksAnyValue && hasConflictWindow) {
@@ -4718,8 +4718,9 @@ public abstract class Record implements Comparable<Record> {
                                     .anyMatch(entry -> overwrites(
                                             diff.get(entry.getKey()),
                                             entry.getValue()))
-                                    || (touched != null && touched.stream()
-                                            .anyMatch(diff::containsKey));
+                                    || (verifyKeys != null
+                                            && verifyKeys.stream().anyMatch(
+                                                    diff::containsKey));
                         }
                         if(stale) {
                             throw new StaleDataException(id);

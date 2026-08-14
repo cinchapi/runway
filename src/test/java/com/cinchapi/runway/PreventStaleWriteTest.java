@@ -1132,7 +1132,7 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a touched value is checked by a save
+     * <strong>Goal:</strong> Verify that a declared value is checked by a save
      * that does not prevent stale writes.
      * <p>
      * <strong>Start state:</strong> A {@link TUser} saved through
@@ -1142,27 +1142,27 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save a {@link TUser}.</li>
      * <li>Externally modify the bio in the database.</li>
-     * <li>Touch {@code bio}, modify the in-memory name, and save.</li>
+     * <li>Declare {@code bio}, modify the in-memory name, and save.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
      */
     @Test(expected = StaleDataException.class)
-    public void testTouchedValueIsCheckedBySaveThatDoesNotPreventStaleWrites() {
-        TUser user = new TUser("touch_plain_save");
+    public void testDeclaredValueIsCheckedBySaveThatDoesNotPreventStaleWrites() {
+        TUser user = new TUser("verify_plain_save");
         Assert.assertTrue(runway.save(user));
 
         externallyWrite(
                 connection -> connection.set("bio", "external", user.id()));
 
-        user.touch("bio");
+        user.verifyOnSave("bio");
         user.name = "updated";
         runway.save(user);
     }
 
     /**
      * <strong>Goal:</strong> Verify that a save succeeds when the database
-     * still holds the touched value that the {@link Record} last saw.
+     * still holds the declared value that the {@link Record} last saw.
      * <p>
      * <strong>Start state:</strong> A {@link TUser} saved through
      * {@link Runway} whose bio no other writer changes.
@@ -1171,27 +1171,27 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save a {@link TUser}.</li>
      * <li>Externally modify a field that is not touched.</li>
-     * <li>Touch {@code bio}, modify the in-memory bio, and save.</li>
+     * <li>Declare {@code bio}, modify the in-memory bio, and save.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save returns {@code true}.
      */
     @Test
-    public void testTouchedValueAllowsSaveWhenTheDatabaseStillHoldsIt() {
-        TUser user = new TUser("touch_fresh");
+    public void testDeclaredValueAllowsSaveWhenTheDatabaseStillHoldsIt() {
+        TUser user = new TUser("verify_fresh");
         user.bio = "original";
         Assert.assertTrue(runway.save(user));
 
         externallyWrite(
                 connection -> connection.set("name", "external", user.id()));
 
-        user.touch("bio");
+        user.verifyOnSave("bio");
         user.bio = "updated";
         Assert.assertTrue(runway.save(user));
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a touched value is checked even when
+     * <strong>Goal:</strong> Verify that a declared value is checked even when
      * the save writes nothing.
      * <p>
      * <strong>Start state:</strong> A {@link TUser} saved through
@@ -1201,20 +1201,20 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Save a {@link TUser}.</li>
      * <li>Externally modify the bio in the database.</li>
-     * <li>Touch {@code bio} and save without modifying anything.</li>
+     * <li>Declare {@code bio} and save without modifying anything.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
      */
     @Test(expected = StaleDataException.class)
-    public void testTouchedValueIsCheckedWhenTheSaveWritesNothing() {
-        TUser user = new TUser("touch_no_write");
+    public void testDeclaredValueIsCheckedWhenTheSaveWritesNothing() {
+        TUser user = new TUser("verify_no_write");
         Assert.assertTrue(runway.save(user));
 
         externallyWrite(
                 connection -> connection.set("bio", "external", user.id()));
 
-        user.touch("bio");
+        user.verifyOnSave("bio");
         runway.save(user);
     }
 
@@ -1226,15 +1226,15 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code touch} with a name that no field carries.</li>
+     * <li>Call {@code verifyOnSave} with a name that no field carries.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
      */
     @Test(expected = IllegalArgumentException.class)
-    public void testTouchRefusesAKeyThatIsNotAnIntrinsicField() {
-        TUser user = new TUser("touch_bad_key");
-        user.touch("nonexistent");
+    public void testVerifyOnSaveRefusesAKeyThatIsNotAnIntrinsicField() {
+        TUser user = new TUser("verify_bad_key");
+        user.verifyOnSave("nonexistent");
     }
 
     /**
@@ -1245,15 +1245,15 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Touch {@code bio} on an unsaved {@link TUser} and save it.</li>
+     * <li>Declare {@code bio} on an unsaved {@link TUser} and save it.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save returns {@code true}.
      */
     @Test
-    public void testTouchHasNoEffectBeforeTheRecordIsPersisted() {
-        TUser user = new TUser("touch_new_record");
-        user.touch("bio");
+    public void testVerifyOnSaveHasNoEffectBeforeTheRecordIsPersisted() {
+        TUser user = new TUser("verify_new_record");
+        user.verifyOnSave("bio");
         Assert.assertTrue(runway.save(user));
     }
 
