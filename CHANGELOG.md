@@ -9,7 +9,7 @@
 ##### Transaction API
 Runway previously offered no way to guarantee atomicity or full ACID compliance across an ad hoc combination of reads and writes: each save committed atomically, but a decision made on loaded data could not be guaranteed to still hold when it was written. The Transaction API provides that guarantee and opens a window to the full power of Concourse transactions, including serializable isolation and atomic multi-operation commits, without a raw Concourse connection.
 
-* **`Runway#stage` starts a `Transaction`.** `stage()` (or its alias, `startTransaction()`) returns a `DatabaseInterface` view that scopes every read and write to a single ACID transaction.
+* **`Runway#transaction` starts a `Transaction`.** `transaction()` returns a `DatabaseInterface` view that scopes every read and write to a single ACID transaction.
     * Reads observe the transaction's isolated snapshot, including its own uncommitted writes; no reader outside the transaction can observe a staged write before the commit.
     * Reads join the transaction's conflict footprint, so a commit fails instead of persisting a decision that was made on data a concurrent writer changed.
 * **A transaction owns its records exclusively.** Every `Record` loaded or created through the view is bound to the transaction, along with the records linked from it: `save()` stages within the transaction and the writes become durable only when `commit()` succeeds.
@@ -24,15 +24,15 @@ Runway previously offered no way to guarantee atomicity or full ACID compliance 
 * **A failed save poisons the transaction.** A save that throws after it begins writing can never commit: every subsequent operation is refused except `abort()` (or `close()`) and `afterAbort` registration, so a partial save never becomes durable.
     * A save that is refused before it begins (an invalid argument) leaves the transaction usable.
 * **A deletion is final within a transaction.** Once a save deletes a record, no later save in the same transaction can bring it back, references to it are removed at commit, and its delete notification fires once.
-* **`Runway#run` and `Runway#supply` execute work within a managed transaction.** The work receives a `TransactionInterface` (`run` for work with no result, `supply` for work that returns one) and the commit happens after the work completes.
+* **`Runway#transact` and `Runway#transactAndGet` execute work within a managed transaction.** The work receives a `TransactionInterface` (`transact` for work with no result, `transactAndGet` for work that returns one) and the commit happens after the work completes.
     * The view withholds `commit`, `abort` and `close`, so the work cannot end the transaction it joins.
     * Conflicts retry within the bounds of the governing `AtomicRetryPolicy`, so the work must be free of side effects outside of the transaction; `RetryExhaustedException` carries the final conflict as its cause.
-* **`Record#run` and `Record#supply` execute work in the record's scope.** These methods let a `Record` perform an atomic combination of reads and writes: within an open transaction the work joins it, and otherwise the work runs in its own managed transaction, the same as `Runway#run` and `Runway#supply`.
-* **An `Audience` starts and scopes transactions.** `Audience#stage` (or its alias, `startTransaction`) returns an open `Transaction` that behaves the same as the audience, just within the confines of the transaction: reads observe the audience's visibility and writes require its permissions.
+* **`Record#transact` and `Record#transactAndGet` execute work in the record's scope.** These methods let a `Record` perform an atomic combination of reads and writes: within an open transaction the work joins it, and otherwise the work runs in its own managed transaction, the same as `Runway#transact` and `Runway#transactAndGet`.
+* **An `Audience` starts and scopes transactions.** `Audience#transaction` returns an open `Transaction` that behaves the same as the audience, just within the confines of the transaction: reads observe the audience's visibility and writes require its permissions.
     * The caller owns the transaction's lifecycle; after the transaction ends, the audience operates against the enclosing `Runway` again.
-    * `Audience#run` and `Audience#supply` execute work in the audience's transactional scope, the same as `Record#run` and `Record#supply`; the work receives a view with the same audience behavior.
+    * `Audience#transact` and `Audience#transactAndGet` execute work in the audience's transactional scope, the same as `Record#transact` and `Record#transactAndGet`; the work receives a view with the same audience behavior.
     * An `Audience` that is not a `Record` (e.g., the anonymous audience) does not support transactional operations.
-* **The `Transactional` interface names a construct that can start and scope transactions.** `Runway` and `Audience` both implement it: `stage`, `startTransaction`, `run` and `supply`.
+* **The `Transactional` interface names a construct that can start and scope transactions.** `Runway` and `Audience` both implement it: `transaction`, `transact` and `transactAndGet`.
 * **`Transaction#afterCommit` and `Transaction#afterAbort` schedule outcome-dependent side effects.** An `afterCommit` hook runs once, only after the transaction successfully commits, and never for an attempt that a conflict retry discards; an `afterAbort` hook runs when the transaction ends without a successful commit. Hooks run synchronously in registration order, and a hook that throws does not change the transaction's outcome.
 
 ##### Atomic Operations

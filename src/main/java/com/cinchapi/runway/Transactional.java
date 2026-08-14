@@ -22,12 +22,12 @@ import java.util.function.Function;
  * A {@link Transactional} construct can scope database operations to a single
  * ACID {@link Transaction}.
  * <p>
- * There are two ways to use a transaction. {@link #stage()} (or its alias,
- * {@link #startTransaction()}) returns an open {@link Transaction} whose
- * lifecycle the caller owns. {@link #run(Consumer) run} and
- * {@link #supply(Function) supply} execute work against a
- * {@link TransactionInterface} view and manage the lifecycle on the caller's
- * behalf.
+ * There are two ways to use a transaction. {@link #transaction()} returns an
+ * open {@link Transaction} whose lifecycle the caller owns, and whose work runs
+ * exactly once. {@link #transact(Consumer) transact} and
+ * {@link #transactAndGet(Function) transactAndGet} execute work against a
+ * {@link TransactionInterface} view, manage the lifecycle on the caller's
+ * behalf, and may run the work more than once.
  * </p>
  * <p>
  * The view that scoped work receives passes through
@@ -43,14 +43,14 @@ public interface Transactional {
      * Execute {@code work} within this {@link Transactional Transactional's}
      * transactional scope.
      * <p>
-     * This method behaves exactly like {@link #supply(Function)} for work that
-     * does not produce a result.
+     * This method behaves exactly like {@link #transactAndGet(Function)} for
+     * work that does not produce a result.
      * </p>
      *
      * @param work the work to run
      */
-    public default void run(Consumer<TransactionInterface> work) {
-        supply(transaction -> {
+    public default void transact(Consumer<TransactionInterface> work) {
+        transactAndGet(transaction -> {
             work.accept(transaction);
             return null;
         });
@@ -89,20 +89,7 @@ public interface Transactional {
      *
      * @return an open {@link Transaction}
      */
-    public Transaction stage();
-
-    /**
-     * Start a {@link Transaction} that scopes reads and writes to a single ACID
-     * transaction.
-     * <p>
-     * This method is an alias for {@link #stage()}.
-     * </p>
-     *
-     * @return an open {@link Transaction}
-     */
-    public default Transaction startTransaction() {
-        return stage();
-    }
+    public Transaction transaction();
 
     /**
      * Execute {@code work} within this {@link Transactional Transactional's}
@@ -140,6 +127,6 @@ public interface Transactional {
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    public <T> T supply(Function<TransactionInterface, T> work);
+    public <T> T transactAndGet(Function<TransactionInterface, T> work);
 
 }

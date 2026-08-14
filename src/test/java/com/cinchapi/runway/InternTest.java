@@ -409,7 +409,7 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * <li>Start a {@link Transaction} with {@link Runway#transaction()} in a
      * try-with-resources block.</li>
      * <li>Call {@code intern} on the transaction with a new {@link User}.</li>
      * <li>Query for the record through the enclosing {@link Runway} before the
@@ -423,7 +423,7 @@ public class InternTest extends RunwayBaseClientServerTest {
     @Test
     public void testInternStagesCreateWithinOpenTransaction() {
         long id;
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.transaction()) {
             User user = new User("ann@example.com", "Ann");
             User interned = transaction.intern(user);
             Assert.assertSame(user, interned);
@@ -446,7 +446,7 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * <li>Start a {@link Transaction} with {@link Runway#transaction()} in a
      * try-with-resources block.</li>
      * <li>Call {@code intern} with a new {@link Plain} and catch the expected
      * rejection.</li>
@@ -460,7 +460,7 @@ public class InternTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testInternRefusalLeavesTransactionUsable() {
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.transaction()) {
             boolean threw = false;
             try {
                 transaction.intern(new Plain("anonymous"));
@@ -541,7 +541,7 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * <li>Start a {@link Transaction} with {@link Runway#transaction()} in a
      * try-with-resources block.</li>
      * <li>Create a {@link User} through the transaction, then call
      * {@code intern()} on it.</li>
@@ -556,7 +556,7 @@ public class InternTest extends RunwayBaseClientServerTest {
     @Test
     public void testRecordInternJoinsOpenTransactionWhenBound() {
         long id;
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.transaction()) {
             User user = transaction.create(User.class, "ann@example.com",
                     "Ann");
             User interned = user.intern();
@@ -658,7 +658,7 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * <li>Start a {@link Transaction} with {@link Runway#transaction()} in a
      * try-with-resources block.</li>
      * <li>Call {@code intern} twice with two new {@link User Users} that share
      * the same email but have different names.</li>
@@ -671,7 +671,7 @@ public class InternTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testInternObservesStagedCreateWithinTransaction() {
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.transaction()) {
             User first = transaction.intern(new User("ann@example.com", "Ann"));
             User second = transaction
                     .intern(new User("ann@example.com", "Other"));
@@ -691,7 +691,7 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save an {@link Account} with a distinct email and handle.</li>
-     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * <li>Start a {@link Transaction} with {@link Runway#transaction()} in a
      * try-with-resources block.</li>
      * <li>Call {@code intern} with a new {@link Account} that has the same
      * email but a different handle, and catch the expected exception.</li>
@@ -706,7 +706,7 @@ public class InternTest extends RunwayBaseClientServerTest {
     @Test
     public void testInternPartialCollisionPoisonsTransaction() {
         runway.save(new Account("e@example.com", "handle1", "bio"));
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.transaction()) {
             boolean threw = false;
             try {
                 transaction
@@ -737,7 +737,7 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Start a {@link Transaction} with {@link Runway#stage()} in a
+     * <li>Start a {@link Transaction} with {@link Runway#transaction()} in a
      * try-with-resources block and {@code commit()} it immediately.</li>
      * <li>Call {@code intern} on the ended transaction with a new
      * {@link User}.</li>
@@ -750,7 +750,7 @@ public class InternTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testInternResumesAgainstRunwayAfterTransactionEnds() {
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.transaction()) {
             Assert.assertTrue(transaction.commit());
             User user = transaction.intern(new User("ann@example.com", "Ann"));
             Assert.assertNotNull(user);

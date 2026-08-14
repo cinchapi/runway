@@ -1002,7 +1002,7 @@ public final class Runway extends Binding implements
      */
     @Override
     public <T extends Record> T intern(T record) {
-        return supply(tx -> tx.intern(record));
+        return transactAndGet(tx -> tx.intern(record));
     }
 
     @Override
@@ -1525,7 +1525,7 @@ public final class Runway extends Binding implements
     }
 
     @Override
-    public Transaction stage() {
+    public Transaction transaction() {
         Concourse concourse = connections.request();
         try {
             return new DatabaseTransaction(this, concourse, true);
@@ -1537,7 +1537,7 @@ public final class Runway extends Binding implements
     }
 
     @Override
-    public <T> T supply(Function<TransactionInterface, T> work) {
+    public <T> T transactAndGet(Function<TransactionInterface, T> work) {
         AtomicRetryPolicy policy = properties().atomicRetryPolicy();
         Concourse concourse = connections.request();
         try {
