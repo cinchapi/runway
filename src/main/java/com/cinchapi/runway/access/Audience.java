@@ -955,7 +955,7 @@ public interface Audience extends DatabaseInterface, Transactional {
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
         if(this instanceof Record) {
-            return ((Record) this).supply(view -> {
+            return ((Record) this).transactAndSupply(view -> {
                 // The checks below run against this Audience, so the raw
                 // transaction is the correct target for the staging
                 // operations; the Audience-scoped view would repeat them.
@@ -1070,9 +1070,10 @@ public interface Audience extends DatabaseInterface, Transactional {
      * <p>
      * This {@link Audience} must have joined the transaction, which the
      * framework guarantees when it invokes this method during
-     * {@link #run(java.util.function.Consumer) run} and
-     * {@link #supply(Function) supply}. Use {@link #stage()} to start a
-     * {@link Transaction} that this {@link Audience} joins.
+     * {@link #transact(java.util.function.Consumer) transact} and
+     * {@link #transactAndSupply(Function) transactAndSupply}. Use
+     * {@link #startTransaction()} to start a {@link Transaction} that this
+     * {@link Audience} joins.
      * </p>
      *
      * @param transaction the transaction that scopes the work
@@ -1131,18 +1132,18 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             {@link Record}
      */
     @Override
-    public default Transaction stage() {
+    public default Transaction startTransaction() {
         if(this instanceof Record) {
             Record record = (Record) this;
             Runway harness = Reflection.call(record, "harness");
-            Verify.that(harness != null, "Cannot stage a Transaction because"
+            Verify.that(harness != null, "Cannot start a Transaction because"
                     + " this Audience has no binding");
             boolean inOpenTransaction = Reflection.call(record,
                     "isBoundToOpenTransaction");
-            Verify.that(!inOpenTransaction, "Cannot stage a Transaction"
+            Verify.that(!inOpenTransaction, "Cannot start a Transaction"
                     + " because this Audience is already bound to an open"
                     + " Transaction");
-            Transaction transaction = harness.stage();
+            Transaction transaction = harness.startTransaction();
             try {
                 Reflection.call(transaction, "join", record);
             }
@@ -1164,7 +1165,7 @@ public interface Audience extends DatabaseInterface, Transactional {
      * If this {@link Audience} is bound to an open {@link Transaction}, then
      * the work joins it; otherwise, the work runs in its own managed
      * transaction that commits after the work completes, per the
-     * {@link Transactional#supply(Function) Transactional} contract.
+     * {@link Transactional#transactAndSupply(Function) Transactional} contract.
      * </p>
      *
      * @param work the work to run
@@ -1176,9 +1177,10 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             {@link Record}
      */
     @Override
-    public default <T> T supply(Function<TransactionInterface, T> work) {
+    public default <T> T transactAndSupply(
+            Function<TransactionInterface, T> work) {
         if(this instanceof Record) {
-            return ((Record) this).supply(work);
+            return ((Record) this).transactAndSupply(work);
         }
         else {
             throw new UnsupportedOperationException();

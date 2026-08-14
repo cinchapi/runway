@@ -302,8 +302,8 @@ public class AudienceAccessControlInternTest
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Start a {@link Transaction} with
-     * {@link com.cinchapi.runway.Runway#stage() stage} in a try-with-resources
-     * block and load the {@link Admin} through it.</li>
+     * {@link com.cinchapi.runway.Runway#startTransaction() transaction} in a
+     * try-with-resources block and load the {@link Admin} through it.</li>
      * <li>Call {@code intern} on the loaded {@link Admin} with a new
      * {@link Employer}.</li>
      * <li>Query for the {@link Employer} through the enclosing
@@ -322,7 +322,7 @@ public class AudienceAccessControlInternTest
         admin.email = "admin@example.com";
         runway.save(admin);
         long id;
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Admin audience = transaction.load(Admin.class, admin.id());
             Employer acme = new Employer();
             acme.name = "Acme";
@@ -348,8 +348,8 @@ public class AudienceAccessControlInternTest
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Start a {@link Transaction} with
-     * {@link com.cinchapi.runway.Runway#stage() stage} in a try-with-resources
-     * block and load the {@link Candidate} through it.</li>
+     * {@link com.cinchapi.runway.Runway#startTransaction() transaction} in a
+     * try-with-resources block and load the {@link Candidate} through it.</li>
      * <li>Call {@code intern} on the loaded {@link Candidate} with a new
      * {@link Badge} that has the same serial, and catch the expected
      * exception.</li>
@@ -368,7 +368,7 @@ public class AudienceAccessControlInternTest
         candidate.name = "Jane Developer";
         candidate.email = "jane@example.com";
         runway.save(existing, candidate);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Candidate audience = transaction.load(Candidate.class,
                     candidate.id());
             Badge probe = new Badge();
@@ -468,7 +468,7 @@ public class AudienceAccessControlInternTest
         admin.name = "System Admin";
         admin.email = "admin@example.com";
         runway.save(gate, admin);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Admin audience = transaction.load(Admin.class, admin.id());
             Gate staged = transaction.load(Gate.class, gate.id());
             staged.open = false;
@@ -629,7 +629,7 @@ public class AudienceAccessControlInternTest
          * @return {@code true} if the gate is open
          */
         public boolean isOpen() {
-            return supply(tx -> tx.load(Gate.class, id()).open);
+            return transactAndSupply(tx -> tx.load(Gate.class, id()).open);
         }
     }
 
