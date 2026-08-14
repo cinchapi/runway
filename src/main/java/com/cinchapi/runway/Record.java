@@ -719,24 +719,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if {@code audit} contains any change recorded after
-     * {@code checkpointTs}
-     *
-     * @param audit a record-level audit history keyed by {@link Timestamp}
-     * @param checkpointTs the timestamp of the most recent checkpoint
-     * @return {@code true} if the data is stale
-     */
-    private static boolean isStaleAudit(Map<Timestamp, List<String>> audit,
-            long checkpointTs) {
-        for (Timestamp ts : audit.keySet()) {
-            if(ts.getMicros() > checkpointTs) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * INTERNAL method to load a {@link Record} from {@code clazz} identified by
      * {@code id}.
      *
@@ -2786,7 +2768,12 @@ public abstract class Record implements Comparable<Record> {
             return false;
         }
         else {
-            return isStaleAudit(concourse.audit(id), checkpointTs);
+            for (Timestamp ts : concourse.audit(id).keySet()) {
+                if(ts.getMicros() > checkpointTs) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
