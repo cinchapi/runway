@@ -524,7 +524,7 @@ public class AudienceAccessControlCreateTest
         admin.name = "System Admin";
         admin.email = "admin@example.com";
         runway.save(gate, admin);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Admin audience = transaction.load(Admin.class, admin.id());
             Gate staged = transaction.load(Gate.class, gate.id());
             staged.open = false;

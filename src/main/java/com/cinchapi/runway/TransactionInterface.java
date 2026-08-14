@@ -31,13 +31,15 @@ import com.cinchapi.concourse.lang.sort.Order;
  * depend on the outcome can be registered, but the transaction's lifecycle
  * stays with its owner.
  * <p>
- * {@link Runway#run(java.util.function.Consumer) run} and
- * {@link Runway#supply(java.util.function.Function) supply}, along with their
- * {@link Record#run(java.util.function.Consumer) Record}
- * {@link Record#supply(java.util.function.Function) counterparts}, hand work
- * this view, so the work cannot commit, abort or close the transaction it
- * joins. {@link Runway#stage()} returns the full {@link Transaction}, which
- * adds the lifecycle verbs for the caller that owns them.
+ * {@link Runway#transact(java.util.function.Consumer) transact} and
+ * {@link Runway#transactAndSupply(java.util.function.Function)
+ * transactAndSupply}, along with their
+ * {@link Record#transact(java.util.function.Consumer) Record}
+ * {@link Record#transactAndSupply(java.util.function.Function) counterparts},
+ * hand work this view, so the work cannot commit, abort or close the
+ * transaction it joins. {@link Runway#startTransaction()} returns the full
+ * {@link Transaction}, which adds the lifecycle verbs for the caller that owns
+ * them.
  * </p>
  *
  * @author Jeff Nelson

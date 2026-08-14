@@ -77,7 +77,7 @@ public class AudienceAccessControlAtomicUpdateTest
         user.email = "hr@acme.example.com";
         user.employer = acme;
         runway.save(acme, user);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             EmployerUser audience = transaction.load(EmployerUser.class,
                     user.id());
             Employer updated = audience.findUniqueAndUpdate(Employer.class,
@@ -121,7 +121,7 @@ public class AudienceAccessControlAtomicUpdateTest
         user.email = "hr@acme.example.com";
         user.employer = acme;
         runway.save(acme, user);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             EmployerUser audience = transaction.load(EmployerUser.class,
                     user.id());
             Assert.assertNull(audience.findUniqueAndUpdate(Employer.class,
@@ -164,7 +164,7 @@ public class AudienceAccessControlAtomicUpdateTest
         user.email = "outsider@other.example.com";
         user.employer = other;
         runway.save(acme, other, user);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             EmployerUser audience = transaction.load(EmployerUser.class,
                     user.id());
             Assert.assertNull(audience.findUniqueAndUpdate(Employer.class,
@@ -203,7 +203,7 @@ public class AudienceAccessControlAtomicUpdateTest
         outsider.name = "Outsider";
         outsider.email = "outsider@example.com";
         runway.save(application, outsider);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Candidate audience = transaction.load(Candidate.class,
                     outsider.id());
             Assert.assertNull(audience.findUniqueAndUpdate(Application.class,
@@ -237,7 +237,7 @@ public class AudienceAccessControlAtomicUpdateTest
         admin.name = "System Admin";
         admin.email = "admin@example.com";
         runway.save(admin);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Admin audience = transaction.load(Admin.class, admin.id());
             Assert.assertNull(audience.findUniqueAndUpdate(Employer.class,
                     name("Ghost"), "description", description -> "x"));
@@ -312,7 +312,7 @@ public class AudienceAccessControlAtomicUpdateTest
         user.employer = acme;
         runway.save(acme, user);
         EmployerUser audience;
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             audience = transaction.load(EmployerUser.class, user.id());
             Assert.assertTrue(transaction.commit());
         }
@@ -390,7 +390,7 @@ public class AudienceAccessControlAtomicUpdateTest
         user.email = "hr@beta.example.com";
         user.employer = beta.job.employer;
         runway.save(alpha, beta, user);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             EmployerUser audience = transaction.load(EmployerUser.class,
                     user.id());
             Application updated = audience.findFirstAndUpdate(Application.class,
@@ -436,7 +436,7 @@ public class AudienceAccessControlAtomicUpdateTest
         user.email = "hr@beta.example.com";
         user.employer = beta.job.employer;
         runway.save(alpha, beta, user);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             EmployerUser audience = transaction.load(EmployerUser.class,
                     user.id());
             Application updated = audience.findUniqueAndUpdate(
@@ -480,7 +480,7 @@ public class AudienceAccessControlAtomicUpdateTest
         admin.name = "System Admin";
         admin.email = "admin@example.com";
         runway.save(candidate, admin);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Admin audience = transaction.load(Admin.class, admin.id());
             User updated = audience.findAnyUniqueAndUpdate(User.class,
                     email("jane@example.com"), "phone", phone -> "555-0100");
@@ -525,7 +525,7 @@ public class AudienceAccessControlAtomicUpdateTest
         admin.name = "System Admin";
         admin.email = "admin@example.com";
         runway.save(first, second, admin);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Admin audience = transaction.load(Admin.class, admin.id());
             User updated = audience.findAnyFirstAndUpdate(User.class,
                     Criteria.where().key("location").operator(Operator.EQUALS)
@@ -571,7 +571,7 @@ public class AudienceAccessControlAtomicUpdateTest
         candidate.name = "Jane Developer";
         candidate.email = "jane@example.com";
         runway.save(memo, candidate);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             Candidate audience = transaction.load(Candidate.class,
                     candidate.id());
             boolean threw = false;
@@ -623,7 +623,7 @@ public class AudienceAccessControlAtomicUpdateTest
         user.email = "hr@acme.example.com";
         user.employer = acme;
         runway.save(acme, user);
-        try (Transaction transaction = runway.stage()) {
+        try (Transaction transaction = runway.startTransaction()) {
             EmployerUser audience = transaction.load(EmployerUser.class,
                     user.id());
             boolean threw = false;

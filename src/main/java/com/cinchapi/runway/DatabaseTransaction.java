@@ -241,12 +241,13 @@ class DatabaseTransaction extends Binding implements Transaction {
      * are discarded (e.g., compensating cleanup or telemetry). Hooks run
      * synchronously on the owner thread, in registration order, after the
      * transaction ends. If the transaction commits, then the hooks never run;
-     * within {@link Runway#run(java.util.function.Consumer) run} and
-     * {@link Runway#supply(java.util.function.Function) supply}, each attempt
-     * is a distinct {@link Transaction}, so a hook registered by the work runs
-     * for its own attempt, including an attempt that a conflict retry discards.
-     * A poisoned transaction still accepts registration, so cleanup can be
-     * scheduled before the required {@link #abort()}.
+     * within {@link Runway#transact(java.util.function.Consumer) transact} and
+     * {@link Runway#transactAndSupply(java.util.function.Function)
+     * transactAndSupply}, each attempt is a distinct {@link Transaction}, so a
+     * hook registered by the work runs for its own attempt, including an
+     * attempt that a conflict retry discards. A poisoned transaction still
+     * accepts registration, so cleanup can be scheduled before the required
+     * {@link #abort()}.
      * </p>
      * <p>
      * A hook that throws does not affect the outcome: the exception propagates
@@ -272,10 +273,11 @@ class DatabaseTransaction extends Binding implements Transaction {
      * Hooks run synchronously on the owner thread, in registration order, after
      * the commit succeeds. If the transaction ends without a successful commit,
      * then the hooks registered on it never run; within
-     * {@link Runway#run(java.util.function.Consumer) run} and
-     * {@link Runway#supply(java.util.function.Function) supply}, each attempt
-     * is a distinct {@link Transaction}, so a hook registered by the work never
-     * runs for an attempt that a conflict retry discards.
+     * {@link Runway#transact(java.util.function.Consumer) transact} and
+     * {@link Runway#transactAndSupply(java.util.function.Function)
+     * transactAndSupply}, each attempt is a distinct {@link Transaction}, so a
+     * hook registered by the work never runs for an attempt that a conflict
+     * retry discards.
      * </p>
      * <p>
      * A hook that throws does not affect the outcome: the transaction remains
