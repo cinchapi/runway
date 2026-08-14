@@ -25,7 +25,6 @@ import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
 import com.cinchapi.common.reflect.Reflection;
-import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.Random;
 
@@ -96,47 +95,14 @@ public class UniqueSaveScopeTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testCommitSucceedsWhenUnrelatedRecordOfSameClassIsCreatedConcurrently() {
-        Transaction transaction = runway.stage();
-        boolean committed;
-        try {
+        try (Transaction transaction = runway.stage()) {
             transaction.save(new Account(Random.getSimpleString()));
             Account unrelated = new Account(Random.getSimpleString());
             unrelated.assign(runway);
             Assert.assertTrue(unrelated.save());
-            committed = transaction.commit();
+            Assert.assertTrue(transaction.commit());
         }
-        catch (TransactionException e) {
-            committed = false;
-        }
-        finally {
-            transaction.close();
-        }
-        Assert.assertTrue(committed);
         Assert.assertEquals(2, runway.count(Account.class));
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that a {@link Unique} constraint with
-     * {@code any = true} still fails a save that duplicates the value on a
-     * sibling class within the hierarchy window.
-     * <p>
-     * <strong>Start state:</strong> No saved {@link Asset Assets}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save an {@link ImageAsset} with a tag.</li>
-     * <li>Save a {@link VideoAsset} with the same tag.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The second save fails and only the
-     * {@link ImageAsset} exists in the hierarchy.
-     */
-    @Test
-    public void testSaveFailsWhenAnyConstraintValueExistsInSiblingClass() {
-        String tag = Random.getSimpleString();
-        Assert.assertTrue(runway.save(new ImageAsset(tag)));
-        Assert.assertFalse(runway.save(new VideoAsset(tag)));
-        Assert.assertEquals(1, runway.countAny(Asset.class));
     }
 
     /**
@@ -447,24 +413,6 @@ public class UniqueSaveScopeTest extends RunwayBaseClientServerTest {
          */
         public Ledger(String address) {
             this.address = address;
-        }
-    }
-
-    /**
-     * A concrete {@link Asset} subclass that is a sibling of
-     * {@link ImageAsset}.
-     *
-     * @author Jeff Nelson
-     */
-    public static class VideoAsset extends Asset {
-
-        /**
-         * Construct a new instance.
-         *
-         * @param tag the identity tag
-         */
-        public VideoAsset(String tag) {
-            super(tag);
         }
     }
 

@@ -3348,10 +3348,6 @@ public abstract class Record implements Comparable<Record> {
                 identities.add(new UniqueIdentity(constraint.any(), window,
                         criteria.build()));
             }
-            else {
-                // Every value under the constraint is null, so the constraint
-                // does not participate in the identity.
-            }
         }
         Verify.thatArgument(!identities.isEmpty(),
                 "{} has no non-null value under a Unique constraint", __);
