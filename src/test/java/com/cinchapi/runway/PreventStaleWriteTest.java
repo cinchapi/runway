@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -626,6 +627,167 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * Wait for the wall clock to advance one millisecond.
+     * <p>
+     * A {@link Record Record's} checkpoint carries the test JVM's clock and a
+     * revision carries the server's, and the two clocks agree only to the
+     * millisecond, so neither of two events in one millisecond is provably
+     * older than the other. Waiting between an external write and whatever a
+     * test orders around it removes that ambiguity.
+     * </p>
+     */
+    private static void tick() {
+        long millis = System.currentTimeMillis();
+        while (System.currentTimeMillis() == millis) {
+            Thread.yield();
+        }
+    }
+
+    /**
+     * Apply {@code write} directly to the database, as a writer outside of this
+     * {@link Runway} would, in a millisecond of its own.
+     *
+     * @param write the write to apply
+     */
+    private void externallyWrite(Consumer<Concourse> write) {
+        tick();
+        Concourse concourse = runway.connections.request();
+        try {
+            write.accept(concourse);
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
+        tick();
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a watched value is checked by a save
+     * that does not prevent stale writes.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose bio is then externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Externally modify the bio in the database.</li>
+     * <li>Watch {@code bio}, modify the in-memory name, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testWatchedValueIsCheckedBySaveThatDoesNotPreventStaleWrites() {
+        TUser user = new TUser("watch_plain_save");
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        user.watch("bio");
+        user.name = "updated";
+        runway.save(user);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save succeeds when the database
+     * still holds the watched value that the {@link Record} last saw.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose bio no other writer changes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Externally modify a field that is not watched.</li>
+     * <li>Watch {@code bio}, modify the in-memory bio, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}.
+     */
+    @Test
+    public void testWatchedValueAllowsSaveWhenTheDatabaseStillHoldsIt() {
+        TUser user = new TUser("watch_fresh");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("name", "external", user.id()));
+
+        user.watch("bio");
+        user.bio = "updated";
+        Assert.assertTrue(runway.save(user));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a watched value is checked even when
+     * the save writes nothing.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose bio is then externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Externally modify the bio in the database.</li>
+     * <li>Watch {@code bio} and save without modifying anything.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testWatchedValueIsCheckedWhenTheSaveWritesNothing() {
+        TUser user = new TUser("watch_no_write");
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        user.watch("bio");
+        runway.save(user);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that watching a name that is not an
+     * intrinsic field is refused.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} that has never been saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code watch} with a name that no field carries.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
+     */
+    @Test(expected = IllegalArgumentException.class)
+    public void testWatchRefusesAKeyThatIsNotAnIntrinsicField() {
+        TUser user = new TUser("watch_bad_key");
+        user.watch("nonexistent");
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that watching has no effect on a
+     * {@link Record} that the database does not yet hold.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} that has never been saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Watch {@code bio} on an unsaved {@link TUser} and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}.
+     */
+    @Test
+    public void testWatchHasNoEffectBeforeTheRecordIsPersisted() {
+        TUser user = new TUser("watch_new_record");
+        user.watch("bio");
+        Assert.assertTrue(runway.save(user));
+    }
+
+    /**
      * A test user record.
      *
      * @author Jeff Nelson
@@ -636,6 +798,12 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
          * The user's name.
          */
         String name;
+
+        /**
+         * The user's biography, an independent field that a writer can change
+         * without touching the {@link #name}.
+         */
+        String bio;
 
         /**
          * Construct a new instance.

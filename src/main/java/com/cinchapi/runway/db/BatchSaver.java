@@ -142,6 +142,23 @@ public final class BatchSaver implements Saver {
         });
     }
 
+    @SuppressWarnings("unchecked")
+    @Override
+    public void audit(String key, long record,
+            Consumer<Map<Timestamp, List<String>>> validator) {
+        Preconditions.checkNotNull(validator);
+        int[] slot = new int[1];
+        preWriteReadOps.add(group -> {
+            slot[0] = group.commands().size();
+            group.audit(key, record);
+        });
+        pendingValidators.add(results -> {
+            Map<Timestamp, List<String>> result = (Map<Timestamp, List<String>>) results
+                    .get(slot[0]);
+            validator.accept(result);
+        });
+    }
+
     @Override
     public void clear(long record) {
         deferredWriteOps.add(group -> group.clear(record));

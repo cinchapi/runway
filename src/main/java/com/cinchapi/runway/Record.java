@@ -1204,6 +1204,13 @@ public abstract class Record implements Comparable<Record> {
     private transient long checkpointTs = 0;
 
     /**
+     * The names of the fields that {@link #watch(String...) watch} declared, or
+     * {@code null} if none were declared.
+     */
+    @Nullable
+    private transient Set<String> watched = null;
+
+    /**
      * Cached copy of audit data used by some {@link Metadata} operations.
      */
     @Nullable
@@ -2234,6 +2241,11 @@ public abstract class Record implements Comparable<Record> {
      * returns; when bound to a {@link Transaction}, the changes stage within it
      * and become durable when the transaction commits.
      * </p>
+     * <p>
+     * <strong>NOTE:</strong> A save also verifies every value that
+     * {@link #watch(String...) watch} declared, whether or not
+     * {@code preventStaleWrite} is {@code true}.
+     * </p>
      *
      * @param preventStaleWrite if {@code true}, reject the save when this
      *            {@link Record} (or any linked {@link Record}) has been
@@ -2430,6 +2442,44 @@ public abstract class Record implements Comparable<Record> {
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
         return updateAtomically(key, update).after();
+    }
+
+    /**
+     * Verify, whenever this {@link Record} saves, that the database still holds
+     * the value that each of the {@code keys} had when this {@link Record} last
+     * loaded or saved, and reject the save with a {@link StaleDataException}
+     * when it does not.
+     * <p>
+     * The verification applies whether or not the save prevents stale writes,
+     * and it covers the fields of this {@link Record} only. A caller whose
+     * decision depends on a value that another {@link Record} holds uses a
+     * {@link Transaction}, whose reads join its conflict footprint.
+     * </p>
+     * <p>
+     * The declaration accumulates and stays in effect for every later save. A
+     * {@link Record} that the database does not yet hold has no stored value to
+     * compare, so nothing is verified until it does.
+     * </p>
+     *
+     * @param keys the names of the intrinsic fields to verify
+     * @throws IllegalArgumentException if any of the {@code keys} does not name
+     *             an intrinsic field of this {@link Record}, or names one that
+     *             is transient
+     */
+    public final void watch(String... keys) {
+        for (String key : keys) {
+            Field field = StaticAnalysis.instance().getField(this, key);
+            Verify.thatArgument(field != null,
+                    "{} is not an intrinsic field of {}", key, __);
+            Verify.thatArgument(!Modifier.isTransient(field.getModifiers()),
+                    "Cannot watch {} in {} because it is transient and never"
+                            + " stored",
+                    key, __);
+        }
+        if(watched == null) {
+            watched = Sets.newLinkedHashSet();
+        }
+        watched.addAll(Arrays.asList(keys));
     }
 
     /**
@@ -3164,13 +3214,22 @@ public abstract class Record implements Comparable<Record> {
         context.admit(this);
         context.snapshot(this);
         Preconditions.checkState(!inViolation);
-        if(context.shouldPreventStaleWrite() && checkpointTs != 0) {
+        if(checkpointTs != 0
+                && (context.shouldPreventStaleWrite() || watched != null)) {
             long ceiling = stalenessCeiling();
-            saver.audit(id, audit -> {
+            Consumer<Map<Timestamp, List<String>>> validator = audit -> {
                 if(isStaleAudit(audit, checkpointTs, ceiling)) {
                     throw new StaleDataException(id);
                 }
-            });
+            };
+            if(context.shouldPreventStaleWrite()) {
+                saver.audit(id, validator);
+            }
+            else {
+                for (String key : watched) {
+                    saver.audit(key, id, validator);
+                }
+            }
         }
         errors.clear();
         context.add(this);

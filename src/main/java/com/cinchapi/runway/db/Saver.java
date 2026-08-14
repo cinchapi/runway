@@ -91,6 +91,24 @@ public interface Saver {
     void audit(long record, Consumer<Map<Timestamp, List<String>>> validator);
 
     /**
+     * Record an {@link Concourse#audit(String, long) audit} of {@code key} in
+     * {@code record} and arrange to apply {@code validator} to the result.
+     * <p>
+     * The {@code validator} may throw to signal a validation failure (typically
+     * {@link com.cinchapi.runway.StaleDataException}); the exception propagates
+     * from the recording call for synchronous implementations and from
+     * {@link #commit()} or {@link #flush()} for bulk implementations.
+     * </p>
+     *
+     * @param key the field whose change history is being inspected
+     * @param record the record id that holds {@code key}
+     * @param validator a {@link Consumer} that receives the audit result and
+     *            may throw to reject the save
+     */
+    void audit(String key, long record,
+            Consumer<Map<Timestamp, List<String>>> validator);
+
+    /**
      * Record a {@link Concourse#clear(long) clear} of every value stored in
      * {@code record}, leaving the record empty.
      *
