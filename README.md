@@ -270,7 +270,7 @@ if(team.roster.size() < 12) {
 }
 ```
 
-The save fails when the database no longer stores exactly what the record saw for a declared key. A player another writer added to the roster is a change, even though every player the record read is still there.
+The save fails when another writer changed a declared key after the record loaded or last saved. A player another writer added to the roster is a change, even though every player the record read is still there.
 
 A declaration lasts until a save commits, so each decision declares its own. `verifyOnSave` covers fields of that record. When the decision rests on another record, use a transaction.
 

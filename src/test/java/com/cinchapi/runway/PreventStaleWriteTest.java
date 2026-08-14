@@ -1391,6 +1391,88 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an element another writer removed from
+     * a declared collection fails the save, even when this instance removes
+     * that same element.
+     * <p>
+     * <strong>Start state:</strong> A {@link TDoc} saved through {@link Runway}
+     * one of whose stored tags another writer then removes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TDoc} that carries two tags.</li>
+     * <li>Externally remove one of them.</li>
+     * <li>Declare {@code tags}, remove that same tag in memory, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredCollectionFailsSaveWhenAnotherWriterRemovesAnElement() {
+        TDoc doc = new TDoc();
+        doc.tags.add("draft");
+        doc.tags.add("stale");
+        Assert.assertTrue(runway.save(doc));
+
+        externallyWrite(
+                connection -> connection.remove("tags", "stale", doc.id()));
+
+        doc.verifyOnSave("tags");
+        doc.tags.remove("stale");
+        runway.save(doc);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declared value another writer stored
+     * fails the save when this instance stores the same value.
+     * <p>
+     * <strong>Start state:</strong> A {@link TDoc} saved through {@link Runway}
+     * whose stored tags another writer then adds to.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TDoc} that carries one tag.</li>
+     * <li>Externally add a second tag.</li>
+     * <li>Declare {@code tags}, add that same tag in memory, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown,
+     * because the tag reached the database before this save ran.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredCollectionFailsSaveWhenAnotherWriterAddsTheSameElement() {
+        TDoc doc = new TDoc();
+        doc.tags.add("draft");
+        Assert.assertTrue(runway.save(doc));
+
+        externallyWrite(
+                connection -> connection.add("tags", "urgent", doc.id()));
+
+        doc.verifyOnSave("tags");
+        doc.tags.add("urgent");
+        runway.save(doc);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that declaring a transient field is
+     * refused.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} that has never been saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code verifyOnSave} with the name of a transient field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
+     */
+    @Test(expected = IllegalArgumentException.class)
+    public void testVerifyOnSaveRefusesATransientField() {
+        TUser user = new TUser("verify_transient_key");
+        user.verifyOnSave("session");
+    }
+
+    /**
      * A test user record.
      *
      * @author Jeff Nelson
@@ -1407,6 +1489,11 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
          * without touching the {@link #name}.
          */
         String bio;
+
+        /**
+         * A value that lives in memory only, so no save stores it.
+         */
+        transient String session;
 
         /**
          * Construct a new instance.

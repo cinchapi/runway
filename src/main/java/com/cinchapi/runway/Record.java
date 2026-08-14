@@ -2553,11 +2553,11 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Declare that the next save must verify that the database still stores
-     * exactly what this {@link Record} last saw for each of the {@code keys},
-     * and reject the save with a {@link StaleDataException} when it does not. A
-     * value stored alongside the ones this {@link Record} saw is a change, so
-     * it fails the save.
+     * Declare that the next save must verify that no other writer changed any
+     * of the {@code keys} since this {@link Record} last loaded or saved, and
+     * reject the save with a {@link StaleDataException} when one did. A value
+     * stored alongside the ones this {@link Record} saw is a change, so it
+     * fails the save.
      * <p>
      * The verification applies whether or not the save prevents stale writes,
      * and it covers the fields of this {@link Record} only. A caller whose
@@ -4732,9 +4732,8 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Record the stale-write check for this {@link Record} on {@code saver}.
      * The check fails the save if it would overwrite a value that another
-     * writer changed, or if the database no longer stores what this
-     * {@link Record} last saw for a key that {@link #verifyOnSave(String...)
-     * verifyOnSave} declared.
+     * writer changed, or if another writer changed a key that
+     * {@link #verifyOnSave(String...) verifyOnSave} declared.
      * <p>
      * A value that another writer changed and changed back does not fail the
      * save, because the stored value is the one this {@link Record} loaded.
@@ -4750,9 +4749,18 @@ public abstract class Record implements Comparable<Record> {
             boolean preventStaleWrite) {
         Map<String, Set<Object>> writes = preventStaleWrite ? writeSet(changed)
                 : ImmutableMap.of();
+        // NOTE: The declared state is captured here, alongside the write set,
+        // because a bulk Saver runs the check after this save replaces the
+        // baseline, and the check must compare against what preceded it.
+        Map<String, Object> verified = Maps.newLinkedHashMap();
+        if(verifyKeys != null) {
+            for (String key : verifyKeys) {
+                verified.put(key, baseline(key));
+            }
+        }
         Timestamp ceiling = stalenessCeiling();
         boolean checksAnyValue = writes == null || !writes.isEmpty()
-                || verifyKeys != null;
+                || !verified.isEmpty();
         boolean hasConflictWindow = ceiling == null
                 || ceiling.getMicros() > checkpointTs;
         if(checksAnyValue && hasConflictWindow) {
@@ -4767,11 +4775,10 @@ public abstract class Record implements Comparable<Record> {
                                     .anyMatch(entry -> overwrites(
                                             diff.get(entry.getKey()),
                                             entry.getValue()))
-                                    || (verifyKeys != null
-                                            && verifyKeys.stream()
-                                                    .anyMatch(key -> diverges(
-                                                            diff.get(key),
-                                                            baseline(key))));
+                                    || verified.entrySet().stream()
+                                            .anyMatch(entry -> diverges(
+                                                    diff.get(entry.getKey()),
+                                                    entry.getValue()));
                         }
                         if(stale) {
                             throw new StaleDataException(id);
