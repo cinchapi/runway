@@ -1094,7 +1094,7 @@ public interface Audience extends DatabaseInterface, Transactional {
             TransactionInterface raw = AudienceTransaction.raw(transaction);
             Verify.that(Reflection.get("binding", this) == raw,
                     "An Audience can only scope a Transaction it has"
-                            + " joined; use stage() to start one");
+                            + " joined; use startTransaction() to start one");
             return new AudienceTransaction(this, (Transaction) raw);
         }
         else {
