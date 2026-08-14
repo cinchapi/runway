@@ -32,12 +32,14 @@ import com.cinchapi.concourse.lang.sort.Order;
  * stays with its owner.
  * <p>
  * {@link Runway#transact(java.util.function.Consumer) transact} and
- * {@link Runway#transactAndGet(java.util.function.Function) transactAndGet},
- * along with their {@link Record#transact(java.util.function.Consumer) Record}
- * {@link Record#transactAndGet(java.util.function.Function) counterparts}, hand
- * work this view, so the work cannot commit, abort or close the transaction it
- * joins. {@link Runway#transaction()} returns the full {@link Transaction},
- * which adds the lifecycle verbs for the caller that owns them.
+ * {@link Runway#transactAndSupply(java.util.function.Function)
+ * transactAndSupply}, along with their
+ * {@link Record#transact(java.util.function.Consumer) Record}
+ * {@link Record#transactAndSupply(java.util.function.Function) counterparts},
+ * hand work this view, so the work cannot commit, abort or close the
+ * transaction it joins. {@link Runway#transaction()} returns the full
+ * {@link Transaction}, which adds the lifecycle verbs for the caller that owns
+ * them.
  * </p>
  *
  * @author Jeff Nelson

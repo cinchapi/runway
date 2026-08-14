@@ -33,7 +33,8 @@ import com.cinchapi.runway.TransactionInterface;
  * operations on an {@link Audience}: {@link Audience#transaction()
  * transaction}, {@link Audience#transaction() transaction},
  * {@link Audience#transact(java.util.function.Consumer) transact} and
- * {@link Audience#transactAndGet(java.util.function.Function) transactAndGet}.
+ * {@link Audience#transactAndSupply(java.util.function.Function)
+ * transactAndSupply}.
  *
  * @author Jeff Nelson
  */
@@ -253,7 +254,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code transactAndGet} on an
+     * <strong>Goal:</strong> Verify that {@code transactAndSupply} on an
      * {@link Audience} that is not bound to an open {@link Transaction} runs
      * the work in its own transaction and commits it.
      * <p>
@@ -262,7 +263,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code admin.transactAndGet(...)} with work that loads the
+     * <li>Call {@code admin.transactAndSupply(...)} with work that loads the
      * {@link Candidate} through the transaction, changes its name and
      * {@code save()}s it.</li>
      * <li>Load the {@link Candidate} through the enclosing
@@ -276,7 +277,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     public void testSupplyCommitsOwnTransactionWhenAudienceNotInTransaction() {
         Admin admin = createAdmin();
         Candidate candidate = createCandidate();
-        String name = admin.transactAndGet(transaction -> {
+        String name = admin.transactAndSupply(transaction -> {
             Candidate inside = transaction.load(Candidate.class,
                     candidate.id());
             inside.name = "Janet Developer";
@@ -289,7 +290,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@code transactAndGet} on an
+     * <strong>Goal:</strong> Verify that {@code transactAndSupply} on an
      * {@link Audience} that is bound to an open {@link Transaction} joins it
      * instead of committing on its own.
      * <p>
@@ -300,7 +301,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <ul>
      * <li>Start a {@link Transaction} with {@code runway.transaction()} and
      * load the {@link Admin} through it.</li>
-     * <li>Call {@code transactAndGet(...)} on the loaded {@link Admin} with
+     * <li>Call {@code transactAndSupply(...)} on the loaded {@link Admin} with
      * work that changes the {@link Candidate Candidate's} name and
      * {@code save()}s it.</li>
      * <li>Load the {@link Candidate} through the enclosing {@link #runway}
@@ -316,7 +317,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
         Candidate candidate = createCandidate();
         try (Transaction outer = runway.transaction()) {
             Admin inside = outer.load(Admin.class, admin.id());
-            inside.transactAndGet(transaction -> {
+            inside.transactAndSupply(transaction -> {
                 Candidate subject = transaction.load(Candidate.class,
                         candidate.id());
                 subject.name = "Janet Developer";
@@ -648,9 +649,9 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the view {@code transactAndGet} hands
-     * to work observes the {@link Audience Audience's} visibility, not the raw
-     * database.
+     * <strong>Goal:</strong> Verify that the view {@code transactAndSupply}
+     * hands to work observes the {@link Audience Audience's} visibility, not
+     * the raw database.
      * <p>
      * <strong>Start state:</strong> A saved viewer {@link Candidate} and a
      * saved {@link Application} that belongs to another {@link Candidate}, all
@@ -659,8 +660,8 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code transactAndGet(...)} on the viewer {@link Candidate} with
-     * work that finds the {@link Application} through the view it
+     * <li>Call {@code transactAndSupply(...)} on the viewer {@link Candidate}
+     * with work that finds the {@link Application} through the view it
      * receives.</li>
      * </ul>
      * <p>
@@ -672,7 +673,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     public void testSupplyViewReadsFilterAudienceVisibility() {
         Candidate viewer = createViewer();
         createHiddenApplication();
-        boolean visible = viewer.transactAndGet(transaction -> !transaction
+        boolean visible = viewer.transactAndSupply(transaction -> !transaction
                 .find(Application.class, submittedStatusCriteria()).isEmpty());
         Assert.assertFalse(visible);
         Assert.assertEquals(1, runway
@@ -727,7 +728,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Get {@link Audience#anonymous()}.</li>
-     * <li>Call {@code transaction()} and {@code transactAndGet(...)} and
+     * <li>Call {@code transaction()} and {@code transactAndSupply(...)} and
      * {@code transact(...)} on it.</li>
      * </ul>
      * <p>
@@ -752,7 +753,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
             // expected
         }
         try {
-            anonymous.transactAndGet(transaction -> null);
+            anonymous.transactAndSupply(transaction -> null);
             Assert.fail("Expected an UnsupportedOperationException");
         }
         catch (UnsupportedOperationException e) {

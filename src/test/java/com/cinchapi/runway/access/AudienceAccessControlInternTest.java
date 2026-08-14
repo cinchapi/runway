@@ -629,7 +629,7 @@ public class AudienceAccessControlInternTest
          * @return {@code true} if the gate is open
          */
         public boolean isOpen() {
-            return transactAndGet(tx -> tx.load(Gate.class, id()).open);
+            return transactAndSupply(tx -> tx.load(Gate.class, id()).open);
         }
     }
 

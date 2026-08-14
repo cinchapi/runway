@@ -955,7 +955,7 @@ public interface Audience extends DatabaseInterface, Transactional {
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
         if(this instanceof Record) {
-            return ((Record) this).transactAndGet(view -> {
+            return ((Record) this).transactAndSupply(view -> {
                 // The checks below run against this Audience, so the raw
                 // transaction is the correct target for the staging
                 // operations; the Audience-scoped view would repeat them.
@@ -1071,7 +1071,7 @@ public interface Audience extends DatabaseInterface, Transactional {
      * This {@link Audience} must have joined the transaction, which the
      * framework guarantees when it invokes this method during
      * {@link #transact(java.util.function.Consumer) transact} and
-     * {@link #transactAndGet(Function) transactAndGet}. Use
+     * {@link #transactAndSupply(Function) transactAndSupply}. Use
      * {@link #transaction()} to start a {@link Transaction} that this
      * {@link Audience} joins.
      * </p>
@@ -1165,7 +1165,7 @@ public interface Audience extends DatabaseInterface, Transactional {
      * If this {@link Audience} is bound to an open {@link Transaction}, then
      * the work joins it; otherwise, the work runs in its own managed
      * transaction that commits after the work completes, per the
-     * {@link Transactional#transactAndGet(Function) Transactional} contract.
+     * {@link Transactional#transactAndSupply(Function) Transactional} contract.
      * </p>
      *
      * @param work the work to run
@@ -1177,10 +1177,10 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             {@link Record}
      */
     @Override
-    public default <T> T transactAndGet(
+    public default <T> T transactAndSupply(
             Function<TransactionInterface, T> work) {
         if(this instanceof Record) {
-            return ((Record) this).transactAndGet(work);
+            return ((Record) this).transactAndSupply(work);
         }
         else {
             throw new UnsupportedOperationException();

@@ -44,9 +44,9 @@ import com.google.common.collect.Maps;
 /**
  * Tests for {@link Runway#transaction()},
  * {@link Runway#transact(java.util.function.Consumer) transact} and
- * {@link Runway#transactAndGet(java.util.function.Function) transactAndGet}:
- * the {@link Transaction} view that scopes reads and writes to a single ACID
- * transaction.
+ * {@link Runway#transactAndSupply(java.util.function.Function)
+ * transactAndSupply}: the {@link Transaction} view that scopes reads and writes
+ * to a single ACID transaction.
  *
  * @author Jeff Nelson
  */
@@ -1142,9 +1142,9 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that
-     * {@link Record#transactAndGet(java.util.function.Function) transactAndGet}
-     * on a {@link Runway}-bound {@link Record} runs the work in a new
-     * transaction that commits after the work completes.
+     * {@link Record#transactAndSupply(java.util.function.Function)
+     * transactAndSupply} on a {@link Runway}-bound {@link Record} runs the work
+     * in a new transaction that commits after the work completes.
      * <p>
      * <strong>Start state:</strong> A saved {@link Item} with a score of 1 and
      * a saved {@link Item} with a score of 5.
@@ -1152,7 +1152,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Call {@code claimScore(5)} on the first {@link Item}, which uses
-     * {@code transactAndGet} to claim a score only if no other {@link Item}
+     * {@code transactAndSupply} to claim a score only if no other {@link Item}
      * holds it.</li>
      * <li>Call {@code claimScore(7)} on the first {@link Item}.</li>
      * </ul>
@@ -1177,9 +1177,9 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that
-     * {@link Record#transactAndGet(java.util.function.Function) transactAndGet}
-     * on a {@link Record} bound to an open {@link Transaction} joins that
-     * transaction instead of starting a new one.
+     * {@link Record#transactAndSupply(java.util.function.Function)
+     * transactAndSupply} on a {@link Record} bound to an open
+     * {@link Transaction} joins that transaction instead of starting a new one.
      * <p>
      * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
      * <p>
@@ -1596,14 +1596,14 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that
-     * {@link Runway#transactAndGet(java.util.function.Function) transactAndGet}
-     * returns the result of the work after the commit.
+     * {@link Runway#transactAndSupply(java.util.function.Function)
+     * transactAndSupply} returns the result of the work after the commit.
      * <p>
      * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code runway.transactAndGet(work)} where the work loads the
+     * <li>Call {@code runway.transactAndSupply(work)} where the work loads the
      * {@link Item}, sets the score to 2, saves and returns the new score.</li>
      * <li>Load the {@link Item} through the enclosing {@link Runway}.</li>
      * </ul>
@@ -1615,7 +1615,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        int score = runway.transactAndGet(transaction -> {
+        int score = runway.transactAndSupply(transaction -> {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
@@ -3773,16 +3773,16 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that
-     * {@link Runway#transactAndGet(java.util.function.Function) transactAndGet}
-     * retries the work when a conflicting outside write invalidates the
-     * transaction in the middle of the work, so the conflict never escapes to
-     * the caller.
+     * {@link Runway#transactAndSupply(java.util.function.Function)
+     * transactAndSupply} retries the work when a conflicting outside write
+     * invalidates the transaction in the middle of the work, so the conflict
+     * never escapes to the caller.
      * <p>
      * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code runway.transactAndGet(work)} where the work reads the
+     * <li>Call {@code runway.transactAndSupply(work)} where the work reads the
      * {@link Item} through the transaction.</li>
      * <li>On the first attempt only, commit a conflicting change to the
      * {@link Item} outside of the transaction.</li>
@@ -3801,7 +3801,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(item.save());
         AtomicInteger attempts = new AtomicInteger(0);
         AtomicInteger completed = new AtomicInteger(0);
-        int result = runway.transactAndGet(transaction -> {
+        int result = runway.transactAndSupply(transaction -> {
             int attempt = attempts.incrementAndGet();
             transaction.load(Item.class, item.id());
             if(attempt == 1) {
@@ -4060,7 +4060,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
          * @return {@code true} if the score is claimed
          */
         public boolean claimScore(int score) {
-            return transactAndGet(transaction -> {
+            return transactAndSupply(transaction -> {
                 Criteria taken = Criteria.where().key("score")
                         .operator(Operator.EQUALS).value(score).build();
                 Item holder = transaction.findUnique(Item.class, taken);

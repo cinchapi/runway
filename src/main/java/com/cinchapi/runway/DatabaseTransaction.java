@@ -242,8 +242,8 @@ class DatabaseTransaction extends Binding implements Transaction {
      * synchronously on the owner thread, in registration order, after the
      * transaction ends. If the transaction commits, then the hooks never run;
      * within {@link Runway#transact(java.util.function.Consumer) transact} and
-     * {@link Runway#transactAndGet(java.util.function.Function)
-     * transactAndGet}, each attempt is a distinct {@link Transaction}, so a
+     * {@link Runway#transactAndSupply(java.util.function.Function)
+     * transactAndSupply}, each attempt is a distinct {@link Transaction}, so a
      * hook registered by the work runs for its own attempt, including an
      * attempt that a conflict retry discards. A poisoned transaction still
      * accepts registration, so cleanup can be scheduled before the required
@@ -274,8 +274,8 @@ class DatabaseTransaction extends Binding implements Transaction {
      * the commit succeeds. If the transaction ends without a successful commit,
      * then the hooks registered on it never run; within
      * {@link Runway#transact(java.util.function.Consumer) transact} and
-     * {@link Runway#transactAndGet(java.util.function.Function)
-     * transactAndGet}, each attempt is a distinct {@link Transaction}, so a
+     * {@link Runway#transactAndSupply(java.util.function.Function)
+     * transactAndSupply}, each attempt is a distinct {@link Transaction}, so a
      * hook registered by the work never runs for an attempt that a conflict
      * retry discards.
      * </p>

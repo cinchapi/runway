@@ -2184,7 +2184,7 @@ public abstract class Record implements Comparable<Record> {
      * Execute {@code work} within this {@link Record Record's} transactional
      * scope.
      * <p>
-     * This method behaves exactly like {@link #transactAndGet(Function)} for
+     * This method behaves exactly like {@link #transactAndSupply(Function)} for
      * work that does not produce a result.
      * </p>
      *
@@ -2196,7 +2196,7 @@ public abstract class Record implements Comparable<Record> {
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
     public final void transact(Consumer<TransactionInterface> work) {
-        transactAndGet(transaction -> {
+        transactAndSupply(transaction -> {
             work.accept(transaction);
             return null;
         });
@@ -2331,7 +2331,7 @@ public abstract class Record implements Comparable<Record> {
      * If this {@link Record} is bound to an open {@link Transaction}, then the
      * work joins it: everything the work stages becomes durable when that
      * transaction's owner commits it. Otherwise, the work runs the same as
-     * {@link Runway#transactAndGet(Function)}: it receives the
+     * {@link Runway#transactAndSupply(Function)}: it receives the
      * {@link TransactionInterface} view of a new {@link Transaction} that
      * commits after the work completes, and this {@link Record} joins each
      * attempt's transaction, so a direct {@link #save() save} stages within it.
@@ -2360,7 +2360,8 @@ public abstract class Record implements Comparable<Record> {
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    public final <T> T transactAndGet(Function<TransactionInterface, T> work) {
+    public final <T> T transactAndSupply(
+            Function<TransactionInterface, T> work) {
         Function<TransactionInterface, T> scoped;
         if(this instanceof Transactional) {
             Transactional transactional = (Transactional) this;
@@ -3479,8 +3480,8 @@ public abstract class Record implements Comparable<Record> {
      * Execute {@code work} within this {@link Record Record's} transactional
      * scope, against the raw transaction view: the work does not receive the
      * {@link Transactional#scope(TransactionInterface) scoped view} that
-     * {@link #transactAndGet(Function)} applies when this {@link Record} is a
-     * {@link Transactional}.
+     * {@link #transactAndSupply(Function)} applies when this {@link Record} is
+     * a {@link Transactional}.
      *
      * @param work the work to run
      * @return the result of {@code work}
@@ -3499,7 +3500,7 @@ public abstract class Record implements Comparable<Record> {
             Runway runway = harness();
             Verify.that(runway != null, "Cannot execute transactional work"
                     + " because this Record has no binding");
-            return runway.transactAndGet(transaction -> {
+            return runway.transactAndSupply(transaction -> {
                 // The lambda receives the Transaction that supply constructs,
                 // so the cast to reach the package-private join is safe.
                 ((DatabaseTransaction) transaction).join(this);
