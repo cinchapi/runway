@@ -4581,24 +4581,25 @@ public abstract class Record implements Comparable<Record> {
      * @param saver the {@link Saver} for the attempt's transaction
      */
     private void stageStaleWriteCheck(Saver saver) {
-        Set<String> scope = writeSet();
+        Set<String> writeSet = writeSet();
         Timestamp ceiling = stalenessCeiling();
-        boolean writesAnyValue = scope == null || !scope.isEmpty();
-        // NOTE: The window is the span between the checkpoint and the ceiling,
-        // which is when another writer could have changed something. A Record
-        // loaded within the Transaction that bounds the check has no window,
-        // because it took its checkpoint after the transaction began.
-        boolean hasWindow = ceiling == null
+        boolean writesAnyValue = writeSet == null || !writeSet.isEmpty();
+        // NOTE: The conflict window spans the checkpoint to the ceiling, which
+        // is when another writer could have changed something. A Record loaded
+        // within the Transaction that bounds the check has no window, because
+        // it took its checkpoint after the transaction began.
+        boolean hasConflictWindow = ceiling == null
                 || ceiling.getMicros() > checkpointTs;
-        if(writesAnyValue && hasWindow) {
+        if(writesAnyValue && hasConflictWindow) {
             saver.diff(id, Timestamp.fromMicros(checkpointTs), ceiling,
                     diff -> {
                         boolean stale;
-                        if(scope == null) {
+                        if(writeSet == null) {
                             stale = !diff.isEmpty();
                         }
                         else {
-                            stale = !Collections.disjoint(diff.keySet(), scope);
+                            stale = !Collections.disjoint(diff.keySet(),
+                                    writeSet);
                         }
                         if(stale) {
                             throw new StaleDataException(id);
