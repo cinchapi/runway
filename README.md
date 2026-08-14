@@ -296,7 +296,7 @@ A transaction is the only rung that guards reads. Everything read through it joi
 Own the lifecycle when a conflict should fail the caller:
 
 ```java
-try (Transaction transaction = db.stage()) {
+try (Transaction transaction = db.startTransaction()) {
     Team team = transaction.load(Team.class, id);
     team.roster.add(new Player());
     if(transaction.commit()) {
@@ -308,7 +308,7 @@ try (Transaction transaction = db.stage()) {
 Let Runway manage it when a conflict should replay the work instead:
 
 ```java
-Team team = db.supply(tx -> {
+Team team = db.transactAndSupply(tx -> {
     Team t = tx.load(Team.class, id);
     t.roster.add(new Player());
     t.save();
