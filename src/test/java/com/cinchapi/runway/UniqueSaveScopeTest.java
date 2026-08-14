@@ -174,8 +174,9 @@ public class UniqueSaveScopeTest extends RunwayBaseClientServerTest {
      * and does not fail the save.
      * <p>
      * <strong>Start state:</strong> A raw record that holds an address and
-     * nothing else, written through a direct {@link com.cinchapi.concourse
-     * Concourse} connection so it carries no class.
+     * nothing else, written through a direct
+     * {@link com.cinchapi.concourse.Concourse Concourse} connection so it
+     * carries no class.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -210,7 +211,8 @@ public class UniqueSaveScopeTest extends RunwayBaseClientServerTest {
      * <li>Save an {@link ImageAsset} with the same tag.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> Both saves succeed.
+     * <strong>Expected:</strong> Both saves succeed, the {@link Asset}
+     * hierarchy holds one {@link Record}, and one {@link Gadget} is stored.
      */
     @Test
     public void testSaveSucceedsWhenAnyConstraintValueExistsOutsideHierarchyWindow() {

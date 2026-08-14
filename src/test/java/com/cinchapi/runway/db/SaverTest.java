@@ -452,7 +452,7 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the {@code validator} passed to
+     * <strong>Goal:</strong> Verify that the {@code consumer} passed to
      * {@link Saver#select(String, Criteria, java.util.function.Consumer, Timing)
      * select} receives each matching record mapped to its values for the
      * requested key.

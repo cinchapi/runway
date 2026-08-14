@@ -3997,10 +3997,10 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Record on {@code saver} the uniqueness check for the (key, value) pairs
-     * in {@code data}, treating them as a single compound constraint that must
-     * not collide with any other {@link Record} in the constraint's scope: this
-     * class when {@code any} is {@code false}, or the {@code window} and every
-     * descendant when {@code any} is {@code true}. A
+     * in {@code data}, treated as one compound constraint that must not collide
+     * with any other {@link Record} in the constraint's scope. The scope is
+     * this class when {@code any} is {@code false}, or the {@code window} and
+     * every descendant when {@code any} is {@code true}. A
      * {@link Sequences#isSequence(Object) sequence}-valued entry is treated
      * element-wise: a collision on any single element is a violation. A
      * {@code null} value does not participate, so a constraint whose every

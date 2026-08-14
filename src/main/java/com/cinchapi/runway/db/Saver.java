@@ -33,8 +33,8 @@ import com.cinchapi.concourse.lang.Criteria;
  * <h2>Reads</h2> A read accepts a {@link Consumer} that may throw to signal a
  * validation failure. The {@link Consumer} runs either {@link Timing#INLINE
  * inline} at the recording call or {@link Timing#DEFERRED deferred} until
- * {@link #commit()} or {@link #flush()}, depending on the implementation and,
- * where a read takes a {@link Timing}, on the caller's request; the throw
+ * {@link #commit()} or {@link #flush()}. The implementation decides, except
+ * where a read takes a {@link Timing} and the caller decides. The throw
  * propagates from whichever site invokes the {@link Consumer}.
  * </p>
  * <h2>Writes</h2> A write is recorded against the active staged transaction,
@@ -240,12 +240,8 @@ public interface Saver {
      * apply {@code consumer} to the resulting record-keyed map with the
      * requested {@code timing}.
      * <p>
-     * {@link Timing#INLINE} suits a read that drives control flow: the
-     * {@code consumer} iterates the result and triggers further save work (e.g.
-     * cascade-delete loads) that the rest of the save depends on.
-     * {@link Timing#DEFERRED} suits a throw/no-throw validation, which nothing
-     * downstream waits on, and which therefore costs a bulk implementation no
-     * submission of its own.
+     * Choose {@link Timing#INLINE} when a later recording depends on the
+     * result, and {@link Timing#DEFERRED} otherwise.
      * </p>
      *
      * @param key the field name whose values should be returned
@@ -300,18 +296,18 @@ public interface Saver {
     public enum Timing {
 
         /**
-         * The {@link Consumer} runs when the save reaches
-         * {@link Saver#commit()} or {@link Saver#flush()}, so the read shares
-         * whatever submission a bulk implementation makes for the rest of the
-         * save. A synchronous implementation runs the {@link Consumer} at the
-         * recording call, as it does for every read.
+         * The {@link Consumer} runs no later than {@link Saver#commit()} or
+         * {@link Saver#flush()}, so no recording made after the read may assume
+         * that the {@link Consumer} already ran. A synchronous implementation
+         * runs the {@link Consumer} at the recording call, as it does for every
+         * read.
          */
         DEFERRED,
 
         /**
-         * The {@link Consumer} runs before the recording call returns. A bulk
-         * implementation submits any reads accumulated so far to make the
-         * result available, and subsequent recordings start a fresh batch.
+         * The {@link Consumer} runs before the recording call returns, so a
+         * later recording may depend on the result. A bulk implementation
+         * performs a round trip to make the result available.
          */
         INLINE
 

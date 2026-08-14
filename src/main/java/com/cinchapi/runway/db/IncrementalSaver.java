@@ -35,7 +35,7 @@ import com.google.common.base.Preconditions;
  * Each {@code audit}/{@code find} round-trips immediately and invokes the
  * supplied {@link Consumer validator} inline so a validation failure throws
  * before any subsequent write is recorded. Every read runs at the recording
- * call, so a requested {@link Saver.Timing Timing} makes no difference here.
+ * call, so this {@link Saver} ignores a requested {@link Saver.Timing Timing}.
  * Each write call goes straight to the connection. {@link #commit()} and
  * {@link #abort()} delegate directly to the underlying connection's transaction
  * primitives.
