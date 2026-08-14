@@ -1684,9 +1684,6 @@ public final class Runway extends Binding implements
     void dispatchSaveOutcomes(SaveContext context) {
         Set<Long> deletions = context.deletions();
         context.forEach((record, outcome) -> {
-            // NOTE: A declaration is spent by the save that carried it,
-            // whatever that save wrote, so it is discarded for every processed
-            // record rather than only for a changed one.
             record.clearVerifyKeys();
             if(outcome == SaveContext.Outcome.DELETED) {
                 enqueueDeleteNotification(record);
