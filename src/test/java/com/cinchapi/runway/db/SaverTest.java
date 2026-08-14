@@ -308,6 +308,44 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the {@code validator} passed to
+     * {@link Saver#audit(String, long, java.util.function.Consumer) audit}
+     * receives only the change history of the recorded key.
+     * <p>
+     * <strong>Start state:</strong> A record with a change under each of two
+     * keys.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record an {@code audit} of one key with a {@code validator} that
+     * captures the result.</li>
+     * <li>Commit so the {@code validator} is guaranteed to have run.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The captured audit describes the recorded key
+     * and never the other one.
+     */
+    @Test
+    public void testKeyAuditValidatorReceivesOnlyThatKeysHistory() {
+        long id = client.add("a", 1);
+        client.add("b", 2, id);
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<Timestamp, List<String>>> captured = new AtomicReference<>();
+        saver.audit("a", id, captured::set);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(captured.get());
+        Assert.assertFalse(captured.get().isEmpty());
+        captured.get().values().forEach(
+                descriptions -> descriptions.forEach(description -> Assert
+                        .assertTrue(description, description.contains(" a ")
+                                && !description.contains(" b "))));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@link Saver#clear(String, long)}
      * removes the values previously associated with the key.
      * <p>

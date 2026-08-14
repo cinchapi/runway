@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -28,6 +29,8 @@ import org.junit.runners.Parameterized.Parameters;
 
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.runway.MergeStrategy.Strategy;
+import com.google.common.collect.ImmutableSet;
 
 /**
  * Tests for {@link Runway#save(boolean, Record...)} with
@@ -75,6 +78,41 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * Wait for the wall clock to advance one millisecond.
+     * <p>
+     * A {@link Record Record's} checkpoint carries the test JVM's clock and a
+     * revision carries the server's, and the two clocks agree only to the
+     * millisecond, so neither of two events in one millisecond is provably
+     * older than the other ({@code GH-123}). Waiting between an external write
+     * and whatever a test orders around it removes that ambiguity.
+     * </p>
+     */
+    private static void tick() {
+        long millis = System.currentTimeMillis();
+        while (System.currentTimeMillis() == millis) {
+            Thread.yield();
+        }
+    }
+
+    /**
+     * Apply {@code write} directly to the database, as a writer outside of this
+     * {@link Runway} would, in a millisecond of its own.
+     *
+     * @param write the write to apply
+     */
+    private void externallyWrite(Consumer<Concourse> write) {
+        tick();
+        Concourse concourse = runway.connections.request();
+        try {
+            write.accept(concourse);
+        }
+        finally {
+            runway.connections.release(concourse);
+        }
+        tick();
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
      * save(true, ...)} throws a {@link StaleDataException} when the
      * {@link Record} has been externally modified since it was last saved.
@@ -99,13 +137,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser user = new TUser("alice");
         Assert.assertTrue(runway.save(user));
 
-        Concourse concourse = runway.connections.request();
-        try {
-            concourse.set("name", "conflict", user.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
+        externallyWrite(
+                connection -> connection.set("name", "conflict", user.id()));
 
         user.name = "local_change";
         runway.save(true, user);
@@ -168,13 +201,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser user = new TUser("charlie");
         Assert.assertTrue(runway.save(user));
 
-        Concourse concourse = runway.connections.request();
-        try {
-            concourse.set("name", "external", user.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
+        externallyWrite(
+                connection -> connection.set("name", "external", user.id()));
 
         try {
             user.name = "local";
@@ -245,13 +273,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser user = new TUser("eve");
         Assert.assertTrue(runway.save(user));
 
-        Concourse concourse = runway.connections.request();
-        try {
-            concourse.set("name", "refreshed", user.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
+        externallyWrite(
+                connection -> connection.set("name", "refreshed", user.id()));
 
         user.refresh();
         user.name = "final_value";
@@ -287,13 +310,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser user = new TUser("frank");
         Assert.assertTrue(runway.save(user));
 
-        Concourse concourse = runway.connections.request();
-        try {
-            concourse.set("name", "external", user.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
+        externallyWrite(
+                connection -> connection.set("name", "external", user.id()));
 
         user.name = "overwrite";
         Assert.assertTrue(runway.save(false, user));
@@ -325,13 +343,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser user = new TUser("gina");
         Assert.assertTrue(runway.save(user));
 
-        Concourse concourse = runway.connections.request();
-        try {
-            concourse.set("name", "external", user.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
+        externallyWrite(
+                connection -> connection.set("name", "external", user.id()));
 
         user.name = "overwrite";
         Assert.assertTrue(runway.save(user));
@@ -339,11 +352,12 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
-     * save(true, ...)} throws a {@link StaleDataException} when a linked
-     * {@link Record} in the object graph has been externally modified.
+     * save(true, ...)} throws a {@link StaleDataException} when the save writes
+     * a value of a linked {@link Record} that was externally modified.
      * <p>
      * <strong>Start state:</strong> A {@link TUser} and a {@link TTenant}
-     * linked to it, both saved. The {@link TUser} is then externally modified.
+     * linked to it, both saved. The {@link TUser TUser's} name is then
+     * externally modified.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -351,29 +365,308 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      * <li>Create and save a {@link TTenant} linked to that {@link TUser}.</li>
      * <li>Externally modify the {@link TUser TUser's} name in the
      * database.</li>
-     * <li>Modify the {@link TTenant TTenant's} name in memory.</li>
+     * <li>Modify both the {@link TUser TUser's} name and the {@link TTenant
+     * TTenant's} name in memory, so the save writes the linked
+     * {@link TUser}.</li>
      * <li>Call {@code runway.save(true, tenant)}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link StaleDataException} is thrown because
-     * the linked {@link TUser} has stale data.
+     * <strong>Expected:</strong> A {@link StaleDataException} that names the
+     * {@link TUser} is thrown, because the save writes the linked {@link TUser
+     * TUser's} name and that value changed externally.
      */
-    @Test(expected = StaleDataException.class)
-    public void testPreventStaleWriteDetectsStaleLinkedRecord() {
+    @Test
+    public void testPreventStaleWriteDetectsStaleLinkedRecordThatTheSaveWrites() {
         TUser user = new TUser("hank");
         TTenant tenant = new TTenant(user);
         Assert.assertTrue(runway.save(tenant));
 
-        Concourse concourse = runway.connections.request();
+        externallyWrite(connection -> connection.set("name", "external_hank",
+                user.id()));
+
+        user.name = "local_hank";
+        tenant.name = "modified_tenant";
         try {
-            concourse.set("name", "external_hank", user.id());
+            runway.save(true, tenant);
+            Assert.fail("Expected StaleDataException");
         }
-        finally {
-            runway.connections.release(concourse);
+        catch (StaleDataException e) {
+            Assert.assertEquals(user.id(), e.id());
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
+     * save(true, ...)} succeeds when a linked {@link Record} that the save
+     * writes nothing to was externally modified.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} and a {@link TTenant}
+     * linked to it, both saved. The {@link TUser TUser's} name is then
+     * externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with name "mona".</li>
+     * <li>Create and save a {@link TTenant} linked to that {@link TUser}.</li>
+     * <li>Externally modify the {@link TUser TUser's} name in the
+     * database.</li>
+     * <li>Modify only the {@link TTenant TTenant's} name in memory.</li>
+     * <li>Call {@code runway.save(true, tenant)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}, the
+     * {@link TTenant TTenant's} new name persists, and the external
+     * {@link TUser} name survives.
+     */
+    @Test
+    public void testPreventStaleWriteSucceedsWhenLinkedRecordChangeIsNotWritten() {
+        TUser user = new TUser("mona");
+        TTenant tenant = new TTenant(user);
+        Assert.assertTrue(runway.save(tenant));
+
+        externallyWrite(connection -> connection.set("name", "external_mona",
+                user.id()));
 
         tenant.name = "modified_tenant";
-        runway.save(true, tenant);
+        Assert.assertTrue(runway.save(true, tenant));
+
+        TTenant loadedTenant = runway.load(TTenant.class, tenant.id());
+        Assert.assertEquals("modified_tenant", loadedTenant.name);
+        TUser loadedUser = runway.load(TUser.class, user.id());
+        Assert.assertEquals("external_mona", loadedUser.name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two instances of one {@link Record}
+     * that change independent fields can both save with
+     * {@code preventStaleWrites} enabled, and that both values persist.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} and a second instance
+     * of it loaded from the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with name "kate".</li>
+     * <li>Load a second instance of the same {@link Record}.</li>
+     * <li>Change the first instance's name and save it.</li>
+     * <li>Change the second instance's bio and call
+     * {@code runway.save(true, second)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both saves return {@code true} and the stored
+     * {@link Record} carries the new name and the new bio.
+     */
+    @Test
+    public void testPreventStaleWriteSucceedsWhenExternalChangeTouchesAnotherField() {
+        TUser first = new TUser("kate");
+        Assert.assertTrue(runway.save(first));
+
+        TUser second = runway.load(TUser.class, first.id());
+        first.name = "kate_renamed";
+        Assert.assertTrue(runway.save(first));
+
+        second.bio = "engineer";
+        Assert.assertTrue(runway.save(true, second));
+
+        TUser loaded = runway.load(TUser.class, first.id());
+        Assert.assertEquals("kate_renamed", loaded.name);
+        Assert.assertEquals("engineer", loaded.bio);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two instances of one {@link Record}
+     * that change the same field cannot both save when the second save enables
+     * {@code preventStaleWrites}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} and a second instance
+     * of it loaded from the database.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with name "liam".</li>
+     * <li>Load a second instance of the same {@link Record}.</li>
+     * <li>Change the first instance's name and save it.</li>
+     * <li>Change the second instance's name and call
+     * {@code runway.save(true, second)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown and the
+     * first instance's name survives.
+     */
+    @Test
+    public void testPreventStaleWriteThrowsWhenExternalChangeTouchesTheSameField() {
+        TUser first = new TUser("liam");
+        Assert.assertTrue(runway.save(first));
+
+        TUser second = runway.load(TUser.class, first.id());
+        first.name = "liam_first";
+        Assert.assertTrue(runway.save(first));
+
+        second.name = "liam_second";
+        try {
+            runway.save(true, second);
+            Assert.fail("Expected StaleDataException");
+        }
+        catch (StaleDataException e) {
+            Assert.assertEquals(first.id(), e.id());
+        }
+
+        TUser loaded = runway.load(TUser.class, first.id());
+        Assert.assertEquals("liam_first", loaded.name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an external change to a collection
+     * field that the save does not write does not fail a save that writes a
+     * different collection field.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TDoc} whose reviewers were
+     * externally extended.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TDoc} with one tag.</li>
+     * <li>Externally add a reviewer directly in the database.</li>
+     * <li>Add a second tag in memory.</li>
+     * <li>Call {@code runway.save(true, doc)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and the stored
+     * {@link TDoc} holds both tags and the external reviewer.
+     */
+    @Test
+    public void testPreventStaleWriteSucceedsWhenExternalChangeTouchesAnotherCollection() {
+        TDoc doc = new TDoc();
+        doc.tags.add("draft");
+        Assert.assertTrue(runway.save(doc));
+
+        externallyWrite(
+                connection -> connection.add("reviewers", "quinn", doc.id()));
+
+        doc.tags.add("reviewed");
+        Assert.assertTrue(runway.save(true, doc));
+
+        TDoc loaded = runway.load(TDoc.class, doc.id());
+        Assert.assertEquals(ImmutableSet.of("draft", "reviewed"), loaded.tags);
+        Assert.assertEquals(ImmutableSet.of("quinn"), loaded.reviewers);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an external change to the collection
+     * field that the save writes fails the save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TDoc} whose tags were
+     * externally extended.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TDoc} with one tag.</li>
+     * <li>Externally add a second tag directly in the database.</li>
+     * <li>Add a third tag in memory.</li>
+     * <li>Call {@code runway.save(true, doc)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown and the
+     * external tag survives without the in-memory one.
+     */
+    @Test
+    public void testPreventStaleWriteThrowsWhenExternalChangeTouchesTheSameCollection() {
+        TDoc doc = new TDoc();
+        doc.tags.add("draft");
+        Assert.assertTrue(runway.save(doc));
+
+        externallyWrite(
+                connection -> connection.add("tags", "external", doc.id()));
+
+        doc.tags.add("reviewed");
+        try {
+            runway.save(true, doc);
+            Assert.fail("Expected StaleDataException");
+        }
+        catch (StaleDataException e) {
+            Assert.assertEquals(doc.id(), e.id());
+        }
+
+        TDoc loaded = runway.load(TDoc.class, doc.id());
+        Assert.assertEquals(ImmutableSet.of("draft", "external"), loaded.tags);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a field annotated
+     * {@link MergeStrategy}{@code (OVERWRITE)} always belongs to its
+     * {@link Record Record's} write set, so an external change to it fails a
+     * save that changed only another field.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TProfile} whose motto was
+     * externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TProfile} with a handle and a motto.</li>
+     * <li>Externally modify the motto directly in the database.</li>
+     * <li>Change only the handle in memory.</li>
+     * <li>Call {@code runway.save(true, profile)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown because
+     * the save would overwrite the externally modified motto.
+     */
+    @Test
+    public void testPreventStaleWriteThrowsWhenOverwriteFieldChangedExternally() {
+        TProfile profile = new TProfile("opal", "carpe diem");
+        Assert.assertTrue(runway.save(profile));
+
+        externallyWrite(connection -> connection.set("motto", "external motto",
+                profile.id()));
+
+        profile.handle = "opal_renamed";
+        try {
+            runway.save(true, profile);
+            Assert.fail("Expected StaleDataException");
+        }
+        catch (StaleDataException e) {
+            Assert.assertEquals(profile.id(), e.id());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save of a {@link Record} staged for
+     * deletion fails when any value of that {@link Record} changed externally,
+     * including a value that no field of the {@link Record} declares.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that an external
+     * writer extended with a key the class does not declare.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with name "rowan".</li>
+     * <li>Externally add a value under a key the {@link TUser} does not
+     * declare.</li>
+     * <li>Stage the {@link TUser} for deletion and call
+     * {@code runway.save(true, user)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown and the
+     * {@link TUser} still exists.
+     */
+    @Test
+    public void testPreventStaleWriteThrowsWhenDeletingRecordChangedOnAnotherKey() {
+        TUser user = new TUser("rowan");
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(connection -> connection.add("undeclared", "external",
+                user.id()));
+
+        user.deleteOnSave();
+        try {
+            runway.save(true, user);
+            Assert.fail("Expected StaleDataException");
+        }
+        catch (StaleDataException e) {
+            Assert.assertEquals(user.id(), e.id());
+        }
+
+        Assert.assertNotNull(runway.load(TUser.class, user.id()));
     }
 
     /**
@@ -404,13 +697,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser user = new TUser("iris");
         Assert.assertTrue(runway.save(user));
 
-        Concourse concourse = runway.connections.request();
-        try {
-            concourse.set("name", "external", user.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
+        externallyWrite(
+                connection -> connection.set("name", "external", user.id()));
 
         user.name = "should_not_persist";
         try {
@@ -452,13 +740,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser jill = new TUser("jill");
         Assert.assertTrue(runway.save(jack, jill));
 
-        Concourse concourse = runway.connections.request();
-        try {
-            concourse.set("name", "external_jack", jack.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
+        externallyWrite(connection -> connection.set("name", "external_jack",
+                jack.id()));
 
         jack.name = "local_jack";
         jill.name = "local_jill";
@@ -528,13 +811,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser user = new TUser("pinned");
         Assert.assertTrue(runway.save(user));
 
-        Concourse concourse = runway.connections.request();
-        try {
-            concourse.set("name", "external", user.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
+        externallyWrite(
+                connection -> connection.set("name", "external", user.id()));
 
         user.name = "local";
         user.save(true);
@@ -567,13 +845,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser user = new TUser("doomed");
         Assert.assertTrue(runway.save(user));
 
-        Concourse concourse = runway.connections.request();
-        try {
-            concourse.set("name", "external", user.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
+        externallyWrite(
+                connection -> connection.set("name", "external", user.id()));
 
         user.deleteOnSave();
         try {
@@ -613,13 +886,8 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser user = new TUser("pinned_no_check");
         Assert.assertTrue(runway.save(user));
 
-        Concourse concourse = runway.connections.request();
-        try {
-            concourse.set("name", "external", user.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
+        externallyWrite(
+                connection -> connection.set("name", "external", user.id()));
 
         user.name = "overwrite";
         Assert.assertTrue(user.save(false));
@@ -638,12 +906,68 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         String name;
 
         /**
+         * The user's biography, an independent field that a writer can change
+         * without touching the {@link #name}.
+         */
+        String bio;
+
+        /**
          * Construct a new instance.
          *
          * @param name the user's name
          */
         public TUser(String name) {
             this.name = name;
+        }
+    }
+
+    /**
+     * A test record with two independent collection fields.
+     *
+     * @author Jeff Nelson
+     */
+    public static class TDoc extends Record {
+
+        /**
+         * The document's tags.
+         */
+        Set<String> tags = new LinkedHashSet<>();
+
+        /**
+         * The document's reviewers.
+         */
+        Set<String> reviewers = new LinkedHashSet<>();
+    }
+
+    /**
+     * A test record with a field that writes its full state on every save of
+     * the record.
+     *
+     * @author Jeff Nelson
+     */
+    public static class TProfile extends Record {
+
+        /**
+         * The profile's handle.
+         */
+        String handle;
+
+        /**
+         * The profile's motto, which every save of a {@link TProfile}
+         * overwrites regardless of whether this instance changed it.
+         */
+        @MergeStrategy(Strategy.OVERWRITE)
+        String motto;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param handle the profile's handle
+         * @param motto the profile's motto
+         */
+        public TProfile(String handle, String motto) {
+            this.handle = handle;
+            this.motto = motto;
         }
     }
 

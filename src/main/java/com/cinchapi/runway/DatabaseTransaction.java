@@ -568,12 +568,13 @@ class DatabaseTransaction extends Binding implements Transaction {
      * {@link #afterAbort(Runnable) afterAbort} registration.
      * </p>
      *
-     * @param preventStaleWrites if {@code true}, reject the save when any
-     *            {@link Record} in the object graph has stale data
+     * @param preventStaleWrites if {@code true}, reject the save when a value
+     *            it writes changed externally
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
-     *             and any {@link Record} has been externally modified
+     *             and a value the save writes changed in the database since the
+     *             {@link Record} that holds it last loaded or saved it
      * @throws IllegalStateException if any of the {@code records} overrides the
      *             save pipeline, if any {@link Record} that the save processes
      *             is bound to a different open {@link Transaction}, or if a

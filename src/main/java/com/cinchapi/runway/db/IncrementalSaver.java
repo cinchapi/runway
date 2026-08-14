@@ -83,6 +83,12 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
+    public void audit(String key, long record,
+            Consumer<Map<Timestamp, List<String>>> validator) {
+        validator.accept(concourse.audit(key, record));
+    }
+
+    @Override
     public void find(Criteria criteria, Consumer<Set<Long>> validator) {
         validator.accept(concourse.find(criteria));
     }

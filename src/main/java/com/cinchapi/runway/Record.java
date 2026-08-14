@@ -1534,8 +1534,9 @@ public abstract class Record implements Comparable<Record> {
      * <p>
      * <strong>NOTE:</strong> This is a targeted write, not a {@link #save()
      * save}: the {@link #beforeSave() beforeSave} hook and any save listeners
-     * do not run. The write does count as a modification for stale-write
-     * detection, so a later {@link #save(boolean) save(preventStaleWrite)} may
+     * do not run. The write does count as an external modification of
+     * {@code key} for another instance, so a later {@link #save(boolean)
+     * save(preventStaleWrite)} that writes {@code key} from that instance may
      * require a {@link #refresh() refresh} first.
      * </p>
      *
@@ -2105,8 +2106,8 @@ public abstract class Record implements Comparable<Record> {
      * any in-memory values with the latest persisted data.
      * <p>
      * After refreshing, this {@link Record} is considered in sync with the
-     * database &mdash; {@link #hasStaleDataWithinTransaction(Concourse)
-     * hasStaleDataWithinTransaction} will return {@code false} until the next
+     * database &mdash; {@link #hasExternalModifications(Concourse)
+     * hasExternalModifications} will return {@code false} until the next
      * external modification occurs. The {@link #computeOnce(String, Supplier)
      * computeOnce} cache is also invalidated so that memoized computed values
      * recompute against the refreshed state on next access.
@@ -2235,12 +2236,27 @@ public abstract class Record implements Comparable<Record> {
      * and become durable when the transaction commits.
      * </p>
      *
-     * @param preventStaleWrite if {@code true}, reject the save when this
-     *            {@link Record} (or any linked {@link Record}) has been
-     *            externally modified since it was last loaded or saved
+     * <p>
+     * When {@code preventStaleWrite} is {@code true}, the save is rejected if a
+     * value the save writes changed in the database since the {@link Record}
+     * that holds it last loaded or saved it. The test applies to this
+     * {@link Record} and to every linked {@link Record} the save reaches, each
+     * against its own writes: a {@link Record} the save writes nothing to never
+     * fails it.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> The guarantee covers writes, not reads. A caller
+     * that reads one value to decide another, or that needs the guarantee
+     * enforced structurally, uses a {@link Transaction} instead, because a
+     * transaction's reads join its conflict footprint.
+     * </p>
+     *
+     * @param preventStaleWrite if {@code true}, reject the save when a value it
+     *            writes changed externally
      * @return {@code true} if this {@link Record} is successfully saved
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
-     *             and stale data is detected
+     *             and a value the save writes changed in the database since the
+     *             {@link Record} that holds it last loaded or saved it
      * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save(boolean preventStaleWrite) {
@@ -2768,13 +2784,20 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if this {@link Record Record's} data in the database
-     * has been modified since this {@link Record} was last loaded or saved.
+     * Return {@code true} if any value of this {@link Record} changed in the
+     * database since this {@link Record} was last loaded or saved.
+     * <p>
+     * The test spans the whole record, unlike the stale-write check that
+     * {@link #save(boolean) save(preventStaleWrite)} applies, because a
+     * transaction conflicts over everything it read as well as everything it
+     * wrote. A {@link Record} with no checkpoint has nothing to compare, so the
+     * result is {@code false}.
+     * </p>
      *
      * @param concourse the {@link Concourse} connection to use
-     * @return {@code true} if the data is stale
+     * @return {@code true} if any value changed externally
      */
-    boolean hasStaleDataWithinTransaction(Concourse concourse) {
+    boolean hasExternalModifications(Concourse concourse) {
         if(checkpointTs == 0) {
             return false;
         }
@@ -3154,7 +3177,8 @@ public abstract class Record implements Comparable<Record> {
      * @param context the active {@link SaveContext}
      * @throws StaleDataException if the {@code context}
      *             {@link SaveContext#shouldPreventStaleWrite() prevents} stale
-     *             writes and this {@link Record} has stale data
+     *             writes and a value that this save writes changed in the
+     *             database since this {@link Record} last loaded or saved it
      * @throws IllegalStateException if a {@link Required} or
      *             {@link ValidatedBy} field constraint is violated
      * @throws ConstraintViolationException if a {@link Unique} field constraint
@@ -3164,14 +3188,6 @@ public abstract class Record implements Comparable<Record> {
         context.admit(this);
         context.snapshot(this);
         Preconditions.checkState(!inViolation);
-        if(context.shouldPreventStaleWrite() && checkpointTs != 0) {
-            long ceiling = stalenessCeiling();
-            saver.audit(id, audit -> {
-                if(isStaleAudit(audit, checkpointTs, ceiling)) {
-                    throw new StaleDataException(id);
-                }
-            });
-        }
         errors.clear();
         context.add(this);
         if(!deleted && context.isDeleted(id)) {
@@ -3181,6 +3197,12 @@ public abstract class Record implements Comparable<Record> {
             // erases. The adoption keeps the instance's deleted state
             // aligned with the notification it receives.
             deleted = true;
+        }
+        if(context.shouldPreventStaleWrite() && checkpointTs != 0) {
+            // NOTE: This runs before anything is staged because a synchronous
+            // Saver reads at the recording call, and the audit must observe
+            // the state that preceded this save's own writes.
+            stageStaleWriteCheck(saver);
         }
         if(_author != null) {
             // Check for self-authorship: if this record is its own author,
@@ -4226,6 +4248,20 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if a save of this {@link Record} stages a change to
+     * its {@link Realms realm} membership.
+     *
+     * @return {@code true} if the realm membership differs from the
+     *         {@link #__baseline baseline}
+     */
+    private boolean hasRealmsDelta() {
+        Object stored = baseline(REALMS_KEY);
+        Set<?> known = stored instanceof Set ? (Set<?>) stored
+                : ImmutableSet.of();
+        return !known.equals(_realms);
+    }
+
+    /**
      * Return the JSON string for this {@link Record}.
      *
      * <p>
@@ -4568,6 +4604,33 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Record the stale-write check for this {@link Record} on {@code saver}: an
+     * audit of each value in this {@link Record Record's} {@link #writeSet()
+     * write set} that rejects the save when the database changed that value
+     * after this {@link Record} last loaded or saved it. A {@link Record} with
+     * an empty write set is not audited.
+     *
+     * @param saver the {@link Saver} for the attempt's transaction
+     */
+    private void stageStaleWriteCheck(Saver saver) {
+        long ceiling = stalenessCeiling();
+        Consumer<Map<Timestamp, List<String>>> validator = audit -> {
+            if(isStaleAudit(audit, checkpointTs, ceiling)) {
+                throw new StaleDataException(id);
+            }
+        };
+        Set<String> keys = writeSet();
+        if(keys == null) {
+            saver.audit(id, validator);
+        }
+        else {
+            for (String key : keys) {
+                saver.audit(key, id, validator);
+            }
+        }
+    }
+
+    /**
      * Stage the removal of every value this {@link Record} knew to be stored
      * for {@code key} on {@code saver}, because the corresponding field no
      * longer holds a value. If nothing was known to be stored, nothing is
@@ -4860,6 +4923,69 @@ public abstract class Record implements Comparable<Record> {
                         "Cannot set '{}' because it is not a writable field in {}",
                         key, getClass().getSimpleName()));
             }
+        }
+    }
+
+    /**
+     * Return the keys whose stored values a {@link #saveWithinTransaction save}
+     * of this {@link Record} writes, or {@code null} if the save writes every
+     * stored value.
+     * <p>
+     * A save writes a key when the field's current state differs from the state
+     * this {@link Record} last loaded or saved, and it writes a
+     * {@link MergeStrategy}{@code (OVERWRITE)} key whenever it writes the
+     * record at all. A save of a {@link Record} with no changes writes nothing,
+     * so the write set is empty. A staged deletion removes every stored value,
+     * so its write set is unbounded and this method returns {@code null}.
+     * </p>
+     * <p>
+     * The framework metadata that every save re-asserts, the section marker and
+     * the unset author, is not a written value: neither carries state that this
+     * instance changed since it loaded.
+     * </p>
+     *
+     * @return the keys the save writes, or {@code null} for every key
+     */
+    @Nullable
+    private Set<String> writeSet() {
+        if(deleted) {
+            return null;
+        }
+        else {
+            Set<String> keys = Sets.newLinkedHashSet();
+            Set<String> overwrites = Sets.newLinkedHashSet();
+            boolean changed = __baseline == null;
+            for (Field field : fields()) {
+                if(!Modifier.isTransient(field.getModifiers())) {
+                    String key = field.getName();
+                    MergeStrategy directive = field
+                            .getAnnotation(MergeStrategy.class);
+                    if(directive != null && directive
+                            .value() == MergeStrategy.Strategy.OVERWRITE) {
+                        overwrites.add(key);
+                    }
+                    if(!Objects.equals(serializeFieldValue(field),
+                            baseline(key))) {
+                        keys.add(key);
+                        changed = true;
+                    }
+                }
+            }
+            if(changed) {
+                keys.addAll(overwrites);
+            }
+            else {
+                // Without a change, the save takes the path that stages no
+                // field at all, so not even an OVERWRITE field is written.
+                keys.clear();
+            }
+            if(_author != null) {
+                keys.add(AUTHOR_KEY);
+            }
+            if(hasRealmsDelta()) {
+                keys.add(REALMS_KEY);
+            }
+            return keys;
         }
     }
 

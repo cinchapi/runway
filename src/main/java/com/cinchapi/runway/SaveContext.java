@@ -95,16 +95,16 @@ final class SaveContext {
     private final Set<Long> priorDeletions;
 
     /**
-     * Whether the save rejects any {@link Record} that has been externally
-     * modified.
+     * Whether the save rejects a value it writes that changed externally since
+     * the {@link Record} that holds it last loaded or saved it.
      */
     private final boolean shouldPreventStaleWrite;
 
     /**
      * Construct a new instance.
      *
-     * @param shouldPreventStaleWrite whether the save rejects any
-     *            {@link Record} that has been externally modified
+     * @param shouldPreventStaleWrite whether the save rejects a value it writes
+     *            that changed externally
      */
     SaveContext(boolean shouldPreventStaleWrite) {
         this(shouldPreventStaleWrite, NO_ADMISSION);
@@ -114,8 +114,8 @@ final class SaveContext {
      * Construct a new instance whose {@code admission} checks every
      * {@link Record} that enters the save.
      *
-     * @param shouldPreventStaleWrite whether the save rejects any
-     *            {@link Record} that has been externally modified
+     * @param shouldPreventStaleWrite whether the save rejects a value it writes
+     *            that changed externally
      * @param admission the check that every {@link Record} must pass when it
      *            enters the save
      */
@@ -127,8 +127,8 @@ final class SaveContext {
      * Construct a new instance for a save within a transaction whose earlier
      * saves deleted the {@code priorDeletions}.
      *
-     * @param shouldPreventStaleWrite whether the save rejects any
-     *            {@link Record} that has been externally modified
+     * @param shouldPreventStaleWrite whether the save rejects a value it writes
+     *            that changed externally
      * @param priorDeletions the ids of records that earlier saves in the same
      *            transaction deleted
      * @param admission the check that every {@link Record} must pass when it
@@ -362,8 +362,8 @@ final class SaveContext {
     }
 
     /**
-     * Return whether the save rejects any {@link Record} that has been
-     * externally modified.
+     * Return whether the save rejects a value it writes that changed externally
+     * since the {@link Record} that holds it last loaded or saved it.
      *
      * @return {@code true} if stale writes are rejected
      */

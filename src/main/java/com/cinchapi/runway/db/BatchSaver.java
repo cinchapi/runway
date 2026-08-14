@@ -125,21 +125,16 @@ public final class BatchSaver implements Saver {
         deferredWriteOps.add(group -> group.add(key, value, record));
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public void audit(long record,
             Consumer<Map<Timestamp, List<String>>> validator) {
-        Preconditions.checkNotNull(validator);
-        int[] slot = new int[1];
-        preWriteReadOps.add(group -> {
-            slot[0] = group.commands().size();
-            group.audit(record);
-        });
-        pendingValidators.add(results -> {
-            Map<Timestamp, List<String>> result = (Map<Timestamp, List<String>>) results
-                    .get(slot[0]);
-            validator.accept(result);
-        });
+        audit(group -> group.audit(record), validator);
+    }
+
+    @Override
+    public void audit(String key, long record,
+            Consumer<Map<Timestamp, List<String>>> validator) {
+        audit(group -> group.audit(key, record), validator);
     }
 
     @Override
@@ -256,6 +251,31 @@ public final class BatchSaver implements Saver {
     @Override
     public void verifyOrSet(String key, Object value, long record) {
         deferredWriteOps.add(group -> group.verifyOrSet(key, value, record));
+    }
+
+    /**
+     * Record {@code read} as a pre-write read and queue {@code validator}
+     * against the slot that {@code read} occupies in its submission.
+     *
+     * @param read a {@link Consumer} that appends the audit command to the
+     *            active {@link CommandGroup}
+     * @param validator a {@link Consumer} that receives the audit result and
+     *            may throw to reject the save
+     */
+    @SuppressWarnings("unchecked")
+    private void audit(Consumer<CommandGroup> read,
+            Consumer<Map<Timestamp, List<String>>> validator) {
+        Preconditions.checkNotNull(validator);
+        int[] slot = new int[1];
+        preWriteReadOps.add(group -> {
+            slot[0] = group.commands().size();
+            read.accept(group);
+        });
+        pendingValidators.add(results -> {
+            Map<Timestamp, List<String>> result = (Map<Timestamp, List<String>>) results
+                    .get(slot[0]);
+            validator.accept(result);
+        });
     }
 
     /**
