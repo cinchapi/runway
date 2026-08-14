@@ -1168,7 +1168,7 @@ public abstract class Record implements Comparable<Record> {
      * from or successfully saved to the database. {@code 0} until this
      * {@link Record} has been synchronized at all.
      */
-    transient long checkpointTs = 0;
+    private transient long checkpointTs = 0;
 
     /**
      * Cached copy of audit data used by some {@link Metadata} operations.
@@ -2748,6 +2748,25 @@ public abstract class Record implements Comparable<Record> {
      */
     final void checkpoint() {
         checkpointTs = Time.now();
+    }
+
+    /**
+     * Return {@code true} if any value of this {@link Record} changed in the
+     * database since this {@link Record} was last loaded or saved.
+     * <p>
+     * This asks what the stale-write check that {@link #save(boolean)
+     * save(preventStaleWrite)} applies asks, and differs only in scope: it
+     * spans the whole record, because a transaction conflicts over everything
+     * it read as well as everything it wrote. A {@link Record} with no
+     * checkpoint has nothing to compare, so the result is {@code false}.
+     * </p>
+     *
+     * @param concourse the {@link Concourse} connection to use
+     * @return {@code true} if any value changed externally
+     */
+    boolean hasExternalModifications(Concourse concourse) {
+        return checkpointTs != 0 && !concourse
+                .diff(id, Timestamp.fromMicros(checkpointTs)).isEmpty();
     }
 
     /**
