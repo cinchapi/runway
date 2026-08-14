@@ -26,9 +26,12 @@ this file elaborates on them.
 5. **`if(` has no space before its paren.** Every other control
    keyword has one: `for (`, `while (`, `switch (`, `catch (`. This is
    asymmetric and intentional.
-6. **Explicit branching.** No implicit else: if logic has two
-   branches, write `if`/`else` for both, even when a branch returns
-   or throws. No guard clauses and no early returns: validate
+6. **Explicit branching for distinct paths.** No implicit else: when
+   logic has two logically distinct paths, write `if`/`else` for
+   both, even when a branch returns or throws. When the `if` has no
+   logical alternative, write it alone: a conditional side effect
+   takes no `else`, and an `else` whose body is only a comment is
+   noise. No guard clauses and no early returns: validate
    preconditions with `Preconditions`/`Verify` calls, and invert the
    condition instead of a bare `return;` that skips the method body.
 7. **Javadoc everything** (even private members), except `@Override`

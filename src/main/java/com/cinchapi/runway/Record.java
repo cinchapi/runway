@@ -97,6 +97,7 @@ import com.cinchapi.concourse.util.TypeAdapters;
 import com.cinchapi.concourse.validate.Keys;
 import com.cinchapi.runway.db.ConcourseProvider;
 import com.cinchapi.runway.db.Saver;
+import com.cinchapi.runway.db.Saver.Timing;
 import com.cinchapi.runway.json.JsonTypeWriter;
 import com.cinchapi.runway.util.BackupReadSourcesHashMap;
 import com.cinchapi.runway.util.ComputedEntry;
@@ -4005,7 +4006,13 @@ public abstract class Record implements Comparable<Record> {
      * class when {@code any} is {@code false}, or the {@code window} and every
      * descendant when {@code any} is {@code true}. A
      * {@link Sequences#isSequence(Object) sequence}-valued entry is treated
-     * element-wise: a collision on any single element is a violation.
+     * element-wise: a collision on any single element is a violation. A
+     * {@code null} value does not participate, so a constraint whose every
+     * value is {@code null} has no identity and records no check.
+     * <p>
+     * A {@link Record} that stores no class, or a class that this JVM cannot
+     * resolve, is outside every scope and therefore never collides.
+     * </p>
      *
      * @param saver the {@link Saver} the uniqueness check is recorded on
      * @param data the (key, value) pairs that collectively identify the
@@ -4018,24 +4025,35 @@ public abstract class Record implements Comparable<Record> {
      */
     private void enqueueUniquenessCheck(Saver saver, Map<String, Object> data,
             String errorName, boolean any, Class<? extends Record> window) {
-        BuildableState scope;
-        if(any) {
-            scope = Criteria.where()
-                    .group(Runway.$Criteria.forClassHierarchy(window));
-        }
-        else {
-            scope = Criteria.where().key(SECTION_KEY).operator(Operator.EQUALS)
-                    .value(getClass().getName());
-        }
-        Criteria criteria = conjoinEqualityClauses(scope, data);
-        String errorMessage = AnyStrings.format("{} must be unique in {}",
-                errorName, __);
-        saver.find(criteria, records -> {
-            if(!(records.isEmpty()
-                    || (records.contains(id) && records.size() == 1))) {
-                throw new ConstraintViolationException(this, errorMessage);
+        BuildableState criteria = conjoinEqualityClauses(null, data);
+        if(criteria != null) {
+            Set<String> scope;
+            if(any) {
+                scope = StaticAnalysis.instance().getClassHierarchy(window)
+                        .stream().map(Class::getName)
+                        .collect(Collectors.toSet());
             }
-        });
+            else {
+                scope = ImmutableSet.of(getClass().getName());
+            }
+            String errorMessage = AnyStrings.format("{} must be unique in {}",
+                    errorName, __);
+            saver.select(SECTION_KEY, criteria.build(), candidates -> {
+                Set<Long> records = Sets.newLinkedHashSet();
+                for (Entry<Long, Set<Object>> candidate : candidates
+                        .entrySet()) {
+                    Object section = Iterables.getLast(candidate.getValue(),
+                            null);
+                    if(scope.contains(section)) {
+                        records.add(candidate.getKey());
+                    }
+                }
+                if(!(records.isEmpty()
+                        || (records.contains(id) && records.size() == 1))) {
+                    throw new ConstraintViolationException(this, errorMessage);
+                }
+            }, Timing.DEFERRED);
+        }
     }
 
     /**

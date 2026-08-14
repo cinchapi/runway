@@ -34,9 +34,11 @@ import com.google.common.base.Preconditions;
  * <p>
  * Each {@code audit}/{@code find} round-trips immediately and invokes the
  * supplied {@link Consumer validator} inline so a validation failure throws
- * before any subsequent write is recorded. Each write call goes straight to the
- * connection. {@link #commit()} and {@link #abort()} delegate directly to the
- * underlying connection's transaction primitives.
+ * before any subsequent write is recorded. Every read runs at the recording
+ * call, so a requested {@link Saver.Timing Timing} makes no difference here.
+ * Each write call goes straight to the connection. {@link #commit()} and
+ * {@link #abort()} delegate directly to the underlying connection's transaction
+ * primitives.
  * </p>
  *
  * @author Jeff Nelson
@@ -87,7 +89,7 @@ public final class IncrementalSaver implements Saver {
 
     @Override
     public void select(String key, Criteria criteria,
-            Consumer<Map<Long, Set<Object>>> consumer) {
+            Consumer<Map<Long, Set<Object>>> consumer, Timing timing) {
         consumer.accept(concourse.select(key, criteria));
     }
 
