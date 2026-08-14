@@ -116,7 +116,46 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     /**
      * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
      * save(true, ...)} throws a {@link StaleDataException} when another writer
-     * changed the realm membership that the save writes.
+     * changed the same realm that the save writes.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved in one realm whose
+     * stored realm membership another writer then replaced.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} that belongs to realm "a".</li>
+     * <li>Externally replace the stored realm membership with "c".</li>
+     * <li>Add realm "c" in memory and call
+     * {@code runway.save(true, user)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} that names the
+     * {@link TUser} is thrown, because the save writes realm "c" and that realm
+     * changed externally.
+     */
+    @Test
+    public void testPreventStaleWriteThrowsWhenTheSameRealmChangedExternally() {
+        TUser user = new TUser("sasha");
+        user.addRealm("a");
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("_realms", "c", user.id()));
+
+        user.addRealm("c");
+        try {
+            runway.save(true, user);
+            Assert.fail("Expected StaleDataException");
+        }
+        catch (StaleDataException e) {
+            Assert.assertEquals(user.id(), e.id());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
+     * save(true, ...)} succeeds when another writer changed a realm that the
+     * save does not write.
      * <p>
      * <strong>Start state:</strong> A {@link TUser} saved in one realm whose
      * stored realm membership another writer then replaced.
@@ -129,13 +168,12 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      * {@code runway.save(true, user)}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link StaleDataException} that names the
-     * {@link TUser} is thrown, because the save writes the realm membership and
-     * that value changed externally.
+     * <strong>Expected:</strong> The save returns {@code true} and the stored
+     * realm membership holds both the external realm and the new one.
      */
     @Test
-    public void testPreventStaleWriteThrowsWhenRealmsChangedExternally() {
-        TUser user = new TUser("sasha");
+    public void testPreventStaleWriteSucceedsWhenAnotherRealmChangedExternally() {
+        TUser user = new TUser("sanjay");
         user.addRealm("a");
         Assert.assertTrue(runway.save(user));
 
@@ -143,13 +181,10 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
                 connection -> connection.set("_realms", "c", user.id()));
 
         user.addRealm("b");
-        try {
-            runway.save(true, user);
-            Assert.fail("Expected StaleDataException");
-        }
-        catch (StaleDataException e) {
-            Assert.assertEquals(user.id(), e.id());
-        }
+        Assert.assertTrue(runway.save(true, user));
+
+        TUser loaded = runway.load(TUser.class, user.id());
+        Assert.assertEquals(ImmutableSet.of("b", "c"), loaded.realms());
     }
 
     /**
@@ -596,8 +631,9 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that an external change to the collection
-     * field that the save writes fails the save.
+     * <strong>Goal:</strong> Verify that an external change to an element of a
+     * collection field that the save does not write does not fail a save that
+     * writes a different element of that same field.
      * <p>
      * <strong>Start state:</strong> A saved {@link TDoc} whose tags were
      * externally extended.
@@ -610,11 +646,11 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      * <li>Call {@code runway.save(true, doc)}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link StaleDataException} is thrown and the
-     * external tag survives without the in-memory one.
+     * <strong>Expected:</strong> The save returns {@code true} and the stored
+     * {@link TDoc} holds the original, the external, and the new tag.
      */
     @Test
-    public void testPreventStaleWriteThrowsWhenExternalChangeTouchesTheSameCollection() {
+    public void testPreventStaleWriteSucceedsWhenExternalChangeTouchesAnotherElement() {
         TDoc doc = new TDoc();
         doc.tags.add("draft");
         Assert.assertTrue(runway.save(doc));
@@ -622,6 +658,43 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         externallyWrite(
                 connection -> connection.add("tags", "external", doc.id()));
 
+        doc.tags.add("reviewed");
+        Assert.assertTrue(runway.save(true, doc));
+
+        TDoc loaded = runway.load(TDoc.class, doc.id());
+        Assert.assertEquals(ImmutableSet.of("draft", "external", "reviewed"),
+                loaded.tags);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an external change to the element of a
+     * collection field that the save writes fails the save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TDoc} one of whose tags
+     * another writer removed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TDoc} with two tags.</li>
+     * <li>Externally remove one of them directly in the database.</li>
+     * <li>Remove that same tag in memory and add another.</li>
+     * <li>Call {@code runway.save(true, doc)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown and
+     * neither in-memory change persists.
+     */
+    @Test
+    public void testPreventStaleWriteThrowsWhenExternalChangeTouchesTheSameElement() {
+        TDoc doc = new TDoc();
+        doc.tags.add("draft");
+        doc.tags.add("stale");
+        Assert.assertTrue(runway.save(doc));
+
+        externallyWrite(
+                connection -> connection.remove("tags", "stale", doc.id()));
+
+        doc.tags.remove("stale");
         doc.tags.add("reviewed");
         try {
             runway.save(true, doc);
@@ -632,7 +705,7 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         }
 
         TDoc loaded = runway.load(TDoc.class, doc.id());
-        Assert.assertEquals(ImmutableSet.of("draft", "external"), loaded.tags);
+        Assert.assertEquals(ImmutableSet.of("draft"), loaded.tags);
     }
 
     /**
@@ -671,6 +744,48 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         catch (StaleDataException e) {
             Assert.assertEquals(profile.id(), e.id());
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a field that only
+     * {@link Record#beforeSave() beforeSave} writes belongs to its
+     * {@link Record Record's} write set, so an external change to it fails the
+     * save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TSlugged} whose slug was
+     * externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TSlugged} named "alpha", whose hook derives the
+     * slug.</li>
+     * <li>Externally modify the slug directly in the database.</li>
+     * <li>Change only the name in memory.</li>
+     * <li>Call {@code runway.save(true, record)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown and the
+     * external slug survives.
+     */
+    @Test
+    public void testPreventStaleWriteThrowsWhenHookWritesExternallyChangedField() {
+        TSlugged record = new TSlugged("alpha");
+        Assert.assertTrue(runway.save(record));
+
+        externallyWrite(
+                connection -> connection.set("slug", "external", record.id()));
+
+        record.name = "beta";
+        try {
+            runway.save(true, record);
+            Assert.fail("Expected StaleDataException");
+        }
+        catch (StaleDataException e) {
+            Assert.assertEquals(record.id(), e.id());
+        }
+
+        TSlugged loaded = runway.load(TSlugged.class, record.id());
+        Assert.assertEquals("external", loaded.slug);
     }
 
     /**
@@ -1012,6 +1127,39 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         public TProfile(String handle, String motto) {
             this.handle = handle;
             this.motto = motto;
+        }
+    }
+
+    /**
+     * A test record whose {@link #beforeSave()} hook derives a field that no
+     * caller sets.
+     *
+     * @author Jeff Nelson
+     */
+    public static class TSlugged extends Record {
+
+        /**
+         * The record's name.
+         */
+        String name;
+
+        /**
+         * The slug that {@link #beforeSave()} derives from the {@link #name}.
+         */
+        String slug;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the record's name
+         */
+        public TSlugged(String name) {
+            this.name = name;
+        }
+
+        @Override
+        protected void beforeSave() {
+            slug = name + "-slug";
         }
     }
 

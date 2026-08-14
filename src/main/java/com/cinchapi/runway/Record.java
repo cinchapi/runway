@@ -87,6 +87,7 @@ import com.cinchapi.concourse.lang.ConcourseCompiler;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.server.io.Serializables;
+import com.cinchapi.concourse.thrift.Diff;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.concourse.util.ByteBuffers;
@@ -545,6 +546,35 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Perform {@code onAdd} on every element of {@code current} that
+     * {@code stored} does not hold and {@code onRemove} on every element of
+     * {@code stored} that {@code current} does not hold. A {@code stored} that
+     * is not a {@link Set} holds no element.
+     *
+     * @param current the elements the field holds now, in serialized form
+     * @param stored the elements the field held in the {@link #__baseline
+     *            baseline}
+     * @param onAdd the action for an introduced element
+     * @param onRemove the action for a dropped element
+     */
+    private static void forEachSequenceDelta(Set<?> current,
+            @Nullable Object stored, Consumer<Object> onAdd,
+            Consumer<Object> onRemove) {
+        Set<?> known = stored instanceof Set ? (Set<?>) stored
+                : ImmutableSet.of();
+        for (Object value : current) {
+            if(!known.contains(value)) {
+                onAdd.accept(value);
+            }
+        }
+        for (Object value : known) {
+            if(value != NULL_PLACEHOLDER && !current.contains(value)) {
+                onRemove.accept(value);
+            }
+        }
+    }
+
+    /**
      * Return a {link TypeAdapterFactory} for {@link Record} types that keeps
      * track of linked records to prevent infinite recursion.
      *
@@ -809,6 +839,30 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if a save that writes {@code writes} for a key takes
+     * away one of the {@code changes} that another writer made to that key.
+     *
+     * @param changes the changes another writer made to the key, or
+     *            {@code null} if the key is unchanged
+     * @param writes the values the save writes to the key, or {@code null} if
+     *            the save replaces every value stored for the key
+     * @return {@code true} if the save takes away a change
+     */
+    private static boolean overwrites(@Nullable Map<Diff, Set<Object>> changes,
+            @Nullable Set<Object> writes) {
+        if(changes == null) {
+            return false;
+        }
+        else if(writes == null) {
+            return true;
+        }
+        else {
+            return changes.values().stream().flatMap(Set::stream)
+                    .anyMatch(writes::contains);
+        }
+    }
+
+    /**
      * If {@code value} is a {@link Record}, {@link DeferredReference} or a
      * {@link Sequences#isSequence(Object) Sequence} that contains either, try
      * to {@link #saveWithinTransaction(Saver, SaveContext) save} it, in case it
@@ -895,6 +949,40 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return sequence;
+    }
+
+    /**
+     * Return the values that a save writes for a field that holds
+     * {@code current} and held {@code stored} in the {@link #__baseline
+     * baseline}, or {@code null} when the save replaces every value stored for
+     * the field.
+     * <p>
+     * A sequence field writes only the elements it introduced and the elements
+     * it dropped. Every other field writes over whatever is stored.
+     * </p>
+     *
+     * @param current the field's value now, in serialized form
+     * @param stored the field's value in the {@link #__baseline baseline}
+     * @return the values that would be written, or {@code null} for every value
+     */
+    @Nullable
+    private static Set<Object> stagedValues(@Nullable Object current,
+            @Nullable Object stored) {
+        if(current instanceof Set) {
+            Set<Object> values = Sets.newLinkedHashSet();
+            forEachSequenceDelta((Set<?>) current, stored, values::add,
+                    values::add);
+            return values;
+        }
+        else if(current == null && stored instanceof Set) {
+            Set<Object> values = Sets.newLinkedHashSet();
+            forEachSequenceDelta(ImmutableSet.of(), stored, values::add,
+                    values::add);
+            return values;
+        }
+        else {
+            return null;
+        }
     }
 
     /**
@@ -3154,6 +3242,11 @@ public abstract class Record implements Comparable<Record> {
             // aligned with the notification it receives.
             deleted = true;
         }
+        if(!deleted && hasUnsavedChanges()) {
+            // NOTE: The hook may add fields to what the save writes, so it runs
+            // before the write set is computed.
+            beforeSave();
+        }
         if(context.shouldPreventStaleWrite() && checkpointTs != 0) {
             // NOTE: This runs before anything is staged because a synchronous
             // Saver reads at the recording call, and the read must observe the
@@ -3199,7 +3292,6 @@ public abstract class Record implements Comparable<Record> {
         }
         else {
             context.markChanged(this);
-            beforeSave();
             stageRealmsDelta(saver);
             saver.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
@@ -4204,20 +4296,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if a save of this {@link Record} stages a change to
-     * its {@link Realms realm} membership.
-     *
-     * @return {@code true} if the realm membership differs from the
-     *         {@link #__baseline baseline}
-     */
-    private boolean hasRealmsDelta() {
-        Object stored = baseline(REALMS_KEY);
-        Set<?> known = stored instanceof Set ? (Set<?>) stored
-                : ImmutableSet.of();
-        return !known.equals(_realms);
-    }
-
-    /**
      * Return the JSON string for this {@link Record}.
      *
      * <p>
@@ -4543,20 +4621,10 @@ public abstract class Record implements Comparable<Record> {
      * @param values the field's current elements in serialized form
      */
     private void stageSequenceDelta(Saver saver, String key, Object[] values) {
-        Object stored = baseline(key);
-        Set<?> known = stored instanceof Set ? (Set<?>) stored
-                : ImmutableSet.of();
         Set<Object> current = Sets.newLinkedHashSet(Arrays.asList(values));
-        for (Object value : current) {
-            if(!known.contains(value)) {
-                saver.add(key, value, id);
-            }
-        }
-        for (Object value : known) {
-            if(value != NULL_PLACEHOLDER && !current.contains(value)) {
-                saver.remove(key, value, id);
-            }
-        }
+        forEachSequenceDelta(current, baseline(key),
+                value -> saver.add(key, value, id),
+                value -> saver.remove(key, value, id));
     }
 
     /**
@@ -4571,21 +4639,23 @@ public abstract class Record implements Comparable<Record> {
      * @param saver the {@link Saver} for the attempt's transaction
      */
     private void stageStaleWriteCheck(Saver saver) {
-        Set<String> writeSet = writeSet();
+        Map<String, Set<Object>> writes = writeSet();
         Timestamp ceiling = stalenessCeiling();
-        boolean writesAnyValue = writeSet == null || !writeSet.isEmpty();
+        boolean writesAnyValue = writes == null || !writes.isEmpty();
         boolean hasConflictWindow = ceiling == null
                 || ceiling.getMicros() > checkpointTs;
         if(writesAnyValue && hasConflictWindow) {
             saver.diff(id, Timestamp.fromMicros(checkpointTs), ceiling,
                     diff -> {
                         boolean stale;
-                        if(writeSet == null) {
+                        if(writes == null) {
                             stale = !diff.isEmpty();
                         }
                         else {
-                            stale = !Collections.disjoint(diff.keySet(),
-                                    writeSet);
+                            stale = writes.entrySet().stream()
+                                    .anyMatch(entry -> overwrites(
+                                            diff.get(entry.getKey()),
+                                            entry.getValue()));
                         }
                         if(stale) {
                             throw new StaleDataException(id);
@@ -4893,19 +4963,21 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the keys that would be written or modified if this {@link Record}
-     * were {@link #save() saved}. If every key would be impacted, return
-     * {@code null}.
+     * Return the values that would be written if this {@link Record} were
+     * {@link #save() saved}, keyed by field name. A {@code null} value means
+     * the save replaces every value stored for that key. If the save would
+     * replace every value in the record, return {@code null}.
      *
-     * @return the keys that would be written, or {@code null} for every key
+     * @return the values that would be written, or {@code null} for the whole
+     *         record
      */
     @Nullable
-    private Set<String> writeSet() {
+    private Map<String, Set<Object>> writeSet() {
         if(deleted) {
             return null;
         }
         else {
-            Set<String> keys = Sets.newLinkedHashSet();
+            Map<String, Set<Object>> writes = Maps.newLinkedHashMap();
             Set<String> overwrites = Sets.newLinkedHashSet();
             boolean changed = __baseline == null;
             for (Field field : fields()) {
@@ -4917,28 +4989,32 @@ public abstract class Record implements Comparable<Record> {
                             .value() == MergeStrategy.Strategy.OVERWRITE) {
                         overwrites.add(key);
                     }
-                    if(!Objects.equals(serializeFieldValue(field),
-                            baseline(key))) {
-                        keys.add(key);
+                    Object current = serializeFieldValue(field);
+                    Object stored = baseline(key);
+                    if(!Objects.equals(current, stored)) {
+                        writes.put(key, stagedValues(current, stored));
                         changed = true;
                     }
                 }
             }
             if(changed) {
-                keys.addAll(overwrites);
+                overwrites.forEach(key -> writes.put(key, null));
             }
             else {
                 // Without a change, the save takes the path that stages no
                 // field at all, so not even an OVERWRITE field is written.
-                keys.clear();
+                writes.clear();
             }
             if(_author != null) {
-                keys.add(AUTHOR_KEY);
+                writes.put(AUTHOR_KEY, null);
             }
-            if(hasRealmsDelta()) {
-                keys.add(REALMS_KEY);
+            Set<Object> realms = Sets.newLinkedHashSet();
+            forEachSequenceDelta(ImmutableSet.copyOf(_realms),
+                    baseline(REALMS_KEY), realms::add, realms::add);
+            if(!realms.isEmpty()) {
+                writes.put(REALMS_KEY, realms);
             }
-            return keys;
+            return writes;
         }
     }
 

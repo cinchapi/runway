@@ -6,11 +6,14 @@
 * **Breaking change: by default, a save now writes only what changed.** Every `Record` tracks its changes granularly, and a save writes precisely the values the instance added, changed, or removed since it last loaded or saved. Previously, a save wrote the record's entire state, so a save from an instance with a stale view erased changes that other writers committed after the instance loaded; now those changes survive. Declare the new `@MergeStrategy(OVERWRITE)` annotation on a field to opt that field into the legacy behavior: whenever the record saves, the field writes its full current state and overwrites concurrent changes. ([GH-163](https://github.com/cinchapi/runway/issues/163))
     * This primarily changes the semantics of collections. A save merges the instance's added and removed elements into the stored collection instead of replacing it, so when other writers change the stored collection concurrently, storage is not guaranteed to exactly match the in-memory collection after a save. A mutation with no serialized effect, such as reordering a `List` (the database stores an unordered set of values), is no longer an unsaved change: a save of it writes nothing and fires no save notification.
 * **Breaking change: `preventStaleWrites` now checks only the data a save could
-  overwrite.** Changes to records or fields that the save does not touch no
+  overwrite.** Changes to records or values that the save does not touch no
   longer cause a conflict. Previously, any change in the saved object graph
   caused a conflict. This prevented two callers from using the flag while
   updating different fields on the same record.
   ([GH-179](https://github.com/cinchapi/runway/issues/179))
+    * A collection is checked element by element. A concurrent change to an
+      element that the save neither adds nor removes does not cause a
+      conflict, so two callers can add different elements to one collection.
     * Deletion remains stricter. Deleting a record removes all of its data, so
       any concurrent change to that record causes a conflict.
     * Changing a value and then restoring its loaded value does not cause a
