@@ -59,6 +59,7 @@ import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.Link;
+import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.BuildableState;
 import com.cinchapi.concourse.lang.Criteria;
@@ -1212,8 +1213,12 @@ public final class Runway extends Binding implements
                     if(t instanceof TransactionException
                             && retrySpuriousSaveFailure
                             && ++attempts <= MAX_SPURIOUS_SAVE_RETRIES
-                            && Arrays.stream(records).noneMatch(r -> r
-                                    .hasExternalModifications(concourse))) {
+                            && Arrays.stream(records).noneMatch(
+                                    record -> record.checkpointTs == 0 ? false
+                                            : !concourse.diff(record.id(),
+                                                    Timestamp.fromMicros(
+                                                            record.checkpointTs))
+                                                    .isEmpty())) {
                         // NOTE: Only root records are checked because linked
                         // records that are recursively saved may show false
                         // positives when concurrent saves share the same
