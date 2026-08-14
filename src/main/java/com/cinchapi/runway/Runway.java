@@ -1123,9 +1123,12 @@ public final class Runway extends Binding implements
      * {@link StaleDataException} if it would overwrite a value that another
      * writer changed, and nothing is persisted. Every {@link Record} in the
      * object graph is judged only on the values it would write, so a
-     * {@link Record} that would write nothing can never fail the save. Deleting
-     * a {@link Record} clears all of its values, so one staged for deletion is
-     * judged on all of them.
+     * {@link Record} that would write nothing can never fail the save. A
+     * {@link Record} that the save stages for deletion loses all of its values,
+     * so it is judged on all of them. The cleanup that a deletion requires is
+     * never judged: a companion that a {@link CascadeDelete} or
+     * {@link JoinDelete} schedules, and the removal of a {@link CaptureDelete}
+     * link to a deleted {@link Record}, both apply whatever another writer did.
      * <p>
      * <strong>NOTE:</strong> This covers writes, not reads. A caller that reads
      * one value to decide another, or that wants the guarantee enforced

@@ -2293,7 +2293,10 @@ public abstract class Record implements Comparable<Record> {
      * would overwrite a value that another writer changed. This {@link Record}
      * and every linked {@link Record} the save reaches are judged only on the
      * values each would write, so a {@link Record} that would write nothing can
-     * never fail the save.
+     * never fail the save. The cleanup that a deletion requires is never
+     * judged: a companion that a {@link CascadeDelete} or {@link JoinDelete}
+     * schedules, and the removal of a {@link CaptureDelete} link to a deleted
+     * {@link Record}, both apply whatever another writer did.
      * </p>
      * <p>
      * <strong>NOTE:</strong> This covers writes, not reads. A caller that reads
@@ -3249,7 +3252,7 @@ public abstract class Record implements Comparable<Record> {
             // NOTE: This runs before anything is staged because a synchronous
             // Saver reads at the recording call, and the read must observe the
             // state that preceded this save's own writes.
-            stageStaleWriteCheck(saver);
+            stageStaleWriteCheck(saver, changed);
         }
         if(_author != null) {
             // Check for self-authorship: if this record is its own author,
@@ -4635,9 +4638,11 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * @param saver the {@link Saver} for the attempt's transaction
+     * @param changed whether the save stages this {@link Record Record's}
+     *            fields
      */
-    private void stageStaleWriteCheck(Saver saver) {
-        Map<String, Set<Object>> writes = writeSet();
+    private void stageStaleWriteCheck(Saver saver, boolean changed) {
+        Map<String, Set<Object>> writes = writeSet(changed);
         Timestamp ceiling = stalenessCeiling();
         boolean writesAnyValue = writes == null || !writes.isEmpty();
         boolean hasConflictWindow = ceiling == null
@@ -4966,18 +4971,20 @@ public abstract class Record implements Comparable<Record> {
      * the save replaces every value stored for that key. If the save would
      * replace every value in the record, return {@code null}.
      *
+     * @param changed whether the save stages this {@link Record Record's}
+     *            fields, as {@link #saveWithinTransaction(Saver, SaveContext)}
+     *            decided
      * @return the values that would be written, or {@code null} for the whole
      *         record
      */
     @Nullable
-    private Map<String, Set<Object>> writeSet() {
+    private Map<String, Set<Object>> writeSet(boolean changed) {
         if(deleted) {
             return null;
         }
         else {
             Map<String, Set<Object>> writes = Maps.newLinkedHashMap();
             Set<String> overwrites = Sets.newLinkedHashSet();
-            boolean changed = __baseline == null;
             for (Field field : fields()) {
                 if(!Modifier.isTransient(field.getModifiers())) {
                     String key = field.getName();
@@ -4991,7 +4998,6 @@ public abstract class Record implements Comparable<Record> {
                     Object stored = baseline(key);
                     if(!Objects.equals(current, stored)) {
                         writes.put(key, stagedValues(current, stored));
-                        changed = true;
                     }
                 }
             }
@@ -5002,9 +5008,6 @@ public abstract class Record implements Comparable<Record> {
                 // Without a change, the save takes the path that stages no
                 // field at all, so not even an OVERWRITE field is written.
                 writes.clear();
-            }
-            if(_author != null) {
-                writes.put(AUTHOR_KEY, null);
             }
             Set<Object> realms = Sets.newLinkedHashSet();
             forEachSequenceDelta(ImmutableSet.copyOf(_realms),

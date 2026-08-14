@@ -29,6 +29,7 @@ import org.junit.runners.Parameterized.Parameters;
 
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.Link;
 import com.cinchapi.runway.MergeStrategy.Strategy;
 import com.google.common.collect.ImmutableSet;
 
@@ -747,6 +748,84 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a save that attributes an author
+     * succeeds when another writer changed the stored author, because
+     * authorship is a marker that every save re-asserts.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} whose stored author
+     * another writer then set.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an author {@link TUser} and a subject {@link TUser}.</li>
+     * <li>Externally link the subject's author directly in the database.</li>
+     * <li>Attribute the subject to the author, change the bio, and call
+     * {@code runway.save(true, subject)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and the new bio
+     * persists.
+     */
+    @Test
+    public void testPreventStaleWriteSucceedsWhenAuthorChangedExternally() {
+        TUser author = new TUser("uma");
+        Assert.assertTrue(runway.save(author));
+        TUser subject = new TUser("umberto");
+        Assert.assertTrue(runway.save(subject));
+
+        externallyWrite(connection -> connection.set("_author",
+                Link.to(author.id()), subject.id()));
+
+        subject.bio = "engineer";
+        Reflection.set("_author", author, subject); // (authorized)
+        Assert.assertTrue(runway.save(true, subject));
+
+        TUser loaded = runway.load(TUser.class, subject.id());
+        Assert.assertEquals("engineer", loaded.bio);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save whose
+     * {@link Record#beforeSave() beforeSave} hook restores the only changed
+     * field still judges the {@link MergeStrategy}{@code (OVERWRITE)} fields
+     * that the save writes.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TReverting} whose motto was
+     * externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TReverting} with a title and a motto.</li>
+     * <li>Externally modify the motto directly in the database.</li>
+     * <li>Change the title in memory, which the hook restores, and call
+     * {@code runway.save(true, record)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown and the
+     * external motto survives.
+     */
+    @Test
+    public void testPreventStaleWriteThrowsWhenHookRestoresTheOnlyChange() {
+        TReverting record = new TReverting("alpha", "carpe diem");
+        Assert.assertTrue(runway.save(record));
+
+        externallyWrite(connection -> connection.set("motto", "external motto",
+                record.id()));
+
+        record.title = "beta";
+        try {
+            runway.save(true, record);
+            Assert.fail("Expected StaleDataException");
+        }
+        catch (StaleDataException e) {
+            Assert.assertEquals(record.id(), e.id());
+        }
+
+        TReverting loaded = runway.load(TReverting.class, record.id());
+        Assert.assertEquals("external motto", loaded.motto);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a field that only
      * {@link Record#beforeSave() beforeSave} writes belongs to its
      * {@link Record Record's} write set, so an external change to it fails the
@@ -1127,6 +1206,43 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         public TProfile(String handle, String motto) {
             this.handle = handle;
             this.motto = motto;
+        }
+    }
+
+    /**
+     * A test record whose {@link #beforeSave()} hook restores its title, so a
+     * caller's change to that field leaves no unsaved change behind.
+     *
+     * @author Jeff Nelson
+     */
+    public static class TReverting extends Record {
+
+        /**
+         * The record's title, which {@link #beforeSave()} restores.
+         */
+        String title;
+
+        /**
+         * The record's motto, which every save of a {@link TReverting}
+         * overwrites regardless of whether this instance changed it.
+         */
+        @MergeStrategy(Strategy.OVERWRITE)
+        String motto;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param title the record's title
+         * @param motto the record's motto
+         */
+        public TReverting(String title, String motto) {
+            this.title = title;
+            this.motto = motto;
+        }
+
+        @Override
+        protected void beforeSave() {
+            title = "alpha";
         }
     }
 
