@@ -3629,7 +3629,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * {@link Transaction}.</li>
      * <li>Change and {@code save()} the second copy, then {@code save()} the
      * unchanged first copy in a separate call, then commit.</li>
-     * <li>After the commit, change a different field on the unchanged copy and
+     * <li>After the commit, change the same field on the unchanged copy and
      * save it with stale-write prevention.</li>
      * </ul>
      * <p>
@@ -3660,7 +3660,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Thread.sleep(10);
         }
         Assert.assertSame(changed, notified.get());
-        stale.name = "renamed";
+        stale.score = 3;
         try {
             stale.save(true);
             Assert.fail("Expected the stale copy's save to be rejected");
@@ -3684,7 +3684,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * {@link Transaction}.</li>
      * <li>Change the second copy and save both copies in one call, with the
      * unchanged copy listed last, then commit.</li>
-     * <li>After the commit, change a different field on the unchanged copy and
+     * <li>After the commit, change the same field on the unchanged copy and
      * save it with stale-write prevention.</li>
      * </ul>
      * <p>
@@ -3714,7 +3714,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Thread.sleep(10);
         }
         Assert.assertSame(changed, notified.get());
-        stale.name = "renamed";
+        stale.score = 3;
         try {
             stale.save(true);
             Assert.fail("Expected the stale copy's save to be rejected");

@@ -141,6 +141,39 @@ public class SaveRoundTripCountTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that re-saving an unchanged
+     * previously-loaded {@link Record} under {@code preventStaleWrites=true}
+     * costs exactly one server round trip, because a save that writes nothing
+     * checks nothing.
+     * <p>
+     * <strong>Start state:</strong> A {@link Plain} that has been saved and
+     * then reloaded, with no mutation.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save and reload a {@link Plain} before instrumentation, so the record
+     * carries a non-zero checkpoint timestamp.</li>
+     * <li>Install a {@link CountingConcourseConnectionPool} on
+     * {@link #runway}.</li>
+     * <li>Reset the RPC counter and call
+     * {@code runway.save(true, reloaded)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and exactly one
+     * {@code submit(CommandGroup)} round trip is observed &mdash; the single
+     * writes-plus-commit submission, with no stale-check read.
+     */
+    @Test
+    public void testUnchangedRecordWithStaleCheckCostsOneRoundTrip() {
+        Plain record = new Plain("alpha", 7);
+        Assert.assertTrue(runway.save(record));
+        Plain reloaded = runway.load(Plain.class, record.id());
+        AtomicInteger rpcs = installCountingPool();
+        Assert.assertTrue(runway.save(true, reloaded));
+        Assert.assertEquals(1, rpcs.get());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that re-saving a previously-loaded
      * {@link Record} with both a {@link Unique @Unique} field and
      * {@code preventStaleWrites=true} still costs exactly two server round
@@ -148,11 +181,13 @@ public class SaveRoundTripCountTest extends RunwayBaseClientServerTest {
      * same {@code flushReads} batch as the writes.
      * <p>
      * <strong>Start state:</strong> A {@link UniqueNamed} that has been saved
-     * and reloaded, with no mutation (its name remains unique against itself).
+     * and reloaded, with a new unique name in memory so the save both audits
+     * and checks uniqueness.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save and reload a {@link UniqueNamed} before instrumentation.</li>
+     * <li>Give the reloaded record a different unique name.</li>
      * <li>Install a {@link CountingConcourseConnectionPool} on
      * {@link #runway}.</li>
      * <li>Reset the RPC counter and call
@@ -167,6 +202,7 @@ public class SaveRoundTripCountTest extends RunwayBaseClientServerTest {
         UniqueNamed record = new UniqueNamed("alpha");
         Assert.assertTrue(runway.save(record));
         UniqueNamed reloaded = runway.load(UniqueNamed.class, record.id());
+        reloaded.name = "beta";
         AtomicInteger rpcs = installCountingPool();
         Assert.assertTrue(runway.save(true, reloaded));
         Assert.assertEquals(2, rpcs.get());

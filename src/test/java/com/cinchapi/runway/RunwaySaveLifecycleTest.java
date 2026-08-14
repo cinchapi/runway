@@ -1541,7 +1541,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
      * <li>Load two id-equal copies of the {@link Player}.</li>
      * <li>Change the first copy and save both copies in one call, with the
      * unchanged copy listed last.</li>
-     * <li>Change a different field on the unchanged copy and save it with
+     * <li>Change the same field on the unchanged copy and save it with
      * stale-write prevention.</li>
      * </ul>
      * <p>
@@ -1565,7 +1565,7 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
             Thread.sleep(10);
         }
         Assert.assertSame(changed, notified.get());
-        stale.name = "renamed";
+        stale.score = 3;
         try {
             stale.save(true);
             Assert.fail("Expected the stale copy's save to be rejected");

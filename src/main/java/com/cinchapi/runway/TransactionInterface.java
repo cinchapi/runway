@@ -329,12 +329,13 @@ public interface TransactionInterface extends DatabaseInterface {
      * commits. Until then, no reader outside the transaction can observe them.
      * </p>
      *
-     * @param preventStaleWrites if {@code true}, reject the save when any
-     *            {@link Record} in the object graph has stale data
+     * @param preventStaleWrites if {@code true}, reject the save if it would
+     *            overwrite a value that another writer changed
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
-     *             and any {@link Record} has been externally modified
+     *             and the save would overwrite a value that another writer
+     *             changed
      * @throws IllegalStateException if any of the {@code records} overrides the
      *             save pipeline, if any {@link Record} that the save processes
      *             is bound to a different open transaction, or if a prior save

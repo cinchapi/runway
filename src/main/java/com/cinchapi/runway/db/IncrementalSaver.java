@@ -16,23 +16,24 @@
 package com.cinchapi.runway.db;
 
 import java.util.Collection;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Diff;
 import com.google.common.base.Preconditions;
 
 /**
  * A {@link Saver} that executes every recording call synchronously against the
  * wrapped {@link Concourse} connection.
  * <p>
- * Each {@code audit}/{@code find} round-trips immediately and invokes the
+ * Each {@code diff}/{@code find} round-trips immediately and invokes the
  * supplied {@link Consumer validator} inline so a validation failure throws
  * before any subsequent write is recorded. Every read runs at the recording
  * call, so this {@link Saver} ignores a requested {@link Saver.Timing Timing}.
@@ -77,9 +78,10 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
-    public void audit(long record,
-            Consumer<Map<Timestamp, List<String>>> validator) {
-        validator.accept(concourse.audit(record));
+    public void diff(long record, Timestamp start, @Nullable Timestamp end,
+            Consumer<Map<String, Map<Diff, Set<Object>>>> validator) {
+        validator.accept(end == null ? concourse.diff(record, start)
+                : concourse.diff(record, start, end));
     }
 
     @Override

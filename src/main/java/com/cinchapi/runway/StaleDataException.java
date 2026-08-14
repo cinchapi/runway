@@ -16,8 +16,13 @@
 package com.cinchapi.runway;
 
 /**
- * A {@link StaleDataException} is thrown when a save is rejected because the
- * {@link Record} has stale data relative to the database.
+ * A {@link StaleDataException} is thrown when a save with stale-write
+ * prevention would overwrite a value that another writer changed.
+ * <p>
+ * The {@link #id()} names the {@link Record} that holds the changed value. That
+ * is not always one of the records passed to the save, because a linked
+ * {@link Record} that the save writes is checked the same way.
+ * </p>
  *
  * @author Jeff Nelson
  */
