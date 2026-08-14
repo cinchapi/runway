@@ -222,16 +222,18 @@ player.set(Map.of("name", "New Name", "score", 100));
 
 ## Concurrent Writers
 
-A Record is a detached snapshot: you load it, change it in memory, and save it later. Other writers can change the same data in between. Runway offers a ladder of tools for that window. Each rung answers one question, and each rung costs more than the one below it. Start at the top and stop at the first rung that answers your question.
+A Record is a detached snapshot: you load it, change it in memory, and save it later. Other writers can change the same data in between. Runway offers a ladder of tools for that window. Each rung serves one goal, and each rung costs more than the one below it. Start at the top and stop at the first rung that meets your goal.
 
-| Question | Tool |
+| Goal | Tool |
 |---|---|
 | Save my changes. | `save()` |
-| Fail if a value I write moved. | `save(true)` |
-| Fail if a value I read moved. | `verifyOnSave(key)` |
-| Change one field, right now. | `exchange`, `getAndUpdate`, `updateAndGet` |
+| Fail if a value I write is out of date. | `save(true)` |
+| Also fail if a value I read is out of date. | `verifyOnSave(key)` |
+| Change one field immediately. | `exchange`, `getAndUpdate`, `updateAndGet` |
 | Commit several records together. | `db.save(a, b, c)` |
 | Keep everything I read valid until I commit. | a transaction |
+
+`verifyOnSave` is a declaration rather than a substitute for a save: the next save carries its check, whether or not that save prevents stale writes.
 
 ### Save what changed
 
@@ -244,18 +246,18 @@ player.save();
 
 Annotate a field with `@MergeStrategy(OVERWRITE)` when it must write its whole state on every save instead.
 
-### Fail if a value I write moved
+### Fail if a value I write is out of date
 
 Pass `true` to reject the save when another writer changed a value this save writes, after the instance loaded it.
 
 ```java
 player.score = 99;
-player.save(true); // throws StaleDataException if the stored score moved
+player.save(true); // throws StaleDataException if the stored score is out of date
 ```
 
 The check covers what the save writes. A change to a field this save does not write never fails it, and each record the save reaches is judged against its own writes. A record staged for deletion removes every stored value, so any change to it fails the save.
 
-### Fail if a value I read moved
+### Fail if a value I read is out of date
 
 A decision often rests on a value the save never writes. Declare that value with `verifyOnSave` and every later save verifies it, whether or not the save prevents stale writes.
 
@@ -264,13 +266,13 @@ Team team = db.load(Team.class, id);
 if(team.roster.size() < 12) {
     team.verifyOnSave("roster"); // the decision rests on this
     team.captain = player;
-    team.save();          // fails if the roster changed since the load
+    team.save(true);             // fails if the roster or the captain moved
 }
 ```
 
 `verifyOnSave` covers fields of that record. When the decision rests on another record, use a transaction.
 
-### Change one field, right now
+### Change one field immediately
 
 These write through immediately, without the save pipeline, and are the cheapest way to make one field move atomically. `exchange` swaps a value when the stored one still matches; `getAndUpdate` and `updateAndGet` apply a function until it takes.
 
@@ -322,7 +324,7 @@ Two common patterns come prepackaged, so no transaction has to be written by han
 
 ### Choosing a rung
 
-Prefer the highest rung that answers the question. A transaction guards the most but conflicts over everything it read, and holds a connection until it ends, so a transaction used where `save(true)` would do turns unrelated writes into conflicts.
+Prefer the highest rung that meets your goal. A transaction guards the most but conflicts over everything it read, and holds a connection until it ends, so a transaction used where `save(true)` would do turns unrelated writes into conflicts.
 
 ## Record Linking
 
