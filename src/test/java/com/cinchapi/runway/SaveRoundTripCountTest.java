@@ -144,7 +144,7 @@ public class SaveRoundTripCountTest extends RunwayBaseClientServerTest {
      * <strong>Goal:</strong> Verify that re-saving an unchanged
      * previously-loaded {@link Record} under {@code preventStaleWrites=true}
      * costs exactly one server round trip, because a save that writes nothing
-     * audits nothing.
+     * checks nothing.
      * <p>
      * <strong>Start state:</strong> A {@link Plain} that has been saved and
      * then reloaded, with no mutation.
@@ -161,7 +161,7 @@ public class SaveRoundTripCountTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Expected:</strong> The save returns {@code true} and exactly one
      * {@code submit(CommandGroup)} round trip is observed &mdash; the single
-     * writes-plus-commit submission, with no audit batch.
+     * writes-plus-commit submission, with no stale-check read.
      */
     @Test
     public void testUnchangedRecordWithStaleCheckCostsOneRoundTrip() {
