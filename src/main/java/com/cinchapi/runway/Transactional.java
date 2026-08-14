@@ -34,6 +34,24 @@ import java.util.function.Function;
  * {@link #scope(TransactionInterface)}, so operations on it behave the same as
  * operations on this {@link Transactional}.
  * </p>
+ * <p>
+ * The two forms open the same kind of transaction and enforce the same rules. A
+ * view from either one reads what this {@link Transactional} reads, binds the
+ * same {@link Record Records}, and commits with the same guarantees, so the
+ * choice between them is a choice about lifecycle rather than about semantics.
+ * What the managed form adds is the retry cycle: a commit that a conflict
+ * defeats discards the transaction and runs the work again against a fresh one,
+ * within the bounds of the governing {@link AtomicRetryPolicy}. That is why its
+ * work may run more than once and must be free of side effects outside of the
+ * transaction, while work in a caller-owned {@link Transaction} runs exactly
+ * once and a defeated commit is the caller's to handle.
+ * </p>
+ * <p>
+ * The forms also differ when this {@link Transactional} already operates within
+ * an open {@link Transaction}: the managed form joins it, while a caller-owned
+ * {@link Transaction} does not nest, so an implementation that is already bound
+ * refuses to start another.
+ * </p>
  *
  * @author Jeff Nelson
  */
@@ -85,6 +103,12 @@ public interface Transactional {
      * <p>
      * Every operation on the returned view behaves the same as the operation on
      * this {@link Transactional}, just within the confines of the transaction.
+     * </p>
+     * <p>
+     * Work in the returned {@link Transaction} runs exactly once, and a commit
+     * that a conflict defeats is the caller's to handle. Use
+     * {@link #transactAndSupply(Function) transactAndSupply} to have that
+     * conflict retried under the governing {@link AtomicRetryPolicy}.
      * </p>
      *
      * @return an open {@link Transaction}
