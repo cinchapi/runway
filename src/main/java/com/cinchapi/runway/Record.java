@@ -839,6 +839,42 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if the {@code changes} leave a key storing something
+     * other than what a {@link Record} last saw for it. A value stored
+     * alongside the ones the {@link Record} saw is a difference, as is one that
+     * is no longer stored.
+     *
+     * @param changes the changes another writer made to the key, or
+     *            {@code null} if the key is unchanged
+     * @param baseline the serialized state the {@link Record} last saw for the
+     *            key, or {@code null} if it saw none
+     * @return {@code true} if the stored state differs from what the
+     *         {@link Record} saw
+     */
+    private static boolean diverges(@Nullable Map<Diff, Set<Object>> changes,
+            @Nullable Object baseline) {
+        if(changes == null) {
+            return false;
+        }
+        else {
+            Set<?> seen;
+            if(baseline == null) {
+                seen = ImmutableSet.of();
+            }
+            else if(baseline instanceof Set) {
+                seen = (Set<?>) baseline;
+            }
+            else {
+                seen = ImmutableSet.of(baseline);
+            }
+            return changes.getOrDefault(Diff.ADDED, ImmutableSet.of()).stream()
+                    .anyMatch(value -> !seen.contains(value))
+                    || changes.getOrDefault(Diff.REMOVED, ImmutableSet.of())
+                            .stream().anyMatch(seen::contains);
+        }
+    }
+
+    /**
      * Return {@code true} if a save that writes {@code writes} for a key takes
      * away one of the {@code changes} that another writer made to that key.
      *
@@ -1257,7 +1293,8 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * The names of the fields that {@link #verifyOnSave(String...)
-     * verifyOnSave} declared, or {@code null} if none were declared.
+     * verifyOnSave} declared for the next save, or {@code null} if none are
+     * declared.
      */
     @Nullable
     private transient Set<String> verifyKeys = null;
@@ -2516,10 +2553,11 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Declare that a save must verify that the database still holds the value
-     * each of the {@code keys} had when this {@link Record} last loaded or
-     * saved, and reject the save with a {@link StaleDataException} when it does
-     * not.
+     * Declare that the next save must verify that the database still stores
+     * exactly what this {@link Record} last saw for each of the {@code keys},
+     * and reject the save with a {@link StaleDataException} when it does not. A
+     * value stored alongside the ones this {@link Record} saw is a change, so
+     * it fails the save.
      * <p>
      * The verification applies whether or not the save prevents stale writes,
      * and it covers the fields of this {@link Record} only. A caller whose
@@ -2527,9 +2565,11 @@ public abstract class Record implements Comparable<Record> {
      * {@link Transaction}, whose reads join its conflict footprint.
      * </p>
      * <p>
-     * The declaration accumulates and stays in effect for every later save. A
-     * {@link Record} that the database does not yet hold has no stored value to
-     * compare, so nothing is verified until it does.
+     * The declaration lasts until a save of this {@link Record} commits, and no
+     * later save carries it. A save that does not commit leaves it in place, so
+     * a caller that retries keeps the verification. A {@link Record} that the
+     * database does not yet hold has no stored value to compare, so nothing is
+     * verified until it does.
      * </p>
      *
      * @param keys the names of the intrinsic fields to verify
@@ -2886,6 +2926,14 @@ public abstract class Record implements Comparable<Record> {
      */
     final void checkpoint() {
         checkpointTs = Time.now();
+    }
+
+    /**
+     * Discard the declaration that {@link #verifyOnSave(String...)
+     * verifyOnSave} made, because the save that carried it committed.
+     */
+    final void clearVerifyKeys() {
+        verifyKeys = null;
     }
 
     /**
@@ -4684,8 +4732,9 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Record the stale-write check for this {@link Record} on {@code saver}.
      * The check fails the save if it would overwrite a value that another
-     * writer changed, or if another writer changed a value that
-     * {@link #verifyOnSave(String...) verifyOnSave} declared.
+     * writer changed, or if the database no longer stores what this
+     * {@link Record} last saw for a key that {@link #verifyOnSave(String...)
+     * verifyOnSave} declared.
      * <p>
      * A value that another writer changed and changed back does not fail the
      * save, because the stored value is the one this {@link Record} loaded.
@@ -4719,8 +4768,10 @@ public abstract class Record implements Comparable<Record> {
                                             diff.get(entry.getKey()),
                                             entry.getValue()))
                                     || (verifyKeys != null
-                                            && verifyKeys.stream().anyMatch(
-                                                    diff::containsKey));
+                                            && verifyKeys.stream()
+                                                    .anyMatch(key -> diverges(
+                                                            diff.get(key),
+                                                            baseline(key))));
                         }
                         if(stale) {
                             throw new StaleDataException(id);

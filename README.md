@@ -222,7 +222,7 @@ player.set(Map.of("name", "New Name", "score", 100));
 
 ## Concurrent Writers
 
-A Record is a detached snapshot: you load it, change it in memory, and save it later. Other writers can change the same data in between. Runway offers a ladder of tools for that window. Each rung serves one goal, and each rung costs more than the one below it. Start at the top and stop at the first rung that meets your goal.
+A Record is a detached snapshot: you load it, change it in memory, and save it later. Other writers can change the same data in between. Runway offers a ladder of tools for that window. Each rung serves one goal, and the lower rungs guard more and cost more. Start at the top and stop at the first rung that meets your goal.
 
 | Goal | Tool |
 |---|---|
@@ -259,7 +259,7 @@ The check covers what the save writes. A change to a field this save does not wr
 
 ### Fail if a value I read is out of date
 
-A decision often rests on a value the save never writes. Declare that value with `verifyOnSave` and every later save verifies it, whether or not the save prevents stale writes.
+A decision often rests on a value the save never writes. Declare that value with `verifyOnSave` and the next save verifies it, whether or not the save prevents stale writes.
 
 ```java
 Team team = db.load(Team.class, id);
@@ -270,7 +270,9 @@ if(team.roster.size() < 12) {
 }
 ```
 
-`verifyOnSave` covers fields of that record. When the decision rests on another record, use a transaction.
+The save fails when the database no longer stores exactly what the record saw for a declared key. A player another writer added to the roster is a change, even though every player the record read is still there.
+
+A declaration lasts until a save commits, so each decision declares its own. `verifyOnSave` covers fields of that record. When the decision rests on another record, use a transaction.
 
 ### Change one field immediately
 

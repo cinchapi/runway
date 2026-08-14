@@ -1675,13 +1675,19 @@ public final class Runway extends Binding implements
     /**
      * Dispatch the lifecycle consequences of a committed save that was staged
      * under {@code context}: a notification and a checkpoint for every
-     * {@link Record} that the commit changed or deleted.
+     * {@link Record} that the commit changed or deleted, and, for every
+     * {@link Record} the save processed, the end of the declaration that
+     * {@link Record#verifyOnSave(String...) verifyOnSave} made.
      *
      * @param context the {@link SaveContext} whose staged save committed
      */
     void dispatchSaveOutcomes(SaveContext context) {
         Set<Long> deletions = context.deletions();
         context.forEach((record, outcome) -> {
+            // NOTE: A declaration is spent by the save that carried it,
+            // whatever that save wrote, so it is discarded for every processed
+            // record rather than only for a changed one.
+            record.clearVerifyKeys();
             if(outcome == SaveContext.Outcome.DELETED) {
                 enqueueDeleteNotification(record);
                 record.checkpoint();
