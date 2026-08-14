@@ -30,11 +30,12 @@ import com.cinchapi.concourse.lang.Criteria;
  * staged transaction, the save-time validation reads, the persisted writes, and
  * the terminal commit or abort.
  * <p>
- * <h2>Reads</h2> A validation read accepts a {@link Consumer} that may throw to
- * signal a validation failure. Depending on the implementation, the
- * {@link Consumer} runs either inline at the recording call or deferred until
- * {@link #commit()} or {@link #flush()}; the throw propagates from whichever
- * site invokes the {@link Consumer}.
+ * <h2>Reads</h2> A read accepts a {@link Consumer} that may throw to signal a
+ * validation failure. The {@link Consumer} runs either {@link Timing#INLINE
+ * inline} at the recording call or {@link Timing#DEFERRED deferred} until
+ * {@link #commit()} or {@link #flush()}. The implementation decides, except
+ * where a read takes a {@link Timing} and the caller decides. The throw
+ * propagates from whichever site invokes the {@link Consumer}.
  * </p>
  * <h2>Writes</h2> A write is recorded against the active staged transaction,
  * which is the unit of atomicity: a failure anywhere before {@link #commit()}
@@ -219,17 +220,8 @@ public interface Saver {
     /**
      * Record a {@link Concourse#select(String, Criteria) select} of values for
      * {@code key} on every record matching {@code criteria} and arrange to
-     * apply {@code consumer} to the resulting record-keyed map.
-     * <p>
-     * Unlike {@link #audit audit} and {@link #find find}, this read drives
-     * control flow rather than a throw/no-throw validation &mdash; the
-     * {@code consumer} typically iterates the result and triggers further save
-     * work (e.g. cascade-delete loads). Implementations therefore guarantee
-     * that {@code consumer} runs before the recording call returns. For bulk
-     * implementations this means an early submission of any reads accumulated
-     * so far so the result is available; subsequent recordings start a fresh
-     * batch.
-     * </p>
+     * apply {@code consumer} to the resulting record-keyed map
+     * {@link Timing#INLINE inline}.
      *
      * @param key the field name whose values should be returned
      * @param criteria the {@link Criteria} that identifies the matching records
@@ -237,8 +229,30 @@ public interface Saver {
      *            mutate caller state, trigger further recordings on this
      *            {@link Saver}, or throw to reject the save
      */
+    default void select(String key, Criteria criteria,
+            Consumer<Map<Long, Set<Object>>> consumer) {
+        select(key, criteria, consumer, Timing.INLINE);
+    }
+
+    /**
+     * Record a {@link Concourse#select(String, Criteria) select} of values for
+     * {@code key} on every record matching {@code criteria} and arrange to
+     * apply {@code consumer} to the resulting record-keyed map with the
+     * requested {@code timing}.
+     * <p>
+     * Choose {@link Timing#INLINE} when a later recording depends on the
+     * result, and {@link Timing#DEFERRED} otherwise.
+     * </p>
+     *
+     * @param key the field name whose values should be returned
+     * @param criteria the {@link Criteria} that identifies the matching records
+     * @param consumer a {@link Consumer} that receives the result and may
+     *            mutate caller state, trigger further recordings on this
+     *            {@link Saver}, or throw to reject the save
+     * @param timing when the {@code consumer} runs
+     */
     void select(String key, Criteria criteria,
-            Consumer<Map<Long, Set<Object>>> consumer);
+            Consumer<Map<Long, Set<Object>>> consumer, Timing timing);
 
     /**
      * Record a {@link Concourse#set(String, Object, long) set} of {@code value}
@@ -272,5 +286,31 @@ public interface Saver {
      * @param record the record id whose mapping is being verified or set
      */
     void verifyOrSet(String key, Object value, long record);
+
+    /**
+     * When the {@link Consumer} of a read runs relative to the call that
+     * records the read.
+     *
+     * @author Jeff Nelson
+     */
+    public enum Timing {
+
+        /**
+         * The {@link Consumer} runs no later than {@link Saver#commit()} or
+         * {@link Saver#flush()}, so no recording made after the read may assume
+         * that the {@link Consumer} already ran. A synchronous implementation
+         * runs the {@link Consumer} at the recording call, as it does for every
+         * read.
+         */
+        DEFERRED,
+
+        /**
+         * The {@link Consumer} runs before the recording call returns, so a
+         * later recording may depend on the result. A bulk implementation
+         * performs a round trip to make the result available.
+         */
+        INLINE
+
+    }
 
 }

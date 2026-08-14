@@ -29,6 +29,7 @@ import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.RunwayBaseClientServerTest;
+import com.cinchapi.runway.db.Saver.Timing;
 import com.google.common.collect.ImmutableSet;
 
 /**
@@ -448,6 +449,91 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(saver.commit());
 
         Assert.assertEquals(ImmutableSet.of(match1, match2), captured.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@code consumer} passed to
+     * {@link Saver#select(String, Criteria, java.util.function.Consumer, Timing)
+     * select} receives each matching record mapped to its values for the
+     * requested key.
+     * <p>
+     * <strong>Start state:</strong> Two records with {@code flag = true}, one
+     * of which also holds a {@code label}, and one record with
+     * {@code flag = false} that also holds a {@code label}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@link Timing#DEFERRED deferred} {@code select} of
+     * {@code label} for {@code flag = true} with a {@code consumer} that
+     * captures the result.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The captured result maps the labeled match to
+     * its label, holds no label for the unlabeled match, and excludes the
+     * record that does not match.
+     */
+    @Test
+    public void testDeferredSelectConsumerReceivesMatchesMappedToValues() {
+        long labeled = client.add("flag", true);
+        client.add("label", "alpha", labeled);
+        long unlabeled = client.add("flag", true);
+        long excluded = client.add("flag", false);
+        client.add("label", "beta", excluded);
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<Long, Set<Object>>> captured = new AtomicReference<>();
+        saver.select("label", Criteria.where().key("flag")
+                .operator(Operator.EQUALS).value(true), captured::set,
+                Timing.DEFERRED);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertEquals(ImmutableSet.of("alpha"),
+                captured.get().get(labeled));
+        Assert.assertTrue(captured.get()
+                .getOrDefault(unlabeled, ImmutableSet.of()).isEmpty());
+        Assert.assertFalse(captured.get().containsKey(excluded));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@code consumer} of a
+     * {@link Timing#DEFERRED deferred}
+     * {@link Saver#select(String, Criteria, java.util.function.Consumer, Timing)
+     * select} observes the writes staged earlier in the same save.
+     * <p>
+     * <strong>Start state:</strong> A record that matches neither the criteria
+     * nor the requested key.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@code set} of the criteria value and a {@code set} of the
+     * requested key on the target.</li>
+     * <li>Record a {@link Timing#DEFERRED deferred} {@code select} of that key
+     * for the criteria with a {@code consumer} that captures the result.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The captured result maps the target to the
+     * value the same save staged for it.
+     */
+    @Test
+    public void testDeferredSelectConsumerObservesWritesStagedInSameSave() {
+        long id = client.add("placeholder", 1L);
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.set("flag", true, id);
+        saver.set("label", "alpha", id);
+        AtomicReference<Map<Long, Set<Object>>> captured = new AtomicReference<>();
+        saver.select("label", Criteria.where().key("flag")
+                .operator(Operator.EQUALS).value(true), captured::set,
+                Timing.DEFERRED);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertEquals(ImmutableSet.of("alpha"), captured.get().get(id));
     }
 
     /**

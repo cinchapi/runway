@@ -226,7 +226,7 @@ public final class BatchSaver implements Saver {
     @SuppressWarnings("unchecked")
     @Override
     public void select(String key, Criteria criteria,
-            Consumer<Map<Long, Set<Object>>> consumer) {
+            Consumer<Map<Long, Set<Object>>> consumer, Timing timing) {
         Preconditions.checkNotNull(consumer);
         int[] slot = new int[1];
         postWriteReadOps.add(group -> {
@@ -238,7 +238,9 @@ public final class BatchSaver implements Saver {
                     .get(slot[0]);
             consumer.accept(result);
         });
-        flushReads();
+        if(timing == Timing.INLINE) {
+            flushReads();
+        }
     }
 
     @Override
