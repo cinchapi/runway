@@ -254,6 +254,21 @@ public final class BatchSaver implements Saver {
     }
 
     @Override
+    public void verify(String key, Object value, long record,
+            Consumer<Boolean> validator) {
+        Preconditions.checkNotNull(validator);
+        int[] slot = new int[1];
+        preWriteReadOps.add(group -> {
+            slot[0] = group.commands().size();
+            group.verify(key, value, record);
+        });
+        pendingValidators.add(results -> {
+            Boolean result = (Boolean) results.get(slot[0]);
+            validator.accept(result);
+        });
+    }
+
+    @Override
     public void verifyOrSet(String key, Object value, long record) {
         deferredWriteOps.add(group -> group.verifyOrSet(key, value, record));
     }

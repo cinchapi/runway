@@ -119,6 +119,12 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
+    public void verify(String key, Object value, long record,
+            Consumer<Boolean> validator) {
+        validator.accept(concourse.verify(key, value, record));
+    }
+
+    @Override
     public void verifyOrSet(String key, Object value, long record) {
         concourse.verifyOrSet(key, value, record);
     }

@@ -35,8 +35,9 @@ import com.cinchapi.runway.CountingConcourseConnectionPool.CountingConcourse;
  * exact number of {@code submit(CommandGroup)} round trips it issued. These
  * tests lock in the {@code 2.0.0} contract that a save with no validation reads
  * costs {@code 1} round trip and a save that needs at least one
- * {@link Unique @Unique}-uniqueness check or a {@code preventStaleWrites} audit
- * costs {@code 2}, regardless of how many records the save covers.
+ * {@link Unique @Unique}-uniqueness check, a {@code preventStaleWrites} audit,
+ * or an existence verification for a previously persisted record costs
+ * {@code 2}, regardless of how many records the save covers.
  * </p>
  *
  * @author Jeff Nelson
@@ -310,6 +311,74 @@ public class SaveRoundTripCountTest extends RunwayBaseClientServerTest {
             this.name = name;
         }
 
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that re-saving a previously persisted
+     * {@link Record} costs exactly two server round trips, since the save
+     * verifies that the {@link Record} still exists before it writes.
+     * <p>
+     * <strong>Start state:</strong> A {@link Plain} that has been saved, with
+     * one mutated field in memory.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Plain} before instrumentation, so the record carries a
+     * baseline.</li>
+     * <li>Mutate the record.</li>
+     * <li>Install a {@link CountingConcourseConnectionPool} on
+     * {@link #runway}.</li>
+     * <li>Reset the RPC counter and call {@code runway.save(record)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and exactly two
+     * {@code submit(CommandGroup)} round trips are observed &mdash; one for the
+     * existence-verification-plus-writes batch and one for the commit.
+     */
+    @Test
+    public void testResaveOfPersistedRecordCostsTwoRoundTrips() {
+        Plain record = new Plain("alpha", 7);
+        Assert.assertTrue(runway.save(record));
+        record.value = 8;
+        AtomicInteger rpcs = installCountingPool();
+        Assert.assertTrue(runway.save(record));
+        Assert.assertEquals(2, rpcs.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a bulk re-save of {@code N} previously
+     * persisted {@link Record Records} costs exactly two server round trips,
+     * not {@code 2 * N}, because every existence verification accumulates into
+     * a single batch.
+     * <p>
+     * <strong>Start state:</strong> Ten saved {@link Plain} records, each with
+     * one mutated field in memory.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save ten {@link Plain} records before instrumentation.</li>
+     * <li>Mutate each record.</li>
+     * <li>Install a {@link CountingConcourseConnectionPool} on
+     * {@link #runway}.</li>
+     * <li>Reset the RPC counter and save all ten together.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and exactly two
+     * {@code submit(CommandGroup)} round trips are observed.
+     */
+    @Test
+    public void testBulkResaveOfPersistedRecordsCostsTwoRoundTrips() {
+        Plain[] records = new Plain[10];
+        for (int i = 0; i < records.length; i++) {
+            records[i] = new Plain("r" + i, i);
+        }
+        Assert.assertTrue(runway.save(records));
+        for (Plain record : records) {
+            record.value = record.value + 1;
+        }
+        AtomicInteger rpcs = installCountingPool();
+        Assert.assertTrue(runway.save(records));
+        Assert.assertEquals(2, rpcs.get());
     }
 
 }

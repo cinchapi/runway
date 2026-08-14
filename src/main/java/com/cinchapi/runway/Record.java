@@ -3223,6 +3223,24 @@ public abstract class Record implements Comparable<Record> {
             context.markChanged(this);
             beforeSave();
             stageRealmsDelta(saver);
+            if(__baseline != null) {
+                // NOTE: A save writes only what changed, so a save of a
+                // Record whose data another writer erased would restore the
+                // section along with those changes and leave a record that no
+                // writer intended to exist. A Record without a baseline has
+                // never been persisted, so it has no stored data to preserve.
+                saver.verify(SECTION_KEY, __, id, exists -> {
+                    if(!exists) {
+                        throw new DeletedRecordException(id);
+                    }
+                    else {
+                        // The Record still exists, so the save may proceed.
+                    }
+                });
+            }
+            else {
+                // The Record has never been persisted.
+            }
             saver.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
             for (Field field : fields()) {

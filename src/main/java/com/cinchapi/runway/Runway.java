@@ -1221,6 +1221,10 @@ public final class Runway extends Binding implements
                         context.restore();
                         throw (StaleDataException) t;
                     }
+                    else if(t instanceof DeletedRecordException) {
+                        context.restore();
+                        throw (DeletedRecordException) t;
+                    }
                     else if(t instanceof Record.TransactionBoundaryException) {
                         // A refusal at the transaction boundary is a
                         // programming error, so it propagates instead of

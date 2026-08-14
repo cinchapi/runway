@@ -278,6 +278,31 @@ public interface Saver {
     void stage();
 
     /**
+     * Record a {@link Concourse#verify(String, Object, long) verify} of
+     * {@code value} for {@code key} in {@code record} and hand the result to
+     * {@code validator}.
+     * <p>
+     * The verification reflects the state that precedes the writes this
+     * {@link Saver} records, so a validator never observes a mapping that the
+     * same save is about to write.
+     * </p>
+     * <p>
+     * The {@code validator} may throw to signal a validation failure (typically
+     * {@link com.cinchapi.runway.DeletedRecordException}); the exception
+     * propagates from the recording call for synchronous implementations and
+     * from {@link #commit()} or {@link #flush()} for bulk implementations.
+     * </p>
+     *
+     * @param key the field name to verify
+     * @param value the value that {@code key} is expected to hold
+     * @param record the record id whose mapping is being verified
+     * @param validator a {@link Consumer} that receives whether the mapping
+     *            exists and may throw to reject the save
+     */
+    void verify(String key, Object value, long record,
+            Consumer<Boolean> validator);
+
+    /**
      * Record a {@link Concourse#verifyOrSet(String, Object, long) verifyOrSet}
      * of {@code value} for {@code key} in {@code record}.
      *
