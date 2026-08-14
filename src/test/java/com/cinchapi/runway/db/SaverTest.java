@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import com.cinchapi.concourse.Concourse;
@@ -288,6 +289,54 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         while (System.currentTimeMillis() == millis) {
             Thread.yield();
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Saver#diff diff} reports a
+     * field that held values at the start of the comparison and holds none at
+     * the end, carrying the values that were removed.
+     * <p>
+     * <strong>Start state:</strong> A record with two fields, one of which is
+     * cleared after the baseline.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Capture a baseline {@link Timestamp}, then clear one field.</li>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@code diff} from the baseline with a {@code validator} that
+     * captures the result.</li>
+     * <li>Commit so the {@code validator} is guaranteed to have run.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The captured difference names the cleared
+     * field and reports the values it held at the baseline as
+     * {@link Diff#REMOVED}.
+     */
+    // TODO: un-ignore once the fixed Concourse release is adopted. The server's
+    // record-scoped diff reads the removed values out of the end state, which
+    // does not hold the key, so it answers with a null set that it then cannot
+    // serialize and the connection drops. See cinchapi/concourse#<issue>.
+    @Ignore
+    @Test
+    public void testDiffReportsValuesRemovedBetweenTheTimestamps() {
+        long id = client.add("a", "one");
+        client.add("b", "keep", id);
+        tick();
+        Timestamp baseline = Timestamp.fromMicros(Time.now());
+        tick();
+        client.clear("a", id);
+        tick();
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<String, Map<Diff, Set<Object>>>> captured = new AtomicReference<>();
+        saver.diff(id, baseline, null, captured::set);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(captured.get());
+        Assert.assertEquals(ImmutableSet.of("a"), captured.get().keySet());
+        Assert.assertEquals(ImmutableSet.of("one"),
+                captured.get().get("a").get(Diff.REMOVED));
     }
 
     /**
