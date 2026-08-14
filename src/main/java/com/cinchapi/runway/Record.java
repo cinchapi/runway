@@ -2753,11 +2753,11 @@ public abstract class Record implements Comparable<Record> {
      * Return {@code true} if any value of this {@link Record} changed in the
      * database since this {@link Record} was last loaded or saved.
      * <p>
-     * The test spans the whole record, unlike the stale-write check that
-     * {@link #save(boolean) save(preventStaleWrite)} applies, because a
-     * transaction conflicts over everything it read as well as everything it
-     * wrote. A {@link Record} with no checkpoint has nothing to compare, so the
-     * result is {@code false}.
+     * This asks what the stale-write check that {@link #save(boolean)
+     * save(preventStaleWrite)} applies asks, and differs only in scope: it
+     * spans the whole record, because a transaction conflicts over everything
+     * it read as well as everything it wrote. A {@link Record} with no
+     * checkpoint has nothing to compare, so the result is {@code false}.
      * </p>
      *
      * @param concourse the {@link Concourse} connection to use
@@ -2768,12 +2768,8 @@ public abstract class Record implements Comparable<Record> {
             return false;
         }
         else {
-            for (Timestamp ts : concourse.audit(id).keySet()) {
-                if(ts.getMicros() > checkpointTs) {
-                    return true;
-                }
-            }
-            return false;
+            return !concourse.diff(id, Timestamp.fromMicros(checkpointTs))
+                    .isEmpty();
         }
     }
 
@@ -4589,27 +4585,28 @@ public abstract class Record implements Comparable<Record> {
      * @param saver the {@link Saver} for the attempt's transaction
      */
     private void stageStaleWriteCheck(Saver saver) {
-        long ceiling = stalenessCeiling();
-        Set<String> keys = writeSet();
-        // NOTE: A checkpoint at or after the ceiling leaves no window in which
-        // another writer could have changed anything, which happens for a
-        // Record loaded within the Transaction that bounds the check.
-        if(checkpointTs < ceiling && (keys == null || !keys.isEmpty())) {
-            Timestamp start = Timestamp.fromMicros(checkpointTs);
-            Timestamp end = ceiling == Long.MAX_VALUE ? null
-                    : Timestamp.fromMicros(ceiling);
-            saver.diff(id, start, end, diff -> {
-                boolean stale;
-                if(keys == null) {
-                    stale = !diff.isEmpty();
-                }
-                else {
-                    stale = !Collections.disjoint(diff.keySet(), keys);
-                }
-                if(stale) {
-                    throw new StaleDataException(id);
-                }
-            });
+        Set<String> scope = writeSet();
+        Timestamp ceiling = stalenessCeiling();
+        boolean writesNothing = scope != null && scope.isEmpty();
+        // NOTE: A ceiling at or before the checkpoint leaves no window in
+        // which another writer could have changed anything, which is the case
+        // for a Record loaded within the Transaction that bounds the check.
+        boolean hasNoWindow = ceiling != null
+                && ceiling.getMicros() <= checkpointTs;
+        if(!writesNothing && !hasNoWindow) {
+            saver.diff(id, Timestamp.fromMicros(checkpointTs), ceiling,
+                    diff -> {
+                        boolean stale;
+                        if(scope == null) {
+                            stale = !diff.isEmpty();
+                        }
+                        else {
+                            stale = !Collections.disjoint(diff.keySet(), scope);
+                        }
+                        if(stale) {
+                            throw new StaleDataException(id);
+                        }
+                    });
         }
     }
 
@@ -4640,24 +4637,26 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the newest revision timestamp that can mark this {@link Record} as
-     * stale.
+     * Return the newest state that can mark this {@link Record} as stale, or
+     * {@code null} when there is no bound.
      * <p>
-     * Within an open {@link Transaction}, every revision after the transaction
+     * Within an open {@link Transaction}, every change after the transaction
      * began is one of the transaction's own staged writes, because no other
-     * writer is visible in the snapshot, so newer revisions never indicate
-     * staleness. Outside of a transaction there is no bound.
+     * writer is visible in the snapshot, so later state never indicates
+     * staleness.
      * </p>
      *
      * @return the staleness ceiling
      */
-    private long stalenessCeiling() {
+    @Nullable
+    private Timestamp stalenessCeiling() {
         if(binding instanceof DatabaseTransaction
                 && ((DatabaseTransaction) binding).open()) {
-            return ((DatabaseTransaction) binding).startTimestamp();
+            return Timestamp.fromMicros(
+                    ((DatabaseTransaction) binding).startTimestamp());
         }
         else {
-            return Long.MAX_VALUE;
+            return null;
         }
     }
 
