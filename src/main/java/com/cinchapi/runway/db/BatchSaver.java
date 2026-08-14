@@ -23,12 +23,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.CommandGroup;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Diff;
 import com.google.common.base.Preconditions;
 
 /**
@@ -72,9 +74,9 @@ public final class BatchSaver implements Saver {
 
     /**
      * Deferred read recordings that must observe the pre-save snapshot. Applied
-     * to the active {@link CommandGroup} before the deferred writes so the
-     * audit-based stale-write check sees only state that existed before this
-     * save began. Each entry records its own slot position when it runs.
+     * to the active {@link CommandGroup} before the deferred writes, so they
+     * see only state that existed before this save began. Each entry records
+     * its own slot position when it runs.
      */
     private final List<Consumer<CommandGroup>> preWriteReadOps;
 
@@ -125,40 +127,6 @@ public final class BatchSaver implements Saver {
         deferredWriteOps.add(group -> group.add(key, value, record));
     }
 
-    @SuppressWarnings("unchecked")
-    @Override
-    public void audit(long record,
-            Consumer<Map<Timestamp, List<String>>> validator) {
-        Preconditions.checkNotNull(validator);
-        int[] slot = new int[1];
-        preWriteReadOps.add(group -> {
-            slot[0] = group.commands().size();
-            group.audit(record);
-        });
-        pendingValidators.add(results -> {
-            Map<Timestamp, List<String>> result = (Map<Timestamp, List<String>>) results
-                    .get(slot[0]);
-            validator.accept(result);
-        });
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public void audit(String key, long record,
-            Consumer<Map<Timestamp, List<String>>> validator) {
-        Preconditions.checkNotNull(validator);
-        int[] slot = new int[1];
-        preWriteReadOps.add(group -> {
-            slot[0] = group.commands().size();
-            group.audit(key, record);
-        });
-        pendingValidators.add(results -> {
-            Map<Timestamp, List<String>> result = (Map<Timestamp, List<String>>) results
-                    .get(slot[0]);
-            validator.accept(result);
-        });
-    }
-
     @Override
     public void clear(long record) {
         deferredWriteOps.add(group -> group.clear(record));
@@ -178,6 +146,28 @@ public final class BatchSaver implements Saver {
         writes.commit();
         List<Object> results = concourse.submit(writes);
         return (Boolean) results.get(commitSlot);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public void diff(long record, Timestamp start, @Nullable Timestamp end,
+            Consumer<Map<String, Map<Diff, Set<Object>>>> validator) {
+        Preconditions.checkNotNull(validator);
+        int[] slot = new int[1];
+        preWriteReadOps.add(group -> {
+            slot[0] = group.commands().size();
+            if(end == null) {
+                group.diff(record, start);
+            }
+            else {
+                group.diff(record, start, end);
+            }
+        });
+        pendingValidators.add(results -> {
+            Map<String, Map<Diff, Set<Object>>> result = (Map<String, Map<Diff, Set<Object>>>) results
+                    .get(slot[0]);
+            validator.accept(result);
+        });
     }
 
     @SuppressWarnings("unchecked")
@@ -293,7 +283,7 @@ public final class BatchSaver implements Saver {
      * No-op when no reads have been recorded since the previous flush.
      * <p>
      * Reads are split around the deferred writes by what they need to see:
-     * pre-write reads (the stale-write {@link #audit audit}) run against the
+     * pre-write reads (the stale-write {@link #diff diff}) run against the
      * pre-save snapshot, then the deferred writes apply within the same staged
      * transaction, then post-write reads ({@link #find find} and {@link #select
      * select}) run so uniqueness and cascade-delete lookups observe the

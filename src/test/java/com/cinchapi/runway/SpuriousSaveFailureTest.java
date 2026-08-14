@@ -299,103 +299,51 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Record#hasStaleDataWithinTransaction(Concourse) hasStaleData}
-     * returns {@code true} when a {@link Record Record's} database state has
-     * been modified by an external transaction since the {@link Record} was
-     * last loaded or saved.
+     * <strong>Goal:</strong> Verify that a {@link Record} reports an external
+     * modification, which is what stops
+     * {@link SpuriousSaveFailureStrategy#RETRY RETRY} from retrying a
+     * {@code TransactionException} that a real conflict caused.
      * <p>
-     * <strong>Start state:</strong> A freshly saved {@link TUser}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link TUser}.</li>
-     * <li>Externally modify the {@link TUser TUser's} name directly in the
-     * database via a separate {@link Concourse} connection.</li>
-     * <li>Call {@code hasStaleData} on the in-memory {@link TUser}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@code hasStaleData} returns {@code true}
-     * because the database was modified after the {@link Record Record's}
-     * {@code __loadedAt} timestamp.
-     */
-    @Test
-    public void testHasStaleDataReturnsTrueAfterExternalModification()
-            throws Exception {
-        Runway retryRunway = runwayBuilder()
-                .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
-                .build();
-        try {
-            TUser user = new TUser("eve");
-            Assert.assertTrue(retryRunway.save(user));
-
-            // Externally modify the user in the database
-            Concourse concourse = retryRunway.connections.request();
-            try {
-                concourse.set("name", "conflict", user.id());
-            }
-            finally {
-                retryRunway.connections.release(concourse);
-            }
-
-            // hasStaleData should detect the external write
-            Concourse check = retryRunway.connections.request();
-            try {
-                Assert.assertTrue(
-                        "hasStaleData should return true" + " after external"
-                                + " modification",
-                        user.hasStaleDataWithinTransaction(check));
-            }
-            finally {
-                retryRunway.connections.release(check);
-            }
-        }
-        finally {
-            retryRunway.close();
-        }
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Record#hasStaleDataWithinTransaction(Concourse) hasStaleData}
-     * returns {@code false} when no external transaction has modified the
-     * {@link Record Record's} database state since it was last saved.
-     * <p>
-     * <strong>Start state:</strong> A freshly saved {@link TUser}.
+     * <strong>Start state:</strong> A saved {@link TUser} whose name another
+     * writer then changed.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Save a {@link TUser}.</li>
-     * <li>Call {@code hasStaleData} on the in-memory {@link TUser} without any
-     * external modifications.</li>
+     * <li>Save a {@link TUser} with name "eve".</li>
+     * <li>Change the name to "conflict" through a separate {@link Concourse}
+     * connection.</li>
+     * <li>Call {@code hasExternalModifications} on the in-memory
+     * {@link TUser}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> {@code hasStaleData} returns {@code false}
-     * because no writes occurred after the {@link Record Record's}
-     * {@code __loadedAt} timestamp.
+     * <strong>Expected:</strong> {@code hasExternalModifications} returns
+     * {@code true}.
      */
     @Test
-    public void testHasStaleDataReturnsFalseWhenUnmodified() throws Exception {
-        Runway retryRunway = runwayBuilder()
-                .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
-                .build();
-        try {
-            TUser user = new TUser("frank");
-            Assert.assertTrue(retryRunway.save(user));
+    public void testHasExternalModificationsReturnsTrueAfterExternalModification() {
+        // NOTE: This calls the package-private method directly because the
+        // retry decision it governs is only reachable through the public API
+        // by winning a race against a concurrent writer.
+        TUser user = new TUser("eve");
+        Assert.assertTrue(runway.save(user));
 
-            Concourse check = retryRunway.connections.request();
-            try {
-                Assert.assertFalse(
-                        "hasStaleData should return false" + " when no external"
-                                + " modification occurred",
-                        user.hasStaleDataWithinTransaction(check));
-            }
-            finally {
-                retryRunway.connections.release(check);
-            }
+        Concourse writer = runway.connections.request();
+        try {
+            writer.set("name", "conflict", user.id());
         }
         finally {
-            retryRunway.close();
+            runway.connections.release(writer);
+        }
+
+        Concourse check = runway.connections.request();
+        try {
+            Assert.assertTrue(
+                    "A record whose stored name another writer changed must"
+                            + " report an external modification",
+                    user.hasExternalModifications(check));
+        }
+        finally {
+            runway.connections.release(check);
         }
     }
 
@@ -467,53 +415,6 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(
                 "At least one save should fail with" + " FAIL_FAST strategy",
                 anyFailed);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Record#hasStaleDataWithinTransaction(Concourse) hasStaleData}
-     * returns {@code false} after loading a {@link Record} from the database,
-     * since the loaded state is in sync with the database.
-     * <p>
-     * <strong>Start state:</strong> A {@link TUser} that has been saved and
-     * then loaded fresh from the database.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link TUser}.</li>
-     * <li>Load the {@link TUser} from the database into a new instance.</li>
-     * <li>Call {@code hasStaleData} on the loaded instance.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> {@code hasStaleData} returns {@code false}
-     * because the loaded {@link Record} is in sync with the database.
-     */
-    @Test
-    public void testHasStaleDataReturnsFalseAfterLoad() throws Exception {
-        Runway retryRunway = runwayBuilder()
-                .spuriousSaveFailureStrategy(SpuriousSaveFailureStrategy.RETRY)
-                .build();
-        try {
-            TUser user = new TUser("julia");
-            Assert.assertTrue(retryRunway.save(user));
-
-            TUser loaded = retryRunway.load(TUser.class, user.id());
-            Assert.assertNotNull(loaded);
-
-            Concourse check = retryRunway.connections.request();
-            try {
-                Assert.assertFalse(
-                        "hasStaleData should return false"
-                                + " for a freshly loaded record",
-                        loaded.hasStaleDataWithinTransaction(check));
-            }
-            finally {
-                retryRunway.connections.release(check);
-            }
-        }
-        finally {
-            retryRunway.close();
-        }
     }
 
     /**

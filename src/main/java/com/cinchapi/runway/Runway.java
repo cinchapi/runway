@@ -1116,31 +1116,37 @@ public final class Runway extends Binding implements
      * All changes are committed atomically &mdash; either every {@link Record}
      * is persisted or none are. When the {@link SpuriousSaveFailureStrategy} is
      * {@link SpuriousSaveFailureStrategy#RETRY RETRY}, a
-     * {@link TransactionException} that is not caused by actual data staleness
-     * is automatically retried in a new transaction.
+     * {@link TransactionException} that no external modification explains is
+     * automatically retried in a new transaction.
      * <p>
-     * When {@code preventStaleWrites} is {@code true}, each {@link Record} in
-     * the object graph is checked for staleness inside the transaction before
-     * its data is written. If any {@link Record} has been externally modified
-     * since it was last loaded or saved, a {@link StaleDataException} is thrown
-     * and no data is persisted. This guarantees that a save will never silently
-     * overwrite data that was changed by another process or transaction after
-     * the {@link Record} was last synchronized. This is especially useful in
-     * multi-writer environments where concurrent updates to the same
-     * {@link Record Records} are possible.
+     * When {@code preventStaleWrites} is {@code true}, the save fails with a
+     * {@link StaleDataException} if it would overwrite a value that another
+     * writer changed, and nothing is persisted. Every {@link Record} in the
+     * object graph is judged only on the values it would write, so a
+     * {@link Record} that would write nothing can never fail the save. A
+     * {@link Record} that the save stages for deletion loses all of its values,
+     * so it is judged on all of them. The cleanup that a deletion requires is
+     * never judged: a companion that a {@link CascadeDelete} or
+     * {@link JoinDelete} schedules, and the removal of a {@link CaptureDelete}
+     * link to a deleted {@link Record}, both apply whatever another writer did.
+     * <p>
+     * <strong>NOTE:</strong> This covers writes, not reads. A caller that reads
+     * one value to decide another, or that wants the guarantee enforced
+     * structurally, should use a {@link Transaction} instead, which conflicts
+     * on what it reads as well.
      * <p>
      * <strong>NOTE:</strong> Enabling {@code preventStaleWrites} adds latency
-     * because an audit query is issued for every {@link Record} in the object
-     * graph before each write. For save operations that touch large object
-     * graphs, this overhead may be significant. When disabled, saves are faster
-     * but external modifications may be silently overwritten.
+     * that grows with the number of {@link Record Records} the save writes.
+     * When disabled, saves are faster but external modifications may be
+     * silently overwritten.
      *
-     * @param preventStaleWrites if {@code true}, reject the save when any
-     *            {@link Record} in the object graph has stale data
+     * @param preventStaleWrites if {@code true}, reject the save if it would
+     *            overwrite a value that another writer changed
      * @param records one or more {@link Record Records} to save
      * @return {@code true} if all changes are atomically saved
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
-     *             and any {@link Record} has been externally modified
+     *             and the save would overwrite a value that another writer
+     *             changed
      * @throws IllegalStateException if any {@link Record} that the save
      *             processes is bound to an open {@link Transaction}, whose
      *             commit is the only way to persist it
@@ -1207,13 +1213,17 @@ public final class Runway extends Binding implements
                     if(t instanceof TransactionException
                             && retrySpuriousSaveFailure
                             && ++attempts <= MAX_SPURIOUS_SAVE_RETRIES
-                            && Arrays.stream(records).noneMatch(
-                                    r -> r.hasStaleDataWithinTransaction(
-                                            concourse))) {
-                        // NOTE: Only root records are checked for stale data
-                        // because linked records that are recursively saved may
-                        // show false positives when concurrent saves share the
-                        // same linked record.
+                            && Arrays.stream(records).noneMatch(record -> record
+                                    .hasExternalModifications(concourse))) {
+                        // NOTE: Only root records are checked because linked
+                        // records that are recursively saved may show false
+                        // positives when concurrent saves share the same
+                        // linked record. The check spans the whole record,
+                        // unlike the write-set-scoped check that
+                        // preventStaleWrites applies. A commit conflicts on
+                        // everything the transaction read as well as
+                        // everything it wrote, so any external change makes
+                        // the failure real rather than spurious.
                         context.restore();
                         continue;
                     }
@@ -1267,8 +1277,8 @@ public final class Runway extends Binding implements
      * All changes are committed atomically &mdash; either every {@link Record}
      * is persisted or none are. When the {@link SpuriousSaveFailureStrategy} is
      * {@link SpuriousSaveFailureStrategy#RETRY RETRY}, a
-     * {@link TransactionException} that is not caused by actual data staleness
-     * is automatically retried in a new transaction.
+     * {@link TransactionException} that no external modification explains is
+     * automatically retried in a new transaction.
      * </p>
      *
      * @param records one or more {@link Record Records} to save
@@ -3645,9 +3655,9 @@ public final class Runway extends Binding implements
          * </p>
          * <p>
          * Setting this to {@link SpuriousSaveFailureStrategy#RETRY} causes
-         * {@link Runway} to automatically retry a failed save when none of the
-         * involved {@link Record Records} have stale data, which indicates that
-         * the {@code TransactionException} was spurious.
+         * {@link Runway} to automatically retry a failed save when no involved
+         * {@link Record} was externally modified, which indicates that the
+         * {@code TransactionException} was spurious.
          * </p>
          *
          * @param strategy the {@link SpuriousSaveFailureStrategy} to use

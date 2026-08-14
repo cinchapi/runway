@@ -118,67 +118,6 @@ public class RecordRefreshTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that
-     * {@link Record#hasStaleDataWithinTransaction(com.cinchapi.concourse.Concourse)
-     * hasStaleDataWithinTransaction} returns {@code false} after calling
-     * {@link Record#refresh()} on a previously stale {@link Record}.
-     * <p>
-     * <strong>Start state:</strong> A {@link TUser} that has been saved and
-     * then externally modified in the database, making it stale.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link TUser} with name "stale".</li>
-     * <li>Externally modify the name to "external" directly in the
-     * database.</li>
-     * <li>Verify that {@code hasStaleDataWithinTransaction} returns
-     * {@code true}.</li>
-     * <li>Call {@link Record#refresh()} on the {@link TUser}.</li>
-     * <li>Check {@code hasStaleDataWithinTransaction} again.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> After {@link Record#refresh()},
-     * {@code hasStaleDataWithinTransaction} returns {@code false} because the
-     * {@link Record} is back in sync with the database.
-     */
-    @Test
-    public void testHasStaleDataReturnsFalseAfterRefresh() {
-        TUser user = new TUser("stale");
-        Assert.assertTrue(runway.save(user));
-
-        com.cinchapi.concourse.Concourse concourse = runway.connections
-                .request();
-        try {
-            concourse.set("name", "external", user.id());
-        }
-        finally {
-            runway.connections.release(concourse);
-        }
-
-        // Confirm the record is stale before refresh
-        com.cinchapi.concourse.Concourse check = runway.connections.request();
-        try {
-            Assert.assertTrue("Should be stale before refresh",
-                    user.hasStaleDataWithinTransaction(check));
-        }
-        finally {
-            runway.connections.release(check);
-        }
-
-        user.refresh();
-
-        // After refresh, stale data should be cleared
-        com.cinchapi.concourse.Concourse check2 = runway.connections.request();
-        try {
-            Assert.assertFalse("Should not be stale after refresh",
-                    user.hasStaleDataWithinTransaction(check2));
-        }
-        finally {
-            runway.connections.release(check2);
-        }
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that {@link Record#refresh()} clears the
      * {@link Record#computeOnce(String, java.util.function.Supplier)
      * computeOnce} cache so that previously memoized computed values are

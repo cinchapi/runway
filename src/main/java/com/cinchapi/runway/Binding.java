@@ -46,12 +46,13 @@ abstract class Binding implements DatabaseInterface {
     /**
      * Save all changes in the provided {@code records}.
      *
-     * @param preventStaleWrites if {@code true}, reject the save when any
-     *            {@link Record} in the object graph has stale data
+     * @param preventStaleWrites if {@code true}, reject the save if it would
+     *            overwrite a value that another writer changed
      * @param records one or more {@link Record Records} to save
      * @return {@code true} if the changes are accepted
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
-     *             and any {@link Record} has been externally modified
+     *             and the save would overwrite a value that another writer
+     *             changed
      */
     public abstract boolean save(boolean preventStaleWrites, Record... records);
 

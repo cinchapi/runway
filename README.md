@@ -227,8 +227,8 @@ A Record is a detached snapshot: you load it, change it in memory, and save it l
 | Question | Tool |
 |---|---|
 | Save my changes. | `save()` |
-| Fail if the record I write moved. | `save(true)` |
-| Fail if a value I read moved. | `watch(key)` |
+| Fail if a value I write moved. | `save(true)` |
+| Fail if a value I read moved. | `touch(key)` |
 | Change one field, right now. | `exchange`, `getAndUpdate`, `updateAndGet` |
 | Commit several records together. | `db.save(a, b, c)` |
 | Keep everything I read valid until I commit. | a transaction |
@@ -244,29 +244,31 @@ player.save();
 
 Annotate a field with `@MergeStrategy(OVERWRITE)` when it must write its whole state on every save instead.
 
-### Fail if the record I write moved
+### Fail if a value I write moved
 
-Pass `true` to reject the save when another writer changed this record, or any record the save reaches through a link, since it loaded.
+Pass `true` to reject the save when another writer changed a value this save writes, after the instance loaded it.
 
 ```java
 player.score = 99;
-player.save(true); // throws StaleDataException if the record moved
+player.save(true); // throws StaleDataException if the stored score moved
 ```
+
+The check covers what the save writes. A change to a field this save does not write never fails it, and each record the save reaches is judged against its own writes. A record staged for deletion removes every stored value, so any change to it fails the save.
 
 ### Fail if a value I read moved
 
-A decision often rests on a value the save never writes. Declare that value with `watch` and every later save verifies it, whether or not the save prevents stale writes.
+A decision often rests on a value the save never writes. Declare that value with `touch` and every later save verifies it, whether or not the save prevents stale writes.
 
 ```java
 Team team = db.load(Team.class, id);
 if(team.roster.size() < 12) {
-    team.watch("roster"); // the decision rests on this
+    team.touch("roster"); // the decision rests on this
     team.captain = player;
     team.save();          // fails if the roster changed since the load
 }
 ```
 
-`watch` covers fields of that record. When the decision rests on another record, use a transaction.
+`touch` covers fields of that record. When the decision rests on another record, use a transaction.
 
 ### Change one field, right now
 
