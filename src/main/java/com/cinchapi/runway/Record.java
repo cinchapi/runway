@@ -6670,7 +6670,7 @@ public abstract class Record implements Comparable<Record> {
     private static class ReactiveBinding extends Binding {
 
         /**
-         * A reference to the enclosing {@link Record} whose state is touched
+         * A reference to the enclosing {@link Record} whose state is watched
          * and reacted to. This is needed since this class is static.
          */
         private final Record tracked;
