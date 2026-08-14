@@ -27,7 +27,9 @@ import org.junit.Test;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Diff;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.concourse.time.Time;
 import com.cinchapi.runway.RunwayBaseClientServerTest;
 import com.cinchapi.runway.db.Saver.Timing;
 import com.google.common.collect.ImmutableSet;
@@ -277,72 +279,101 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the {@code validator} passed to
-     * {@link Saver#audit(long, java.util.function.Consumer) audit} receives the
-     * audit history for the recorded record.
-     * <p>
-     * <strong>Start state:</strong> A record that has been modified once.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage the {@link Saver}.</li>
-     * <li>Record an {@code audit} with a {@code validator} that captures the
-     * result.</li>
-     * <li>Commit so the {@code validator} is guaranteed to have run.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The captured audit map is non-empty.
+     * Wait for the wall clock to advance one millisecond, so a timestamp
+     * captured from this JVM and a revision stamped by the server cannot land
+     * on the same microsecond ({@code GH-123}).
      */
-    @Test
-    public void testAuditValidatorReceivesResult() {
-        long id = client.add("a", 1);
-
-        Saver saver = newSaver();
-        saver.stage();
-        AtomicReference<Map<Timestamp, List<String>>> captured = new AtomicReference<>();
-        saver.audit(id, captured::set);
-        Assert.assertTrue(saver.commit());
-
-        Assert.assertNotNull(captured.get());
-        Assert.assertFalse(captured.get().isEmpty());
+    private static void tick() {
+        long millis = System.currentTimeMillis();
+        while (System.currentTimeMillis() == millis) {
+            Thread.yield();
+        }
     }
 
     /**
      * <strong>Goal:</strong> Verify that the {@code validator} passed to
-     * {@link Saver#audit(String, long, java.util.function.Consumer) audit}
-     * receives only the change history of the recorded key.
+     * {@link Saver#diff diff} receives the fields whose stored values differ
+     * between the two timestamps, and no field that ended where it started.
      * <p>
-     * <strong>Start state:</strong> A record with a change under each of two
-     * keys.
+     * <strong>Start state:</strong> A record whose {@code "a"} changed and
+     * changed back after the baseline and whose {@code "b"} changed once.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
+     * <li>Capture a baseline {@link Timestamp}, then change {@code "a"} away
+     * from and back to its original value and change {@code "b"} once.</li>
      * <li>Stage the {@link Saver}.</li>
-     * <li>Record an {@code audit} of one key with a {@code validator} that
+     * <li>Record a {@code diff} from the baseline with a {@code validator} that
      * captures the result.</li>
      * <li>Commit so the {@code validator} is guaranteed to have run.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The captured audit describes the recorded key
-     * and never the other one.
+     * <strong>Expected:</strong> The captured difference names {@code "b"} and
+     * not {@code "a"}.
      */
     @Test
-    public void testKeyAuditValidatorReceivesOnlyThatKeysHistory() {
-        long id = client.add("a", 1);
-        client.add("b", 2, id);
+    public void testDiffValidatorReceivesOnlyNetChangedKeys() {
+        long id = client.add("a", "one");
+        client.add("b", "keep", id);
+        tick();
+        Timestamp baseline = Timestamp.fromMicros(Time.now());
+        tick();
+        client.set("a", "two", id);
+        client.set("a", "one", id);
+        client.set("b", "changed", id);
+        tick();
 
         Saver saver = newSaver();
         saver.stage();
-        AtomicReference<Map<Timestamp, List<String>>> captured = new AtomicReference<>();
-        saver.audit("a", id, captured::set);
+        AtomicReference<Map<String, Map<Diff, Set<Object>>>> captured = new AtomicReference<>();
+        saver.diff(id, baseline, null, captured::set);
         Assert.assertTrue(saver.commit());
 
         Assert.assertNotNull(captured.get());
-        Assert.assertFalse(captured.get().isEmpty());
-        captured.get().values().forEach(
-                descriptions -> descriptions.forEach(description -> Assert
-                        .assertTrue(description, description.contains(" a ")
-                                && !description.contains(" b "))));
+        Assert.assertEquals(ImmutableSet.of("b"), captured.get().keySet());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@code end} of a {@link Saver#diff
+     * diff} bounds the comparison, so a change made after it is not reported.
+     * <p>
+     * <strong>Start state:</strong> A record changed once before a bound and
+     * once after it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Capture a baseline {@link Timestamp}, change {@code "a"}, then
+     * capture a bound {@link Timestamp} and change {@code "b"}.</li>
+     * <li>Stage the {@link Saver} and record a {@code diff} between the
+     * baseline and the bound.</li>
+     * <li>Commit so the {@code validator} is guaranteed to have run.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The captured difference names {@code "a"} and
+     * not {@code "b"}.
+     */
+    @Test
+    public void testDiffEndBoundsTheComparison() {
+        long id = client.add("a", "one");
+        client.add("b", "keep", id);
+        tick();
+        Timestamp baseline = Timestamp.fromMicros(Time.now());
+        tick();
+        client.set("a", "two", id);
+        tick();
+        Timestamp bound = Timestamp.fromMicros(Time.now());
+        tick();
+        client.set("b", "changed", id);
+        tick();
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<String, Map<Diff, Set<Object>>>> captured = new AtomicReference<>();
+        saver.diff(id, baseline, bound, captured::set);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(captured.get());
+        Assert.assertEquals(ImmutableSet.of("a"), captured.get().keySet());
     }
 
     /**

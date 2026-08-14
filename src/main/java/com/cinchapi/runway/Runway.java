@@ -1135,9 +1135,9 @@ public final class Runway extends Binding implements
      * transaction's reads join its conflict footprint.
      * <p>
      * <strong>NOTE:</strong> Enabling {@code preventStaleWrites} adds latency
-     * because the save issues an audit query for each value it writes. When
-     * disabled, saves are faster but external modifications may be silently
-     * overwritten.
+     * because the save issues an extra read for each {@link Record} it writes.
+     * When disabled, saves are faster but external modifications may be
+     * silently overwritten.
      *
      * @param preventStaleWrites if {@code true}, reject the save when a value
      *            it writes changed externally

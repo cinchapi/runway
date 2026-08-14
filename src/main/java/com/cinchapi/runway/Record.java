@@ -728,24 +728,8 @@ public abstract class Record implements Comparable<Record> {
      */
     private static boolean isStaleAudit(Map<Timestamp, List<String>> audit,
             long checkpointTs) {
-        return isStaleAudit(audit, checkpointTs, Long.MAX_VALUE);
-    }
-
-    /**
-     * Return {@code true} if {@code audit} contains any change recorded after
-     * {@code checkpointTs} and no later than {@code ceiling}
-     *
-     * @param audit a record-level audit history keyed by {@link Timestamp}
-     * @param checkpointTs the timestamp of the most recent checkpoint
-     * @param ceiling the newest timestamp that can indicate staleness; changes
-     *            recorded after it are disregarded
-     * @return {@code true} if the data is stale
-     */
-    private static boolean isStaleAudit(Map<Timestamp, List<String>> audit,
-            long checkpointTs, long ceiling) {
         for (Timestamp ts : audit.keySet()) {
-            long micros = ts.getMicros();
-            if(micros > checkpointTs && micros <= ceiling) {
+            if(ts.getMicros() > checkpointTs) {
                 return true;
             }
         }
@@ -4604,29 +4588,41 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Record the stale-write check for this {@link Record} on {@code saver}: an
-     * audit of each value in this {@link Record Record's} {@link #writeSet()
-     * write set} that rejects the save when the database changed that value
-     * after this {@link Record} last loaded or saved it. A {@link Record} with
-     * an empty write set is not audited.
+     * Record the stale-write check for this {@link Record} on {@code saver}: a
+     * read that rejects the save when a value in this {@link Record Record's}
+     * {@link #writeSet() write set} differs from what this {@link Record} last
+     * loaded or saved. A {@link Record} with an empty write set, or with no
+     * window in which another writer could have changed anything, is not read.
+     * <p>
+     * The comparison is between two states, not over the revisions between
+     * them, so a value that another writer changed and changed back holds what
+     * this {@link Record} loaded and does not reject the save.
+     * </p>
      *
      * @param saver the {@link Saver} for the attempt's transaction
      */
     private void stageStaleWriteCheck(Saver saver) {
         long ceiling = stalenessCeiling();
-        Consumer<Map<Timestamp, List<String>>> validator = audit -> {
-            if(isStaleAudit(audit, checkpointTs, ceiling)) {
-                throw new StaleDataException(id);
-            }
-        };
         Set<String> keys = writeSet();
-        if(keys == null) {
-            saver.audit(id, validator);
-        }
-        else {
-            for (String key : keys) {
-                saver.audit(key, id, validator);
-            }
+        // NOTE: A checkpoint at or after the ceiling leaves no window in which
+        // another writer could have changed anything, which happens for a
+        // Record loaded within the Transaction that bounds the check.
+        if(checkpointTs < ceiling && (keys == null || !keys.isEmpty())) {
+            Timestamp start = Timestamp.fromMicros(checkpointTs);
+            Timestamp end = ceiling == Long.MAX_VALUE ? null
+                    : Timestamp.fromMicros(ceiling);
+            saver.diff(id, start, end, diff -> {
+                boolean stale;
+                if(keys == null) {
+                    stale = !diff.isEmpty();
+                }
+                else {
+                    stale = !Collections.disjoint(diff.keySet(), keys);
+                }
+                if(stale) {
+                    throw new StaleDataException(id);
+                }
+            });
         }
     }
 

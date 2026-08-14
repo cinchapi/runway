@@ -474,6 +474,42 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a value another writer changed and
+     * changed back does not fail the save, because the stored value is the one
+     * the instance loaded.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} whose name an
+     * external writer changed and then restored.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with name "nadia".</li>
+     * <li>Externally change the name and then externally change it back.</li>
+     * <li>Change the name in memory and call
+     * {@code runway.save(true, user)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and the
+     * in-memory name persists.
+     */
+    @Test
+    public void testPreventStaleWriteSucceedsWhenExternalChangeWasReverted() {
+        TUser user = new TUser("nadia");
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("name", "detour", user.id()));
+        externallyWrite(
+                connection -> connection.set("name", "nadia", user.id()));
+
+        user.name = "nadia_final";
+        Assert.assertTrue(runway.save(true, user));
+
+        TUser loaded = runway.load(TUser.class, user.id());
+        Assert.assertEquals("nadia_final", loaded.name);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that two instances of one {@link Record}
      * that change the same field cannot both save when the second save enables
      * {@code preventStaleWrites}.
