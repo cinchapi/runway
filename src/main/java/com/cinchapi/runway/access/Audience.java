@@ -1094,7 +1094,7 @@ public interface Audience extends DatabaseInterface, Transactional {
             TransactionInterface raw = AudienceTransaction.raw(transaction);
             Verify.that(Reflection.get("binding", this) == raw,
                     "An Audience can only scope a Transaction it has"
-                            + " joined; use stage() to start one");
+                            + " joined; use startTransaction() to start one");
             return new AudienceTransaction(this, (Transaction) raw);
         }
         else {
@@ -1117,12 +1117,21 @@ public interface Audience extends DatabaseInterface, Transactional {
      * with exactly one of {@link Transaction#commit() commit} or
      * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
      * close} to abort whatever was not committed. Use a try-with-resources
-     * block so the transaction always ends. After the transaction ends, this
-     * {@link Audience} operates against the enclosing {@link Runway} again, and
-     * the ended view falls through to the {@link Runway} the same way. If this
-     * {@link Audience} later joins a different {@link Transaction}, then a
-     * database operation on the ended view is refused with an
-     * {@link IllegalStateException} instead of following the new scope.
+     * block so the transaction always ends.
+     * </p>
+     * <p>
+     * After the transaction ends, this {@link Audience} operates against the
+     * enclosing {@link Runway} again, and the ended view falls through to the
+     * {@link Runway} the same way. If this {@link Audience} later joins a
+     * different {@link Transaction}, then a database operation on the ended
+     * view is refused with an {@link IllegalStateException} instead of
+     * following the new scope.
+     * </p>
+     * <p>
+     * Work in the returned {@link Transaction} runs exactly once. Use
+     * {@link #transactAndSupply(Function) transactAndSupply} instead to retry a
+     * conflict under the governing {@link com.cinchapi.runway.AtomicRetryPolicy
+     * AtomicRetryPolicy}.
      * </p>
      *
      * @return an open {@link Transaction} that this {@link Audience} joined
@@ -1163,9 +1172,15 @@ public interface Audience extends DatabaseInterface, Transactional {
      * transactional scope and return its result.
      * <p>
      * If this {@link Audience} is bound to an open {@link Transaction}, then
-     * the work joins it; otherwise, the work runs in its own managed
+     * the work joins it. Otherwise, the work runs in its own managed
      * transaction that commits after the work completes, per the
      * {@link Transactional#transactAndSupply(Function) Transactional} contract.
+     * Either way, reads observe this {@link Audience Audience's} visibility and
+     * the writes it permits are the ones that stage.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> The work may run more than once, so it must be
+     * free of side effects outside of the transaction.
      * </p>
      *
      * @param work the work to run
