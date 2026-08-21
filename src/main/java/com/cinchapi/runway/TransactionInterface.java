@@ -337,7 +337,8 @@ public interface TransactionInterface extends DatabaseInterface {
      * @return {@code true} when the changes are staged
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and the save would overwrite a value that another writer
-     *             changed
+     *             changed, or if another writer changed a value that
+     *             {@link Record#verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if any of the {@code records} overrides the
      *             save pipeline, if any {@link Record} that the save processes
      *             is bound to a different open transaction, or if a prior save

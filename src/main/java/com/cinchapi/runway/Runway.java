@@ -1146,7 +1146,8 @@ public final class Runway extends Binding implements
      * @return {@code true} if all changes are atomically saved
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and the save would overwrite a value that another writer
-     *             changed
+     *             changed, or if another writer changed a value that
+     *             {@link Record#verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if any {@link Record} that the save
      *             processes is bound to an open {@link Transaction}, whose
      *             commit is the only way to persist it
@@ -1675,16 +1676,13 @@ public final class Runway extends Binding implements
     /**
      * Dispatch the lifecycle consequences of a committed save that was staged
      * under {@code context}: a notification and a checkpoint for every
-     * {@link Record} that the commit changed or deleted, and, for every
-     * {@link Record} the save processed, the end of the declaration that
-     * {@link Record#verifyOnSave(String...) verifyOnSave} made.
+     * {@link Record} that the commit changed or deleted.
      *
      * @param context the {@link SaveContext} whose staged save committed
      */
     void dispatchSaveOutcomes(SaveContext context) {
         Set<Long> deletions = context.deletions();
         context.forEach((record, outcome) -> {
-            record.clearVerifyKeys();
             if(outcome == SaveContext.Outcome.DELETED) {
                 enqueueDeleteNotification(record);
                 record.checkpoint();

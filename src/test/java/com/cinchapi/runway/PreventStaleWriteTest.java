@@ -30,6 +30,7 @@ import org.junit.runners.Parameterized.Parameters;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Link;
+import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.runway.MergeStrategy.Strategy;
 import com.google.common.collect.ImmutableSet;
 
@@ -1470,6 +1471,129 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     public void testVerifyOnSaveRefusesATransientField() {
         TUser user = new TUser("verify_transient_key");
         user.verifyOnSave("session");
+    }
+
+    /**
+     * Run the declared-value scenario within a {@link Transaction} and report
+     * whether the commit was refused.
+     * <p>
+     * NOTE: The caller that loads through {@link Runway} fails until
+     * {@code https://github.com/cinchapi/concourse/issues/828} ships in the
+     * server this suite installs. A transaction whose nested atomic operation
+     * is preempted stops observing version changes, so the declared read never
+     * conflicts. The caller that loads through the {@link Transaction} passes
+     * without that fix, because the load registers the read as well.
+     * </p>
+     *
+     * @param loadThroughTransaction whether the {@link Transaction} loads the
+     *            {@link TUser}, rather than {@link Runway}
+     * @return {@code true} if the commit was refused
+     */
+    private boolean declarationFailsTheCommit(boolean loadThroughTransaction) {
+        TUser user = new TUser("verify_tx_conflict");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        Transaction transaction = runway.startTransaction();
+        try {
+            TUser loaded = loadThroughTransaction
+                    ? transaction.load(TUser.class, user.id())
+                    : runway.load(TUser.class, user.id());
+            loaded.verifyOnSave("bio");
+            externallyWrite(
+                    connection -> connection.set("bio", "external", user.id()));
+            loaded.name = "updated";
+            transaction.save(loaded);
+            return !transaction.commit();
+        }
+        catch (TransactionException | StaleDataException e) {
+            return true;
+        }
+        finally {
+            transaction.close();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a commit ends only the declaration
+     * that the save it committed carried.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} whose save staged within a
+     * {@link Transaction} before the declaration was made.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}, then load it through a
+     * {@link Transaction}.</li>
+     * <li>Modify the in-memory name and save, which stages.</li>
+     * <li>Declare {@code bio}, then commit.</li>
+     * <li>Externally modify the bio, then modify the name of the same instance
+     * and save it again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown by the
+     * later save, because no save carried the declaration.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclarationMadeAfterTheSaveStagedSurvivesTheCommit() {
+        TUser user = new TUser("verify_late_declaration");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        TUser loaded;
+        try (Transaction transaction = runway.startTransaction()) {
+            loaded = transaction.load(TUser.class, user.id());
+            loaded.name = "updated";
+            Assert.assertTrue(loaded.save());
+            loaded.verifyOnSave("bio");
+            Assert.assertTrue(transaction.commit());
+        }
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        loaded.name = "later";
+        runway.save(loaded);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a commit ends the declaration of every
+     * instance whose check the save carried, not only the instance that speaks
+     * for the record.
+     * <p>
+     * <strong>Start state:</strong> Two instances of one saved {@link TUser},
+     * one of which declares its bio.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} and load it twice.</li>
+     * <li>Declare {@code bio} on the second instance.</li>
+     * <li>Modify the name of the first instance and save both together.</li>
+     * <li>Externally modify the bio.</li>
+     * <li>Modify the name of the second instance and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The later save returns {@code true}, because
+     * the committed save already verified the declaration that the second
+     * instance made.
+     */
+    @Test
+    public void testCommitEndsTheDeclarationOfANonSpeakingInstance() {
+        TUser user = new TUser("verify_duplicate_instance");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        TUser speaking = runway.load(TUser.class, user.id());
+        TUser other = runway.load(TUser.class, user.id());
+        other.verifyOnSave("bio");
+        speaking.name = "updated";
+        Assert.assertTrue(runway.save(speaking, other));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        other.name = "later";
+        Assert.assertTrue(runway.save(other));
     }
 
     /**

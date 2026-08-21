@@ -1295,6 +1295,11 @@ public abstract class Record implements Comparable<Record> {
      * The names of the fields that {@link #verifyOnSave(String...)
      * verifyOnSave} declared for the next save, or {@code null} if none are
      * declared.
+     * <p>
+     * The set is replaced wholesale on every update and its contents are never
+     * mutated in place, so a {@link Snapshot} can capture and
+     * {@link #restore(Snapshot) restore} it by reference.
+     * </p>
      */
     @Nullable
     private transient Set<String> verifyKeys = null;
@@ -2313,6 +2318,8 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * @return {@code true} if this {@link Record} is successfully saved
+     * @throws StaleDataException if another writer changed a value that
+     *             {@link #verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save() {
@@ -2359,7 +2366,8 @@ public abstract class Record implements Comparable<Record> {
      * @return {@code true} if this {@link Record} is successfully saved
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
      *             and the save would overwrite a value that another writer
-     *             changed
+     *             changed, or if another writer changed a value that
+     *             {@link #verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save(boolean preventStaleWrite) {
@@ -2565,9 +2573,10 @@ public abstract class Record implements Comparable<Record> {
      * {@link Transaction}, whose reads join its conflict footprint.
      * </p>
      * <p>
-     * The declaration lasts until a save of this {@link Record} commits, and no
-     * later save carries it. A save that does not commit leaves it in place, so
-     * a caller that retries keeps the verification. A {@link Record} that the
+     * The save that carries a declared key ends that key's declaration when it
+     * commits, and no later save carries it. A key that no save carried stays
+     * declared, and a save that does not commit leaves its keys declared, so a
+     * caller that retries keeps the verification. A {@link Record} that the
      * database does not yet hold has no stored value to compare, so nothing is
      * verified until it does.
      * </p>
@@ -2587,10 +2596,10 @@ public abstract class Record implements Comparable<Record> {
                             + " stored",
                     key, __);
         }
-        if(verifyKeys == null) {
-            verifyKeys = Sets.newLinkedHashSet();
-        }
-        verifyKeys.addAll(Arrays.asList(keys));
+        Set<String> declared = verifyKeys == null ? Sets.newLinkedHashSet()
+                : Sets.newLinkedHashSet(verifyKeys);
+        declared.addAll(Arrays.asList(keys));
+        verifyKeys = declared;
     }
 
     /**
@@ -2926,14 +2935,6 @@ public abstract class Record implements Comparable<Record> {
      */
     final void checkpoint() {
         checkpointTs = Time.now();
-    }
-
-    /**
-     * Discard the declaration that {@link #verifyOnSave(String...)
-     * verifyOnSave} made, because the save that carried it committed.
-     */
-    final void clearVerifyKeys() {
-        verifyKeys = null;
     }
 
     /**
@@ -3305,6 +3306,7 @@ public abstract class Record implements Comparable<Record> {
         __baseline = snapshot.baseline;
         _author = snapshot.author;
         deleted = snapshot.deleted;
+        verifyKeys = snapshot.verifyKeys;
         // The discarded attempt may have cached audit history that includes
         // its own staged revisions, so the next metadata read must re-fetch
         // from the durable state.
@@ -3354,6 +3356,12 @@ public abstract class Record implements Comparable<Record> {
             // state that preceded this save's own writes.
             stageStaleWriteCheck(saver, changed,
                     context.shouldPreventStaleWrite());
+            // NOTE: The check that just staged is the verification the
+            // declaration asked for, so the declaration ends here rather than
+            // at the commit. A save that does not commit restores the
+            // Snapshot that this attempt captured, which puts the declaration
+            // back for the retry.
+            verifyKeys = null;
         }
         if(_author != null) {
             // Check for self-authorship: if this record is its own author,
@@ -6637,12 +6645,19 @@ public abstract class Record implements Comparable<Record> {
         final boolean deleted;
 
         /**
+         * The snapshotted value of {@link Record#verifyKeys}.
+         */
+        @Nullable
+        final Set<String> verifyKeys;
+
+        /**
          * Construct a new instance.
          */
         Snapshot() {
             this.baseline = Record.this.__baseline;
             this.author = Record.this._author;
             this.deleted = Record.this.deleted;
+            this.verifyKeys = Record.this.verifyKeys;
         }
 
     }
