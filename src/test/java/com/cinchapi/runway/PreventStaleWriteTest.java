@@ -1489,16 +1489,14 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      *            {@link TUser}, rather than {@link Runway}
      * @return {@code true} if the commit was refused
      */
-    private boolean declarationFailsTheCommit(boolean loadThroughTransaction) {
+    private boolean declarationFailsTheCommit() {
         TUser user = new TUser("verify_tx_conflict");
         user.bio = "original";
         Assert.assertTrue(runway.save(user));
 
         Transaction transaction = runway.startTransaction();
         try {
-            TUser loaded = loadThroughTransaction
-                    ? transaction.load(TUser.class, user.id())
-                    : runway.load(TUser.class, user.id());
+            TUser loaded = transaction.load(TUser.class, user.id());
             loaded.verifyOnSave("bio");
             externallyWrite(
                     connection -> connection.set("bio", "external", user.id()));
@@ -1511,6 +1509,96 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         }
         finally {
             transaction.close();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declared value fails the commit when
+     * another writer changes it while the {@link Transaction} that loaded the
+     * {@link Record} is open.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that an open
+     * {@link Transaction} loads.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} and start a {@link Transaction}.</li>
+     * <li>Load the {@link TUser} through the {@link Transaction} and declare
+     * {@code bio}.</li>
+     * <li>Externally modify the bio.</li>
+     * <li>Modify the in-memory name, save through the {@link Transaction} and
+     * commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The commit is refused.
+     */
+    @Test
+    public void testDeclaredValueFailsTheCommitWhenTheTransactionLoadedIt() {
+        Assert.assertTrue(declarationFailsTheCommit());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses a save
+     * that carries a declaration it cannot verify.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} and an open
+     * {@link Transaction} that did not load it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} and start a {@link Transaction}.</li>
+     * <li>Load the {@link TUser} through {@link Runway} and declare
+     * {@code bio}.</li>
+     * <li>Modify the in-memory name and save through the
+     * {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save is refused, because the {@link TUser}
+     * did not reach its state through the {@link Transaction}.
+     */
+    @Test(expected = Record.TransactionBoundaryException.class)
+    public void testSaveIsRefusedWhenTheTransactionCannotVerifyADeclaration() {
+        TUser user = new TUser("verify_tx_outside");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        try (Transaction transaction = runway.startTransaction()) {
+            TUser loaded = runway.load(TUser.class, user.id());
+            loaded.verifyOnSave("bio");
+            loaded.name = "updated";
+            transaction.save(loaded);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declaration inside a
+     * {@link Transaction} commits when no writer changes the declared value.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} and an open
+     * {@link Transaction} that loads it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Start a {@link Transaction} and load the {@link TUser} through
+     * it.</li>
+     * <li>Declare {@code bio}, modify the in-memory name, save and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save and the commit both succeed.
+     */
+    @Test
+    public void testDeclaredValueCommitsWithinATransactionWhenNothingChanged() {
+        TUser user = new TUser("verify_tx_inside");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        try (Transaction transaction = runway.startTransaction()) {
+            TUser loaded = transaction.load(TUser.class, user.id());
+            loaded.verifyOnSave("bio");
+            loaded.name = "updated";
+            Assert.assertTrue(loaded.save());
+            Assert.assertTrue(transaction.commit());
         }
     }
 

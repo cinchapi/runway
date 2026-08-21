@@ -274,6 +274,8 @@ The save fails when another writer changed a declared key after the record loade
 
 A declaration lasts until a save commits, so each decision declares its own. `verifyOnSave` covers fields of that record. When the decision rests on another record, use a transaction.
 
+Inside a transaction, a record the transaction loaded needs no declaration, because the transaction fails its own commit when a writer changes anything it read. A declaration on such a record costs nothing. A save is refused when it carries a declaration on a record that reached its state outside the transaction, because nothing there can verify it.
+
 ### Change one field immediately
 
 These write through immediately, without the save pipeline, and are the cheapest way to make one field move atomically. `exchange` swaps a value when the stored one still matches; `getAndUpdate` and `updateAndGet` apply a function until it takes.

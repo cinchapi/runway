@@ -1285,6 +1285,14 @@ public abstract class Record implements Comparable<Record> {
     private transient Map<String, Object> __baseline = null;
 
     /**
+     * The {@link #binding} through which this {@link Record} reached the state
+     * at {@link #checkpointTs}, or {@code null} until this {@link Record} has
+     * been synchronized at all.
+     */
+    @Nullable
+    private transient Binding checkpointBinding = null;
+
+    /**
      * The timestamp (in microseconds) when this {@link Record} was last loaded
      * from or successfully saved to the database. {@code 0} until this
      * {@link Record} has been synchronized at all.
@@ -2580,6 +2588,15 @@ public abstract class Record implements Comparable<Record> {
      * database does not yet hold has no stored value to compare, so nothing is
      * verified until it does.
      * </p>
+     * <p>
+     * Within an open {@link Transaction}, a {@link Record} that the
+     * {@link Transaction} loaded needs no declaration, because the
+     * {@link Transaction} fails its own commit when a writer changes anything
+     * it read. A declaration on such a {@link Record} costs nothing. A save is
+     * refused when it carries a declaration on a {@link Record} that reached
+     * its current state outside the {@link Transaction}, since nothing there
+     * can verify it.
+     * </p>
      *
      * @param keys the names of the intrinsic fields to verify
      * @throws IllegalArgumentException if any of the {@code keys} does not name
@@ -2935,6 +2952,7 @@ public abstract class Record implements Comparable<Record> {
      */
     final void checkpoint() {
         checkpointTs = Time.now();
+        checkpointBinding = binding;
     }
 
     /**
@@ -4752,6 +4770,9 @@ public abstract class Record implements Comparable<Record> {
      *            fields
      * @param preventStaleWrite whether the values that the save writes are
      *            checked in addition to the declared ones
+     * @throws TransactionBoundaryException if a declared key cannot be verified
+     *             because this {@link Record} did not reach its current state
+     *             through the {@link Transaction} that saves it
      */
     private void stageStaleWriteCheck(Saver saver, boolean changed,
             boolean preventStaleWrite) {
@@ -4767,6 +4788,18 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         Timestamp ceiling = stalenessCeiling();
+        if(!verified.isEmpty() && ceiling != null && __baseline != null
+                && checkpointBinding != binding) {
+            // NOTE: A Transaction verifies whatever it read, so a Record it
+            // loaded needs nothing here. A Record that reached its state
+            // elsewhere is outside that cover, and the Transaction's older
+            // snapshot cannot answer what the declaration asks, so the save is
+            // refused instead of passing a declaration nothing verifies.
+            throw new TransactionBoundaryException("Cannot verify "
+                    + verified.keySet() + " in " + __ + " because this Record"
+                    + " did not reach its current state through the Transaction"
+                    + " that saves it; load it through the Transaction");
+        }
         boolean checksAnyValue = writes == null || !writes.isEmpty()
                 || !verified.isEmpty();
         boolean hasConflictWindow = ceiling == null
