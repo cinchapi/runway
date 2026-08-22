@@ -576,7 +576,8 @@ class DatabaseTransaction extends Binding implements Transaction {
      * @return {@code true} when the changes are staged
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and the save would overwrite a value that another writer
-     *             changed
+     *             changed, or if another writer changed a value that
+     *             {@link Record#verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if any of the {@code records} overrides the
      *             save pipeline, if any {@link Record} that the save processes
      *             is bound to a different open {@link Transaction}, or if a
@@ -889,6 +890,13 @@ class DatabaseTransaction extends Binding implements Transaction {
                             (a, b) -> a.sequence <= b.sequence ? a : b));
                 }
                 oldest.forEach((record, snapshot) -> record.restore(snapshot));
+                // NOTE: A later snapshot of the same record holds the keys
+                // that a later save carried, and none of those saves
+                // committed, so every one of them is declared again.
+                for (SaveContext context : saves) {
+                    context.forEachSnapshot((record, snapshot) -> record
+                            .redeclareVerifyKeys(snapshot.verifyKeys));
+                }
                 try {
                     for (Runnable hook : afterAbortHooks) {
                         hook.run();

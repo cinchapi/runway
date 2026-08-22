@@ -232,6 +232,20 @@ public final class BatchSaver implements Saver {
 
     @SuppressWarnings("unchecked")
     @Override
+    public void select(Collection<String> keys, long record,
+            Consumer<Map<String, Set<Object>>> validator) {
+        Preconditions.checkNotNull(validator);
+        int[] slot = new int[1];
+        preWriteReadOps.add(group -> {
+            slot[0] = group.commands().size();
+            group.select(keys, record);
+        });
+        pendingValidators.add(results -> validator
+                .accept((Map<String, Set<Object>>) results.get(slot[0])));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
     public void select(String key, Criteria criteria,
             Consumer<Map<Long, Set<Object>>> consumer, Timing timing) {
         Preconditions.checkNotNull(consumer);

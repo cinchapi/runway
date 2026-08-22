@@ -882,6 +882,28 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return the values a {@link Record} last saw stored for a key, as the set
+     * that a read of the key returns when nothing changed.
+     *
+     * @param baseline the serialized state the {@link Record} last saw for the
+     *            key, or {@code null} if it saw none
+     * @return the seen values
+     */
+    private static Set<?> seenValues(@Nullable Object baseline) {
+        if(baseline == null) {
+            return ImmutableSet.of();
+        }
+        else if(baseline instanceof Set) {
+            return ((Set<?>) baseline).stream()
+                    .filter(value -> value != NULL_PLACEHOLDER)
+                    .collect(Collectors.toSet());
+        }
+        else {
+            return ImmutableSet.of(baseline);
+        }
+    }
+
+    /**
      * Set the {@code value} of an {@link #INTERNAL_FIELDS internal field} on
      * the provided {@code instance}.
      * <p>
@@ -1249,11 +1271,32 @@ public abstract class Record implements Comparable<Record> {
     private transient Map<String, Object> __baseline = null;
 
     /**
+     * The {@link #binding} through which this {@link Record} reached the state
+     * at {@link #checkpointTs}, or {@code null} until this {@link Record} has
+     * been synchronized at all.
+     */
+    @Nullable
+    private transient Binding checkpointBinding = null;
+
+    /**
      * The timestamp (in microseconds) when this {@link Record} was last loaded
      * from or successfully saved to the database. {@code 0} until this
      * {@link Record} has been synchronized at all.
      */
     private transient long checkpointTs = 0;
+
+    /**
+     * The names of the fields that {@link #verifyOnSave(String...)
+     * verifyOnSave} declared for the next save, or {@code null} if none are
+     * declared.
+     * <p>
+     * The set is replaced wholesale on every update and its contents are never
+     * mutated in place, so a {@link Snapshot} can capture it by reference and a
+     * {@link #restore(Snapshot) restore} can declare its keys again.
+     * </p>
+     */
+    @Nullable
+    private transient Set<String> verifyKeys = null;
 
     /**
      * Cached copy of audit data used by some {@link Metadata} operations.
@@ -2234,29 +2277,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Execute {@code work} within this {@link Record Record's} transactional
-     * scope.
-     * <p>
-     * This method behaves exactly like {@link #transactAndSupply(Function)} for
-     * work that does not produce a result. The work may therefore run more than
-     * once, so it must be free of side effects outside of the transaction.
-     * </p>
-     *
-     * @param work the work to run
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
-     * @throws RetryExhaustedException if a new transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
-    public final void transact(Consumer<TransactionInterface> work) {
-        transactAndSupply(transaction -> {
-            work.accept(transaction);
-            return null;
-        });
-    }
-
-    /**
      * Save any changes made to this {@link Record}.
      * <p>
      * <strong>NOTE:</strong> This method recursively saves any linked
@@ -2270,6 +2290,8 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * @return {@code true} if this {@link Record} is successfully saved
+     * @throws StaleDataException if another writer changed a value that
+     *             {@link #verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save() {
@@ -2287,6 +2309,11 @@ public abstract class Record implements Comparable<Record> {
      * bound to a {@link Runway}, the changes are durable when this method
      * returns; when bound to a {@link Transaction}, the changes stage within it
      * and become durable when the transaction commits.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> A save also verifies every value that
+     * {@link #verifyOnSave(String...) verifyOnSave} declared, whether or not
+     * {@code preventStaleWrite} is {@code true}.
      * </p>
      *
      * <p>
@@ -2311,7 +2338,8 @@ public abstract class Record implements Comparable<Record> {
      * @return {@code true} if this {@link Record} is successfully saved
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
      *             and the save would overwrite a value that another writer
-     *             changed
+     *             changed, or if another writer changed a value that
+     *             {@link #verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save(boolean preventStaleWrite) {
@@ -2396,6 +2424,59 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Thrown an exception that describes any exceptions that were previously
+     * suppressed. If none occurred, then this method does nothing. This is a
+     * good way to understand why a save operation fails.
+     *
+     * @throws RuntimeException
+     */
+    public void throwSupressedExceptions() {
+        if(!errors.isEmpty()) {
+            Iterator<Throwable> it = errors.iterator();
+            StringBuilder summary = new StringBuilder();
+            ArrayBuilder<StackTraceElement> stacktrace = ArrayBuilder.builder();
+            while (it.hasNext()) {
+                Throwable t = it.next();
+                summary.append(";").append(t.getMessage());
+                stacktrace.add(t.getStackTrace());
+                it.remove();
+            }
+            SuppressedRunwayException supressed = new SuppressedRunwayException(
+                    summary.toString().trim().substring(1));
+            supressed.setStackTrace(stacktrace.build());
+            throw supressed;
+        }
+    }
+
+    @Override
+    public final String toString() {
+        return json();
+    }
+
+    /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope.
+     * <p>
+     * This method behaves exactly like {@link #transactAndSupply(Function)} for
+     * work that does not produce a result. The work may therefore run more than
+     * once, so it must be free of side effects outside of the transaction.
+     * </p>
+     *
+     * @param work the work to run
+     * @throws IllegalStateException if this {@link Record} has no binding, or
+     *             if it is bound to an open {@link Transaction} that another
+     *             thread owns or that a failed save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    public final void transact(Consumer<TransactionInterface> work) {
+        transactAndSupply(transaction -> {
+            work.accept(transaction);
+            return null;
+        });
+    }
+
+    /**
      * Execute {@code work} within this {@link Record Record's} transactional
      * scope and return its result.
      * <p>
@@ -2453,36 +2534,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Thrown an exception that describes any exceptions that were previously
-     * suppressed. If none occurred, then this method does nothing. This is a
-     * good way to understand why a save operation fails.
-     *
-     * @throws RuntimeException
-     */
-    public void throwSupressedExceptions() {
-        if(!errors.isEmpty()) {
-            Iterator<Throwable> it = errors.iterator();
-            StringBuilder summary = new StringBuilder();
-            ArrayBuilder<StackTraceElement> stacktrace = ArrayBuilder.builder();
-            while (it.hasNext()) {
-                Throwable t = it.next();
-                summary.append(";").append(t.getMessage());
-                stacktrace.add(t.getStackTrace());
-                it.remove();
-            }
-            SuppressedRunwayException supressed = new SuppressedRunwayException(
-                    summary.toString().trim().substring(1));
-            supressed.setStackTrace(stacktrace.build());
-            throw supressed;
-        }
-    }
-
-    @Override
-    public final String toString() {
-        return json();
-    }
-
-    /**
      * Atomically apply {@code update} to the value of {@code key} and return
      * the value that the update produced.
      * <p>
@@ -2509,6 +2560,61 @@ public abstract class Record implements Comparable<Record> {
      */
     public final <T> T updateAndGet(String key, UnaryOperator<T> update) {
         return updateAtomically(key, update).after();
+    }
+
+    /**
+     * Declare that the next save must verify that the database still stores,
+     * for each of the {@code keys}, what this {@link Record} last saw, and
+     * reject the save with a {@link StaleDataException} when it does not. A
+     * value stored alongside the ones this {@link Record} saw is a difference,
+     * so it fails the save.
+     * <p>
+     * The verification applies whether or not the save prevents stale writes,
+     * and it covers the fields of this {@link Record} only. A caller whose
+     * decision depends on a value that another {@link Record} holds uses a
+     * {@link Transaction}, whose reads join its conflict footprint.
+     * </p>
+     * <p>
+     * The save that carries a declared key ends that key's declaration when it
+     * commits, and no later save carries it. A key that no save carried stays
+     * declared, and a save that does not commit leaves its keys declared, so a
+     * caller that retries keeps the verification. A {@link Record} that the
+     * database does not yet hold has no stored value to compare, so nothing is
+     * verified until it does.
+     * </p>
+     * <p>
+     * Within an open {@link Transaction}, a {@link Record} that the
+     * {@link Transaction} loaded needs no declaration, because the
+     * {@link Transaction} fails its own commit when a writer changes anything
+     * it read. A declaration on such a {@link Record} costs nothing. A
+     * {@link Record} that reached its state before the {@link Transaction}
+     * began carries its declaration into the {@link Transaction}, which
+     * verifies it against the state at its start. A save throws an
+     * {@link IllegalStateException} when it carries a declaration on a
+     * {@link Record} that reached its current state outside the
+     * {@link Transaction} after it began, which the {@link Transaction} cannot
+     * see.
+     * </p>
+     *
+     * @param keys the names of the intrinsic fields to verify
+     * @throws IllegalArgumentException if any of the {@code keys} does not name
+     *             an intrinsic field of this {@link Record}, or names one that
+     *             is transient
+     */
+    public final void verifyOnSave(String... keys) {
+        for (String key : keys) {
+            Field field = StaticAnalysis.instance().getField(this, key);
+            Verify.thatArgument(field != null,
+                    "{} is not an intrinsic field of {}", key, __);
+            Verify.thatArgument(!Modifier.isTransient(field.getModifiers()),
+                    "Cannot verify {} in {} because it is transient and never"
+                            + " stored",
+                    key, __);
+        }
+        Set<String> declared = verifyKeys == null ? Sets.newLinkedHashSet()
+                : Sets.newLinkedHashSet(verifyKeys);
+        declared.addAll(Arrays.asList(keys));
+        verifyKeys = declared;
     }
 
     /**
@@ -2844,6 +2950,7 @@ public abstract class Record implements Comparable<Record> {
      */
     final void checkpoint() {
         checkpointTs = Time.now();
+        checkpointBinding = binding;
     }
 
     /**
@@ -3135,6 +3242,22 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Declare again the {@code keys} that a save carried and did not commit,
+     * alongside any key that {@link #verifyOnSave(String...) verifyOnSave}
+     * declared since.
+     *
+     * @param keys the keys to declare again, or {@code null} for none
+     */
+    void redeclareVerifyKeys(@Nullable Set<String> keys) {
+        if(keys != null) {
+            Set<String> declared = verifyKeys == null ? Sets.newLinkedHashSet()
+                    : Sets.newLinkedHashSet(verifyKeys);
+            declared.addAll(keys);
+            verifyKeys = declared;
+        }
+    }
+
+    /**
      * Remove every reference held by one of this {@link Record Record's}
      * {@link CaptureDelete} fields to a {@link Record} whose id is in
      * {@code ids}.
@@ -3215,6 +3338,7 @@ public abstract class Record implements Comparable<Record> {
         __baseline = snapshot.baseline;
         _author = snapshot.author;
         deleted = snapshot.deleted;
+        redeclareVerifyKeys(snapshot.verifyKeys);
         // The discarded attempt may have cached audit history that includes
         // its own staged revisions, so the next metadata read must re-fetch
         // from the durable state.
@@ -3231,7 +3355,9 @@ public abstract class Record implements Comparable<Record> {
      * @throws StaleDataException if the {@code context}
      *             {@link SaveContext#shouldPreventStaleWrite() prevents} stale
      *             writes and a value that this save writes changed in the
-     *             database since this {@link Record} last loaded or saved it
+     *             database since this {@link Record} last loaded or saved it,
+     *             or if a value that {@link #verifyOnSave(String...)
+     *             verifyOnSave} declared changed in that window
      * @throws IllegalStateException if a {@link Required} or
      *             {@link ValidatedBy} field constraint is violated
      * @throws ConstraintViolationException if a {@link Unique} field constraint
@@ -3257,11 +3383,19 @@ public abstract class Record implements Comparable<Record> {
             // before the write set is computed.
             beforeSave();
         }
-        if(context.shouldPreventStaleWrite() && checkpointTs != 0) {
+        if(checkpointTs != 0
+                && (context.shouldPreventStaleWrite() || verifyKeys != null)) {
             // NOTE: This runs before anything is staged because a synchronous
             // Saver reads at the recording call, and the read must observe the
             // state that preceded this save's own writes.
-            stageStaleWriteCheck(saver, changed);
+            stageStaleWriteCheck(saver, changed,
+                    context.shouldPreventStaleWrite());
+            // NOTE: The check that just staged is the verification the
+            // declaration asked for, so the declaration ends here rather than
+            // at the commit. A save that does not commit restores the
+            // Snapshot that this attempt captured, which puts the declaration
+            // back for the retry.
+            verifyKeys = null;
         }
         if(_author != null) {
             // Check for self-authorship: if this record is its own author,
@@ -4640,7 +4774,9 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Record the stale-write check for this {@link Record} on {@code saver}.
      * The check fails the save if it would overwrite a value that another
-     * writer changed.
+     * writer changed, or if the database no longer stores what this
+     * {@link Record} last saw for a key that {@link #verifyOnSave(String...)
+     * verifyOnSave} declared.
      * <p>
      * A value that another writer changed and changed back does not fail the
      * save, because the stored value is the one this {@link Record} loaded.
@@ -4649,13 +4785,53 @@ public abstract class Record implements Comparable<Record> {
      * @param saver the {@link Saver} for the attempt's transaction
      * @param changed whether the save stages this {@link Record Record's}
      *            fields
+     * @param preventStaleWrite whether the values that the save writes are
+     *            checked in addition to the declared ones
+     * @throws TransactionBoundaryException if a declared key cannot be verified
+     *             because this {@link Record} reached its current state outside
+     *             the {@link Transaction} that saves it, after that
+     *             {@link Transaction} began
      */
-    private void stageStaleWriteCheck(Saver saver, boolean changed) {
-        Map<String, Set<Object>> writes = writeSet(changed);
+    private void stageStaleWriteCheck(Saver saver, boolean changed,
+            boolean preventStaleWrite) {
+        Map<String, Set<Object>> writes = preventStaleWrite ? writeSet(changed)
+                : ImmutableMap.of();
+        // NOTE: The declared state is captured here, alongside the write set,
+        // because a bulk Saver runs the check after this save replaces the
+        // baseline, and the check must compare against what preceded it.
+        Map<String, Set<?>> verified = Maps.newLinkedHashMap();
+        if(verifyKeys != null) {
+            for (String key : verifyKeys) {
+                verified.put(key, seenValues(baseline(key)));
+            }
+        }
         Timestamp ceiling = stalenessCeiling();
-        boolean writesAnyValue = writes == null || !writes.isEmpty();
         boolean hasConflictWindow = ceiling == null
                 || ceiling.getMicros() > checkpointTs;
+        if(!verified.isEmpty() && !hasConflictWindow && __baseline != null
+                && checkpointBinding != binding) {
+            // NOTE: A Transaction verifies whatever it read, so a Record it
+            // loaded needs nothing here. A Record that reached its state
+            // elsewhere, after the Transaction began, saw what the
+            // Transaction's snapshot cannot, so nothing within the
+            // Transaction can answer what the declaration asks.
+            throw new TransactionBoundaryException("Cannot verify "
+                    + verified.keySet() + " in " + __ + " because this Record"
+                    + " reached its current state after the Transaction that"
+                    + " saves it began; load it through the Transaction");
+        }
+        if(!verified.isEmpty() && hasConflictWindow) {
+            saver.select(verified.keySet(), id, stored -> {
+                boolean stale = verified.entrySet().stream()
+                        .anyMatch(entry -> !stored
+                                .getOrDefault(entry.getKey(), ImmutableSet.of())
+                                .equals(entry.getValue()));
+                if(stale) {
+                    throw new StaleDataException(id);
+                }
+            });
+        }
+        boolean writesAnyValue = writes == null || !writes.isEmpty();
         if(writesAnyValue && hasConflictWindow) {
             saver.diff(id, Timestamp.fromMicros(checkpointTs), ceiling,
                     diff -> {
@@ -6526,20 +6702,29 @@ public abstract class Record implements Comparable<Record> {
         final boolean deleted;
 
         /**
+         * The snapshotted value of {@link Record#verifyKeys}.
+         */
+        @Nullable
+        final Set<String> verifyKeys;
+
+        /**
          * Construct a new instance.
          */
         Snapshot() {
             this.baseline = Record.this.__baseline;
             this.author = Record.this._author;
             this.deleted = Record.this.deleted;
+            this.verifyKeys = Record.this.verifyKeys;
         }
 
     }
 
     /**
      * A {@link TransactionBoundaryException} is thrown when a save refuses a
-     * {@link Record} because it is bound to an open {@link Transaction}, whose
-     * commit is the only way to persist it.
+     * {@link Record} at the boundary of an open {@link Transaction}: the
+     * {@link Record} is bound to a {@link Transaction} whose commit is the only
+     * way to persist it, or it carries a declaration that the
+     * {@link Transaction} cannot verify.
      *
      * @author Jeff Nelson
      */

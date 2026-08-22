@@ -30,6 +30,8 @@ import org.junit.runners.Parameterized.Parameters;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Link;
+import com.cinchapi.concourse.Tag;
+import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.runway.MergeStrategy.Strategy;
 import com.google.common.collect.ImmutableSet;
 
@@ -1132,6 +1134,788 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a declared value is checked by a save
+     * that does not prevent stale writes.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose bio is then externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Externally modify the bio in the database.</li>
+     * <li>Declare {@code bio}, modify the in-memory name, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredValueIsCheckedBySaveThatDoesNotPreventStaleWrites() {
+        TUser user = new TUser("verify_plain_save");
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        user.verifyOnSave("bio");
+        user.name = "updated";
+        runway.save(user);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save succeeds when the database
+     * still holds the declared value that the {@link Record} last saw.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose bio no other writer changes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Externally modify a field that is not touched.</li>
+     * <li>Declare {@code bio}, modify the in-memory bio, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}.
+     */
+    @Test
+    public void testDeclaredValueAllowsSaveWhenTheDatabaseStillHoldsIt() {
+        TUser user = new TUser("verify_fresh");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("name", "external", user.id()));
+
+        user.verifyOnSave("bio");
+        user.bio = "updated";
+        Assert.assertTrue(runway.save(user));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save succeeds when the database
+     * still holds the declared value of a field whose stored form is a
+     * {@link Tag}.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose status no other writer changes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with a status.</li>
+     * <li>Declare {@code status}, modify the in-memory name, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}.
+     */
+    @Test
+    public void testDeclaredValueAllowsSaveWhenTheFieldStoresAsATag() {
+        TUser user = new TUser("verify_tag_fresh");
+        user.status = TStatus.ACTIVE;
+        Assert.assertTrue(runway.save(user));
+
+        user.verifyOnSave("status");
+        user.name = "updated";
+        Assert.assertTrue(runway.save(user));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save succeeds when the database
+     * still holds the declared elements of a collection whose stored elements
+     * are {@link Tag Tags}.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose roles no other writer changes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} that holds two roles.</li>
+     * <li>Declare {@code roles}, modify the in-memory name, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}.
+     */
+    @Test
+    public void testDeclaredCollectionAllowsSaveWhenTheElementsStoreAsTags() {
+        TUser user = new TUser("verify_tag_collection_fresh");
+        user.roles.add(TStatus.ACTIVE);
+        user.roles.add(TStatus.SUSPENDED);
+        Assert.assertTrue(runway.save(user));
+
+        user.verifyOnSave("roles");
+        user.name = "updated";
+        Assert.assertTrue(runway.save(user));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declared value of a field whose
+     * stored form is a {@link Tag} fails the save when another writer changes
+     * it.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose status is then externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with a status.</li>
+     * <li>Externally modify the status in the database.</li>
+     * <li>Declare {@code status}, modify the in-memory name, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredValueFailsSaveWhenTheTagFieldChangedExternally() {
+        TUser user = new TUser("verify_tag_stale");
+        user.status = TStatus.ACTIVE;
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(connection -> connection.set("status",
+                TStatus.SUSPENDED.name(), user.id()));
+
+        user.verifyOnSave("status");
+        user.name = "updated";
+        runway.save(user);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declared value is checked even when
+     * the save writes nothing.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose bio is then externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Externally modify the bio in the database.</li>
+     * <li>Declare {@code bio} and save without modifying anything.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredValueIsCheckedWhenTheSaveWritesNothing() {
+        TUser user = new TUser("verify_no_write");
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        user.verifyOnSave("bio");
+        runway.save(user);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that declaring a name that is not an
+     * intrinsic field is refused.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} that has never been saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code verifyOnSave} with a name that no field carries.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
+     */
+    @Test(expected = IllegalArgumentException.class)
+    public void testVerifyOnSaveRefusesAKeyThatIsNotAnIntrinsicField() {
+        TUser user = new TUser("verify_bad_key");
+        user.verifyOnSave("nonexistent");
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declaration has no effect on a
+     * {@link Record} that the database does not yet hold.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} that has never been saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Declare {@code bio} on an unsaved {@link TUser} and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}.
+     */
+    @Test
+    public void testVerifyOnSaveHasNoEffectBeforeTheRecordIsPersisted() {
+        TUser user = new TUser("verify_new_record");
+        user.verifyOnSave("bio");
+        Assert.assertTrue(runway.save(user));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a value this instance wrote through an
+     * atomic operation does not fail its own later save.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose bio this instance then exchanges.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with a bio.</li>
+     * <li>Declare {@code bio} and exchange it through this instance.</li>
+     * <li>Modify the in-memory name and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}, because the
+     * database still stores what this instance last saw for {@code bio}.
+     */
+    @Test
+    public void testDeclaredValueAllowsSaveAfterThisInstanceAtomicallyWroteIt() {
+        TUser user = new TUser("verify_own_atomic_write");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        user.verifyOnSave("bio");
+        Assert.assertTrue(user.exchange("bio", "exchanged"));
+
+        user.name = "updated";
+        Assert.assertTrue(runway.save(user));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an element another writer adds to a
+     * declared collection fails the save.
+     * <p>
+     * <strong>Start state:</strong> A {@link TDoc} saved through {@link Runway}
+     * whose stored tags another writer then adds to.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TDoc} that carries one tag.</li>
+     * <li>Externally add a second tag, leaving the first in place.</li>
+     * <li>Declare {@code tags}, add a reviewer, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown, even
+     * though every tag the {@link TDoc} read is still stored.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredCollectionFailsSaveWhenAnotherWriterAddsAnElement() {
+        TDoc doc = new TDoc();
+        doc.tags.add("draft");
+        Assert.assertTrue(runway.save(doc));
+
+        externallyWrite(
+                connection -> connection.add("tags", "urgent", doc.id()));
+
+        doc.verifyOnSave("tags");
+        doc.reviewers.add("alice");
+        runway.save(doc);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declaration does not carry past the
+     * save that commits it.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} that declared its bio and
+     * saved since.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}, declare {@code bio}, and save again.</li>
+     * <li>Externally modify the bio in the database.</li>
+     * <li>Modify the in-memory name and save a third time.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The third save returns {@code true}, because
+     * the second save spent the declaration.
+     */
+    @Test
+    public void testDeclaredValueDoesNotCarryPastTheSaveThatCommitsIt() {
+        TUser user = new TUser("verify_one_shot");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        user.verifyOnSave("bio");
+        user.name = "first";
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        user.name = "second";
+        Assert.assertTrue(runway.save(user));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declaration stays in place when the
+     * save that carried it does not commit.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose bio is then externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Externally modify the bio in the database.</li>
+     * <li>Declare {@code bio} and save, catching the failure.</li>
+     * <li>Modify the in-memory name and save again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown by the
+     * second save as well.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredValueStaysInPlaceWhenTheSaveDoesNotCommit() {
+        TUser user = new TUser("verify_retained_on_failure");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        user.verifyOnSave("bio");
+        try {
+            runway.save(user);
+            Assert.fail("The save should have failed on the declared value");
+        }
+        catch (StaleDataException e) {/* expected */}
+
+        user.name = "updated";
+        runway.save(user);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an element another writer removed from
+     * a declared collection fails the save, even when this instance removes
+     * that same element.
+     * <p>
+     * <strong>Start state:</strong> A {@link TDoc} saved through {@link Runway}
+     * one of whose stored tags another writer then removes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TDoc} that carries two tags.</li>
+     * <li>Externally remove one of them.</li>
+     * <li>Declare {@code tags}, remove that same tag in memory, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredCollectionFailsSaveWhenAnotherWriterRemovesAnElement() {
+        TDoc doc = new TDoc();
+        doc.tags.add("draft");
+        doc.tags.add("stale");
+        Assert.assertTrue(runway.save(doc));
+
+        externallyWrite(
+                connection -> connection.remove("tags", "stale", doc.id()));
+
+        doc.verifyOnSave("tags");
+        doc.tags.remove("stale");
+        runway.save(doc);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declared value another writer stored
+     * fails the save when this instance stores the same value.
+     * <p>
+     * <strong>Start state:</strong> A {@link TDoc} saved through {@link Runway}
+     * whose stored tags another writer then adds to.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TDoc} that carries one tag.</li>
+     * <li>Externally add a second tag.</li>
+     * <li>Declare {@code tags}, add that same tag in memory, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown,
+     * because the tag reached the database before this save ran.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredCollectionFailsSaveWhenAnotherWriterAddsTheSameElement() {
+        TDoc doc = new TDoc();
+        doc.tags.add("draft");
+        Assert.assertTrue(runway.save(doc));
+
+        externallyWrite(
+                connection -> connection.add("tags", "urgent", doc.id()));
+
+        doc.verifyOnSave("tags");
+        doc.tags.add("urgent");
+        runway.save(doc);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that declaring a transient field is
+     * refused.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} that has never been saved.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code verifyOnSave} with the name of a transient field.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
+     */
+    @Test(expected = IllegalArgumentException.class)
+    public void testVerifyOnSaveRefusesATransientField() {
+        TUser user = new TUser("verify_transient_key");
+        user.verifyOnSave("session");
+    }
+
+    /**
+     * Run the declared-value scenario within a {@link Transaction} and report
+     * whether the commit was refused.
+     *
+     * @return {@code true} if the commit was refused
+     */
+    private boolean declarationFailsTheCommit() {
+        TUser user = new TUser("verify_tx_conflict");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        Transaction transaction = runway.startTransaction();
+        try {
+            TUser loaded = transaction.load(TUser.class, user.id());
+            loaded.verifyOnSave("bio");
+            externallyWrite(
+                    connection -> connection.set("bio", "external", user.id()));
+            loaded.name = "updated";
+            transaction.save(loaded);
+            return !transaction.commit();
+        }
+        catch (TransactionException | StaleDataException e) {
+            return true;
+        }
+        finally {
+            transaction.close();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declared value fails the commit when
+     * another writer changes it while the {@link Transaction} that loaded the
+     * {@link Record} is open.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that an open
+     * {@link Transaction} loads.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} and start a {@link Transaction}.</li>
+     * <li>Load the {@link TUser} through the {@link Transaction} and declare
+     * {@code bio}.</li>
+     * <li>Externally modify the bio.</li>
+     * <li>Modify the in-memory name, save through the {@link Transaction} and
+     * commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The commit is refused.
+     */
+    @Test
+    public void testDeclaredValueFailsTheCommitWhenTheTransactionLoadedIt() {
+        Assert.assertTrue(declarationFailsTheCommit());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses a save
+     * that carries a declaration it cannot verify.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} and an open
+     * {@link Transaction} that did not load it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} and start a {@link Transaction}.</li>
+     * <li>Load the {@link TUser} through {@link Runway} and declare
+     * {@code bio}.</li>
+     * <li>Modify the in-memory name and save through the
+     * {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save is refused, because the {@link TUser}
+     * did not reach its state through the {@link Transaction}.
+     */
+    @Test(expected = Record.TransactionBoundaryException.class)
+    public void testSaveIsRefusedWhenTheTransactionCannotVerifyADeclaration() {
+        TUser user = new TUser("verify_tx_outside");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        try (Transaction transaction = runway.startTransaction()) {
+            TUser loaded = runway.load(TUser.class, user.id());
+            loaded.verifyOnSave("bio");
+            loaded.name = "updated";
+            transaction.save(loaded);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declaration inside a
+     * {@link Transaction} commits when no writer changes the declared value.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} and an open
+     * {@link Transaction} that loads it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Start a {@link Transaction} and load the {@link TUser} through
+     * it.</li>
+     * <li>Declare {@code bio}, modify the in-memory name, save and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save and the commit both succeed.
+     */
+    @Test
+    public void testDeclaredValueCommitsWithinATransactionWhenNothingChanged() {
+        TUser user = new TUser("verify_tx_inside");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        try (Transaction transaction = runway.startTransaction()) {
+            TUser loaded = transaction.load(TUser.class, user.id());
+            loaded.verifyOnSave("bio");
+            loaded.name = "updated";
+            Assert.assertTrue(loaded.save());
+            Assert.assertTrue(transaction.commit());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a commit ends only the declaration
+     * that the save it committed carried.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} whose save staged within a
+     * {@link Transaction} before the declaration was made.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}, then load it through a
+     * {@link Transaction}.</li>
+     * <li>Modify the in-memory name and save, which stages.</li>
+     * <li>Declare {@code bio}, then commit.</li>
+     * <li>Externally modify the bio, then modify the name of the same instance
+     * and save it again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown by the
+     * later save, because no save carried the declaration.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclarationMadeAfterTheSaveStagedSurvivesTheCommit() {
+        TUser user = new TUser("verify_late_declaration");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        TUser loaded;
+        try (Transaction transaction = runway.startTransaction()) {
+            loaded = transaction.load(TUser.class, user.id());
+            loaded.name = "updated";
+            Assert.assertTrue(loaded.save());
+            loaded.verifyOnSave("bio");
+            Assert.assertTrue(transaction.commit());
+        }
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        loaded.name = "later";
+        runway.save(loaded);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a commit ends the declaration of every
+     * instance whose check the save carried, not only the instance that speaks
+     * for the record.
+     * <p>
+     * <strong>Start state:</strong> Two instances of one saved {@link TUser},
+     * one of which declares its bio.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} and load it twice.</li>
+     * <li>Declare {@code bio} on the second instance.</li>
+     * <li>Modify the name of the first instance and save both together.</li>
+     * <li>Externally modify the bio.</li>
+     * <li>Modify the name of the second instance and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The later save returns {@code true}, because
+     * the committed save already verified the declaration that the second
+     * instance made.
+     */
+    @Test
+    public void testCommitEndsTheDeclarationOfANonSpeakingInstance() {
+        TUser user = new TUser("verify_duplicate_instance");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        TUser speaking = runway.load(TUser.class, user.id());
+        TUser other = runway.load(TUser.class, user.id());
+        other.verifyOnSave("bio");
+        speaking.name = "updated";
+        Assert.assertTrue(runway.save(speaking, other));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        other.name = "later";
+        Assert.assertTrue(runway.save(other));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an abort keeps every declaration that
+     * a save within the {@link Transaction} carried, not only the oldest.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that a
+     * {@link Transaction} loads.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Declare {@code bio} and save, then declare {@code email} and save,
+     * both within the {@link Transaction}.</li>
+     * <li>Externally modify the name so the commit fails.</li>
+     * <li>Externally modify the email, then modify the name of the same
+     * instance and save it through {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown by the
+     * later save, because {@code email} stayed declared.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testAbortKeepsEveryDeclarationThatASaveCarried() {
+        TUser user = new TUser("verify_abort_keeps_all");
+        user.bio = "original";
+        user.email = "original";
+        Assert.assertTrue(runway.save(user));
+
+        TUser loaded;
+        try (Transaction transaction = runway.startTransaction()) {
+            loaded = transaction.load(TUser.class, user.id());
+            loaded.verifyOnSave("bio");
+            loaded.name = "a";
+            Assert.assertTrue(loaded.save());
+            loaded.verifyOnSave("email");
+            loaded.name = "b";
+            Assert.assertTrue(loaded.save());
+            externallyWrite(connection -> connection.set("name", "external",
+                    user.id()));
+            try {
+                Assert.assertFalse(transaction.commit());
+            }
+            catch (TransactionException e) {/* the commit was refused */}
+        }
+
+        externallyWrite(
+                connection -> connection.set("email", "external", user.id()));
+        loaded.name = "c";
+        runway.save(loaded);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declared value fails the save when
+     * another writer changed it before an earlier save of this instance, which
+     * never re-read it.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} with a bio.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Externally modify the bio in the database.</li>
+     * <li>Modify the in-memory name and save.</li>
+     * <li>Declare {@code bio}, modify the name again and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown,
+     * because the database does not hold the bio this instance saw.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredValueFailsWhenAnEarlierSaveMovedPastAnotherWritersChange() {
+        TUser user = new TUser("verify_after_intermediate_save");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        user.name = "first";
+        Assert.assertTrue(runway.save(user));
+
+        user.verifyOnSave("bio");
+        user.name = "second";
+        runway.save(user);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declaration a {@link Record} made
+     * before it joined a {@link Transaction} is verified within that
+     * {@link Transaction}.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose bio is then externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Externally modify the bio in the database.</li>
+     * <li>Declare {@code bio}, then modify the name and save within the
+     * {@link TUser TUser's} own transactional scope.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown,
+     * because the {@link Transaction} began after the {@link TUser} reached its
+     * state and so can verify the declaration.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredValueIsVerifiedWithinTheRecordsOwnTransactScope() {
+        TUser user = new TUser("verify_transact_scope");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        user.verifyOnSave("bio");
+        user.transact(transaction -> {
+            user.name = "updated";
+            transaction.save(user);
+        });
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} accepts a
+     * declaration on a {@link Record} that reached its state before the
+     * {@link Transaction} began, and commits it when nothing changed.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that {@link Runway}
+     * loads before the {@link Transaction} starts.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} and load it through {@link Runway}.</li>
+     * <li>Start a {@link Transaction} and declare {@code bio}.</li>
+     * <li>Modify the in-memory name, save through the {@link Transaction} and
+     * commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save and the commit both succeed.
+     */
+    @Test
+    public void testDeclaredValueCommitsWhenTheTransactionBeganAfterTheRecordLoaded() {
+        TUser user = new TUser("verify_tx_after_load");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        TUser loaded = runway.load(TUser.class, user.id());
+        tick();
+        try (Transaction transaction = runway.startTransaction()) {
+            loaded.verifyOnSave("bio");
+            loaded.name = "updated";
+            Assert.assertTrue(transaction.save(loaded));
+            Assert.assertTrue(transaction.commit());
+        }
+    }
+
+    /**
      * A test user record.
      *
      * @author Jeff Nelson
@@ -1148,6 +1932,28 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
          * without touching the {@link #name}.
          */
         String bio;
+
+        /**
+         * The user's email, a second independent field.
+         */
+        String email;
+
+        /**
+         * The user's status, whose stored form is a {@link Tag} rather than a
+         * {@link String}.
+         */
+        TStatus status;
+
+        /**
+         * The user's roles, a collection whose stored elements are {@link Tag
+         * Tags} rather than {@link String Strings}.
+         */
+        Set<TStatus> roles = new LinkedHashSet<>();
+
+        /**
+         * A value that lives in memory only, so no save stores it.
+         */
+        transient String session;
 
         /**
          * Construct a new instance.
@@ -1342,6 +2148,24 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
             this.user = user;
             this.tenant = tenant;
         }
+    }
+
+    /**
+     * The status of a {@link TUser}.
+     *
+     * @author Jeff Nelson
+     */
+    public enum TStatus {
+
+        /**
+         * The user may sign in.
+         */
+        ACTIVE,
+
+        /**
+         * The user may not sign in.
+         */
+        SUSPENDED
     }
 
 }

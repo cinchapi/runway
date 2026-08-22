@@ -1146,7 +1146,8 @@ public final class Runway extends Binding implements
      * @return {@code true} if all changes are atomically saved
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and the save would overwrite a value that another writer
-     *             changed
+     *             changed, or if another writer changed a value that
+     *             {@link Record#verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if any {@link Record} that the save
      *             processes is bound to an open {@link Transaction}, whose
      *             commit is the only way to persist it
