@@ -146,9 +146,8 @@ public interface Saver {
 
     /**
      * Record a {@link Concourse#select(Collection, long) select} of
-     * {@code keys} in {@code record}, read before any write that this
-     * {@link Saver} stages, and arrange to apply {@code validator} to the
-     * stored values, keyed by field name.
+     * {@code keys} in {@code record} and arrange to apply {@code validator} to
+     * the stored values, keyed by field name.
      * <p>
      * The {@code validator} may throw to signal a validation failure (typically
      * {@link com.cinchapi.runway.StaleDataException}); the exception propagates
