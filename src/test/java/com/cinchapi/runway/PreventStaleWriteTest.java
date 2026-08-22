@@ -1846,6 +1846,76 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a declaration a {@link Record} made
+     * before it joined a {@link Transaction} is verified within that
+     * {@link Transaction}.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose bio is then externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Externally modify the bio in the database.</li>
+     * <li>Declare {@code bio}, then modify the name and save within the
+     * {@link TUser TUser's} own transactional scope.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown,
+     * because the {@link Transaction} began after the {@link TUser} reached its
+     * state and so can verify the declaration.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredValueIsVerifiedWithinTheRecordsOwnTransactScope() {
+        TUser user = new TUser("verify_transact_scope");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        user.verifyOnSave("bio");
+        user.transact(transaction -> {
+            user.name = "updated";
+            transaction.save(user);
+        });
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} accepts a
+     * declaration on a {@link Record} that reached its state before the
+     * {@link Transaction} began, and commits it when nothing changed.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that {@link Runway}
+     * loads before the {@link Transaction} starts.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} and load it through {@link Runway}.</li>
+     * <li>Start a {@link Transaction} and declare {@code bio}.</li>
+     * <li>Modify the in-memory name, save through the {@link Transaction} and
+     * commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save and the commit both succeed.
+     */
+    @Test
+    public void testDeclaredValueCommitsWhenTheTransactionBeganAfterTheRecordLoaded() {
+        TUser user = new TUser("verify_tx_after_load");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        TUser loaded = runway.load(TUser.class, user.id());
+        tick();
+        try (Transaction transaction = runway.startTransaction()) {
+            loaded.verifyOnSave("bio");
+            loaded.name = "updated";
+            Assert.assertTrue(transaction.save(loaded));
+            Assert.assertTrue(transaction.commit());
+        }
+    }
+
+    /**
      * A test user record.
      *
      * @author Jeff Nelson

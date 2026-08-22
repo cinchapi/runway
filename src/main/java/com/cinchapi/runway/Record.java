@@ -2586,10 +2586,14 @@ public abstract class Record implements Comparable<Record> {
      * Within an open {@link Transaction}, a {@link Record} that the
      * {@link Transaction} loaded needs no declaration, because the
      * {@link Transaction} fails its own commit when a writer changes anything
-     * it read. A declaration on such a {@link Record} costs nothing. A save
-     * throws an {@link IllegalStateException} when it carries a declaration on
-     * a {@link Record} that reached its current state outside the
-     * {@link Transaction}.
+     * it read. A declaration on such a {@link Record} costs nothing. A
+     * {@link Record} that reached its state before the {@link Transaction}
+     * began carries its declaration into the {@link Transaction}, which
+     * verifies it against the state at its start. A save throws an
+     * {@link IllegalStateException} when it carries a declaration on a
+     * {@link Record} that reached its current state outside the
+     * {@link Transaction} after it began, which the {@link Transaction} cannot
+     * see.
      * </p>
      *
      * @param keys the names of the intrinsic fields to verify
@@ -4784,8 +4788,9 @@ public abstract class Record implements Comparable<Record> {
      * @param preventStaleWrite whether the values that the save writes are
      *            checked in addition to the declared ones
      * @throws TransactionBoundaryException if a declared key cannot be verified
-     *             because this {@link Record} did not reach its current state
-     *             through the {@link Transaction} that saves it
+     *             because this {@link Record} reached its current state outside
+     *             the {@link Transaction} that saves it, after that
+     *             {@link Transaction} began
      */
     private void stageStaleWriteCheck(Saver saver, boolean changed,
             boolean preventStaleWrite) {
@@ -4801,19 +4806,20 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         Timestamp ceiling = stalenessCeiling();
-        if(!verified.isEmpty() && ceiling != null && __baseline != null
+        boolean hasConflictWindow = ceiling == null
+                || ceiling.getMicros() > checkpointTs;
+        if(!verified.isEmpty() && !hasConflictWindow && __baseline != null
                 && checkpointBinding != binding) {
             // NOTE: A Transaction verifies whatever it read, so a Record it
             // loaded needs nothing here. A Record that reached its state
-            // elsewhere is outside that cover, and the Transaction's older
-            // snapshot cannot answer what the declaration asks.
+            // elsewhere, after the Transaction began, saw what the
+            // Transaction's snapshot cannot, so nothing within the
+            // Transaction can answer what the declaration asks.
             throw new TransactionBoundaryException("Cannot verify "
                     + verified.keySet() + " in " + __ + " because this Record"
-                    + " did not reach its current state through the Transaction"
-                    + " that saves it; load it through the Transaction");
+                    + " reached its current state after the Transaction that"
+                    + " saves it began; load it through the Transaction");
         }
-        boolean hasConflictWindow = ceiling == null
-                || ceiling.getMicros() > checkpointTs;
         if(!verified.isEmpty() && hasConflictWindow) {
             saver.select(verified.keySet(), id, stored -> {
                 boolean stale = verified.entrySet().stream()
