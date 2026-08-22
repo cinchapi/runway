@@ -27,6 +27,7 @@ import org.junit.Test;
 import com.cinchapi.common.base.ArrayBuilder;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.RunwayBaseClientServerTest;
@@ -147,6 +148,40 @@ public class AudienceVisibilityScopeIntegrationTest
         Selections sel = alice.select(
                 Selection.of(OwnedDocument.class).where(criteria).unique());
         OwnedDocument result = sel.next();
+        Assert.assertNull(result);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a first selection (the
+     * {@code findFirst} path) through an {@link Audience} whose visibility
+     * {@link Scope} is {@link Scope#none()} resolves to {@code null} instead of
+     * an empty {@link Set}, since the result of a first selection is a single
+     * {@link Record}.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link OwnedDocument}. Scope
+     * registered to return {@link Scope#none()} for all audiences.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a none scope for {@link OwnedDocument}.</li>
+     * <li>Save a document whose title matches the query criteria.</li>
+     * <li>Call {@code findFirst} for that title as an audience.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code null} and is assignable
+     * to the {@link Record} type without a {@link ClassCastException}.
+     */
+    @Test
+    public void testNoneScopeResolvesFirstSelectionToNull() {
+        AccessControl.registerVisibilityScope(OwnedDocument.class,
+                audience -> Scope.none());
+        TestUser alice = new TestUser("alice");
+        alice.save();
+        runway.save(new OwnedDocument("doc1", "alice"));
+        Criteria criteria = Criteria.where().key("title")
+                .operator(Operator.EQUALS).value("doc1").build();
+        OwnedDocument result = alice.findFirst(OwnedDocument.class, criteria,
+                Order.by("title").ascending());
         Assert.assertNull(result);
     }
 

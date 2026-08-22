@@ -314,6 +314,15 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
+     * Return the result of this {@link DatabaseSelection} when no
+     * {@link Record} is visible to the caller.
+     *
+     * @return the result that represents no visible {@link Record Records}
+     */
+    @Nullable
+    abstract Object emptyResult();
+
+    /**
      * Return {@code true} if this {@link DatabaseSelection} can be combined
      * with other {@link DatabaseSelection Selections} in a single database
      * call.
