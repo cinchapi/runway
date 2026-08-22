@@ -1511,6 +1511,37 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a declared scalar whose only stored
+     * value another writer removed fails the save.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose stored bio another writer then removes, leaving the
+     * field with no stored value.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} that carries a bio.</li>
+     * <li>Externally remove the bio, which is its only value.</li>
+     * <li>Declare {@code bio}, modify the in-memory name, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredScalarFailsSaveWhenAnotherWriterRemovesItsOnlyValue() {
+        TUser user = new TUser("verify_scalar_removed");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.remove("bio", "original", user.id()));
+
+        user.verifyOnSave("bio");
+        user.name = "updated";
+        runway.save(user);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a declared value another writer stored
      * fails the save when this instance stores the same value.
      * <p>
