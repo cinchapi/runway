@@ -3349,7 +3349,9 @@ public abstract class Record implements Comparable<Record> {
      * @throws StaleDataException if the {@code context}
      *             {@link SaveContext#shouldPreventStaleWrite() prevents} stale
      *             writes and a value that this save writes changed in the
-     *             database since this {@link Record} last loaded or saved it
+     *             database since this {@link Record} last loaded or saved it,
+     *             or if a value that {@link #verifyOnSave(String...)
+     *             verifyOnSave} declared changed in that window
      * @throws IllegalStateException if a {@link Required} or
      *             {@link ValidatedBy} field constraint is violated
      * @throws ConstraintViolationException if a {@link Unique} field constraint

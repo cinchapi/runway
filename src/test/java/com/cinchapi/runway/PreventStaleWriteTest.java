@@ -1476,17 +1476,7 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     /**
      * Run the declared-value scenario within a {@link Transaction} and report
      * whether the commit was refused.
-     * <p>
-     * NOTE: The caller that loads through {@link Runway} fails until
-     * {@code https://github.com/cinchapi/concourse/issues/828} ships in the
-     * server this suite installs. A transaction whose nested atomic operation
-     * is preempted stops observing version changes, so the declared read never
-     * conflicts. The caller that loads through the {@link Transaction} passes
-     * without that fix, because the load registers the read as well.
-     * </p>
      *
-     * @param loadThroughTransaction whether the {@link Transaction} loads the
-     *            {@link TUser}, rather than {@link Runway}
      * @return {@code true} if the commit was refused
      */
     private boolean declarationFailsTheCommit() {
