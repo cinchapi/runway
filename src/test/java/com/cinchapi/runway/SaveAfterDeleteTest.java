@@ -293,4 +293,121 @@ public class SaveAfterDeleteTest extends RunwayBaseClientServerTest {
         Assert.assertFalse(exists(user.id()));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that the existence check inside a
+     * {@link Transaction} observes the {@link Transaction Transaction's} own
+     * staged writes, so a re-save of a {@link Record} that the same
+     * {@link Transaction} created is accepted.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Open a {@link Transaction}.</li>
+     * <li>Save a new {@link TUser} through it.</li>
+     * <li>Change the name on the same instance and save it again.</li>
+     * <li>Commit the {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both saves and the commit succeed, and the
+     * second name persists.
+     */
+    @Test
+    public void testResaveWithinTransactionAcceptsRecordItCreated() {
+        TUser user = new TUser("jeff");
+        try (Transaction transaction = runway.startTransaction()) {
+            Assert.assertTrue(transaction.save(user));
+            user.name = "jeffery";
+            Assert.assertTrue(transaction.save(user));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals("jeffery",
+                runway.load(TUser.class, user.id()).name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save inside a {@link Transaction} of
+     * a {@link Record} whose data another writer erased fails and poisons the
+     * {@link Transaction}, so none of its staged writes can commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that a second
+     * instance deletes before the {@link Transaction} opens.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Load a second instance of it and delete that instance.</li>
+     * <li>Change the name on the first instance.</li>
+     * <li>Open a {@link Transaction} and save the first instance through
+     * it.</li>
+     * <li>Attempt to commit the {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a
+     * {@link DeletedRecordException} that names the record, the commit is
+     * refused with an {@link IllegalStateException}, and the record holds no
+     * data afterward.
+     */
+    @Test
+    public void testSaveWithinTransactionThrowsWhenRecordWasDeleted() {
+        TUser user = new TUser("jeff");
+        Assert.assertTrue(runway.save(user));
+        TUser other = runway.load(TUser.class, user.id());
+        other.deleteOnSave();
+        Assert.assertTrue(runway.save(other));
+        user.name = "resurrected";
+        try (Transaction transaction = runway.startTransaction()) {
+            try {
+                transaction.save(user);
+                Assert.fail("Expected DeletedRecordException");
+            }
+            catch (DeletedRecordException e) {
+                Assert.assertEquals(user.id(), e.id());
+            }
+            try {
+                transaction.commit();
+                Assert.fail("Expected the commit to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+        }
+        Assert.assertFalse(exists(user.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save whose only change is realm
+     * membership does not write into a {@link Record} whose data another writer
+     * erased, since a realm change is not an unsaved change but is still a
+     * write.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that a second
+     * instance deletes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Load a second instance of it and delete that instance.</li>
+     * <li>Add the first instance to a realm and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a
+     * {@link DeletedRecordException} and the record holds no data afterward.
+     */
+    @Test
+    public void testRealmOnlySaveThrowsWhenRecordWasDeleted() {
+        TUser user = new TUser("jeff");
+        Assert.assertTrue(runway.save(user));
+        TUser other = runway.load(TUser.class, user.id());
+        other.deleteOnSave();
+        Assert.assertTrue(runway.save(other));
+        user.addRealm("tenant-a");
+        try {
+            runway.save(user);
+            Assert.fail("Expected DeletedRecordException");
+        }
+        catch (DeletedRecordException e) {
+            Assert.assertEquals(user.id(), e.id());
+        }
+        Assert.assertFalse(exists(user.id()));
+    }
+
 }

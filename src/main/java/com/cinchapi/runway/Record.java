@@ -2290,6 +2290,9 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * @return {@code true} if this {@link Record} is successfully saved
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database, so the save would restore a
+     *             record that another writer erased
      * @throws StaleDataException if another writer changed a value that
      *             {@link #verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if this {@link Record} has no binding
@@ -2336,6 +2339,9 @@ public abstract class Record implements Comparable<Record> {
      * @param preventStaleWrite if {@code true}, reject the save if it would
      *            overwrite a value that another writer changed
      * @return {@code true} if this {@link Record} is successfully saved
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database, so the save would restore a
+     *             record that another writer erased
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
      *             and the save would overwrite a value that another writer
      *             changed, or if another writer changed a value that
@@ -3352,6 +3358,9 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param saver the {@link Saver} for the attempt's transaction
      * @param context the active {@link SaveContext}
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database, so the save would restore a
+     *             record that another writer erased
      * @throws StaleDataException if the {@code context}
      *             {@link SaveContext#shouldPreventStaleWrite() prevents} stale
      *             writes and a value that this save writes changed in the
@@ -3382,6 +3391,24 @@ public abstract class Record implements Comparable<Record> {
             // NOTE: The hook may add fields to what the save writes, so it runs
             // before the write set is computed.
             beforeSave();
+        }
+        if(!deleted && __baseline != null && !writeSet(changed).isEmpty()) {
+            // NOTE: A save writes only what changed, so a save of a Record
+            // whose data another writer erased would restore what it writes
+            // and leave a record that no writer intended to exist. A Record
+            // without a baseline has never been persisted, and a save that
+            // writes nothing restores nothing, so neither needs the check.
+            // This precedes the stale-write check so the more specific
+            // refusal reaches the caller when both apply.
+            saver.select(ImmutableSet.of(SECTION_KEY), id, stored -> {
+                if(stored.getOrDefault(SECTION_KEY, ImmutableSet.of())
+                        .isEmpty()) {
+                    throw new DeletedRecordException(id);
+                }
+                else {
+                    // The Record still exists, so the save may proceed.
+                }
+            });
         }
         if(checkpointTs != 0
                 && (context.shouldPreventStaleWrite() || verifyKeys != null)) {
@@ -3437,25 +3464,6 @@ public abstract class Record implements Comparable<Record> {
         else {
             context.markChanged(this);
             stageRealmsDelta(saver);
-            if(__baseline != null) {
-                // NOTE: A save writes only what changed, so a save of a
-                // Record whose data another writer erased would restore the
-                // section along with those changes and leave a record that no
-                // writer intended to exist. A Record without a baseline has
-                // never been persisted, so it has no stored data to preserve.
-                saver.select(ImmutableSet.of(SECTION_KEY), id, stored -> {
-                    if(stored.getOrDefault(SECTION_KEY, ImmutableSet.of())
-                            .isEmpty()) {
-                        throw new DeletedRecordException(id);
-                    }
-                    else {
-                        // The Record still exists, so the save may proceed.
-                    }
-                });
-            }
-            else {
-                // The Record has never been persisted.
-            }
             saver.verifyOrSet(SECTION_KEY, __, id);
             Set<String> alreadyVerifiedUniqueConstraints = Sets.newHashSet();
             for (Field field : fields()) {
