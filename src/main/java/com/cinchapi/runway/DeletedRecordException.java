@@ -16,9 +16,14 @@
 package com.cinchapi.runway;
 
 /**
- * A {@link DeletedRecordException} is thrown when a save is rejected because
- * the {@link Record} it writes holds no data in the database, so persisting the
- * write would restore a record that no longer exists.
+ * A {@link DeletedRecordException} is thrown when a save would write into a
+ * {@link Record} that holds no data in the database. The write would restore a
+ * record that no longer exists, so the save is refused and writes nothing.
+ * <p>
+ * The {@link #id()} names the {@link Record} that holds no data. That is not
+ * always one of the records passed to the save, because a linked {@link Record}
+ * that the save writes is checked the same way.
+ * </p>
  *
  * @author Jeff Nelson
  */

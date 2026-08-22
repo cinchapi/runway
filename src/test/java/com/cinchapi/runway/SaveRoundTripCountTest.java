@@ -33,11 +33,12 @@ import com.cinchapi.runway.CountingConcourseConnectionPool.CountingConcourse;
  * Each test reflectively replaces the {@link Runway} connection pool with a
  * {@link CountingConcourseConnectionPool}, performs one save, and asserts the
  * exact number of {@code submit(CommandGroup)} round trips it issued. These
- * tests lock in the {@code 2.0.0} contract that a save with no validation reads
- * costs {@code 1} round trip and a save that needs at least one
- * {@link Unique @Unique}-uniqueness check, a {@code preventStaleWrites} audit,
- * or an existence verification for a previously persisted record costs
- * {@code 2}, regardless of how many records the save covers.
+ * tests lock in the {@code 2.0.0} contract, in which a save with no validation
+ * reads costs {@code 1} round trip. A save costs {@code 2} when it needs at
+ * least one {@link Unique @Unique}-uniqueness check, a
+ * {@code preventStaleWrites} audit, or an existence verification for a
+ * previously persisted record. Both costs hold regardless of how many records
+ * the save covers.
  * </p>
  *
  * @author Jeff Nelson

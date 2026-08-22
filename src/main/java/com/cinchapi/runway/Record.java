@@ -2291,8 +2291,7 @@ public abstract class Record implements Comparable<Record> {
      *
      * @return {@code true} if this {@link Record} is successfully saved
      * @throws DeletedRecordException if a {@link Record} that the save writes
-     *             holds no data in the database, so the save would restore a
-     *             record that another writer erased
+     *             holds no data in the database
      * @throws StaleDataException if another writer changed a value that
      *             {@link #verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if this {@link Record} has no binding
@@ -2340,8 +2339,7 @@ public abstract class Record implements Comparable<Record> {
      *            overwrite a value that another writer changed
      * @return {@code true} if this {@link Record} is successfully saved
      * @throws DeletedRecordException if a {@link Record} that the save writes
-     *             holds no data in the database, so the save would restore a
-     *             record that another writer erased
+     *             holds no data in the database
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
      *             and the save would overwrite a value that another writer
      *             changed, or if another writer changed a value that
@@ -3359,8 +3357,7 @@ public abstract class Record implements Comparable<Record> {
      * @param saver the {@link Saver} for the attempt's transaction
      * @param context the active {@link SaveContext}
      * @throws DeletedRecordException if a {@link Record} that the save writes
-     *             holds no data in the database, so the save would restore a
-     *             record that another writer erased
+     *             holds no data in the database
      * @throws StaleDataException if the {@code context}
      *             {@link SaveContext#shouldPreventStaleWrite() prevents} stale
      *             writes and a value that this save writes changed in the
@@ -3392,7 +3389,7 @@ public abstract class Record implements Comparable<Record> {
             // before the write set is computed.
             beforeSave();
         }
-        if(!deleted && __baseline != null && !writeSet(changed).isEmpty()) {
+        if(!deleted && __baseline != null && (changed || hasRealmChanges())) {
             // NOTE: A save writes only what changed, so a save of a Record
             // whose data another writer erased would restore what it writes
             // and leave a record that no writer intended to exist. A Record
@@ -4740,6 +4737,19 @@ public abstract class Record implements Comparable<Record> {
         else {
             return serializeScalarValue(value);
         }
+    }
+
+    /**
+     * Return {@code true} if this {@link Record Record's} realm membership
+     * differs from its {@link #__baseline baseline}.
+     *
+     * @return {@code true} if a save would write a realm change
+     */
+    private boolean hasRealmChanges() {
+        boolean[] changed = new boolean[1];
+        forEachSequenceDelta(ImmutableSet.copyOf(_realms), baseline(REALMS_KEY),
+                $ -> changed[0] = true, $ -> changed[0] = true);
+        return changed[0];
     }
 
     /**

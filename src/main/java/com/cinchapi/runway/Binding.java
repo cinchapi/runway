@@ -51,8 +51,7 @@ abstract class Binding implements DatabaseInterface {
      * @param records one or more {@link Record Records} to save
      * @return {@code true} if the changes are accepted
      * @throws DeletedRecordException if a {@link Record} that the save writes
-     *             holds no data in the database, so the save would restore a
-     *             record that another writer erased
+     *             holds no data in the database
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
      *             and the save would overwrite a value that another writer
      *             changed, or if another writer changed a value that

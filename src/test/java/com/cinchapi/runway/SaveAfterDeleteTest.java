@@ -40,7 +40,9 @@ import com.cinchapi.concourse.Concourse;
 public class SaveAfterDeleteTest extends RunwayBaseClientServerTest {
 
     /**
-     * A test record with a mutable attribute.
+     * A test user record.
+     *
+     * @author Jeff Nelson
      */
     public static class TUser extends Record {
 
@@ -183,9 +185,7 @@ public class SaveAfterDeleteTest extends RunwayBaseClientServerTest {
             runway.save(user);
             Assert.fail("Expected DeletedRecordException");
         }
-        catch (DeletedRecordException e) {
-            /* expected */
-        }
+        catch (DeletedRecordException e) {/* expected */}
         Assert.assertTrue(runway.load(TUser.class).stream()
                 .noneMatch(record -> record.id() == id));
     }
@@ -402,6 +402,43 @@ public class SaveAfterDeleteTest extends RunwayBaseClientServerTest {
         user.addRealm("tenant-a");
         try {
             runway.save(user);
+            Assert.fail("Expected DeletedRecordException");
+        }
+        catch (DeletedRecordException e) {
+            Assert.assertEquals(user.id(), e.id());
+        }
+        Assert.assertFalse(exists(user.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the deleted-record refusal reaches the
+     * caller ahead of a stale-write failure when both apply.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that a second
+     * instance deletes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser}.</li>
+     * <li>Load a second instance of it and delete that instance.</li>
+     * <li>Change the name on the first instance and save it with stale-write
+     * prevention.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a
+     * {@link DeletedRecordException}, not a {@link StaleDataException}, and the
+     * record holds no data afterward.
+     */
+    @Test
+    public void testDeletedRecordRefusalPrecedesStaleWriteFailure() {
+        TUser user = new TUser("jeff");
+        Assert.assertTrue(runway.save(user));
+        TUser other = runway.load(TUser.class, user.id());
+        other.deleteOnSave();
+        Assert.assertTrue(runway.save(other));
+        user.name = "resurrected";
+        try {
+            runway.save(true, user);
             Assert.fail("Expected DeletedRecordException");
         }
         catch (DeletedRecordException e) {
