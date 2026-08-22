@@ -241,12 +241,13 @@ class DatabaseTransaction extends Binding implements Transaction {
      * are discarded (e.g., compensating cleanup or telemetry). Hooks run
      * synchronously on the owner thread, in registration order, after the
      * transaction ends. If the transaction commits, then the hooks never run;
-     * within {@link Runway#run(java.util.function.Consumer) run} and
-     * {@link Runway#supply(java.util.function.Function) supply}, each attempt
-     * is a distinct {@link Transaction}, so a hook registered by the work runs
-     * for its own attempt, including an attempt that a conflict retry discards.
-     * A poisoned transaction still accepts registration, so cleanup can be
-     * scheduled before the required {@link #abort()}.
+     * within {@link Runway#transact(java.util.function.Consumer) transact} and
+     * {@link Runway#transactAndSupply(java.util.function.Function)
+     * transactAndSupply}, each attempt is a distinct {@link Transaction}, so a
+     * hook registered by the work runs for its own attempt, including an
+     * attempt that a conflict retry discards. A poisoned transaction still
+     * accepts registration, so cleanup can be scheduled before the required
+     * {@link #abort()}.
      * </p>
      * <p>
      * A hook that throws does not affect the outcome: the exception propagates
@@ -272,10 +273,11 @@ class DatabaseTransaction extends Binding implements Transaction {
      * Hooks run synchronously on the owner thread, in registration order, after
      * the commit succeeds. If the transaction ends without a successful commit,
      * then the hooks registered on it never run; within
-     * {@link Runway#run(java.util.function.Consumer) run} and
-     * {@link Runway#supply(java.util.function.Function) supply}, each attempt
-     * is a distinct {@link Transaction}, so a hook registered by the work never
-     * runs for an attempt that a conflict retry discards.
+     * {@link Runway#transact(java.util.function.Consumer) transact} and
+     * {@link Runway#transactAndSupply(java.util.function.Function)
+     * transactAndSupply}, each attempt is a distinct {@link Transaction}, so a
+     * hook registered by the work never runs for an attempt that a conflict
+     * retry discards.
      * </p>
      * <p>
      * A hook that throws does not affect the outcome: the transaction remains
@@ -568,12 +570,14 @@ class DatabaseTransaction extends Binding implements Transaction {
      * {@link #afterAbort(Runnable) afterAbort} registration.
      * </p>
      *
-     * @param preventStaleWrites if {@code true}, reject the save when any
-     *            {@link Record} in the object graph has stale data
+     * @param preventStaleWrites if {@code true}, reject the save if it would
+     *            overwrite a value that another writer changed
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
-     *             and any {@link Record} has been externally modified
+     *             and the save would overwrite a value that another writer
+     *             changed, or if another writer changed a value that
+     *             {@link Record#verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if any of the {@code records} overrides the
      *             save pipeline, if any {@link Record} that the save processes
      *             is bound to a different open {@link Transaction}, or if a
@@ -886,6 +890,13 @@ class DatabaseTransaction extends Binding implements Transaction {
                             (a, b) -> a.sequence <= b.sequence ? a : b));
                 }
                 oldest.forEach((record, snapshot) -> record.restore(snapshot));
+                // NOTE: A later snapshot of the same record holds the keys
+                // that a later save carried, and none of those saves
+                // committed, so every one of them is declared again.
+                for (SaveContext context : saves) {
+                    context.forEachSnapshot((record, snapshot) -> record
+                            .redeclareVerifyKeys(snapshot.verifyKeys));
+                }
                 try {
                     for (Runnable hook : afterAbortHooks) {
                         hook.run();

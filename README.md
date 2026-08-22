@@ -220,6 +220,120 @@ player.set("score", 99);
 player.set(Map.of("name", "New Name", "score", 100));
 ```
 
+## Concurrent Writers
+
+A Record is a detached snapshot: you load it, change it in memory, and save it later. Other writers can change the same data in between. Runway offers a ladder of tools for that window. Each rung serves one goal, and the lower rungs guard more and cost more. Start at the top and stop at the first rung that meets your goal.
+
+| Goal | Tool |
+|---|---|
+| Save my changes. | `save()` |
+| Fail if a value I write is out of date. | `save(true)` |
+| Also fail if a value I read is out of date. | `verifyOnSave(key)` |
+| Change one field immediately. | `exchange`, `getAndUpdate`, `updateAndGet` |
+| Commit several records together. | `db.save(a, b, c)` |
+| Keep everything I read valid until I commit. | a transaction |
+
+`verifyOnSave` is a declaration rather than a substitute for a save: the next save carries its check, whether or not that save prevents stale writes.
+
+### Save what changed
+
+A save writes the values the instance added, changed, or removed since it loaded. Values it never touched are left alone, so two writers who change different fields of one record both succeed and neither erases the other.
+
+```java
+player.score = 99;
+player.save();
+```
+
+Annotate a field with `@MergeStrategy(OVERWRITE)` when it must write its whole state on every save instead.
+
+### Fail if a value I write is out of date
+
+Pass `true` to reject the save when another writer changed a value this save writes, after the instance loaded it.
+
+```java
+player.score = 99;
+player.save(true); // throws StaleDataException if the stored score is out of date
+```
+
+The check covers what the save writes. A change to a field this save does not write never fails it, and each record the save reaches is judged against its own writes. A record staged for deletion removes every stored value, so any change to it fails the save.
+
+### Fail if a value I read is out of date
+
+A decision often rests on a value the save never writes. Declare that value with `verifyOnSave` and the next save verifies it, whether or not the save prevents stale writes.
+
+```java
+Team team = db.load(Team.class, id);
+if(team.roster.size() < 12) {
+    team.verifyOnSave("roster"); // the decision rests on this
+    team.captain = player;
+    team.save(true);             // fails if the roster or the captain moved
+}
+```
+
+The save fails when the database no longer holds what the record last saw for a declared key. A player another writer added to the roster is a difference, even though every player the record read is still there.
+
+A save that reads the changed value throws `StaleDataException`. When the change lands after the save reads the value but before it commits, the save returns `false` and records the conflict instead. Treat both outcomes as a decision that no longer holds.
+
+A declaration lasts until a save commits, so each decision declares its own. `verifyOnSave` covers fields of that record. When the decision rests on another record, use a transaction.
+
+Inside a transaction, a record the transaction loaded needs no declaration, because the transaction fails its own commit when a writer changes anything it read. A declaration on such a record costs nothing. A record that reached its state before the transaction began carries its declaration in, and the transaction verifies it against the state at its start. A save is refused when it carries a declaration on a record that reached its state outside the transaction after the transaction began, because the transaction cannot see what that record saw.
+
+### Change one field immediately
+
+These write through immediately, without the save pipeline, and are the cheapest way to make one field move atomically. `exchange` swaps a value when the stored one still matches; `getAndUpdate` and `updateAndGet` apply a function until it takes.
+
+```java
+conversation.exchange("lastActivity", Timestamp.now());
+int next = counter.updateAndGet("count", n -> n + 1);
+```
+
+Because they bypass the save pipeline, `beforeSave` and save listeners do not run, and a field that is `@Unique` is not eligible.
+
+### Commit several records together
+
+`Runway#save` commits every record it is given, and everything reachable from them, as one ACID transaction. No transaction object is needed for this.
+
+```java
+db.save(player1, player2); // both, or neither
+```
+
+### Keep everything I read valid until I commit
+
+A transaction is the only rung that guards reads. Everything read through it joins its conflict footprint, so a commit fails rather than persisting a decision that rested on data another writer changed. Reach for it when a find decides a write, such as looking for a record and creating it when it is absent, or when a decision spans records.
+
+Own the lifecycle when a conflict should fail the caller:
+
+```java
+try (Transaction transaction = db.startTransaction()) {
+    Team team = transaction.load(Team.class, id);
+    team.roster.add(new Player());
+    if(transaction.commit()) {
+        // durable
+    }
+}
+```
+
+Let Runway manage it when a conflict should replay the work instead:
+
+```java
+Team team = db.transactAndSupply(tx -> {
+    Team t = tx.load(Team.class, id);
+    t.roster.add(new Player());
+    t.save();
+    return t;
+});
+```
+
+The work runs again from the start when a conflict aborts it, so it must be free of side effects. A record loaded through a transaction is owned by it until it ends, and only the thread that started the transaction may use it. Read through the transaction whatever the decision depends on: a value loaded before the transaction opened is not part of its footprint.
+
+The retries are bounded. When a conflict defeats every attempt, the call throws `RetryExhaustedException` and nothing commits. Set the retry limit and the pacing between attempts with `Runway.builder().atomicRetryPolicy(AtomicRetryPolicy.create(limit, backoffMillis))`.
+
+Two common patterns come prepackaged, so no transaction has to be written by hand: `intern` returns the stored record that carries a `@Unique` identity, creating it when absent, and `findUniqueAndUpdate` updates the single record that matches a criteria.
+
+### Choosing a rung
+
+Prefer the highest rung that meets your goal. A transaction guards the most but conflicts over everything it read, and holds a connection until it ends, so a transaction used where `save(true)` would do turns unrelated writes into conflicts.
+
 ## Record Linking
 
 Fields whose type is another `Record` subclass are automatically stored as Links in Concourse. When a Record is loaded, its linked Records are loaded too.
@@ -468,6 +582,33 @@ For unauthenticated contexts, use the anonymous audience:
 Audience anon = Audience.anonymous();
 Set<Document> publicDocs = anon.find(Document.class, criteria);
 ```
+
+### Transactions in an Audience's Scope
+
+An `Audience` starts and scopes transactions the same way a `Runway` does. Reads observe the audience's visibility, the writes it permits are the ones that stage, and the access checks that gate them resolve inside the transaction's snapshot.
+
+Own the lifecycle with `startTransaction`:
+
+```java
+try (Transaction transaction = user.startTransaction()) {
+    Document doc = user.load(Document.class, docId);
+    user.write("title", "New Title", doc);
+    doc.save();
+    transaction.commit();
+}
+```
+
+Let Runway manage it with `transact` or `transactAndSupply`:
+
+```java
+user.transact(transaction -> {
+    Document doc = transaction.load(Document.class, docId);
+    doc.title = "New Title";
+    doc.save();
+});
+```
+
+An audience that is already inside an open transaction refuses to start another. After the transaction ends, the audience operates against the enclosing `Runway` again. An `Audience` that is not a `Record`, such as the anonymous audience, throws `UnsupportedOperationException` for all three methods.
 
 ### Access Rule Constants
 

@@ -16,23 +16,24 @@
 package com.cinchapi.runway.db;
 
 import java.util.Collection;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Diff;
 import com.google.common.base.Preconditions;
 
 /**
  * A {@link Saver} that executes every recording call synchronously against the
  * wrapped {@link Concourse} connection.
  * <p>
- * Each {@code audit}/{@code find} round-trips immediately and invokes the
+ * Each {@code diff}/{@code find} round-trips immediately and invokes the
  * supplied {@link Consumer validator} inline so a validation failure throws
  * before any subsequent write is recorded. Every read runs at the recording
  * call, so this {@link Saver} ignores a requested {@link Saver.Timing Timing}.
@@ -62,40 +63,8 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
-    public void stage() {
-        concourse.stage();
-    }
-
-    @Override
-    public boolean commit() {
-        return concourse.commit();
-    }
-
-    @Override
     public void abort() {
         concourse.abort();
-    }
-
-    @Override
-    public void audit(long record,
-            Consumer<Map<Timestamp, List<String>>> validator) {
-        validator.accept(concourse.audit(record));
-    }
-
-    @Override
-    public void find(Criteria criteria, Consumer<Set<Long>> validator) {
-        validator.accept(concourse.find(criteria));
-    }
-
-    @Override
-    public void select(String key, Criteria criteria,
-            Consumer<Map<Long, Set<Object>>> consumer, Timing timing) {
-        consumer.accept(concourse.select(key, criteria));
-    }
-
-    @Override
-    public void set(String key, Object value, long record) {
-        concourse.set(key, value, record);
     }
 
     @Override
@@ -104,8 +73,8 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
-    public void remove(String key, Object value, long record) {
-        concourse.remove(key, value, record);
+    public void clear(long record) {
+        concourse.clear(record);
     }
 
     @Override
@@ -114,19 +83,20 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
-    public void clear(long record) {
-        concourse.clear(record);
+    public boolean commit() {
+        return concourse.commit();
     }
 
     @Override
-    public void verify(String key, Object value, long record,
-            Consumer<Boolean> validator) {
-        validator.accept(concourse.verify(key, value, record));
+    public void diff(long record, Timestamp start, @Nullable Timestamp end,
+            Consumer<Map<String, Map<Diff, Set<Object>>>> validator) {
+        validator.accept(end == null ? concourse.diff(record, start)
+                : concourse.diff(record, start, end));
     }
 
     @Override
-    public void verifyOrSet(String key, Object value, long record) {
-        concourse.verifyOrSet(key, value, record);
+    public void find(Criteria criteria, Consumer<Set<Long>> validator) {
+        validator.accept(concourse.find(criteria));
     }
 
     @Override
@@ -147,6 +117,38 @@ public final class IncrementalSaver implements Saver {
         else {
             concourse.reconcile(key, record, values);
         }
+    }
+
+    @Override
+    public void remove(String key, Object value, long record) {
+        concourse.remove(key, value, record);
+    }
+
+    @Override
+    public void select(Collection<String> keys, long record,
+            Consumer<Map<String, Set<Object>>> validator) {
+        validator.accept(concourse.select(keys, record));
+    }
+
+    @Override
+    public void select(String key, Criteria criteria,
+            Consumer<Map<Long, Set<Object>>> consumer, Timing timing) {
+        consumer.accept(concourse.select(key, criteria));
+    }
+
+    @Override
+    public void set(String key, Object value, long record) {
+        concourse.set(key, value, record);
+    }
+
+    @Override
+    public void stage() {
+        concourse.stage();
+    }
+
+    @Override
+    public void verifyOrSet(String key, Object value, long record) {
+        concourse.verifyOrSet(key, value, record);
     }
 
 }

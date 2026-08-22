@@ -31,13 +31,15 @@ import com.cinchapi.concourse.lang.sort.Order;
  * depend on the outcome can be registered, but the transaction's lifecycle
  * stays with its owner.
  * <p>
- * {@link Runway#run(java.util.function.Consumer) run} and
- * {@link Runway#supply(java.util.function.Function) supply}, along with their
- * {@link Record#run(java.util.function.Consumer) Record}
- * {@link Record#supply(java.util.function.Function) counterparts}, hand work
- * this view, so the work cannot commit, abort or close the transaction it
- * joins. {@link Runway#stage()} returns the full {@link Transaction}, which
- * adds the lifecycle verbs for the caller that owns them.
+ * {@link Runway#transact(java.util.function.Consumer) transact} and
+ * {@link Runway#transactAndSupply(java.util.function.Function)
+ * transactAndSupply}, along with their
+ * {@link Record#transact(java.util.function.Consumer) Record}
+ * {@link Record#transactAndSupply(java.util.function.Function) counterparts},
+ * hand work this view, so the work cannot commit, abort or close the
+ * transaction it joins. {@link Runway#startTransaction()} returns the full
+ * {@link Transaction}, which adds the lifecycle verbs for the caller that owns
+ * them.
  * </p>
  *
  * @author Jeff Nelson
@@ -329,12 +331,14 @@ public interface TransactionInterface extends DatabaseInterface {
      * commits. Until then, no reader outside the transaction can observe them.
      * </p>
      *
-     * @param preventStaleWrites if {@code true}, reject the save when any
-     *            {@link Record} in the object graph has stale data
+     * @param preventStaleWrites if {@code true}, reject the save if it would
+     *            overwrite a value that another writer changed
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
      * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
-     *             and any {@link Record} has been externally modified
+     *             and the save would overwrite a value that another writer
+     *             changed, or if another writer changed a value that
+     *             {@link Record#verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if any of the {@code records} overrides the
      *             save pipeline, if any {@link Record} that the save processes
      *             is bound to a different open transaction, or if a prior save

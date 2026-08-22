@@ -19,20 +19,45 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
- * A {@link Transactional} construct can scope database operations to a single
- * ACID {@link Transaction}.
+ * A {@link Transactional} construct scopes database operations to a single ACID
+ * {@link Transaction}.
  * <p>
- * There are two ways to use a transaction. {@link #stage()} (or its alias,
- * {@link #startTransaction()}) returns an open {@link Transaction} whose
- * lifecycle the caller owns. {@link #run(Consumer) run} and
- * {@link #supply(Function) supply} execute work against a
- * {@link TransactionInterface} view and manage the lifecycle on the caller's
- * behalf.
+ * There are two forms:
+ * </p>
+ * <ul>
+ * <li>{@link #startTransaction()} returns an open {@link Transaction}. The
+ * caller owns its lifecycle, and the work runs exactly once.</li>
+ * <li>{@link #transact(Consumer) transact} and
+ * {@link #transactAndSupply(Function) transactAndSupply} run work against a
+ * {@link TransactionInterface} view. This {@link Transactional} owns the
+ * lifecycle, and the work may run more than once.</li>
+ * </ul>
+ * <p>
+ * Both forms open the same kind of transaction and enforce the same rules. A
+ * view from either one reads what this {@link Transactional} reads, binds the
+ * same {@link Record Records}, and commits with the same guarantees. Each view
+ * passes through {@link #scope(TransactionInterface)}, so an operation on it
+ * behaves the same as the operation on this {@link Transactional}. The choice
+ * between the forms is a choice about lifecycle.
  * </p>
  * <p>
- * The view that scoped work receives passes through
- * {@link #scope(TransactionInterface)}, so operations on it behave the same as
- * operations on this {@link Transactional}.
+ * The managed form adds the retry cycle. When a conflict defeats the commit,
+ * the managed form discards the transaction and runs the work again against a
+ * fresh one, within the bounds of the governing {@link AtomicRetryPolicy}. A
+ * caller-owned {@link Transaction} never retries, so a defeated commit belongs
+ * to the caller.
+ * </p>
+ * <p>
+ * <strong>NOTE:</strong> The managed form can run the work again, so the work
+ * must be free of side effects outside of the transaction.
+ * </p>
+ * <p>
+ * The forms also differ inside an open {@link Transaction}. The managed form
+ * joins the open transaction. A caller-owned {@link Transaction} does not nest,
+ * so an implementation that joins transactions refuses to start another while
+ * it holds one. An implementation that joins none, such as {@link Runway},
+ * starts a transaction that is independent of every open transaction, including
+ * one that encloses the call.
  * </p>
  *
  * @author Jeff Nelson
@@ -43,14 +68,17 @@ public interface Transactional {
      * Execute {@code work} within this {@link Transactional Transactional's}
      * transactional scope.
      * <p>
-     * This method behaves exactly like {@link #supply(Function)} for work that
-     * does not produce a result.
+     * This method behaves exactly like {@link #transactAndSupply(Function)} for
+     * work that does not produce a result. The work may therefore run more than
+     * once, so it must be free of side effects outside of the transaction.
      * </p>
      *
      * @param work the work to run
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    public default void run(Consumer<TransactionInterface> work) {
-        supply(transaction -> {
+    public default void transact(Consumer<TransactionInterface> work) {
+        transactAndSupply(transaction -> {
             work.accept(transaction);
             return null;
         });
@@ -62,6 +90,9 @@ public interface Transactional {
      * <p>
      * Every operation on the returned view behaves the same as the operation on
      * this {@link Transactional}, just within the confines of the transaction.
+     * </p>
+     * <p>
+     * This is a framework-private method and should not be called directly.
      * </p>
      *
      * @param transaction the transaction that scopes the work
@@ -86,23 +117,16 @@ public interface Transactional {
      * Every operation on the returned view behaves the same as the operation on
      * this {@link Transactional}, just within the confines of the transaction.
      * </p>
-     *
-     * @return an open {@link Transaction}
-     */
-    public Transaction stage();
-
-    /**
-     * Start a {@link Transaction} that scopes reads and writes to a single ACID
-     * transaction.
      * <p>
-     * This method is an alias for {@link #stage()}.
+     * Work in the returned {@link Transaction} runs exactly once. If a conflict
+     * defeats the commit, then the caller handles it. Use
+     * {@link #transactAndSupply(Function) transactAndSupply} instead to retry
+     * that conflict under the governing {@link AtomicRetryPolicy}.
      * </p>
      *
      * @return an open {@link Transaction}
      */
-    public default Transaction startTransaction() {
-        return stage();
-    }
+    public Transaction startTransaction();
 
     /**
      * Execute {@code work} within this {@link Transactional Transactional's}
@@ -123,16 +147,19 @@ public interface Transactional {
      * outside of the transaction.
      * </p>
      * <p>
-     * When the work runs in its own transaction and the commit fails because of
-     * a conflict, the transaction is discarded and the work runs again against
-     * a fresh one, within the bounds of the governing
-     * {@link AtomicRetryPolicy}, so the work may run more than once and must be
+     * When the work runs in its own transaction and a conflict defeats the
+     * commit, the transaction is discarded and the work runs again against a
+     * fresh one, within the bounds of the governing {@link AtomicRetryPolicy}.
+     * Any other exception from {@code work} aborts the transaction and
+     * propagates to the caller.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> The work may run more than once, so it must be
      * free of side effects outside of the transaction. A {@link Record
      * Record's} in-memory state is outside of it, so an edit from a discarded
-     * attempt survives and is visible to the next one. Set each value
-     * absolutely, or derive it from a read through the transaction, rather than
-     * increment what a prior attempt left behind. Any other exception thrown by
-     * {@code work} aborts the transaction and propagates to the caller.
+     * attempt survives into the next one. Set each value absolutely, or derive
+     * it from a read through the transaction. Do not increment what a prior
+     * attempt left behind.
      * </p>
      *
      * @param work the work to run
@@ -140,6 +167,6 @@ public interface Transactional {
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
-    public <T> T supply(Function<TransactionInterface, T> work);
+    public <T> T transactAndSupply(Function<TransactionInterface, T> work);
 
 }

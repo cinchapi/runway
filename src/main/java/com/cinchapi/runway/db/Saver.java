@@ -16,14 +16,16 @@
 package com.cinchapi.runway.db;
 
 import java.util.Collection;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import javax.annotation.Nullable;
+
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Diff;
 
 /**
  * A {@link Saver} encapsulates the database interaction for one save: the
@@ -75,22 +77,6 @@ public interface Saver {
     void add(String key, Object value, long record);
 
     /**
-     * Record an {@link Concourse#audit(long) audit} for {@code record} and
-     * arrange to apply {@code validator} to the result.
-     * <p>
-     * The {@code validator} may throw to signal a validation failure (typically
-     * {@link com.cinchapi.runway.StaleDataException}); the exception propagates
-     * from the recording call for synchronous implementations and from
-     * {@link #commit()} or {@link #flush()} for bulk implementations.
-     * </p>
-     *
-     * @param record the record id whose change history is being inspected
-     * @param validator a {@link Consumer} that receives the audit result and
-     *            may throw to reject the save
-     */
-    void audit(long record, Consumer<Map<Timestamp, List<String>>> validator);
-
-    /**
      * Record a {@link Concourse#clear(long) clear} of every value stored in
      * {@code record}, leaving the record empty.
      *
@@ -132,6 +118,31 @@ public interface Saver {
      *         that the caller may retry)
      */
     boolean commit();
+
+    /**
+     * Record a {@link Concourse#diff(long, Timestamp, Timestamp) diff} of
+     * {@code record} between {@code start} and {@code end} and arrange to apply
+     * {@code validator} to the net difference, keyed by field name.
+     * <p>
+     * A field whose stored values at {@code end} match its stored values at
+     * {@code start} has no entry, however many times it changed in between.
+     * </p>
+     * <p>
+     * The {@code validator} may throw to signal a validation failure (typically
+     * {@link com.cinchapi.runway.StaleDataException}); the exception propagates
+     * from the recording call for synchronous implementations and from
+     * {@link #commit()} or {@link #flush()} for bulk implementations.
+     * </p>
+     *
+     * @param record the record id whose difference is being inspected
+     * @param start the timestamp to compare from
+     * @param end the timestamp to compare to, or {@code null} to compare
+     *            against whatever the {@link Saver} sees when the read runs
+     * @param validator a {@link Consumer} that receives the difference and may
+     *            throw to reject the save
+     */
+    void diff(long record, Timestamp start, @Nullable Timestamp end,
+            Consumer<Map<String, Map<Diff, Set<Object>>>> validator);
 
     /**
      * Record a {@link Concourse#find(Criteria) find} for the {@code criteria}
@@ -218,6 +229,25 @@ public interface Saver {
     void remove(String key, Object value, long record);
 
     /**
+     * Record a {@link Concourse#select(Collection, long) select} of
+     * {@code keys} in {@code record} and arrange to apply {@code validator} to
+     * the stored values, keyed by field name.
+     * <p>
+     * The {@code validator} may throw to signal a validation failure (typically
+     * {@link com.cinchapi.runway.StaleDataException}); the exception propagates
+     * from the recording call for synchronous implementations and from
+     * {@link #commit()} or {@link #flush()} for bulk implementations.
+     * </p>
+     *
+     * @param keys the field names to read
+     * @param record the record id whose stored values are being inspected
+     * @param validator a {@link Consumer} that receives the stored values and
+     *            may throw to reject the save
+     */
+    void select(Collection<String> keys, long record,
+            Consumer<Map<String, Set<Object>>> validator);
+
+    /**
      * Record a {@link Concourse#select(String, Criteria) select} of values for
      * {@code key} on every record matching {@code criteria} and arrange to
      * apply {@code consumer} to the resulting record-keyed map
@@ -276,31 +306,6 @@ public interface Saver {
      * </p>
      */
     void stage();
-
-    /**
-     * Record a {@link Concourse#verify(String, Object, long) verify} of
-     * {@code value} for {@code key} in {@code record} and hand the result to
-     * {@code validator}.
-     * <p>
-     * The verification reflects the state that precedes the writes this
-     * {@link Saver} records, so a validator never observes a mapping that the
-     * same save is about to write.
-     * </p>
-     * <p>
-     * The {@code validator} may throw to signal a validation failure (typically
-     * {@link com.cinchapi.runway.DeletedRecordException}); the exception
-     * propagates from the recording call for synchronous implementations and
-     * from {@link #commit()} or {@link #flush()} for bulk implementations.
-     * </p>
-     *
-     * @param key the field name to verify
-     * @param value the value that {@code key} is expected to hold
-     * @param record the record id whose mapping is being verified
-     * @param validator a {@link Consumer} that receives whether the mapping
-     *            exists and may throw to reject the save
-     */
-    void verify(String key, Object value, long record,
-            Consumer<Boolean> validator);
 
     /**
      * Record a {@link Concourse#verifyOrSet(String, Object, long) verifyOrSet}

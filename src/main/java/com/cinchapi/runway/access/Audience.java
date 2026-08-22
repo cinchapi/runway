@@ -955,7 +955,7 @@ public interface Audience extends DatabaseInterface, Transactional {
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
         if(this instanceof Record) {
-            return ((Record) this).supply(view -> {
+            return ((Record) this).transactAndSupply(view -> {
                 // The checks below run against this Audience, so the raw
                 // transaction is the correct target for the staging
                 // operations; the Audience-scoped view would repeat them.
@@ -1070,9 +1070,13 @@ public interface Audience extends DatabaseInterface, Transactional {
      * <p>
      * This {@link Audience} must have joined the transaction, which the
      * framework guarantees when it invokes this method during
-     * {@link #run(java.util.function.Consumer) run} and
-     * {@link #supply(Function) supply}. Use {@link #stage()} to start a
-     * {@link Transaction} that this {@link Audience} joins.
+     * {@link #transact(java.util.function.Consumer) transact} and
+     * {@link #transactAndSupply(Function) transactAndSupply}. Use
+     * {@link #startTransaction()} to start a {@link Transaction} that this
+     * {@link Audience} joins.
+     * </p>
+     * <p>
+     * This is a framework-private method and should not be called directly.
      * </p>
      *
      * @param transaction the transaction that scopes the work
@@ -1093,7 +1097,7 @@ public interface Audience extends DatabaseInterface, Transactional {
             TransactionInterface raw = AudienceTransaction.raw(transaction);
             Verify.that(Reflection.get("binding", this) == raw,
                     "An Audience can only scope a Transaction it has"
-                            + " joined; use stage() to start one");
+                            + " joined; use startTransaction() to start one");
             return new AudienceTransaction(this, (Transaction) raw);
         }
         else {
@@ -1116,12 +1120,21 @@ public interface Audience extends DatabaseInterface, Transactional {
      * with exactly one of {@link Transaction#commit() commit} or
      * {@link Transaction#abort() abort}, or rely on {@link Transaction#close()
      * close} to abort whatever was not committed. Use a try-with-resources
-     * block so the transaction always ends. After the transaction ends, this
-     * {@link Audience} operates against the enclosing {@link Runway} again, and
-     * the ended view falls through to the {@link Runway} the same way. If this
-     * {@link Audience} later joins a different {@link Transaction}, then a
-     * database operation on the ended view is refused with an
-     * {@link IllegalStateException} instead of following the new scope.
+     * block so the transaction always ends.
+     * </p>
+     * <p>
+     * After the transaction ends, this {@link Audience} operates against the
+     * enclosing {@link Runway} again, and the ended view falls through to the
+     * {@link Runway} the same way. If this {@link Audience} later joins a
+     * different {@link Transaction}, then a database operation on the ended
+     * view is refused with an {@link IllegalStateException} instead of
+     * following the new scope.
+     * </p>
+     * <p>
+     * Work in the returned {@link Transaction} runs exactly once. Use
+     * {@link #transactAndSupply(Function) transactAndSupply} instead to retry a
+     * conflict under the governing {@link com.cinchapi.runway.AtomicRetryPolicy
+     * AtomicRetryPolicy}.
      * </p>
      *
      * @return an open {@link Transaction} that this {@link Audience} joined
@@ -1131,18 +1144,18 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             {@link Record}
      */
     @Override
-    public default Transaction stage() {
+    public default Transaction startTransaction() {
         if(this instanceof Record) {
             Record record = (Record) this;
             Runway harness = Reflection.call(record, "harness");
-            Verify.that(harness != null, "Cannot stage a Transaction because"
+            Verify.that(harness != null, "Cannot start a Transaction because"
                     + " this Audience has no binding");
             boolean inOpenTransaction = Reflection.call(record,
                     "isBoundToOpenTransaction");
-            Verify.that(!inOpenTransaction, "Cannot stage a Transaction"
+            Verify.that(!inOpenTransaction, "Cannot start a Transaction"
                     + " because this Audience is already bound to an open"
                     + " Transaction");
-            Transaction transaction = harness.stage();
+            Transaction transaction = harness.startTransaction();
             try {
                 Reflection.call(transaction, "join", record);
             }
@@ -1162,9 +1175,15 @@ public interface Audience extends DatabaseInterface, Transactional {
      * transactional scope and return its result.
      * <p>
      * If this {@link Audience} is bound to an open {@link Transaction}, then
-     * the work joins it; otherwise, the work runs in its own managed
+     * the work joins it. Otherwise, the work runs in its own managed
      * transaction that commits after the work completes, per the
-     * {@link Transactional#supply(Function) Transactional} contract.
+     * {@link Transactional#transactAndSupply(Function) Transactional} contract.
+     * Either way, reads observe this {@link Audience Audience's} visibility and
+     * the writes it permits are the ones that stage.
+     * </p>
+     * <p>
+     * <strong>NOTE:</strong> The work may run more than once, so it must be
+     * free of side effects outside of the transaction.
      * </p>
      *
      * @param work the work to run
@@ -1176,9 +1195,10 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             {@link Record}
      */
     @Override
-    public default <T> T supply(Function<TransactionInterface, T> work) {
+    public default <T> T transactAndSupply(
+            Function<TransactionInterface, T> work) {
         if(this instanceof Record) {
-            return ((Record) this).supply(work);
+            return ((Record) this).transactAndSupply(work);
         }
         else {
             throw new UnsupportedOperationException();

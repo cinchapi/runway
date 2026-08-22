@@ -3,13 +3,35 @@
 #### Version 2.3.0 (TBD)
 * **A `@Unique` constraint can scope its identity across the class hierarchy.** Declare `@Unique(any = true)` and the class that declares the annotated field, and every descendant, share one identity space, in the same sense that `findAnyUnique` matches across them: a save that duplicates the identity anywhere in that subtree fails enforcement. The scope lives on the declaration, so no caller passes a class that can drift. The default is unchanged: a constraint without `any = true` applies among records of the same concrete class. ([GH-171](https://github.com/cinchapi/runway/issues/171))
     * A named compound constraint declares one `any` for all of its members. A hierarchy-scoped group also declares all of its members in one class. A group that violates either rule is rejected as a misdeclaration.
+* **A `Record` can declare the values a save must verify.** Call `verifyOnSave` with the names of the fields a decision rests on, and the next save of that `Record` fails with a `StaleDataException` when the database no longer holds what the `Record` last saw for one of them. A decision that rests on another `Record` still calls for a `Transaction`, whose reads join its conflict footprint.
+    * A value stored alongside the ones the `Record` saw is a difference, so an element another writer added to a declared collection fails the save.
+    * The verification applies whether or not the save prevents stale writes.
+    * The declaration lasts until a save commits, so each decision declares its own. A save that does not commit leaves the declaration in place.
+    * A name that does not identify a stored field of the `Record` is refused.
+    * Within a `Transaction`, a `Record` that the `Transaction` loaded needs no declaration, because the `Transaction` fails its own commit when a writer changes anything it read. A `Record` that reached its state before the `Transaction` began carries its declaration in. A save is refused when it carries a declaration on a `Record` that reached its state outside the `Transaction` after it began.
 * **Breaking change: by default, a save now writes only what changed.** Every `Record` tracks its changes granularly, and a save writes precisely the values the instance added, changed, or removed since it last loaded or saved. Previously, a save wrote the record's entire state, so a save from an instance with a stale view erased changes that other writers committed after the instance loaded; now those changes survive. Declare the new `@MergeStrategy(OVERWRITE)` annotation on a field to opt that field into the legacy behavior: whenever the record saves, the field writes its full current state and overwrites concurrent changes. ([GH-163](https://github.com/cinchapi/runway/issues/163))
     * This primarily changes the semantics of collections. A save merges the instance's added and removed elements into the stored collection instead of replacing it, so when other writers change the stored collection concurrently, storage is not guaranteed to exactly match the in-memory collection after a save. A mutation with no serialized effect, such as reordering a `List` (the database stores an unordered set of values), is no longer an unsaved change: a save of it writes nothing and fires no save notification.
+* **Breaking change: `preventStaleWrites` now checks only the data a save could
+  overwrite.** Changes to records or values that the save does not touch no
+  longer cause a conflict. Previously, any change in the saved object graph
+  caused a conflict. This prevented two callers from using the flag while
+  updating different fields on the same record.
+  ([GH-179](https://github.com/cinchapi/runway/issues/179))
+    * A collection is checked element by element. A concurrent change to an
+      element that the save neither adds nor removes does not cause a
+      conflict, so two callers can add different elements to one collection.
+    * Deletion remains stricter. Deleting a record removes all of its data, so
+      any concurrent change to that record causes a conflict.
+    * Changing a value and then restoring its loaded value does not cause a
+      conflict because the save would not overwrite anything.
+    * The flag checks writes, not reads. If a write depends on a value read
+      earlier, declare that value with `verifyOnSave`, or use a `Transaction`
+      when the value belongs to another record.
 
 ##### Transaction API
 Runway previously offered no way to guarantee atomicity or full ACID compliance across an ad hoc combination of reads and writes: each save committed atomically, but a decision made on loaded data could not be guaranteed to still hold when it was written. The Transaction API provides that guarantee and opens a window to the full power of Concourse transactions, including serializable isolation and atomic multi-operation commits, without a raw Concourse connection.
 
-* **`Runway#stage` starts a `Transaction`.** `stage()` (or its alias, `startTransaction()`) returns a `DatabaseInterface` view that scopes every read and write to a single ACID transaction.
+* **`Runway#startTransaction` starts a `Transaction`.** `startTransaction()` returns a `DatabaseInterface` view that scopes every read and write to a single ACID transaction.
     * Reads observe the transaction's isolated snapshot, including its own uncommitted writes; no reader outside the transaction can observe a staged write before the commit.
     * Reads join the transaction's conflict footprint, so a commit fails instead of persisting a decision that was made on data a concurrent writer changed.
 * **A transaction owns its records exclusively.** Every `Record` loaded or created through the view is bound to the transaction, along with the records linked from it: `save()` stages within the transaction and the writes become durable only when `commit()` succeeds.
@@ -24,15 +46,15 @@ Runway previously offered no way to guarantee atomicity or full ACID compliance 
 * **A failed save poisons the transaction.** A save that throws after it begins writing can never commit: every subsequent operation is refused except `abort()` (or `close()`) and `afterAbort` registration, so a partial save never becomes durable.
     * A save that is refused before it begins (an invalid argument) leaves the transaction usable.
 * **A deletion is final within a transaction.** Once a save deletes a record, no later save in the same transaction can bring it back, references to it are removed at commit, and its delete notification fires once.
-* **`Runway#run` and `Runway#supply` execute work within a managed transaction.** The work receives a `TransactionInterface` (`run` for work with no result, `supply` for work that returns one) and the commit happens after the work completes.
+* **`Runway#transact` and `Runway#transactAndSupply` execute work within a managed transaction.** The work receives a `TransactionInterface` (`transact` for work with no result, `transactAndSupply` for work that returns one) and the commit happens after the work completes.
     * The view withholds `commit`, `abort` and `close`, so the work cannot end the transaction it joins.
     * Conflicts retry within the bounds of the governing `AtomicRetryPolicy`, so the work must be free of side effects outside of the transaction; `RetryExhaustedException` carries the final conflict as its cause.
-* **`Record#run` and `Record#supply` execute work in the record's scope.** These methods let a `Record` perform an atomic combination of reads and writes: within an open transaction the work joins it, and otherwise the work runs in its own managed transaction, the same as `Runway#run` and `Runway#supply`.
-* **An `Audience` starts and scopes transactions.** `Audience#stage` (or its alias, `startTransaction`) returns an open `Transaction` that behaves the same as the audience, just within the confines of the transaction: reads observe the audience's visibility and writes require its permissions.
+* **`Record#transact` and `Record#transactAndSupply` execute work in the record's scope.** These methods let a `Record` perform an atomic combination of reads and writes: within an open transaction the work joins it, and otherwise the work runs in its own managed transaction, the same as `Runway#transact` and `Runway#transactAndSupply`.
+* **An `Audience` starts and scopes transactions.** `Audience#startTransaction` returns an open `Transaction` that behaves the same as the audience, just within the confines of the transaction: reads observe the audience's visibility and writes require its permissions.
     * The caller owns the transaction's lifecycle; after the transaction ends, the audience operates against the enclosing `Runway` again.
-    * `Audience#run` and `Audience#supply` execute work in the audience's transactional scope, the same as `Record#run` and `Record#supply`; the work receives a view with the same audience behavior.
+    * `Audience#transact` and `Audience#transactAndSupply` execute work in the audience's transactional scope, the same as `Record#transact` and `Record#transactAndSupply`; the work receives a view with the same audience behavior.
     * An `Audience` that is not a `Record` (e.g., the anonymous audience) does not support transactional operations.
-* **The `Transactional` interface names a construct that can start and scope transactions.** `Runway` and `Audience` both implement it: `stage`, `startTransaction`, `run` and `supply`.
+* **The `Transactional` interface names a construct that can start and scope transactions.** `Runway` and `Audience` both implement it: `startTransaction`, `transact` and `transactAndSupply`.
 * **`Transaction#afterCommit` and `Transaction#afterAbort` schedule outcome-dependent side effects.** An `afterCommit` hook runs once, only after the transaction successfully commits, and never for an attempt that a conflict retry discards; an `afterAbort` hook runs when the transaction ends without a successful commit. Hooks run synchronously in registration order, and a hook that throws does not change the transaction's outcome.
 
 ##### Atomic Operations
