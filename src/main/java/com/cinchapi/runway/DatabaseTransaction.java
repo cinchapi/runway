@@ -890,6 +890,13 @@ class DatabaseTransaction extends Binding implements Transaction {
                             (a, b) -> a.sequence <= b.sequence ? a : b));
                 }
                 oldest.forEach((record, snapshot) -> record.restore(snapshot));
+                // NOTE: A later snapshot of the same record holds the keys
+                // that a later save carried, and none of those saves
+                // committed, so every one of them is declared again.
+                for (SaveContext context : saves) {
+                    context.forEachSnapshot((record, snapshot) -> record
+                            .redeclareVerifyKeys(snapshot.verifyKeys));
+                }
                 try {
                     for (Runnable hook : afterAbortHooks) {
                         hook.run();

@@ -1675,6 +1675,55 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an abort keeps every declaration that
+     * a save within the {@link Transaction} carried, not only the oldest.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that a
+     * {@link Transaction} loads.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Declare {@code bio} and save, then declare {@code email} and save,
+     * both within the {@link Transaction}.</li>
+     * <li>Externally modify the name so the commit fails.</li>
+     * <li>Externally modify the email, then modify the name of the same
+     * instance and save it through {@link Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown by the
+     * later save, because {@code email} stayed declared.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testAbortKeepsEveryDeclarationThatASaveCarried() {
+        TUser user = new TUser("verify_abort_keeps_all");
+        user.bio = "original";
+        user.email = "original";
+        Assert.assertTrue(runway.save(user));
+
+        TUser loaded;
+        try (Transaction transaction = runway.startTransaction()) {
+            loaded = transaction.load(TUser.class, user.id());
+            loaded.verifyOnSave("bio");
+            loaded.name = "a";
+            Assert.assertTrue(loaded.save());
+            loaded.verifyOnSave("email");
+            loaded.name = "b";
+            Assert.assertTrue(loaded.save());
+            externallyWrite(connection -> connection.set("name", "external",
+                    user.id()));
+            try {
+                Assert.assertFalse(transaction.commit());
+            }
+            catch (TransactionException e) {/* the commit was refused */}
+        }
+
+        externallyWrite(
+                connection -> connection.set("email", "external", user.id()));
+        loaded.name = "c";
+        runway.save(loaded);
+    }
+
+    /**
      * A test user record.
      *
      * @author Jeff Nelson
@@ -1691,6 +1740,11 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
          * without touching the {@link #name}.
          */
         String bio;
+
+        /**
+         * The user's email, a second independent field.
+         */
+        String email;
 
         /**
          * A value that lives in memory only, so no save stores it.

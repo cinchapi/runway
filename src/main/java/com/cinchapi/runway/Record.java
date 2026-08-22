@@ -3332,11 +3332,27 @@ public abstract class Record implements Comparable<Record> {
         __baseline = snapshot.baseline;
         _author = snapshot.author;
         deleted = snapshot.deleted;
-        verifyKeys = snapshot.verifyKeys;
+        redeclareVerifyKeys(snapshot.verifyKeys);
         // The discarded attempt may have cached audit history that includes
         // its own staged revisions, so the next metadata read must re-fetch
         // from the durable state.
         _audit = null;
+    }
+
+    /**
+     * Declare again the {@code keys} that a save carried and did not commit,
+     * alongside any key that {@link #verifyOnSave(String...) verifyOnSave}
+     * declared since.
+     *
+     * @param keys the keys to declare again, or {@code null} for none
+     */
+    void redeclareVerifyKeys(@Nullable Set<String> keys) {
+        if(keys != null) {
+            Set<String> declared = verifyKeys == null ? Sets.newLinkedHashSet()
+                    : Sets.newLinkedHashSet(verifyKeys);
+            declared.addAll(keys);
+            verifyKeys = declared;
+        }
     }
 
     /**
