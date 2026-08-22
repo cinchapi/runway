@@ -1724,6 +1724,41 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a declared value fails the save when
+     * another writer changed it before an earlier save of this instance, which
+     * never re-read it.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} with a bio.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Externally modify the bio in the database.</li>
+     * <li>Modify the in-memory name and save.</li>
+     * <li>Declare {@code bio}, modify the name again and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown,
+     * because the database does not hold the bio this instance saw.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredValueFailsWhenAnEarlierSaveMovedPastAnotherWritersChange() {
+        TUser user = new TUser("verify_after_intermediate_save");
+        user.bio = "original";
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(
+                connection -> connection.set("bio", "external", user.id()));
+
+        user.name = "first";
+        Assert.assertTrue(runway.save(user));
+
+        user.verifyOnSave("bio");
+        user.name = "second";
+        runway.save(user);
+    }
+
+    /**
      * A test user record.
      *
      * @author Jeff Nelson

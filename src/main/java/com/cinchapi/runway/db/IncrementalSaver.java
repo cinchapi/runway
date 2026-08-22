@@ -90,6 +90,12 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
+    public void select(Collection<String> keys, long record,
+            Consumer<Map<String, Set<Object>>> validator) {
+        validator.accept(concourse.select(keys, record));
+    }
+
+    @Override
     public void select(String key, Criteria criteria,
             Consumer<Map<Long, Set<Object>>> consumer, Timing timing) {
         consumer.accept(concourse.select(key, criteria));

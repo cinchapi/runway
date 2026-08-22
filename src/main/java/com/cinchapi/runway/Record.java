@@ -839,38 +839,24 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if the {@code changes} leave a key storing something
-     * other than what a {@link Record} last saw for it. A value stored
-     * alongside the ones the {@link Record} saw is a difference, as is one that
-     * is no longer stored.
+     * Return the values a {@link Record} last saw stored for a key, as the set
+     * that a read of the key returns when nothing changed.
      *
-     * @param changes the changes another writer made to the key, or
-     *            {@code null} if the key is unchanged
      * @param baseline the serialized state the {@link Record} last saw for the
      *            key, or {@code null} if it saw none
-     * @return {@code true} if the stored state differs from what the
-     *         {@link Record} saw
+     * @return the seen values
      */
-    private static boolean diverges(@Nullable Map<Diff, Set<Object>> changes,
-            @Nullable Object baseline) {
-        if(changes == null) {
-            return false;
+    private static Set<?> seenValues(@Nullable Object baseline) {
+        if(baseline == null) {
+            return ImmutableSet.of();
+        }
+        else if(baseline instanceof Set) {
+            return ((Set<?>) baseline).stream()
+                    .filter(value -> value != NULL_PLACEHOLDER)
+                    .collect(Collectors.toSet());
         }
         else {
-            Set<?> seen;
-            if(baseline == null) {
-                seen = ImmutableSet.of();
-            }
-            else if(baseline instanceof Set) {
-                seen = (Set<?>) baseline;
-            }
-            else {
-                seen = ImmutableSet.of(baseline);
-            }
-            return changes.getOrDefault(Diff.ADDED, ImmutableSet.of()).stream()
-                    .anyMatch(value -> !seen.contains(value))
-                    || changes.getOrDefault(Diff.REMOVED, ImmutableSet.of())
-                            .stream().anyMatch(seen::contains);
+            return ImmutableSet.of(baseline);
         }
     }
 
@@ -2577,11 +2563,11 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Declare that the next save must verify that no other writer changed any
-     * of the {@code keys} since this {@link Record} last loaded or saved, and
-     * reject the save with a {@link StaleDataException} when one did. A value
-     * stored alongside the ones this {@link Record} saw is a change, so it
-     * fails the save.
+     * Declare that the next save must verify that the database still stores,
+     * for each of the {@code keys}, what this {@link Record} last saw, and
+     * reject the save with a {@link StaleDataException} when it does not. A
+     * value stored alongside the ones this {@link Record} saw is a difference,
+     * so it fails the save.
      * <p>
      * The verification applies whether or not the save prevents stale writes,
      * and it covers the fields of this {@link Record} only. A caller whose
@@ -4784,8 +4770,9 @@ public abstract class Record implements Comparable<Record> {
     /**
      * Record the stale-write check for this {@link Record} on {@code saver}.
      * The check fails the save if it would overwrite a value that another
-     * writer changed, or if another writer changed a key that
-     * {@link #verifyOnSave(String...) verifyOnSave} declared.
+     * writer changed, or if the database no longer stores what this
+     * {@link Record} last saw for a key that {@link #verifyOnSave(String...)
+     * verifyOnSave} declared.
      * <p>
      * A value that another writer changed and changed back does not fail the
      * save, because the stored value is the one this {@link Record} loaded.
@@ -4807,10 +4794,10 @@ public abstract class Record implements Comparable<Record> {
         // NOTE: The declared state is captured here, alongside the write set,
         // because a bulk Saver runs the check after this save replaces the
         // baseline, and the check must compare against what preceded it.
-        Map<String, Object> verified = Maps.newLinkedHashMap();
+        Map<String, Set<?>> verified = Maps.newLinkedHashMap();
         if(verifyKeys != null) {
             for (String key : verifyKeys) {
-                verified.put(key, baseline(key));
+                verified.put(key, seenValues(baseline(key)));
             }
         }
         Timestamp ceiling = stalenessCeiling();
@@ -4826,11 +4813,21 @@ public abstract class Record implements Comparable<Record> {
                     + " did not reach its current state through the Transaction"
                     + " that saves it; load it through the Transaction");
         }
-        boolean checksAnyValue = writes == null || !writes.isEmpty()
-                || !verified.isEmpty();
         boolean hasConflictWindow = ceiling == null
                 || ceiling.getMicros() > checkpointTs;
-        if(checksAnyValue && hasConflictWindow) {
+        if(!verified.isEmpty() && hasConflictWindow) {
+            saver.select(verified.keySet(), id, stored -> {
+                boolean stale = verified.entrySet().stream()
+                        .anyMatch(entry -> !stored
+                                .getOrDefault(entry.getKey(), ImmutableSet.of())
+                                .equals(entry.getValue()));
+                if(stale) {
+                    throw new StaleDataException(id);
+                }
+            });
+        }
+        boolean writesAnyValue = writes == null || !writes.isEmpty();
+        if(writesAnyValue && hasConflictWindow) {
             saver.diff(id, Timestamp.fromMicros(checkpointTs), ceiling,
                     diff -> {
                         boolean stale;
@@ -4841,11 +4838,7 @@ public abstract class Record implements Comparable<Record> {
                             stale = writes.entrySet().stream()
                                     .anyMatch(entry -> overwrites(
                                             diff.get(entry.getKey()),
-                                            entry.getValue()))
-                                    || verified.entrySet().stream()
-                                            .anyMatch(entry -> diverges(
-                                                    diff.get(entry.getKey()),
-                                                    entry.getValue()));
+                                            entry.getValue()));
                         }
                         if(stale) {
                             throw new StaleDataException(id);

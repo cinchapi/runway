@@ -145,6 +145,26 @@ public interface Saver {
             Consumer<Map<String, Map<Diff, Set<Object>>>> validator);
 
     /**
+     * Record a {@link Concourse#select(Collection, long) select} of
+     * {@code keys} in {@code record}, read before any write that this
+     * {@link Saver} stages, and arrange to apply {@code validator} to the
+     * stored values, keyed by field name.
+     * <p>
+     * The {@code validator} may throw to signal a validation failure (typically
+     * {@link com.cinchapi.runway.StaleDataException}); the exception propagates
+     * from the recording call for synchronous implementations and from
+     * {@link #commit()} or {@link #flush()} for bulk implementations.
+     * </p>
+     *
+     * @param keys the field names to read
+     * @param record the record id whose stored values are being inspected
+     * @param validator a {@link Consumer} that receives the stored values and
+     *            may throw to reject the save
+     */
+    void select(Collection<String> keys, long record,
+            Consumer<Map<String, Set<Object>>> validator);
+
+    /**
      * Record a {@link Concourse#find(Criteria) find} for the {@code criteria}
      * and arrange to apply {@code validator} to the matching record ids.
      * <p>

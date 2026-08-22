@@ -33,6 +33,7 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 import com.cinchapi.runway.RunwayBaseClientServerTest;
 import com.cinchapi.runway.db.Saver.Timing;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
 /**
@@ -337,6 +338,44 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(ImmutableSet.of("a"), captured.get().keySet());
         Assert.assertEquals(ImmutableSet.of("one"),
                 captured.get().get("a").get(Diff.REMOVED));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@code validator} passed to
+     * {@link Saver#select select} receives the stored values of the requested
+     * keys as they were before this {@link Saver Saver's} own writes, and no
+     * other key.
+     * <p>
+     * <strong>Start state:</strong> A record that stores {@code "a"},
+     * {@code "b"} and {@code "c"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link Saver}.</li>
+     * <li>Record a {@code select} of {@code "a"} and {@code "b"} with a
+     * {@code validator} that captures the result.</li>
+     * <li>Record a {@code set} that changes {@code "a"}.</li>
+     * <li>Commit so the {@code validator} is guaranteed to have run.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The captured values hold the original
+     * {@code "a"} and {@code "b"} and nothing else.
+     */
+    @Test
+    public void testSelectValidatorReceivesStoredValuesBeforeOwnWrites() {
+        long id = client.add("a", "one");
+        client.add("b", "two", id);
+        client.add("c", "three", id);
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<String, Set<Object>>> captured = new AtomicReference<>();
+        saver.select(ImmutableSet.of("a", "b"), id, captured::set);
+        saver.set("a", "changed", id);
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertEquals(ImmutableMap.of("a", ImmutableSet.of("one"), "b",
+                ImmutableSet.of("two")), captured.get());
     }
 
     /**
