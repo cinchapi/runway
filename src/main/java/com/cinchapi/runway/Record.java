@@ -839,28 +839,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return the values a {@link Record} last saw stored for a key, as the set
-     * that a read of the key returns when nothing changed.
-     *
-     * @param baseline the serialized state the {@link Record} last saw for the
-     *            key, or {@code null} if it saw none
-     * @return the seen values
-     */
-    private static Set<?> seenValues(@Nullable Object baseline) {
-        if(baseline == null) {
-            return ImmutableSet.of();
-        }
-        else if(baseline instanceof Set) {
-            return ((Set<?>) baseline).stream()
-                    .filter(value -> value != NULL_PLACEHOLDER)
-                    .collect(Collectors.toSet());
-        }
-        else {
-            return ImmutableSet.of(baseline);
-        }
-    }
-
-    /**
      * Return {@code true} if a save that writes {@code writes} for a key takes
      * away one of the {@code changes} that another writer made to that key.
      *
@@ -901,6 +879,28 @@ public abstract class Record implements Comparable<Record> {
                 record.saveWithinTransaction(saver, context);
             }
         });
+    }
+
+    /**
+     * Return the values a {@link Record} last saw stored for a key, as the set
+     * that a read of the key returns when nothing changed.
+     *
+     * @param baseline the serialized state the {@link Record} last saw for the
+     *            key, or {@code null} if it saw none
+     * @return the seen values
+     */
+    private static Set<?> seenValues(@Nullable Object baseline) {
+        if(baseline == null) {
+            return ImmutableSet.of();
+        }
+        else if(baseline instanceof Set) {
+            return ((Set<?>) baseline).stream()
+                    .filter(value -> value != NULL_PLACEHOLDER)
+                    .collect(Collectors.toSet());
+        }
+        else {
+            return ImmutableSet.of(baseline);
+        }
     }
 
     /**
@@ -2277,29 +2277,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Execute {@code work} within this {@link Record Record's} transactional
-     * scope.
-     * <p>
-     * This method behaves exactly like {@link #transactAndSupply(Function)} for
-     * work that does not produce a result. The work may therefore run more than
-     * once, so it must be free of side effects outside of the transaction.
-     * </p>
-     *
-     * @param work the work to run
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
-     * @throws RetryExhaustedException if a new transaction cannot commit within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
-     */
-    public final void transact(Consumer<TransactionInterface> work) {
-        transactAndSupply(transaction -> {
-            work.accept(transaction);
-            return null;
-        });
-    }
-
-    /**
      * Save any changes made to this {@link Record}.
      * <p>
      * <strong>NOTE:</strong> This method recursively saves any linked
@@ -2447,6 +2424,59 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Thrown an exception that describes any exceptions that were previously
+     * suppressed. If none occurred, then this method does nothing. This is a
+     * good way to understand why a save operation fails.
+     *
+     * @throws RuntimeException
+     */
+    public void throwSupressedExceptions() {
+        if(!errors.isEmpty()) {
+            Iterator<Throwable> it = errors.iterator();
+            StringBuilder summary = new StringBuilder();
+            ArrayBuilder<StackTraceElement> stacktrace = ArrayBuilder.builder();
+            while (it.hasNext()) {
+                Throwable t = it.next();
+                summary.append(";").append(t.getMessage());
+                stacktrace.add(t.getStackTrace());
+                it.remove();
+            }
+            SuppressedRunwayException supressed = new SuppressedRunwayException(
+                    summary.toString().trim().substring(1));
+            supressed.setStackTrace(stacktrace.build());
+            throw supressed;
+        }
+    }
+
+    @Override
+    public final String toString() {
+        return json();
+    }
+
+    /**
+     * Execute {@code work} within this {@link Record Record's} transactional
+     * scope.
+     * <p>
+     * This method behaves exactly like {@link #transactAndSupply(Function)} for
+     * work that does not produce a result. The work may therefore run more than
+     * once, so it must be free of side effects outside of the transaction.
+     * </p>
+     *
+     * @param work the work to run
+     * @throws IllegalStateException if this {@link Record} has no binding, or
+     *             if it is bound to an open {@link Transaction} that another
+     *             thread owns or that a failed save poisoned
+     * @throws RetryExhaustedException if a new transaction cannot commit within
+     *             the bounds of the governing {@link AtomicRetryPolicy}
+     */
+    public final void transact(Consumer<TransactionInterface> work) {
+        transactAndSupply(transaction -> {
+            work.accept(transaction);
+            return null;
+        });
+    }
+
+    /**
      * Execute {@code work} within this {@link Record Record's} transactional
      * scope and return its result.
      * <p>
@@ -2501,36 +2531,6 @@ public abstract class Record implements Comparable<Record> {
             scoped = work;
         }
         return $supply(scoped);
-    }
-
-    /**
-     * Thrown an exception that describes any exceptions that were previously
-     * suppressed. If none occurred, then this method does nothing. This is a
-     * good way to understand why a save operation fails.
-     *
-     * @throws RuntimeException
-     */
-    public void throwSupressedExceptions() {
-        if(!errors.isEmpty()) {
-            Iterator<Throwable> it = errors.iterator();
-            StringBuilder summary = new StringBuilder();
-            ArrayBuilder<StackTraceElement> stacktrace = ArrayBuilder.builder();
-            while (it.hasNext()) {
-                Throwable t = it.next();
-                summary.append(";").append(t.getMessage());
-                stacktrace.add(t.getStackTrace());
-                it.remove();
-            }
-            SuppressedRunwayException supressed = new SuppressedRunwayException(
-                    summary.toString().trim().substring(1));
-            supressed.setStackTrace(stacktrace.build());
-            throw supressed;
-        }
-    }
-
-    @Override
-    public final String toString() {
-        return json();
     }
 
     /**
@@ -3238,6 +3238,22 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Declare again the {@code keys} that a save carried and did not commit,
+     * alongside any key that {@link #verifyOnSave(String...) verifyOnSave}
+     * declared since.
+     *
+     * @param keys the keys to declare again, or {@code null} for none
+     */
+    void redeclareVerifyKeys(@Nullable Set<String> keys) {
+        if(keys != null) {
+            Set<String> declared = verifyKeys == null ? Sets.newLinkedHashSet()
+                    : Sets.newLinkedHashSet(verifyKeys);
+            declared.addAll(keys);
+            verifyKeys = declared;
+        }
+    }
+
+    /**
      * Remove every reference held by one of this {@link Record Record's}
      * {@link CaptureDelete} fields to a {@link Record} whose id is in
      * {@code ids}.
@@ -3323,22 +3339,6 @@ public abstract class Record implements Comparable<Record> {
         // its own staged revisions, so the next metadata read must re-fetch
         // from the durable state.
         _audit = null;
-    }
-
-    /**
-     * Declare again the {@code keys} that a save carried and did not commit,
-     * alongside any key that {@link #verifyOnSave(String...) verifyOnSave}
-     * declared since.
-     *
-     * @param keys the keys to declare again, or {@code null} for none
-     */
-    void redeclareVerifyKeys(@Nullable Set<String> keys) {
-        if(keys != null) {
-            Set<String> declared = verifyKeys == null ? Sets.newLinkedHashSet()
-                    : Sets.newLinkedHashSet(verifyKeys);
-            declared.addAll(keys);
-            verifyKeys = declared;
-        }
     }
 
     /**
