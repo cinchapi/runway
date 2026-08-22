@@ -2290,6 +2290,8 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * @return {@code true} if this {@link Record} is successfully saved
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database
      * @throws StaleDataException if another writer changed a value that
      *             {@link #verifyOnSave(String...) verifyOnSave} declared
      * @throws IllegalStateException if this {@link Record} has no binding
@@ -2336,6 +2338,8 @@ public abstract class Record implements Comparable<Record> {
      * @param preventStaleWrite if {@code true}, reject the save if it would
      *            overwrite a value that another writer changed
      * @return {@code true} if this {@link Record} is successfully saved
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
      *             and the save would overwrite a value that another writer
      *             changed, or if another writer changed a value that
@@ -3352,6 +3356,8 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param saver the {@link Saver} for the attempt's transaction
      * @param context the active {@link SaveContext}
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database
      * @throws StaleDataException if the {@code context}
      *             {@link SaveContext#shouldPreventStaleWrite() prevents} stale
      *             writes and a value that this save writes changed in the
@@ -3382,6 +3388,28 @@ public abstract class Record implements Comparable<Record> {
             // NOTE: The hook may add fields to what the save writes, so it runs
             // before the write set is computed.
             beforeSave();
+        }
+        if(!deleted && __baseline != null
+                && (changed || _author != null || hasRealmChanges())) {
+            // NOTE: A save writes only what changed, so a save of a Record
+            // whose data another writer erased would restore what it writes
+            // and leave a record that no writer intended to exist. A Record
+            // without a baseline has never been persisted, and a save that
+            // writes nothing restores nothing, so neither needs the check.
+            // The condition names every write this method stages into this
+            // Record: its fields, its author attribution and its realm
+            // membership. A new one belongs here too.
+            // This precedes the stale-write check so the more specific
+            // refusal reaches the caller when both apply to this Record.
+            saver.select(ImmutableSet.of(SECTION_KEY), id, stored -> {
+                if(stored.getOrDefault(SECTION_KEY, ImmutableSet.of())
+                        .isEmpty()) {
+                    throw new DeletedRecordException(id);
+                }
+                else {
+                    // The Record still exists, so the save may proceed.
+                }
+            });
         }
         if(checkpointTs != 0
                 && (context.shouldPreventStaleWrite() || verifyKeys != null)) {
@@ -4713,6 +4741,19 @@ public abstract class Record implements Comparable<Record> {
         else {
             return serializeScalarValue(value);
         }
+    }
+
+    /**
+     * Return {@code true} if this {@link Record Record's} realm membership
+     * differs from its {@link #__baseline baseline}.
+     *
+     * @return {@code true} if a save would write a realm change
+     */
+    private boolean hasRealmChanges() {
+        boolean[] changed = new boolean[1];
+        forEachSequenceDelta(ImmutableSet.copyOf(_realms), baseline(REALMS_KEY),
+                $ -> changed[0] = true, $ -> changed[0] = true);
+        return changed[0];
     }
 
     /**

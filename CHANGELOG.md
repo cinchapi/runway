@@ -76,6 +76,12 @@ Runway previously offered no way to guarantee atomicity or full ACID compliance 
     * The lookup, the access checks and the update run in the `Audience`'s transactional scope: within an open transaction they stage and commit with it; otherwise, they commit together in their own transaction and conflicts retry within the bounds of the governing `AtomicRetryPolicy`.
 
 ##### Bug Fixes
+* Fixed a bug where a save of a record that another writer deleted restored that record instead of failing. The record reappeared in queries over its class, and a later load of it could fail because the values it requires were gone. A save that would write anything into a record that holds no data now throws the new `DeletedRecordException`, which names the record, and writes nothing.
+    * The refusal reaches the caller ahead of a stale-write failure when both apply to the same record.
+    * A realm change and an author attribution are writes, so a save whose only change is realm membership, or attribution through an `Audience`, is refused the same way.
+    * A record that has never been saved is unaffected. A save with nothing to write still succeeds. Deleting a record that another writer already deleted still succeeds.
+    * Inside a transaction, the refusal poisons the transaction, so none of its staged writes can commit.
+    * Against a server that supports bulk commands, the existence check adds one server round trip per save operation, and none when the save has nothing to write or already performs a uniqueness or stale-data read.
 * Fixed a bug where a `write` performed through an `Audience` could modify a record that a visibility `Scope` hid from that `Audience` when the caller held the record and its field rules permitted the keys. A write through an `Audience` now also requires the record to be visible.
 * Fixed a bug where a save (or the combined saves of one transaction) that processed multiple in-memory copies of the same record could deliver the save notification to a copy that changed nothing and treat that copy as current, so a later `preventStaleWrites` save of it silently overwrote the changes that actually persisted. Now the notification goes to the copy whose changes persisted, and the stale copy fails the stale-write check.
 * Fixed a bug where a save of a record with no unsaved changes traversed its transient fields and saved modified records that were referenced only through them. A transient field is outside a record's persistent data, so a record referenced only through one no longer saves with its holder.
