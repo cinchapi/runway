@@ -30,6 +30,7 @@ import org.junit.runners.Parameterized.Parameters;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Link;
+import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.runway.MergeStrategy.Strategy;
 import com.google.common.collect.ImmutableSet;
@@ -1192,6 +1193,92 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a save succeeds when the database
+     * still holds the declared value of a field whose stored form is a
+     * {@link Tag}.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose status no other writer changes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with a status.</li>
+     * <li>Declare {@code status}, modify the in-memory name, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}.
+     */
+    @Test
+    public void testDeclaredValueAllowsSaveWhenTheFieldStoresAsATag() {
+        TUser user = new TUser("verify_tag_fresh");
+        user.status = TStatus.ACTIVE;
+        Assert.assertTrue(runway.save(user));
+
+        user.verifyOnSave("status");
+        user.name = "updated";
+        Assert.assertTrue(runway.save(user));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save succeeds when the database
+     * still holds the declared elements of a collection whose stored elements
+     * are {@link Tag Tags}.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose roles no other writer changes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} that holds two roles.</li>
+     * <li>Declare {@code roles}, modify the in-memory name, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}.
+     */
+    @Test
+    public void testDeclaredCollectionAllowsSaveWhenTheElementsStoreAsTags() {
+        TUser user = new TUser("verify_tag_collection_fresh");
+        user.roles.add(TStatus.ACTIVE);
+        user.roles.add(TStatus.SUSPENDED);
+        Assert.assertTrue(runway.save(user));
+
+        user.verifyOnSave("roles");
+        user.name = "updated";
+        Assert.assertTrue(runway.save(user));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declared value of a field whose
+     * stored form is a {@link Tag} fails the save when another writer changes
+     * it.
+     * <p>
+     * <strong>Start state:</strong> A {@link TUser} saved through
+     * {@link Runway} whose status is then externally modified.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} with a status.</li>
+     * <li>Externally modify the status in the database.</li>
+     * <li>Declare {@code status}, modify the in-memory name, and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link StaleDataException} is thrown.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclaredValueFailsSaveWhenTheTagFieldChangedExternally() {
+        TUser user = new TUser("verify_tag_stale");
+        user.status = TStatus.ACTIVE;
+        Assert.assertTrue(runway.save(user));
+
+        externallyWrite(connection -> connection.set("status",
+                TStatus.SUSPENDED.name(), user.id()));
+
+        user.verifyOnSave("status");
+        user.name = "updated";
+        runway.save(user);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a declared value is checked even when
      * the save writes nothing.
      * <p>
@@ -1782,6 +1869,18 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         String email;
 
         /**
+         * The user's status, whose stored form is a {@link Tag} rather than a
+         * {@link String}.
+         */
+        TStatus status;
+
+        /**
+         * The user's roles, a collection whose stored elements are {@link Tag
+         * Tags} rather than {@link String Strings}.
+         */
+        Set<TStatus> roles = new LinkedHashSet<>();
+
+        /**
          * A value that lives in memory only, so no save stores it.
          */
         transient String session;
@@ -1979,6 +2078,24 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
             this.user = user;
             this.tenant = tenant;
         }
+    }
+
+    /**
+     * The status of a {@link TUser}.
+     *
+     * @author Jeff Nelson
+     */
+    public enum TStatus {
+
+        /**
+         * The user may sign in.
+         */
+        ACTIVE,
+
+        /**
+         * The user may not sign in.
+         */
+        SUSPENDED
     }
 
 }
