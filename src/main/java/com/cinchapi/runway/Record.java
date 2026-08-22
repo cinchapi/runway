@@ -1291,8 +1291,8 @@ public abstract class Record implements Comparable<Record> {
      * declared.
      * <p>
      * The set is replaced wholesale on every update and its contents are never
-     * mutated in place, so a {@link Snapshot} can capture and
-     * {@link #restore(Snapshot) restore} it by reference.
+     * mutated in place, so a {@link Snapshot} can capture it by reference and a
+     * {@link #restore(Snapshot) restore} can declare its keys again.
      * </p>
      */
     @Nullable
@@ -6721,8 +6721,10 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * A {@link TransactionBoundaryException} is thrown when a save refuses a
-     * {@link Record} because it is bound to an open {@link Transaction}, whose
-     * commit is the only way to persist it.
+     * {@link Record} at the boundary of an open {@link Transaction}: the
+     * {@link Record} is bound to a {@link Transaction} whose commit is the only
+     * way to persist it, or it carries a declaration that the
+     * {@link Transaction} cannot verify.
      *
      * @author Jeff Nelson
      */
