@@ -314,6 +314,24 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
+     * Return the result that represents no matching {@link Record Records} for
+     * this {@link DatabaseSelection}.
+     *
+     * @return the result that represents no matching {@link Record Records}
+     */
+    @Nullable
+    abstract Object $emptyResultConstant();
+
+    /**
+     * Resolve this {@link DatabaseSelection} to the result that represents no
+     * matching {@link Record Records}, without dispatching it to the database.
+     */
+    final void $resolveAsEmpty() {
+        setResult($emptyResultConstant());
+        setState(Selection.State.RESOLVED);
+    }
+
+    /**
      * Return {@code true} if this {@link DatabaseSelection} can be combined
      * with other {@link DatabaseSelection Selections} in a single database
      * call.

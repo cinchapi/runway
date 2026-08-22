@@ -23,7 +23,6 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
-import com.google.common.collect.ImmutableSet;
 
 /**
  * Describes the visibility that an {@link Audience} has for a given
@@ -304,21 +303,7 @@ public abstract class Scope {
         public Selection<?> apply(Selection<?> selection) {
             selection = Selection.withInjectedFilter(
                     (Selection<Record>) selection, record -> false);
-            String className = selection.getClass().getSimpleName();
-            Object result;
-            if(className.equals("CountSelection")) {
-                result = 0;
-            }
-            else if(className.equals("LoadRecordSelection")
-                    || className.equals("FirstSelection")) {
-                result = null;
-            }
-            else {
-                result = ImmutableSet.of();
-            }
-            Reflection.call(selection, "setResult", result); /* (authorized) */
-            Reflection.call(selection, "setState",
-                    Selection.State.RESOLVED); /* (authorized) */
+            Reflection.call(selection, "$resolveAsEmpty"); /* (authorized) */
             return selection;
         }
 

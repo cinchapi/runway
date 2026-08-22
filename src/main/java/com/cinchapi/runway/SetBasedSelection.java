@@ -21,6 +21,7 @@ import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.google.common.base.MoreObjects;
 import com.google.common.base.MoreObjects.ToStringHelper;
+import com.google.common.collect.ImmutableSet;
 
 /**
  * A {@link DatabaseSelection} whose result is a {@link java.util.Set Set} of
@@ -71,6 +72,11 @@ abstract class SetBasedSelection<T extends Record>
         if(page != null) {
             helper.add("page", page);
         }
+    }
+
+    @Override
+    final Object $emptyResultConstant() {
+        return ImmutableSet.of();
     }
 
     /**

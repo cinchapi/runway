@@ -76,6 +76,7 @@ Runway previously offered no way to guarantee atomicity or full ACID compliance 
     * The lookup, the access checks and the update run in the `Audience`'s transactional scope: within an open transaction they stage and commit with it; otherwise, they commit together in their own transaction and conflicts retry within the bounds of the governing `AtomicRetryPolicy`.
 
 ##### Bug Fixes
+* Fixed a bug where a unique query through an `Audience` whose visibility `Scope` denies all access failed with a `ClassCastException` instead of returning `null`. `findUnique` and `findAnyUnique` now return `null` under such a `Scope`, consistent with their contract when no record matches.
 * Fixed a bug where a save of a record that another writer deleted restored that record instead of failing. The record reappeared in queries over its class, and a later load of it could fail because the values it requires were gone. A save that would write anything into a record that holds no data now throws the new `DeletedRecordException`, which names the record, and writes nothing.
     * The refusal reaches the caller ahead of a stale-write failure when both apply to the same record.
     * A realm change and an author attribution are writes, so a save whose only change is realm membership, or attribution through an `Audience`, is refused the same way.
