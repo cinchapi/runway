@@ -1291,6 +1291,8 @@ public final class Runway extends Binding implements
      *
      * @param records one or more {@link Record Records} to save
      * @return {@code true} if all changes are atomically saved
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database
      */
     @Override
     public boolean save(Record... records) {

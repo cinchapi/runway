@@ -353,6 +353,8 @@ public interface TransactionInterface extends DatabaseInterface {
      *
      * @param records one or more {@link Record Records} to save
      * @return {@code true} when the changes are staged
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database
      * @throws IllegalStateException if any of the {@code records} overrides the
      *             save pipeline, if any {@link Record} that the save processes
      *             is bound to a different open transaction, or if a prior save

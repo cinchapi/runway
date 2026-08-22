@@ -38,6 +38,8 @@ abstract class Binding implements DatabaseInterface {
      *
      * @param records one or more {@link Record Records} to save
      * @return {@code true} if the changes are accepted
+     * @throws DeletedRecordException if a {@link Record} that the save writes
+     *             holds no data in the database
      */
     public boolean save(Record... records) {
         return save(false, records);
