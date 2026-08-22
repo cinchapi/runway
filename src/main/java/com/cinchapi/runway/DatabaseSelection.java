@@ -314,13 +314,22 @@ abstract class DatabaseSelection<T extends Record> implements Selection<T> {
     }
 
     /**
-     * Return the result of this {@link DatabaseSelection} when no
-     * {@link Record} is visible to the caller.
+     * Return the result that represents no matching {@link Record Records} for
+     * this {@link DatabaseSelection}.
      *
-     * @return the result that represents no visible {@link Record Records}
+     * @return the result that represents no matching {@link Record Records}
      */
     @Nullable
-    abstract Object emptyResult();
+    abstract Object $emptyResultConstant();
+
+    /**
+     * Resolve this {@link DatabaseSelection} to the result that represents no
+     * matching {@link Record Records}, without dispatching it to the database.
+     */
+    final void $resolveAsEmpty() {
+        setResult($emptyResultConstant());
+        setState(Selection.State.RESOLVED);
+    }
 
     /**
      * Return {@code true} if this {@link DatabaseSelection} can be combined

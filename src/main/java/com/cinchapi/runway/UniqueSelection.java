@@ -71,7 +71,7 @@ final class UniqueSelection<T extends Record> extends DatabaseSelection<T> {
     }
 
     @Override
-    Object emptyResult() {
+    Object $emptyResultConstant() {
         return null;
     }
 

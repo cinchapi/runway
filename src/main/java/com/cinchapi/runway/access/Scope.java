@@ -303,11 +303,7 @@ public abstract class Scope {
         public Selection<?> apply(Selection<?> selection) {
             selection = Selection.withInjectedFilter(
                     (Selection<Record>) selection, record -> false);
-            Object result = Reflection.call(selection,
-                    "emptyResult"); /* (authorized) */
-            Reflection.call(selection, "setResult", result); /* (authorized) */
-            Reflection.call(selection, "setState",
-                    Selection.State.RESOLVED); /* (authorized) */
+            Reflection.call(selection, "$resolveAsEmpty"); /* (authorized) */
             return selection;
         }
 

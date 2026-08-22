@@ -69,7 +69,7 @@ final class CountSelection<T extends Record> extends DatabaseSelection<T> {
     }
 
     @Override
-    Object emptyResult() {
+    Object $emptyResultConstant() {
         return 0;
     }
 

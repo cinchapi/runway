@@ -75,7 +75,7 @@ abstract class SetBasedSelection<T extends Record>
     }
 
     @Override
-    final Object emptyResult() {
+    final Object $emptyResultConstant() {
         return ImmutableSet.of();
     }
 
