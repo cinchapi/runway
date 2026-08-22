@@ -528,4 +528,44 @@ public class SaveAfterDeleteTest extends RunwayBaseClientServerTest {
         Assert.assertFalse(exists(user.id()));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a save refused because one
+     * {@link Record} holds no data writes nothing for the other {@link Record
+     * Records} of the same save.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link TUser TUsers}, one of
+     * which a second instance deletes.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link TUser TUsers} together.</li>
+     * <li>Load a second instance of one of them and delete that instance.</li>
+     * <li>Change the name on both and save them together.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a
+     * {@link DeletedRecordException} that names the deleted {@link TUser}, and
+     * the surviving {@link TUser} still holds the name it was saved with.
+     */
+    @Test
+    public void testRefusedSaveWritesNothingForOtherRecords() {
+        TUser doomed = new TUser("doomed");
+        TUser healthy = new TUser("healthy");
+        Assert.assertTrue(runway.save(doomed, healthy));
+        TUser other = runway.load(TUser.class, doomed.id());
+        other.deleteOnSave();
+        Assert.assertTrue(runway.save(other));
+        doomed.name = "resurrected";
+        healthy.name = "changed";
+        try {
+            runway.save(doomed, healthy);
+            Assert.fail("Expected DeletedRecordException");
+        }
+        catch (DeletedRecordException e) {
+            Assert.assertEquals(doomed.id(), e.id());
+        }
+        Assert.assertEquals("healthy",
+                runway.load(TUser.class, healthy.id()).name);
+    }
+
 }
