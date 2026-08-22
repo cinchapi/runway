@@ -54,7 +54,10 @@ import java.util.function.Function;
  * <p>
  * The forms also differ inside an open {@link Transaction}. The managed form
  * joins the open transaction. A caller-owned {@link Transaction} does not nest,
- * so an implementation that already joined one refuses to start another.
+ * so an implementation that joins transactions refuses to start another while
+ * it holds one. An implementation that joins none, such as {@link Runway},
+ * starts a transaction that is independent of every open transaction, including
+ * one that encloses the call.
  * </p>
  *
  * @author Jeff Nelson
@@ -87,6 +90,9 @@ public interface Transactional {
      * <p>
      * Every operation on the returned view behaves the same as the operation on
      * this {@link Transactional}, just within the confines of the transaction.
+     * </p>
+     * <p>
+     * This is a framework-private method and should not be called directly.
      * </p>
      *
      * @param transaction the transaction that scopes the work

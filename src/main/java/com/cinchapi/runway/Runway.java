@@ -496,8 +496,9 @@ public final class Runway extends Binding implements
     private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
     /**
-     * The {@link AtomicRetryPolicy} that governs how atomic read-modify-write
-     * operations respond to persistent contention.
+     * The {@link AtomicRetryPolicy} that governs how the atomic operations and
+     * the managed transactions of this {@link Runway} respond to persistent
+     * contention.
      */
     private AtomicRetryPolicy atomicRetryPolicy = AtomicRetryPolicy.defaults();
 
@@ -3389,8 +3390,9 @@ public final class Runway extends Binding implements
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
         /**
-         * Set the {@link AtomicRetryPolicy} that governs how atomic
-         * read-modify-write operations respond to persistent contention.
+         * Set the {@link AtomicRetryPolicy} that governs how the atomic
+         * operations and the managed transactions of the built {@link Runway}
+         * respond to persistent contention.
          * <p>
          * The default is {@link AtomicRetryPolicy#defaults()}.
          * </p>
@@ -3692,8 +3694,9 @@ public final class Runway extends Binding implements
     public class Properties {
 
         /**
-         * Return the {@link AtomicRetryPolicy} that governs how atomic
-         * read-modify-write operations respond to persistent contention.
+         * Return the {@link AtomicRetryPolicy} that governs how the atomic
+         * operations and the managed transactions of this {@link Runway}
+         * respond to persistent contention.
          *
          * @return the {@link AtomicRetryPolicy}
          */

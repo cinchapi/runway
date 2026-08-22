@@ -326,6 +326,8 @@ Team team = db.transactAndSupply(tx -> {
 
 The work runs again from the start when a conflict aborts it, so it must be free of side effects. A record loaded through a transaction is owned by it until it ends, and only the thread that started the transaction may use it. Read through the transaction whatever the decision depends on: a value loaded before the transaction opened is not part of its footprint.
 
+The retries are bounded. When a conflict defeats every attempt, the call throws `RetryExhaustedException` and nothing commits. Set the retry limit and the pacing between attempts with `Runway.builder().atomicRetryPolicy(AtomicRetryPolicy.create(limit, backoffMillis))`.
+
 Two common patterns come prepackaged, so no transaction has to be written by hand: `intern` returns the stored record that carries a `@Unique` identity, creating it when absent, and `findUniqueAndUpdate` updates the single record that matches a criteria.
 
 ### Choosing a rung
@@ -580,6 +582,33 @@ For unauthenticated contexts, use the anonymous audience:
 Audience anon = Audience.anonymous();
 Set<Document> publicDocs = anon.find(Document.class, criteria);
 ```
+
+### Transactions in an Audience's Scope
+
+An `Audience` starts and scopes transactions the same way a `Runway` does. Reads observe the audience's visibility, the writes it permits are the ones that stage, and the access checks that gate them resolve inside the transaction's snapshot.
+
+Own the lifecycle with `startTransaction`:
+
+```java
+try (Transaction transaction = user.startTransaction()) {
+    Document doc = user.load(Document.class, docId);
+    user.write("title", "New Title", doc);
+    doc.save();
+    transaction.commit();
+}
+```
+
+Let Runway manage it with `transact` or `transactAndSupply`:
+
+```java
+user.transact(transaction -> {
+    Document doc = transaction.load(Document.class, docId);
+    doc.title = "New Title";
+    doc.save();
+});
+```
+
+An audience that is already inside an open transaction refuses to start another. After the transaction ends, the audience operates against the enclosing `Runway` again. An `Audience` that is not a `Record`, such as the anonymous audience, throws `UnsupportedOperationException` for all three methods.
 
 ### Access Rule Constants
 

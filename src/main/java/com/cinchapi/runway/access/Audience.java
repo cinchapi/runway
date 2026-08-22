@@ -1075,6 +1075,9 @@ public interface Audience extends DatabaseInterface, Transactional {
      * {@link #startTransaction()} to start a {@link Transaction} that this
      * {@link Audience} joins.
      * </p>
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
      *
      * @param transaction the transaction that scopes the work
      * @return the view the work receives
