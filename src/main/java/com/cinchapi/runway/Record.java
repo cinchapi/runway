@@ -2586,10 +2586,10 @@ public abstract class Record implements Comparable<Record> {
      * Within an open {@link Transaction}, a {@link Record} that the
      * {@link Transaction} loaded needs no declaration, because the
      * {@link Transaction} fails its own commit when a writer changes anything
-     * it read. A declaration on such a {@link Record} costs nothing. A save is
-     * refused when it carries a declaration on a {@link Record} that reached
-     * its current state outside the {@link Transaction}, since nothing there
-     * can verify it.
+     * it read. A declaration on such a {@link Record} costs nothing. A save
+     * throws an {@link IllegalStateException} when it carries a declaration on
+     * a {@link Record} that reached its current state outside the
+     * {@link Transaction}.
      * </p>
      *
      * @param keys the names of the intrinsic fields to verify
@@ -4806,8 +4806,7 @@ public abstract class Record implements Comparable<Record> {
             // NOTE: A Transaction verifies whatever it read, so a Record it
             // loaded needs nothing here. A Record that reached its state
             // elsewhere is outside that cover, and the Transaction's older
-            // snapshot cannot answer what the declaration asks, so the save is
-            // refused instead of passing a declaration nothing verifies.
+            // snapshot cannot answer what the declaration asks.
             throw new TransactionBoundaryException("Cannot verify "
                     + verified.keySet() + " in " + __ + " because this Record"
                     + " did not reach its current state through the Transaction"

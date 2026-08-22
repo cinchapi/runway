@@ -272,6 +272,8 @@ if(team.roster.size() < 12) {
 
 The save fails when the database no longer holds what the record last saw for a declared key. A player another writer added to the roster is a difference, even though every player the record read is still there.
 
+A save that reads the changed value throws `StaleDataException`. When the change lands after the save reads the value but before it commits, the save returns `false` and records the conflict instead. Treat both outcomes as a decision that no longer holds.
+
 A declaration lasts until a save commits, so each decision declares its own. `verifyOnSave` covers fields of that record. When the decision rests on another record, use a transaction.
 
 Inside a transaction, a record the transaction loaded needs no declaration, because the transaction fails its own commit when a writer changes anything it read. A declaration on such a record costs nothing. A save is refused when it carries a declaration on a record that reached its state outside the transaction, because nothing there can verify it.

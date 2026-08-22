@@ -34,9 +34,10 @@ import com.cinchapi.concourse.time.Time;
  * transaction is open.
  * </p>
  * <p>
- * A concurrent reader made a field read serve the whole record, which lost the
- * conflict for a transaction that also wrote the record through an atomic
- * operation. Concourse 1.0.3 fixes that, so these guard against a regression.
+ * A field read through a transaction joins the conflict footprint on its own,
+ * whether or not another session reads the whole record and whether or not the
+ * transaction also writes that record. These pin the server behavior that
+ * {@link Record#verifyOnSave(String...) verifyOnSave} rests on.
  * </p>
  *
  * @author Jeff Nelson
