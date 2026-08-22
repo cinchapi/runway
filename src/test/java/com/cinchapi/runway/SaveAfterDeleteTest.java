@@ -52,9 +52,9 @@ public class SaveAfterDeleteTest extends RunwayBaseClientServerTest {
         public String name;
 
         /**
-         * The user's title.
+         * The user's manager.
          */
-        public String title;
+        public TUser manager;
 
         /**
          * Construct a new instance.
@@ -408,6 +408,87 @@ public class SaveAfterDeleteTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(user.id(), e.id());
         }
         Assert.assertFalse(exists(user.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save refused because a linked
+     * {@link Record} holds no data names the linked {@link Record} rather than
+     * the {@link Record} that the caller passed to the save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that links to a
+     * second {@link TUser} whose data another instance erases.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TUser} that links to a manager {@link TUser}.</li>
+     * <li>Load a second instance of the manager and delete that instance.</li>
+     * <li>Change the manager's name and save the {@link TUser} that links to
+     * it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a
+     * {@link DeletedRecordException} that names the manager, and the manager
+     * holds no data afterward.
+     */
+    @Test
+    public void testSaveThrowsWhenLinkedRecordWasDeleted() {
+        TUser manager = new TUser("boss");
+        TUser user = new TUser("jeff");
+        user.manager = manager;
+        Assert.assertTrue(runway.save(user));
+        TUser other = runway.load(TUser.class, manager.id());
+        other.deleteOnSave();
+        Assert.assertTrue(runway.save(other));
+        manager.name = "resurrected";
+        try {
+            runway.save(user);
+            Assert.fail("Expected DeletedRecordException");
+        }
+        catch (DeletedRecordException e) {
+            Assert.assertEquals(manager.id(), e.id());
+        }
+        Assert.assertFalse(exists(manager.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save whose only write is the author
+     * attribution does not write into a {@link Record} whose data another
+     * writer erased, since an attribution is not an unsaved change but is still
+     * a write.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that a second
+     * instance deletes, attributed to a saved author {@link TUser}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an author {@link TUser} and a subject {@link TUser}.</li>
+     * <li>Load a second instance of the subject and delete that instance.</li>
+     * <li>Attribute the subject to the author without changing any field or
+     * realm, then save the subject.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a
+     * {@link DeletedRecordException} that names the subject, and the subject
+     * holds no data afterward.
+     */
+    @Test
+    public void testAuthorOnlySaveThrowsWhenRecordWasDeleted() {
+        TUser author = new TUser("uma");
+        Assert.assertTrue(runway.save(author));
+        TUser subject = new TUser("jeff");
+        Assert.assertTrue(runway.save(subject));
+        TUser other = runway.load(TUser.class, subject.id());
+        other.deleteOnSave();
+        Assert.assertTrue(runway.save(other));
+        Reflection.set("_author", author, subject); // (authorized)
+        try {
+            runway.save(subject);
+            Assert.fail("Expected DeletedRecordException");
+        }
+        catch (DeletedRecordException e) {
+            Assert.assertEquals(subject.id(), e.id());
+        }
+        Assert.assertFalse(exists(subject.id()));
     }
 
     /**

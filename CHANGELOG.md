@@ -77,8 +77,8 @@ Runway previously offered no way to guarantee atomicity or full ACID compliance 
 
 ##### Bug Fixes
 * Fixed a bug where a save of a record that another writer deleted restored that record instead of failing. The record reappeared in queries over its class, and a later load of it could fail because the values it requires were gone. A save that would write anything into a record that holds no data now throws the new `DeletedRecordException`, which names the record, and writes nothing.
-    * The refusal reaches the caller ahead of a stale-write failure when both apply.
-    * A realm change is a write, so a save whose only change is realm membership is refused the same way.
+    * The refusal reaches the caller ahead of a stale-write failure when both apply to the same record.
+    * A realm change and an author attribution are writes, so a save whose only change is realm membership, or attribution through an `Audience`, is refused the same way.
     * A record that has never been saved is unaffected. A save with nothing to write still succeeds. Deleting a record that another writer already deleted still succeeds.
     * Inside a transaction, the refusal poisons the transaction, so none of its staged writes can commit.
     * Against a server that supports bulk commands, the existence check adds one server round trip per save operation, and none when the save has nothing to write or already performs a uniqueness or stale-data read.

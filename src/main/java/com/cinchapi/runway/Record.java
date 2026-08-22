@@ -3389,14 +3389,18 @@ public abstract class Record implements Comparable<Record> {
             // before the write set is computed.
             beforeSave();
         }
-        if(!deleted && __baseline != null && (changed || hasRealmChanges())) {
+        if(!deleted && __baseline != null
+                && (changed || _author != null || hasRealmChanges())) {
             // NOTE: A save writes only what changed, so a save of a Record
             // whose data another writer erased would restore what it writes
             // and leave a record that no writer intended to exist. A Record
             // without a baseline has never been persisted, and a save that
             // writes nothing restores nothing, so neither needs the check.
+            // The condition names every write this method stages into this
+            // Record: its fields, its author attribution and its realm
+            // membership. A new one belongs here too.
             // This precedes the stale-write check so the more specific
-            // refusal reaches the caller when both apply.
+            // refusal reaches the caller when both apply to this Record.
             saver.select(ImmutableSet.of(SECTION_KEY), id, stored -> {
                 if(stored.getOrDefault(SECTION_KEY, ImmutableSet.of())
                         .isEmpty()) {
