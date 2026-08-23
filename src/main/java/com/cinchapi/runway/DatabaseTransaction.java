@@ -129,6 +129,15 @@ class DatabaseTransaction extends Binding implements Transaction {
     private final List<SaveContext> saves = new ArrayList<>();
 
     /**
+     * The {@link SaveContext} that holds a metadata {@link #snapshot(Record)
+     * snapshot} for every {@link Record} that a single-key atomic operation
+     * wrote within the transaction, or {@code null} until the first one is
+     * captured.
+     */
+    @Nullable
+    private SaveContext swaps = null;
+
+    /**
      * The id of every record that a staged save deleted, so the deletion stays
      * final for the saves that follow it within the transaction.
      */
@@ -752,9 +761,11 @@ class DatabaseTransaction extends Binding implements Transaction {
      * @param record the {@link Record} whose state is captured
      */
     void snapshot(Record record) {
-        SaveContext context = new SaveContext(false);
-        context.snapshot(record);
-        saves.add(context);
+        if(swaps == null) {
+            swaps = new SaveContext(false);
+            saves.add(swaps);
+        }
+        swaps.snapshot(record);
     }
 
     @Override
@@ -928,6 +939,7 @@ class DatabaseTransaction extends Binding implements Transaction {
             // the staged contexts and hooks; otherwise one retained Record
             // would pin every record and closure the transaction touched.
             saves.clear();
+            swaps = null;
             deletions.clear();
             afterCommitHooks.clear();
             afterAbortHooks.clear();

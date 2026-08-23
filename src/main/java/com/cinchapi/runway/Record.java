@@ -1684,19 +1684,11 @@ public abstract class Record implements Comparable<Record> {
         try {
             boolean swapped;
             if(expected == null && transactional) {
-                // The enclosing Transaction provides the atomicity and its
-                // reads join the conflict footprint, so the absence check
-                // cannot (and need not) stage the nested transaction that
+                // The enclosing Transaction makes the check-then-set atomic
+                // and its reads join the conflict footprint, so this path
+                // does not stage the nested transaction that
                 // Runway.setIfAbsent uses.
-                Map<String, Set<Object>> stored = concourse
-                        .select(ImmutableList.of(SECTION_KEY, key), id);
-                if(stored.getOrDefault(SECTION_KEY, ImmutableSet.of())
-                        .isEmpty()) {
-                    // Without the section metadata the record does not exist
-                    // in the database, so a write here would orphan the value
-                    swapped = false;
-                }
-                else if(stored.getOrDefault(key, ImmutableSet.of()).isEmpty()) {
+                if(Runway.canSetIfAbsent(concourse, key, id)) {
                     concourse.set(key, serializeScalarValue(replacement), id);
                     swapped = true;
                 }
@@ -1811,6 +1803,9 @@ public abstract class Record implements Comparable<Record> {
      *            current one; it must not return {@code null}
      * @return the value that was current immediately before the update took
      *         effect, or {@code null} if the field had no value
+     * @throws DeletedRecordException if, when bound to an open
+     *             {@link Transaction}, this {@link Record} holds no data in the
+     *             database
      * @throws RetryExhaustedException if, when bound to a {@link Runway}, the
      *             update cannot be committed within the bounds of the governing
      *             {@link AtomicRetryPolicy}
@@ -2601,6 +2596,9 @@ public abstract class Record implements Comparable<Record> {
      *            current one; it must not return {@code null}
      * @return the value that is current immediately after the update takes
      *         effect
+     * @throws DeletedRecordException if, when bound to an open
+     *             {@link Transaction}, this {@link Record} holds no data in the
+     *             database
      * @throws RetryExhaustedException if, when bound to a {@link Runway}, the
      *             update cannot be committed within the bounds of the governing
      *             {@link AtomicRetryPolicy}
@@ -5106,6 +5104,9 @@ public abstract class Record implements Comparable<Record> {
      * @param update the function that produces the replacement value from the
      *            current one; it must not return {@code null}
      * @return the {@link AtomicUpdate} that took effect
+     * @throws DeletedRecordException if, when bound to an open
+     *             {@link Transaction}, this {@link Record} holds no data in the
+     *             database
      * @throws RetryExhaustedException if, when bound to a {@link Runway}, the
      *             update cannot be committed within the bounds of the governing
      *             {@link AtomicRetryPolicy}
@@ -5136,15 +5137,16 @@ public abstract class Record implements Comparable<Record> {
             // Within an open Transaction the update applies once against the
             // snapshot: the current value is re-read through the transaction,
             // so it joins the conflict footprint, and the produced value
-            // stages as a save. Contention surfaces when the transaction's
+            // stages within it. Contention surfaces when the transaction's
             // owner commits, so no retry loop runs here.
             Field field = getAtomicableField(key, this);
             refreshAtomicableField(field, key);
             T current = getAtomicableFieldValue(field, this);
             T next = resolveAtomicUpdate(key, this, update);
-            if(next != null) {
-                set(key, next);
-                save();
+            if(next != null && !exchange(key, next)) {
+                // Within the transaction's snapshot the swap only fails when
+                // the database does not hold this Record.
+                throw new DeletedRecordException(id);
             }
             return new AtomicUpdate<>(current, next != null ? next : current);
         }
