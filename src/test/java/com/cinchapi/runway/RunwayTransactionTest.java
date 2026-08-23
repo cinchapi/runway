@@ -283,39 +283,421 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that single-key atomic operations are
-     * refused on a {@link Record} that is bound to a {@link Transaction},
-     * because the transaction's commit is the unit of atomicity.
+     * <strong>Goal:</strong> Verify that {@code getAndUpdate} on a
+     * {@link Record} bound to an open {@link Transaction} stages within it, so
+     * the update is visible inside the transaction, invisible outside, and
+     * durable after the commit.
      * <p>
-     * <strong>Start state:</strong> A saved {@link Item}.
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Load the {@link Item} through a {@link Transaction}.</li>
-     * <li>Call {@code getAndUpdate} and {@code exchange} on the transactional
-     * copy.</li>
+     * <li>Call {@code getAndUpdate("score", s -> s + 1)}.</li>
+     * <li>Read the score through the transaction and through the enclosing
+     * {@link Runway}, then commit.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> Both calls throw
-     * {@link IllegalStateException}.
+     * <strong>Expected:</strong> The call returns 1, the transaction observes 2
+     * while the {@link Runway} still observes 1, and after the commit the
+     * {@link Runway} observes 2.
      */
     @Test
-    public void testAtomicOperationsAreRefusedOnTransactionBoundRecords() {
+    public void testGetAndUpdateStagesWithinAnOpenTransaction() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertEquals(1, (int) txItem.getAndUpdate("score",
+                    (Integer score) -> score + 1));
+            Assert.assertEquals(2,
+                    transaction.load(Item.class, item.id()).score);
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code updateAndGet} on a
+     * {@link Record} bound to an open {@link Transaction} stages within it and
+     * returns the produced value.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}.</li>
+     * <li>Call {@code updateAndGet("score", s -> s + 1)} and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns 2 and, after the commit, the
+     * {@link Runway} observes 2.
+     */
+    @Test
+    public void testUpdateAndGetStagesWithinAnOpenTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertEquals(2, (int) txItem.updateAndGet("score",
+                    (Integer score) -> score + 1));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that consecutive atomic updates within one
+     * {@link Transaction} accumulate, because each reads the value the previous
+     * one staged.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}.</li>
+     * <li>Call {@code getAndUpdate("score", s -> s + 1)} twice and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The calls return 1 and 2, and after the commit
+     * the {@link Runway} observes 3.
+     */
+    @Test
+    public void testAtomicUpdatesAccumulateWithinAnOpenTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertEquals(1, (int) txItem.getAndUpdate("score",
+                    (Integer score) -> score + 1));
+            Assert.assertEquals(2, (int) txItem.getAndUpdate("score",
+                    (Integer score) -> score + 1));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(3, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an atomic update staged within an
+     * aborted {@link Transaction} never reaches the database, and that the
+     * {@link Record} unwinds well enough for the operation to resume correctly
+     * against the enclosing {@link Runway}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}.</li>
+     * <li>Call {@code getAndUpdate("score", s -> s + 1)}, then abort.</li>
+     * <li>Call {@code getAndUpdate("score", s -> s + 1)} again on the same
+     * instance, whose in-memory value still reflects the discarded update.</li>
+     * <li>Call {@code refresh()} and update again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the abort the database still stores 1.
+     * The stale post-abort call is refused as an unsaved change, so no staged
+     * value is silently discarded; after a refresh the update returns 1 and
+     * durably stores 2.
+     */
+    @Test
+    public void testGetAndUpdateWithinAnAbortedTransactionLeavesTheDatabaseUnchanged() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertEquals(1, (int) txItem.getAndUpdate("score",
+                    (Integer score) -> score + 1));
+            transaction.abort();
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
             try {
                 txItem.getAndUpdate("score", (Integer score) -> score + 1);
                 Assert.fail("Expected an IllegalStateException");
             }
             catch (IllegalStateException e) {/* expected */}
+            txItem.refresh();
+            Assert.assertEquals(1, (int) txItem.getAndUpdate("score",
+                    (Integer score) -> score + 1));
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an atomic update within a
+     * {@link Transaction} resolves against the snapshot instead of the
+     * {@link Record Record's} possibly stale in-memory value.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} whose stored score was
+     * changed to 5 through a second copy after the first copy loaded it with a
+     * score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code getAndUpdate("score", s -> s + 1)} on the stale copy
+     * within {@code transactAndSupply}, which joins it to a managed
+     * {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns 5, not the stale 1, and the
+     * stored score becomes 6.
+     */
+    @Test
+    public void testGetAndUpdateWithinATransactionResolvesAgainstTheSnapshot() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Item stale = runway.load(Item.class, item.id());
+        Item other = runway.load(Item.class, item.id());
+        other.score = 5;
+        Assert.assertTrue(other.save());
+        int before = stale.transactAndSupply(transaction -> stale
+                .getAndUpdate("score", (Integer score) -> score + 1));
+        Assert.assertEquals(5, before);
+        Assert.assertEquals(6, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a no-op atomic update within an open
+     * {@link Transaction} stages nothing and the transaction commits cleanly.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}.</li>
+     * <li>Call {@code getAndUpdate("score", s -> s)} and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns 1 and the stored score
+     * remains 1 after the commit.
+     */
+    @Test
+    public void testGetAndUpdateNoOpWithinAnOpenTransactionStagesNothing() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertEquals(1, (int) txItem.getAndUpdate("score",
+                    (Integer score) -> score));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code exchange} on a {@link Record}
+     * bound to an open {@link Transaction} stages within it, so the swap is
+     * visible inside the transaction, invisible outside, and durable after the
+     * commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}.</li>
+     * <li>Call {@code exchange("score", 100)}.</li>
+     * <li>Read the score through the transaction and through the enclosing
+     * {@link Runway}, then commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code true}, the
+     * transaction observes 100 while the {@link Runway} still observes 1, and
+     * after the commit the {@link Runway} observes 100.
+     */
+    @Test
+    public void testExchangeStagesWithinAnOpenTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertTrue(txItem.exchange("score", 100));
+            Assert.assertEquals(100,
+                    transaction.load(Item.class, item.id()).score);
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(100, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} within a
+     * {@link Transaction} answers against the snapshot, so a {@code true} holds
+     * only if the transaction commits, and the commit fails when a concurrent
+     * writer changed the value after the snapshot.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1,
+     * loaded through an open {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Change the score to 99 through the {@link Runway} while the
+     * transaction is open.</li>
+     * <li>Call {@code exchange("score", 2)} on the transactional copy.</li>
+     * <li>Attempt to commit, unless the conflict already surfaced at the
+     * exchange as a {@link TransactionException}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange never becomes durable: either the
+     * operation throws {@link TransactionException} or the commit fails, and
+     * the database keeps the concurrent writer's 99.
+     */
+    @Test
+    public void testExchangeWithinATransactionIsConditionalOnTheCommit() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Item other = runway.load(Item.class, item.id());
+            other.score = 99;
+            Assert.assertTrue(other.save());
             try {
-                txItem.exchange("score", 100);
-                Assert.fail("Expected an IllegalStateException");
+                txItem.exchange("score", 2);
+                Assert.assertFalse(transaction.commit());
             }
-            catch (IllegalStateException e) {/* expected */}
+            catch (TransactionException e) {
+                // The conflict surfaced at the operation instead of the
+                // commit; either way the exchange never becomes durable
+                transaction.abort();
+            }
+        }
+        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} within a
+     * {@link Transaction} returns {@code false} when the snapshot disagrees
+     * with the {@link Record Record's} in-memory expected value, and leaves the
+     * transaction usable.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} whose stored score was
+     * changed to 5 through a second copy after the first copy loaded it with a
+     * score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code exchange("score", 2)} on the stale copy within
+     * {@code transactAndSupply}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code false}, nothing
+     * changes in memory or in the database, and the managed transaction
+     * completes.
+     */
+    @Test
+    public void testExchangeWithinATransactionReturnsFalseWhenTheSnapshotDisagrees() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Item stale = runway.load(Item.class, item.id());
+        Item other = runway.load(Item.class, item.id());
+        other.score = 5;
+        Assert.assertTrue(other.save());
+        boolean swapped = stale
+                .transactAndSupply(transaction -> stale.exchange("score", 2));
+        Assert.assertFalse(swapped);
+        Assert.assertEquals(1, stale.score);
+        Assert.assertEquals(5, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} staged within an
+     * aborted {@link Transaction} never reaches the database, and that the
+     * {@link Record} unwinds well enough for the operation to resume correctly
+     * against the enclosing {@link Runway}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}.</li>
+     * <li>Call {@code exchange("score", 100)}, then abort.</li>
+     * <li>Call {@code exchange("score", 50)} on the same instance, whose
+     * in-memory value still reflects the discarded swap.</li>
+     * <li>Call {@code refresh()} and exchange again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the abort the database still stores 1.
+     * The stale post-abort exchange returns {@code false}; after a refresh the
+     * exchange succeeds and durably stores 50.
+     */
+    @Test
+    public void testExchangeWithinAnAbortedTransactionLeavesTheDatabaseUnchanged() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertTrue(txItem.exchange("score", 100));
+            transaction.abort();
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertFalse(txItem.exchange("score", 50));
+            txItem.refresh();
+            Assert.assertTrue(txItem.exchange("score", 50));
+        }
+        Assert.assertEquals(50, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} that expects
+     * absence stages within an open {@link Transaction}, without the nested
+     * staging that the direct-scope absence path uses.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} that stores no
+     * {@code badge}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}.</li>
+     * <li>Call {@code exchange("badge", "gold")} and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code true} and, after
+     * the commit, the {@link Runway} observes the badge.
+     */
+    @Test
+    public void testExchangeFromAbsenceStagesWithinAnOpenTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertTrue(txItem.exchange("badge", "gold"));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals("gold", runway.load(Item.class, item.id()).badge);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} within a
+     * {@link Transaction} never succeeds against a {@link Record} that the
+     * database does not hold, matching the direct-scope contract.
+     * <p>
+     * <strong>Start state:</strong> An open {@link Transaction} and no saved
+     * records.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create an {@link Item} through the {@link Transaction} without saving
+     * it.</li>
+     * <li>Call {@code exchange("badge", "gold")}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exchange returns {@code false} and nothing
+     * is staged.
+     */
+    @Test
+    public void testExchangeNeverSucceedsAgainstAnUnsavedRecordWithinATransaction() {
+        try (Transaction transaction = runway.startTransaction()) {
+            Item created = transaction.create(Item.class, "widget", 1);
+            Assert.assertFalse(created.exchange("badge", "gold"));
+            Assert.assertTrue(transaction.commit());
         }
     }
 
@@ -4008,6 +4390,11 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
          * The orderable score.
          */
         int score;
+
+        /**
+         * An optional decoration that an {@link Item} may store or not.
+         */
+        String badge;
 
         /**
          * Construct a new instance.

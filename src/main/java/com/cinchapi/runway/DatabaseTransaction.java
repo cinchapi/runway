@@ -744,6 +744,19 @@ class DatabaseTransaction extends Binding implements Transaction {
         record.bindGraph(this, provider, Sets.newIdentityHashSet());
     }
 
+    /**
+     * Capture {@code record}'s current metadata so that, if this transaction
+     * ends without a successful commit, {@code record} is restored the same as
+     * one that a staged save touched.
+     *
+     * @param record the {@link Record} whose state is captured
+     */
+    void snapshot(Record record) {
+        SaveContext context = new SaveContext(false);
+        context.snapshot(record);
+        saves.add(context);
+    }
+
     @Override
     <T extends Record> T load(long id) {
         if(open) {
