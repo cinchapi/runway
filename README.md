@@ -289,6 +289,8 @@ int next = counter.updateAndGet("count", n -> n + 1);
 
 Because they bypass the save pipeline, `beforeSave` and save listeners do not run, and a field that is `@Unique` is not eligible.
 
+On a record bound to an open transaction, these resolve within the transaction instead. The value the operation reads joins the transaction's conflict footprint, the write stages, and both become durable only when the commit succeeds. `getAndUpdate` and `updateAndGet` apply the function once there, because the commit is the unit of atomicity rather than a retry.
+
 ### Commit several records together
 
 `Runway#save` commits every record it is given, and everything reachable from them, as one ACID transaction. No transaction object is needed for this.

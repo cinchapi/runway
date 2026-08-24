@@ -204,6 +204,30 @@ public final class Runway extends Binding implements
     }
 
     /**
+     * Return {@code true} if a write of {@code key} in {@code record} would
+     * fill an absence: the record exists in the database and stores no value
+     * for {@code key}.
+     *
+     * @param concourse the {@link Concourse} connection to use
+     * @param key the field name
+     * @param record the record id
+     * @return {@code true} if the record exists and stores no value for
+     *         {@code key}
+     */
+    static boolean canSetIfAbsent(Concourse concourse, String key,
+            long record) {
+        // Without the section metadata the record does not exist in the
+        // database (it was never saved, or its data was erased), so a write
+        // here would orphan the value in a record that no load or find can
+        // ever return.
+        Map<String, Set<Object>> stored = concourse
+                .select(ImmutableList.of(Record.SECTION_KEY, key), record);
+        return !stored.getOrDefault(Record.SECTION_KEY, ImmutableSet.of())
+                .isEmpty()
+                && stored.getOrDefault(key, ImmutableSet.of()).isEmpty();
+    }
+
+    /**
      * Atomically store {@code value} for {@code key} in {@code record} if and
      * only if the record exists in the database and currently stores no value
      * for {@code key}.
@@ -219,18 +243,7 @@ public final class Runway extends Binding implements
             long record) {
         concourse.stage();
         try {
-            Map<String, Set<Object>> stored = concourse
-                    .select(ImmutableList.of(Record.SECTION_KEY, key), record);
-            if(stored.getOrDefault(Record.SECTION_KEY, ImmutableSet.of())
-                    .isEmpty()) {
-                // Without the section metadata the record does not exist in
-                // the database (it was never saved, or its data was erased),
-                // so a write here would orphan the value in a record that no
-                // load or find can ever return.
-                concourse.abort();
-                return false;
-            }
-            else if(stored.getOrDefault(key, ImmutableSet.of()).isEmpty()) {
+            if(canSetIfAbsent(concourse, key, record)) {
                 concourse.set(key, value, record);
                 return concourse.commit();
             }
