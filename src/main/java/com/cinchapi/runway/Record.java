@@ -188,18 +188,46 @@ public abstract class Record implements Comparable<Record> {
      */
     public static <T extends Record> boolean isDatabaseResolvableCondition(
             Class<T> clazz, Criteria condition) {
-        if(DatabaseSelection.isScopeBearing(condition)) {
-            return true;
-        }
-        Set<String> intrinsic = StaticAnalysis.instance().getKeys(clazz);
-        Parser parser = Parsers.create(condition);
-        for (String key : parser.analyze().keys()) {
-            if(!Keys.isNavigationKey(key) && !intrinsic.contains(key)
-                    && !IDENTIFIER_KEY.equals(key)) {
-                return false;
+        return isDatabaseResolvableCondition(clazz, condition, false);
+    }
+
+    /**
+     * Return {@code true} if the matching {@code condition} for data that is
+     * part of the specified {@code clazz}, or its descendants when {@code any}
+     * is {@code true}, can be resolved entirely by the database.
+     *
+     * @param <T>
+     * @param clazz
+     * @param condition
+     * @param any whether the condition applies across the class hierarchy
+     * @return a boolean that indicates if the {@code condition} can be resolved
+     *         by the database or not
+     */
+    public static <T extends Record> boolean isDatabaseResolvableCondition(
+            Class<T> clazz, Criteria condition, boolean any) {
+        boolean resolvable = true;
+        if(!DatabaseSelection.isScopeBearing(condition)) {
+            Set<String> intrinsic = Sets.newLinkedHashSet();
+            if(any) {
+                for (Class<?> type : StaticAnalysis.instance()
+                        .getClassHierarchy(clazz)) {
+                    intrinsic.addAll(StaticAnalysis.instance()
+                            .getKeys(type.asSubclass(Record.class)));
+                }
+            }
+            else {
+                intrinsic.addAll(StaticAnalysis.instance().getKeys(clazz));
+            }
+            Parser parser = Parsers.create(condition);
+            for (String key : parser.analyze().keys()) {
+                if(!Keys.isNavigationKey(key) && !intrinsic.contains(key)
+                        && !IDENTIFIER_KEY.equals(key)) {
+                    resolvable = false;
+                    break;
+                }
             }
         }
-        return true;
+        return resolvable;
     }
 
     /**

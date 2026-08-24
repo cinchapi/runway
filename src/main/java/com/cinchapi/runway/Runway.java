@@ -2028,7 +2028,7 @@ public final class Runway extends Binding implements
                     : $Criteria.amongRealms(realms, $Criteria.forClass(clazz)))
                             .map(SelectResult::new);
         }
-        else if(Record.isDatabaseResolvableCondition(clazz, criteria)) {
+        else if(Record.isDatabaseResolvableCondition(clazz, criteria, any)) {
             return $count(
                     reader, any
                             ? $Criteria.amongRealms(realms,
@@ -2079,7 +2079,7 @@ public final class Runway extends Binding implements
             // sorting/pagination is requested, the database can handle the
             // query directly without client-side stream manipulation.
             boolean dbResolvable = Record.isDatabaseResolvableCondition(clazz,
-                    criteria);
+                    criteria, any);
             Criteria scoped = $Criteria.amongRealms(realms,
                     any ? $Criteria.accrossClassHierachy(clazz, criteria)
                             : $Criteria.withinClass(clazz, criteria));
