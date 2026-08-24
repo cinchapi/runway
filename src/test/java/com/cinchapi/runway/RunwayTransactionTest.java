@@ -31,10 +31,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
+import com.cinchapi.common.reflect.Reflection;
+import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.CountingConcourseConnectionPool.CountingConcourse;
 import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.access.AccessControl;
 import com.cinchapi.runway.access.Audience;
@@ -560,6 +564,40 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             catch (TransactionException e) {/* the conflict is the point */}
         }
         Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code getAndUpdate} from absence
+     * within a {@link Transaction} reads the record and field only once.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} whose {@code badge}
+     * field is absent, loaded through an open {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Install a {@link CountingConcourseConnectionPool} and reset its RPC
+     * counter after loading the {@link Item}.</li>
+     * <li>Call {@code getAndUpdate("badge", b -> "gold")} and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The update returns {@code null}, performs one
+     * read RPC and durably stores "gold".
+     */
+    @Test
+    public void testGetAndUpdateFromAbsenceInTransactionUsesOneReadRpc() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        AtomicInteger rpcs = installCountingPool();
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            rpcs.set(0);
+            Assert.assertNull(
+                    txItem.getAndUpdate("badge", (String badge) -> "gold"));
+            Assert.assertEquals(1, rpcs.get());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals("gold", runway.load(Item.class, item.id()).badge);
     }
 
     /**
@@ -4586,6 +4624,25 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 Assert.assertTrue(e.getCause() instanceof TransactionException);
             }
         }
+    }
+
+    /**
+     * Reflectively replace {@link #runway runway's} connection pool with a
+     * {@link CountingConcourseConnectionPool} and return the shared read-RPC
+     * counter.
+     *
+     * @return the read-RPC counter shared by the replacement pool
+     */
+    private AtomicInteger installCountingPool() {
+        ConnectionPool pool = new CountingConcourseConnectionPool(
+                Concourse.connect("localhost", server.getClientPort(), "admin",
+                        "admin", environment));
+        Reflection.set("connections", pool, runway); // (authorized)
+        Concourse connection = pool.request();
+        AtomicInteger rpcs = ((CountingConcourse) connection).rpcs();
+        pool.release(connection);
+        rpcs.set(0);
+        return rpcs;
     }
 
     /**

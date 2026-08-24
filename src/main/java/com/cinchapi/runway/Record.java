@@ -5152,21 +5152,24 @@ public abstract class Record implements Comparable<Record> {
                         + " staged for deletion",
                 key, __);
         if(isBoundToOpenTransaction()) {
-            // Within an open Transaction the update applies once against the
-            // snapshot: the current value is re-read through the transaction,
-            // so that value joins the conflict footprint, and the produced
-            // value stages within the transaction. Contention surfaces when
-            // the transaction's owner commits, so no retry loop runs here.
-            Field field = getAtomicableField(key, this);
-            refreshAtomicableField(field, key, true);
-            T current = getAtomicableFieldValue(field, this);
-            T next = resolveAtomicUpdate(key, this, update);
-            if(next != null && !exchange(key, next)) {
-                // Within the transaction's snapshot the swap only fails when
-                // the database does not hold this Record.
-                throw new DeletedRecordException(id);
-            }
-            return new AtomicUpdate<>(current, next != null ? next : current);
+            DatabaseTransaction transaction = (DatabaseTransaction) binding;
+            return transaction.execute(() -> {
+                // The read joins the conflict footprint. The Transaction
+                // makes the targeted write conditional on that snapshot, so
+                // another compare-and-swap is unnecessary.
+                Field field = getAtomicableField(key, this);
+                refreshAtomicableField(field, key, true);
+                T current = getAtomicableFieldValue(field, this);
+                T next = resolveAtomicUpdate(key, this, update);
+                if(next != null) {
+                    transaction.verifyOrSet(key, serializeScalarValue(next),
+                            id);
+                    transaction.recordAtomicValue(this, key, next);
+                    applyValueChange(key, next);
+                }
+                return new AtomicUpdate<>(current,
+                        next != null ? next : current);
+            });
         }
         else {
             AtomicRetryPolicy policy = harness().properties()
