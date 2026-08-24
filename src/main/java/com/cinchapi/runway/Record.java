@@ -5169,39 +5169,42 @@ public abstract class Record implements Comparable<Record> {
             }
             return new AtomicUpdate<>(current, next != null ? next : current);
         }
-        AtomicRetryPolicy policy = harness().properties().atomicRetryPolicy();
-        int attempts = 0;
-        for (;;) {
-            Field field = getAtomicableField(key, this);
-            T current = getAtomicableFieldValue(field, this);
-            T next = update.apply(current);
-            Verify.thatArgument(next != null,
-                    "The update function cannot return null");
-            boolean settled;
-            if(Objects.equals(current, next)) {
-                // Nothing to write, but confirm the read isn't stale before
-                // treating the no-op as settled.
-                Concourse concourse = connections.request();
-                try {
-                    settled = concourse.verify(key,
-                            serializeScalarValue(current), id);
+        else {
+            AtomicRetryPolicy policy = harness().properties()
+                    .atomicRetryPolicy();
+            int attempts = 0;
+            for (;;) {
+                Field field = getAtomicableField(key, this);
+                T current = getAtomicableFieldValue(field, this);
+                T next = update.apply(current);
+                Verify.thatArgument(next != null,
+                        "The update function cannot return null");
+                boolean settled;
+                if(Objects.equals(current, next)) {
+                    // Nothing to write, but confirm the read isn't stale
+                    // before treating the no-op as settled.
+                    Concourse concourse = connections.request();
+                    try {
+                        settled = concourse.verify(key,
+                                serializeScalarValue(current), id);
+                    }
+                    finally {
+                        connections.release(concourse);
+                    }
                 }
-                finally {
-                    connections.release(concourse);
+                else {
+                    settled = exchange(key, next);
                 }
-            }
-            else {
-                settled = exchange(key, next);
-            }
-            if(settled) {
-                return new AtomicUpdate<>(current, next);
-            }
-            else if(++attempts > policy.limit()) {
-                throw new RetryExhaustedException(attempts);
-            }
-            else {
-                policy.backoff(attempts);
-                refreshAtomicableField(field, key, false);
+                if(settled) {
+                    return new AtomicUpdate<>(current, next);
+                }
+                else if(++attempts > policy.limit()) {
+                    throw new RetryExhaustedException(attempts);
+                }
+                else {
+                    policy.backoff(attempts);
+                    refreshAtomicableField(field, key, false);
+                }
             }
         }
     }

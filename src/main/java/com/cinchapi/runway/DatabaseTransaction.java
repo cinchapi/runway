@@ -918,7 +918,7 @@ class DatabaseTransaction extends Binding implements Transaction {
                 // A restore is whole-record, so it may revert baseline
                 // entries that single-key atomic operations mirrored. Those
                 // mirrors are not user edits, so reinstate them: the record
-                // keeps the value the operation observed and only real edits
+                // keeps the latest mirrored replacement and only real edits
                 // remain unsaved.
                 atomicValues.forEach((record, values) -> values
                         .forEach(record::updateBaseline));

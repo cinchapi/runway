@@ -402,7 +402,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * The post-abort call self-corrects: it returns 1 and durably stores 2.
      */
     @Test
-    public void testGetAndUpdateWithinAnAbortedTransactionLeavesTheDatabaseUnchanged() {
+    public void testGetAndUpdateInAbortedTransactionLeavesDatabaseUnchanged() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -700,7 +700,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * completes.
      */
     @Test
-    public void testExchangeWithinATransactionReturnsFalseWhenTheSnapshotDisagrees() {
+    public void testExchangeInTransactionReturnsFalseWhenSnapshotDisagrees() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -737,7 +737,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * exchange succeeds and durably stores 50.
      */
     @Test
-    public void testExchangeWithinAnAbortedTransactionLeavesTheDatabaseUnchanged() {
+    public void testExchangeInAbortedTransactionLeavesDatabaseUnchanged() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -802,7 +802,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * is staged.
      */
     @Test
-    public void testExchangeNeverSucceedsAgainstAnUnsavedRecordWithinATransaction() {
+    public void testExchangeInTransactionReturnsFalseForUnsavedRecord() {
         try (Transaction transaction = runway.startTransaction()) {
             Item created = transaction.create(Item.class, "widget", 1);
             Assert.assertFalse(created.exchange("badge", "gold"));
@@ -829,7 +829,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * and the stored score becomes 51.
      */
     @Test
-    public void testGetAndUpdateWithinAManagedTransactionRetriesAfterAConflict() {
+    public void testManagedGetAndUpdateRetriesAfterConflict() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -873,7 +873,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * {@code refresh()}: it returns 103 and durably stores 104.
      */
     @Test
-    public void testGetAndUpdateWithinAManagedTransactionThrowsWhenRetriesAreExhausted() {
+    public void testManagedGetAndUpdateThrowsWhenRetriesExhausted() {
         try {
             runway.close();
         }
@@ -924,7 +924,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * database.
      */
     @Test
-    public void testGetAndUpdateWithinATransactionRefusesAnErasedRecordWithAPrimitiveField() {
+    public void testGetAndUpdateRefusesAnErasedRecordWithAPrimitiveField() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -963,7 +963,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * 1: the discarded exchange never becomes a durable write.
      */
     @Test
-    public void testSaveThenExchangeWithinAnAbortedTransactionKeepsOnlyTheSaveEdit() {
+    public void testSaveThenExchangeInAbortedTransactionKeepsOnlySaveEdit() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -1006,7 +1006,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * 1: the discarded exchange never becomes a durable write.
      */
     @Test
-    public void testExchangeThenSaveWithinAnAbortedTransactionKeepsOnlyTheSaveEdit() {
+    public void testExchangeThenSaveInAbortedTransactionKeepsOnlySaveEdit() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
@@ -1050,7 +1050,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * discarded exchange becomes a durable write.
      */
     @Test
-    public void testInterleavedExchangesAndSaveWithinAnAbortedTransactionKeepOnlyTheSaveEdit() {
+    public void testExchangesAroundSaveInAbortedTransactionKeepOnlySaveEdit() {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
