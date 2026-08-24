@@ -1707,10 +1707,11 @@ public abstract class Record implements Comparable<Record> {
             }
             if(swapped) {
                 if(transactional) {
-                    // The swap stages within the Transaction, so if it ends
-                    // without a commit, the metadata this write updates must
-                    // unwind the same as a staged save's
-                    ((DatabaseTransaction) binding).snapshot(this);
+                    // The mirror of a staged swap is not a user edit, so a
+                    // Transaction that ends without a commit must not leave
+                    // it behind as an unsaved change
+                    ((DatabaseTransaction) binding).recordAtomicValue(this, key,
+                            replacement);
                 }
                 applyValueChange(key, replacement);
                 return true;
@@ -4604,13 +4605,31 @@ public abstract class Record implements Comparable<Record> {
      * @param field an {@link #getAtomicableField(String, Record) eligible}
      *            {@link Field}
      * @param key the field's name
+     * @param requireRecord whether to refuse a record that holds no data in the
+     *            database
+     * @throws DeletedRecordException if {@code requireRecord} and this
+     *             {@link Record} holds no data in the database
      * @throws IllegalStateException if the field is primitive-typed and the
      *             database no longer stores a value for {@code key}
      */
-    private void refreshAtomicableField(Field field, String key) {
+    private void refreshAtomicableField(Field field, String key,
+            boolean requireRecord) {
         Concourse concourse = connections.request();
         try {
-            Object stored = Iterables.getFirst(concourse.select(key, id), null);
+            Set<Object> values;
+            if(requireRecord) {
+                Map<String, Set<Object>> data = concourse
+                        .select(ImmutableList.of(SECTION_KEY, key), id);
+                if(data.getOrDefault(SECTION_KEY, ImmutableSet.of())
+                        .isEmpty()) {
+                    throw new DeletedRecordException(id);
+                }
+                values = data.getOrDefault(key, ImmutableSet.of());
+            }
+            else {
+                values = concourse.select(key, id);
+            }
+            Object stored = Iterables.getFirst(values, null);
             Object fresh = stored != null
                     ? convert(key, field.getType(), stored, concourse,
                             new ConcurrentHashMap<>(), null)
@@ -5140,7 +5159,7 @@ public abstract class Record implements Comparable<Record> {
             // stages within it. Contention surfaces when the transaction's
             // owner commits, so no retry loop runs here.
             Field field = getAtomicableField(key, this);
-            refreshAtomicableField(field, key);
+            refreshAtomicableField(field, key, true);
             T current = getAtomicableFieldValue(field, this);
             T next = resolveAtomicUpdate(key, this, update);
             if(next != null && !exchange(key, next)) {
@@ -5182,7 +5201,7 @@ public abstract class Record implements Comparable<Record> {
             }
             else {
                 policy.backoff(attempts);
-                refreshAtomicableField(field, key);
+                refreshAtomicableField(field, key, false);
             }
         }
     }
@@ -5197,7 +5216,7 @@ public abstract class Record implements Comparable<Record> {
      * @param value the scalar value the database now stores, in its
      *            unserialized form; may be {@code null}
      */
-    private void updateBaseline(String key, @Nullable Object value) {
+    void updateBaseline(String key, @Nullable Object value) {
         if(__baseline != null) {
             Map<String, Object> baseline = Maps.newHashMap(__baseline);
             if(value != null) {

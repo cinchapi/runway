@@ -30,6 +30,7 @@ import java.util.function.Supplier;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.Criteria;
@@ -383,9 +384,9 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that an atomic update staged within an
-     * aborted {@link Transaction} never reaches the database, and that the
-     * {@link Record} unwinds well enough for the operation to resume correctly
-     * against the enclosing {@link Runway}.
+     * aborted {@link Transaction} never reaches the database and leaves no
+     * residue on the {@link Record}, so the operation resumes directly against
+     * the enclosing {@link Runway}.
      * <p>
      * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
      * <p>
@@ -394,14 +395,11 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <li>Load the {@link Item} through a {@link Transaction}.</li>
      * <li>Call {@code getAndUpdate("score", s -> s + 1)}, then abort.</li>
      * <li>Call {@code getAndUpdate("score", s -> s + 1)} again on the same
-     * instance, whose in-memory value still reflects the discarded update.</li>
-     * <li>Call {@code refresh()} and update again.</li>
+     * instance, without a {@code refresh()}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> After the abort the database still stores 1.
-     * The stale post-abort call is refused as an unsaved change, so no staged
-     * value is silently discarded; after a refresh the update returns 1 and
-     * durably stores 2.
+     * The post-abort call self-corrects: it returns 1 and durably stores 2.
      */
     @Test
     public void testGetAndUpdateWithinAnAbortedTransactionLeavesTheDatabaseUnchanged() {
@@ -414,12 +412,6 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                     (Integer score) -> score + 1));
             transaction.abort();
             Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
-            try {
-                txItem.getAndUpdate("score", (Integer score) -> score + 1);
-                Assert.fail("Expected an IllegalStateException");
-            }
-            catch (IllegalStateException e) {/* expected */}
-            txItem.refresh();
             Assert.assertEquals(1, (int) txItem.getAndUpdate("score",
                     (Integer score) -> score + 1));
         }
@@ -816,6 +808,268 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertFalse(created.exchange("badge", "gold"));
             Assert.assertTrue(transaction.commit());
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a conflicted managed atomic update
+     * retries the work and succeeds, because a discarded attempt leaves no
+     * residue on the {@link Record}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code getAndUpdate("score", s -> s + 1)} within
+     * {@code transactAndSupply}.</li>
+     * <li>On the first attempt only, change the score to 50 through the
+     * {@link Runway} after the update, so the commit conflicts.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The work runs twice, the update returns 50,
+     * and the stored score becomes 51.
+     */
+    @Test
+    public void testGetAndUpdateWithinAManagedTransactionRetriesAfterAConflict() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Item copy = runway.load(Item.class, item.id());
+        AtomicInteger attempts = new AtomicInteger(0);
+        int before = copy.transactAndSupply(transaction -> {
+            int result = copy.getAndUpdate("score",
+                    (Integer score) -> score + 1);
+            if(attempts.incrementAndGet() == 1) {
+                Item other = runway.load(Item.class, item.id());
+                other.score = 50;
+                Assert.assertTrue(other.save());
+            }
+            return result;
+        });
+        Assert.assertEquals(2, attempts.get());
+        Assert.assertEquals(50, before);
+        Assert.assertEquals(51, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a managed atomic update under
+     * persistent contention throws {@link RetryExhaustedException} and leaves
+     * the {@link Record} usable, matching the direct scope.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1 and
+     * a {@link Runway} whose {@link AtomicRetryPolicy} permits 2 retries with
+     * no backoff.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code getAndUpdate("score", s -> s + 1)} within
+     * {@code transactAndSupply}.</li>
+     * <li>On every attempt, change the score through the {@link Runway} after
+     * the update, so every commit conflicts.</li>
+     * <li>After the failure, call {@code getAndUpdate} directly.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The work runs 3 times and throws
+     * {@link RetryExhaustedException}. The direct call then succeeds without a
+     * {@code refresh()}: it returns 103 and durably stores 104.
+     */
+    @Test
+    public void testGetAndUpdateWithinAManagedTransactionThrowsWhenRetriesAreExhausted() {
+        try {
+            runway.close();
+        }
+        catch (Exception e) {
+            throw CheckedExceptions.throwAsRuntimeException(e);
+        }
+        runway = runwayBuilder()
+                .atomicRetryPolicy(AtomicRetryPolicy.create(2, 0)).build();
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Item copy = runway.load(Item.class, item.id());
+        AtomicInteger attempts = new AtomicInteger(0);
+        try {
+            copy.transactAndSupply(transaction -> {
+                int result = copy.getAndUpdate("score",
+                        (Integer score) -> score + 1);
+                Item other = runway.load(Item.class, item.id());
+                other.score = 100 + attempts.incrementAndGet();
+                Assert.assertTrue(other.save());
+                return result;
+            });
+            Assert.fail("Expected a RetryExhaustedException");
+        }
+        catch (RetryExhaustedException e) {/* expected */}
+        Assert.assertEquals(3, attempts.get());
+        Assert.assertEquals(103,
+                (int) copy.getAndUpdate("score", (Integer score) -> score + 1));
+        Assert.assertEquals(104, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code getAndUpdate} within a
+     * {@link Transaction} refuses a {@link Record} whose data another writer
+     * erased, even when the operated field is primitive-typed.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} whose data was erased
+     * through a second copy after the first copy loaded it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code getAndUpdate("score", s -> s + 1)} on the stale copy
+     * within {@code transactAndSupply}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The operation throws
+     * {@link DeletedRecordException} and the record remains absent from the
+     * database.
+     */
+    @Test
+    public void testGetAndUpdateWithinATransactionRefusesAnErasedRecordWithAPrimitiveField() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Item stale = runway.load(Item.class, item.id());
+        Item doomed = runway.load(Item.class, item.id());
+        doomed.deleteOnSave();
+        Assert.assertTrue(doomed.save());
+        try {
+            stale.transactAndSupply(transaction -> stale.getAndUpdate("score",
+                    (Integer score) -> score + 1));
+            Assert.fail("Expected a DeletedRecordException");
+        }
+        catch (DeletedRecordException e) {/* expected */}
+        Assert.assertNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that when a staged save precedes an
+     * {@code exchange} in an aborted {@link Transaction}, the save edit remains
+     * an unsaved change while the exchange leaves no residue, so a later save
+     * writes only the caller's own edit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} named "widget" with a
+     * score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}.</li>
+     * <li>Change the name to "crate" and save, then call
+     * {@code exchange("score", 100)}.</li>
+     * <li>Abort, then save the same instance directly.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the abort the database still stores
+     * "widget" and 1. The post-abort save persists "crate" but the score stays
+     * 1: the discarded exchange never becomes a durable write.
+     */
+    @Test
+    public void testSaveThenExchangeWithinAnAbortedTransactionKeepsOnlyTheSaveEdit() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.name = "crate";
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(txItem.exchange("score", 100));
+            transaction.abort();
+            Item afterAbort = runway.load(Item.class, item.id());
+            Assert.assertEquals("widget", afterAbort.name);
+            Assert.assertEquals(1, afterAbort.score);
+            Assert.assertEquals(100, txItem.score);
+            Assert.assertTrue(txItem.save());
+        }
+        Item afterSave = runway.load(Item.class, item.id());
+        Assert.assertEquals("crate", afterSave.name);
+        Assert.assertEquals(1, afterSave.score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that when an {@code exchange} precedes a
+     * staged save in an aborted {@link Transaction}, the save edit remains an
+     * unsaved change while the exchange leaves no residue, so a later save
+     * writes only the caller's own edit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} named "widget" with a
+     * score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}.</li>
+     * <li>Call {@code exchange("score", 100)}, then change the name to "crate"
+     * and save.</li>
+     * <li>Abort, then save the same instance directly.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the abort the database still stores
+     * "widget" and 1. The post-abort save persists "crate" but the score stays
+     * 1: the discarded exchange never becomes a durable write.
+     */
+    @Test
+    public void testExchangeThenSaveWithinAnAbortedTransactionKeepsOnlyTheSaveEdit() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertTrue(txItem.exchange("score", 100));
+            txItem.name = "crate";
+            Assert.assertTrue(txItem.save());
+            transaction.abort();
+            Item afterAbort = runway.load(Item.class, item.id());
+            Assert.assertEquals("widget", afterAbort.name);
+            Assert.assertEquals(1, afterAbort.score);
+            Assert.assertEquals(100, txItem.score);
+            Assert.assertTrue(txItem.save());
+        }
+        Item afterSave = runway.load(Item.class, item.id());
+        Assert.assertEquals("crate", afterSave.name);
+        Assert.assertEquals(1, afterSave.score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that when exchanges surround a staged save
+     * in an aborted {@link Transaction}, the record settles on the latest
+     * exchanged value with no residue, so a later save writes only the caller's
+     * own edit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} named "widget" with a
+     * score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}.</li>
+     * <li>Call {@code exchange("score", 100)}, change the name to "crate" and
+     * save, then call {@code exchange("score", 200)}.</li>
+     * <li>Abort, then save the same instance directly.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the abort the database still stores
+     * "widget" and 1, and the instance holds the latest exchanged score of 200.
+     * The post-abort save persists "crate" but the score stays 1: neither
+     * discarded exchange becomes a durable write.
+     */
+    @Test
+    public void testInterleavedExchangesAndSaveWithinAnAbortedTransactionKeepOnlyTheSaveEdit() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            Assert.assertTrue(txItem.exchange("score", 100));
+            txItem.name = "crate";
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(txItem.exchange("score", 200));
+            transaction.abort();
+            Item afterAbort = runway.load(Item.class, item.id());
+            Assert.assertEquals("widget", afterAbort.name);
+            Assert.assertEquals(1, afterAbort.score);
+            Assert.assertEquals(200, txItem.score);
+            Assert.assertTrue(txItem.save());
+        }
+        Item afterSave = runway.load(Item.class, item.id());
+        Assert.assertEquals("crate", afterSave.name);
+        Assert.assertEquals(1, afterSave.score);
     }
 
     /**

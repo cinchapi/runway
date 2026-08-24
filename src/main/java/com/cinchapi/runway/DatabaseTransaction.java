@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -129,13 +130,11 @@ class DatabaseTransaction extends Binding implements Transaction {
     private final List<SaveContext> saves = new ArrayList<>();
 
     /**
-     * The {@link SaveContext} that holds a metadata {@link #snapshot(Record)
-     * snapshot} for every {@link Record} that a single-key atomic operation
-     * wrote within the transaction, or {@code null} until the first one is
-     * captured.
+     * The latest value that a single-key atomic operation
+     * {@link #recordAtomicValue(Record, String, Object) wrote} for each
+     * (record, key) within the transaction.
      */
-    @Nullable
-    private SaveContext swaps = null;
+    private final Map<Record, Map<String, Object>> atomicValues = new IdentityHashMap<>();
 
     /**
      * The id of every record that a staged save deleted, so the deletion stays
@@ -754,18 +753,18 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Capture {@code record}'s current metadata so that, if this transaction
-     * ends without a successful commit, {@code record} is restored the same as
-     * one that a staged save touched.
+     * Record that a single-key atomic operation wrote {@code value} for
+     * {@code key} in {@code record}, so that, if this transaction ends without
+     * a successful commit, {@code record} does not carry the write as an
+     * unsaved change.
      *
-     * @param record the {@link Record} whose state is captured
+     * @param record the {@link Record} that the operation wrote
+     * @param key the field the operation wrote
+     * @param value the value the operation wrote, in its unserialized form
      */
-    void snapshot(Record record) {
-        if(swaps == null) {
-            swaps = new SaveContext(false);
-            saves.add(swaps);
-        }
-        swaps.snapshot(record);
+    void recordAtomicValue(Record record, String key, Object value) {
+        atomicValues.computeIfAbsent(record, ignore -> new HashMap<>()).put(key,
+                value);
     }
 
     @Override
@@ -916,6 +915,13 @@ class DatabaseTransaction extends Binding implements Transaction {
                             (a, b) -> a.sequence <= b.sequence ? a : b));
                 }
                 oldest.forEach((record, snapshot) -> record.restore(snapshot));
+                // A restore is whole-record, so it may revert baseline
+                // entries that single-key atomic operations mirrored. Those
+                // mirrors are not user edits, so reinstate them: the record
+                // keeps the value the operation observed and only real edits
+                // remain unsaved.
+                atomicValues.forEach((record, values) -> values
+                        .forEach(record::updateBaseline));
                 // NOTE: A later snapshot of the same record holds the keys
                 // that a later save carried, and none of those saves
                 // committed, so every one of them is declared again.
@@ -939,7 +945,7 @@ class DatabaseTransaction extends Binding implements Transaction {
             // the staged contexts and hooks; otherwise one retained Record
             // would pin every record and closure the transaction touched.
             saves.clear();
-            swaps = null;
+            atomicValues.clear();
             deletions.clear();
             afterCommitHooks.clear();
             afterAbortHooks.clear();
