@@ -43,6 +43,7 @@ import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.access.AccessControl;
 import com.cinchapi.runway.access.Audience;
 import com.cinchapi.runway.meta.Metadata;
+import com.cinchapi.runway.validation.Validator;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
@@ -56,6 +57,12 @@ import com.google.common.collect.Maps;
  * @author Jeff Nelson
  */
 public class RunwayTransactionTest extends RunwayBaseClientServerTest {
+
+    /**
+     * The {@link Transaction} that {@link TransactionEnder} tries to end, or
+     * {@code null} when no test is exercising that validator.
+     */
+    static final AtomicReference<Transaction> ENDING = new AtomicReference<>();
 
     /**
      * <strong>Goal:</strong> Verify that a read through a {@link Transaction}
@@ -846,6 +853,81 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertFalse(created.exchange("badge", "gold"));
             Assert.assertTrue(transaction.commit());
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code exchange} succeeds against a
+     * {@link Record} whose existence rests on a save that the same
+     * {@link Transaction} staged but has not committed.
+     * <p>
+     * <strong>Start state:</strong> An open {@link Transaction} and no saved
+     * records.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create an {@link Item} through the {@link Transaction} and save
+     * it.</li>
+     * <li>Call {@code exchange("badge", "gold")} and
+     * {@code exchange("score", 2)}, then commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both exchanges return {@code true} and, after
+     * the commit, the {@link Runway} observes the badge and the score.
+     */
+    @Test
+    public void testExchangeStagesAgainstRecordCreatedAndSavedInTransaction() {
+        long id;
+        try (Transaction transaction = runway.startTransaction()) {
+            Item created = transaction.create(Item.class, "widget", 1);
+            Assert.assertTrue(created.save());
+            Assert.assertTrue(created.exchange("badge", "gold"));
+            Assert.assertTrue(created.exchange("score", 2));
+            id = created.id();
+            Assert.assertTrue(transaction.commit());
+        }
+        Item stored = runway.load(Item.class, id);
+        Assert.assertEquals("gold", stored.badge);
+        Assert.assertEquals(2, stored.score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link ValidatedBy} validator cannot
+     * end the {@link Transaction} that an {@code exchange} resolves against, so
+     * the swap cannot escape the transaction and reach the database directly.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter} whose reading is
+     * "one", loaded through an open {@link Transaction} that {@link #ENDING}
+     * holds.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code exchange("reading", "two")} on the transactional copy, so
+     * the validator tries to abort the {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The operation throws
+     * {@link IllegalStateException} because an operation is in flight, and the
+     * database still stores "one".
+     */
+    @Test
+    public void testExchangeRefusesAValidatorThatEndsTheTransaction() {
+        Meter meter = new Meter("one");
+        meter.assign(runway);
+        Assert.assertTrue(meter.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Meter txMeter = transaction.load(Meter.class, meter.id());
+            ENDING.set(transaction);
+            try {
+                txMeter.exchange("reading", "two");
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            finally {
+                ENDING.set(null);
+            }
+        }
+        Assert.assertEquals("one",
+                runway.load(Meter.class, meter.id()).reading);
     }
 
     /**
@@ -4800,6 +4882,56 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         public java.util.Set<String> $writableByAnonymous() {
             return NO_KEYS;
         }
+    }
+
+    /**
+     * A {@link Validator} that tries to end the {@link Transaction} that
+     * {@link RunwayTransactionTest#ENDING} holds, and accepts every value it is
+     * given.
+     *
+     * @author Jeff Nelson
+     */
+    public static class TransactionEnder implements Validator {
+
+        @Override
+        public boolean validate(Object object) {
+            Transaction transaction = ENDING.get();
+            if(transaction != null) {
+                transaction.abort();
+            }
+            return true;
+        }
+
+        @Override
+        public String getErrorMessage() {
+            return "The reading is not valid";
+        }
+
+    }
+
+    /**
+     * An instrument whose validated reading lets its validator reach the
+     * enclosing {@link Transaction}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Meter extends Record {
+
+        /**
+         * The current reading.
+         */
+        @ValidatedBy(TransactionEnder.class)
+        String reading;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param reading the initial reading
+         */
+        public Meter(String reading) {
+            this.reading = reading;
+        }
+
     }
 
     /**

@@ -1677,11 +1677,14 @@ public abstract class Record implements Comparable<Record> {
                         + " replacement is a {} and the field stores a {}",
                 key, __, replacement.getClass().getSimpleName(),
                 field.getType().getSimpleName());
-        checkIsSavable(field, key, replacement);
-        Object expected = getAtomicableFieldValue(field, this);
         boolean transactional = isBoundToOpenTransaction();
         Concourse concourse = connections.request();
         try {
+            // The validation runs within the operation window so that a
+            // ValidatedBy validator cannot end the enclosing Transaction and
+            // leave the write to resolve against the enclosing Runway.
+            checkIsSavable(field, key, replacement);
+            Object expected = getAtomicableFieldValue(field, this);
             boolean swapped;
             if(expected == null && transactional) {
                 // The enclosing Transaction makes the check-then-set atomic
