@@ -205,13 +205,8 @@ public final class Runway extends Binding implements
 
     /**
      * Return {@code true} if a write of {@code key} in {@code record} would
-     * fill an absence: the record exists in the database and currently stores
-     * no value for {@code key}.
-     * <p>
-     * A record without its section metadata does not exist in the database (it
-     * was never saved, or its data was erased), so a write to it would orphan
-     * the value in a record that no load or find can ever return.
-     * </p>
+     * fill an absence: the record exists in the database and stores no value
+     * for {@code key}.
      *
      * @param concourse the {@link Concourse} connection to use
      * @param key the field name
@@ -221,6 +216,10 @@ public final class Runway extends Binding implements
      */
     static boolean canSetIfAbsent(Concourse concourse, String key,
             long record) {
+        // Without the section metadata the record does not exist in the
+        // database (it was never saved, or its data was erased), so a write
+        // here would orphan the value in a record that no load or find can
+        // ever return.
         Map<String, Set<Object>> stored = concourse
                 .select(ImmutableList.of(Record.SECTION_KEY, key), record);
         return !stored.getOrDefault(Record.SECTION_KEY, ImmutableSet.of())

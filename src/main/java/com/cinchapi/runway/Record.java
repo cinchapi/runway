@@ -1619,11 +1619,11 @@ public abstract class Record implements Comparable<Record> {
      * The exchange resolves against this {@link Record Record's} binding. When
      * bound to a {@link Runway}, a successful swap is durable when this method
      * returns. When bound to an open {@link Transaction}, the expected value is
-     * verified against the transaction's snapshot and the swap stages within
-     * it: a {@code true} answer holds only if the transaction commits, and a
-     * conflict with a concurrent writer surfaces as a
+     * compared against what that {@link Transaction} observes, and a
+     * {@code true} answer holds only if that {@link Transaction} commits. A
+     * conflict with a concurrent writer throws
      * {@link com.cinchapi.concourse.TransactionException TransactionException}
-     * at the operation or fails the commit.
+     * or fails the commit.
      * </p>
      * <p>
      * Only an intrinsic, single-value field whose type is a Java primitive or
@@ -1709,7 +1709,7 @@ public abstract class Record implements Comparable<Record> {
                 if(transactional) {
                     // The mirror of a staged swap is not a user edit, so a
                     // Transaction that ends without a commit must not leave
-                    // it behind as an unsaved change
+                    // the mirror behind as an unsaved change.
                     ((DatabaseTransaction) binding).recordAtomicValue(this, key,
                             replacement);
                 }
@@ -1775,13 +1775,13 @@ public abstract class Record implements Comparable<Record> {
      * may reflect a value that a concurrent writer stored.
      * </p>
      * <p>
-     * When bound to an open {@link Transaction}, the current value is re-read
-     * through the transaction, so it joins the conflict footprint, and the
-     * produced value stages within it. Both become durable only when the
-     * transaction's owner commits, so no retry runs here: a conflict with a
-     * concurrent writer surfaces as a
+     * When bound to an open {@link Transaction}, the update rests on the value
+     * that transaction observes rather than on this {@link Record Record's}
+     * in-memory value, and that value joins the transaction's conflict
+     * footprint. The produced value becomes durable only when the transaction's
+     * owner commits. A conflict with a concurrent writer throws
      * {@link com.cinchapi.concourse.TransactionException TransactionException}
-     * at the operation or fails the commit.
+     * or fails the commit.
      * </p>
      * <p>
      * The {@code update} function may be applied more than once, so it must be
@@ -4605,10 +4605,10 @@ public abstract class Record implements Comparable<Record> {
      * @param field an {@link #getAtomicableField(String, Record) eligible}
      *            {@link Field}
      * @param key the field's name
-     * @param requireRecord whether to refuse a record that holds no data in the
-     *            database
-     * @throws DeletedRecordException if {@code requireRecord} and this
-     *             {@link Record} holds no data in the database
+     * @param requireRecord if {@code true}, refuse a record that holds no data
+     *            in the database
+     * @throws DeletedRecordException if {@code requireRecord} is {@code true}
+     *             and this {@link Record} holds no data in the database
      * @throws IllegalStateException if the field is primitive-typed and the
      *             database no longer stores a value for {@code key}
      */
@@ -5114,9 +5114,8 @@ public abstract class Record implements Comparable<Record> {
      * This is the core behind {@link #getAndUpdate(String, UnaryOperator)
      * getAndUpdate} and {@link #updateAndGet(String, UnaryOperator)
      * updateAndGet}, which each return one side of the result. The update
-     * resolves against the binding: within an open {@link Transaction} it
-     * applies once against the snapshot and stages, and otherwise it runs a
-     * compare-and-swap retry loop against the {@link Runway}.
+     * resolves against this {@link Record Record's} binding, with the contract
+     * that {@link #getAndUpdate(String, UnaryOperator) getAndUpdate} states.
      * </p>
      *
      * @param key the name of the intrinsic field to update
@@ -5155,9 +5154,9 @@ public abstract class Record implements Comparable<Record> {
         if(isBoundToOpenTransaction()) {
             // Within an open Transaction the update applies once against the
             // snapshot: the current value is re-read through the transaction,
-            // so it joins the conflict footprint, and the produced value
-            // stages within it. Contention surfaces when the transaction's
-            // owner commits, so no retry loop runs here.
+            // so that value joins the conflict footprint, and the produced
+            // value stages within the transaction. Contention surfaces when
+            // the transaction's owner commits, so no retry loop runs here.
             Field field = getAtomicableField(key, this);
             refreshAtomicableField(field, key, true);
             T current = getAtomicableFieldValue(field, this);

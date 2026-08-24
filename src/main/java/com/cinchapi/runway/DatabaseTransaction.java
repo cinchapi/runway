@@ -130,9 +130,8 @@ class DatabaseTransaction extends Binding implements Transaction {
     private final List<SaveContext> saves = new ArrayList<>();
 
     /**
-     * The latest value that a single-key atomic operation
-     * {@link #recordAtomicValue(Record, String, Object) wrote} for each
-     * (record, key) within the transaction.
+     * The latest value that a single-key atomic operation wrote for each
+     * (record, key) pair within the transaction.
      */
     private final Map<Record, Map<String, Object>> atomicValues = new IdentityHashMap<>();
 
@@ -754,12 +753,12 @@ class DatabaseTransaction extends Binding implements Transaction {
 
     /**
      * Record that a single-key atomic operation wrote {@code value} for
-     * {@code key} in {@code record}, so that, if this transaction ends without
-     * a successful commit, {@code record} does not carry the write as an
+     * {@code key} in {@code record}. If this transaction ends without a
+     * successful commit, then {@code record} does not carry the write as an
      * unsaved change.
      *
      * @param record the {@link Record} that the operation wrote
-     * @param key the field the operation wrote
+     * @param key the name of the field the operation wrote
      * @param value the value the operation wrote, in its unserialized form
      */
     void recordAtomicValue(Record record, String key, Object value) {
