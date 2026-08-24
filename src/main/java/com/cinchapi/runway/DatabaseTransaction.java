@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -127,6 +128,12 @@ class DatabaseTransaction extends Binding implements Transaction {
      * {@link #commit()} or unwound at {@link #abort()}.
      */
     private final List<SaveContext> saves = new ArrayList<>();
+
+    /**
+     * The latest value that a single-key atomic operation wrote for each
+     * (record, key) pair within the transaction.
+     */
+    private final Map<Record, Map<String, Object>> atomicValues = new IdentityHashMap<>();
 
     /**
      * The id of every record that a staged save deleted, so the deletion stays
@@ -744,6 +751,21 @@ class DatabaseTransaction extends Binding implements Transaction {
         record.bindGraph(this, provider, Sets.newIdentityHashSet());
     }
 
+    /**
+     * Record that a single-key atomic operation wrote {@code value} for
+     * {@code key} in {@code record}. If this transaction ends without a
+     * successful commit, then {@code record} does not carry the write as an
+     * unsaved change.
+     *
+     * @param record the {@link Record} that the operation wrote
+     * @param key the name of the field the operation wrote
+     * @param value the value the operation wrote, in its unserialized form
+     */
+    void recordAtomicValue(Record record, String key, Object value) {
+        atomicValues.computeIfAbsent(record, ignore -> new HashMap<>()).put(key,
+                value);
+    }
+
     @Override
     <T extends Record> T load(long id) {
         if(open) {
@@ -892,6 +914,13 @@ class DatabaseTransaction extends Binding implements Transaction {
                             (a, b) -> a.sequence <= b.sequence ? a : b));
                 }
                 oldest.forEach((record, snapshot) -> record.restore(snapshot));
+                // A restore is whole-record, so it may revert baseline
+                // entries that single-key atomic operations mirrored. Those
+                // mirrors are not user edits, so reinstate them: the record
+                // keeps the latest mirrored replacement and only real edits
+                // remain unsaved.
+                atomicValues.forEach((record, values) -> values
+                        .forEach(record::updateBaseline));
                 // NOTE: A later snapshot of the same record holds the keys
                 // that a later save carried, and none of those saves
                 // committed, so every one of them is declared again.
@@ -915,6 +944,7 @@ class DatabaseTransaction extends Binding implements Transaction {
             // the staged contexts and hooks; otherwise one retained Record
             // would pin every record and closure the transaction touched.
             saves.clear();
+            atomicValues.clear();
             deletions.clear();
             afterCommitHooks.clear();
             afterAbortHooks.clear();

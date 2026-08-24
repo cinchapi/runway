@@ -1616,6 +1616,16 @@ public abstract class Record implements Comparable<Record> {
      * {@link Record} that is staged for deletion is refused.
      * </p>
      * <p>
+     * The exchange resolves against this {@link Record Record's} binding. When
+     * bound to a {@link Runway}, a successful swap is durable when this method
+     * returns. When bound to an open {@link Transaction}, the expected value is
+     * compared against what that {@link Transaction} observes, and a
+     * {@code true} answer holds only if that {@link Transaction} commits. A
+     * conflict with a concurrent writer throws
+     * {@link com.cinchapi.concourse.TransactionException TransactionException}
+     * or fails the commit.
+     * </p>
+     * <p>
      * Only an intrinsic, single-value field whose type is a Java primitive or
      * its boxed form, a {@link String}, a {@link Timestamp}, an enum, or a
      * {@link Tag} is eligible. Transient and {@link Unique} fields are not
@@ -1643,17 +1653,16 @@ public abstract class Record implements Comparable<Record> {
      *             atomic operations, or {@code replacement} is {@code null} or
      *             is not an instance of the field's type
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, is staged for deletion, is bound to
-     *             an open {@link Transaction}, or {@code replacement} violates
-     *             the field's constraints
+     *             {@link Runway} instance, is staged for deletion, or
+     *             {@code replacement} violates the field's constraints
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
     public final <T> boolean exchange(String key, T replacement) {
-        Verify.that(hasDirectRunwayScope(),
-                "Cannot atomically exchange {} in {} because single-key"
-                        + " atomic operations require a direct Runway binding",
+        Verify.that(harness() != null,
+                "Cannot atomically exchange {} in {} because this Record is"
+                        + " not pinned to a Runway instance",
                 key, __);
         Verify.that(!deleted,
                 "Cannot atomically exchange {} in {} because this Record is"
@@ -1668,12 +1677,29 @@ public abstract class Record implements Comparable<Record> {
                         + " replacement is a {} and the field stores a {}",
                 key, __, replacement.getClass().getSimpleName(),
                 field.getType().getSimpleName());
-        checkIsSavable(field, key, replacement);
-        Object expected = getAtomicableFieldValue(field, this);
+        boolean transactional = isBoundToOpenTransaction();
         Concourse concourse = connections.request();
         try {
+            // The validation runs within the operation window so that a
+            // ValidatedBy validator cannot end the enclosing Transaction and
+            // leave the write to resolve against the enclosing Runway.
+            checkIsSavable(field, key, replacement);
+            Object expected = getAtomicableFieldValue(field, this);
             boolean swapped;
-            if(expected == null) {
+            if(expected == null && transactional) {
+                // The enclosing Transaction makes the check-then-set atomic
+                // and its reads join the conflict footprint, so this path
+                // does not stage the nested transaction that
+                // Runway.setIfAbsent uses.
+                if(Runway.canSetIfAbsent(concourse, key, id)) {
+                    concourse.set(key, serializeScalarValue(replacement), id);
+                    swapped = true;
+                }
+                else {
+                    swapped = false;
+                }
+            }
+            else if(expected == null) {
                 swapped = Runway.setIfAbsent(concourse, key,
                         serializeScalarValue(replacement), id);
             }
@@ -1683,6 +1709,13 @@ public abstract class Record implements Comparable<Record> {
                         serializeScalarValue(replacement));
             }
             if(swapped) {
+                if(transactional) {
+                    // The mirror of a staged swap is not a user edit, so a
+                    // Transaction that ends without a commit must not leave
+                    // the mirror behind as an unsaved change.
+                    ((DatabaseTransaction) binding).recordAtomicValue(this, key,
+                            replacement);
+                }
                 applyValueChange(key, replacement);
                 return true;
             }
@@ -1732,14 +1765,26 @@ public abstract class Record implements Comparable<Record> {
      * <p>
      * The {@code update} function receives the current value for {@code key},
      * or {@code null} when the field has no value, and returns the value that
-     * should take its place. When this method returns, the produced value is
-     * durably stored and this {@link Record Record's} in-memory value for
+     * should take its place.
+     * </p>
+     * <p>
+     * The update resolves against this {@link Record Record's} binding. When
+     * bound to a {@link Runway}, the produced value is durably stored when this
+     * method returns and this {@link Record Record's} in-memory value for
      * {@code key} matches it. If the update cannot be committed within the
-     * bounds of the {@link AtomicRetryPolicy} configured on the {@link Runway}
-     * instance this {@link Record} is pinned to, a
-     * {@link RetryExhaustedException} is thrown and nothing is written; this
-     * {@link Record Record's} in-memory value for {@code key} may reflect a
-     * value that a concurrent writer stored.
+     * bounds of the {@link AtomicRetryPolicy} configured on that
+     * {@link Runway}, a {@link RetryExhaustedException} is thrown and nothing
+     * is written; this {@link Record Record's} in-memory value for {@code key}
+     * may reflect a value that a concurrent writer stored.
+     * </p>
+     * <p>
+     * When bound to an open {@link Transaction}, the update rests on the value
+     * that transaction observes rather than on this {@link Record Record's}
+     * in-memory value, and that value joins the transaction's conflict
+     * footprint. The produced value becomes durable only when the transaction's
+     * owner commits. A conflict with a concurrent writer throws
+     * {@link com.cinchapi.concourse.TransactionException TransactionException}
+     * or fails the commit.
      * </p>
      * <p>
      * The {@code update} function may be applied more than once, so it must be
@@ -1762,13 +1807,17 @@ public abstract class Record implements Comparable<Record> {
      *            current one; it must not return {@code null}
      * @return the value that was current immediately before the update took
      *         effect, or {@code null} if the field had no value
-     * @throws RetryExhaustedException if the update cannot be committed within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
+     * @throws DeletedRecordException if, when bound to an open
+     *             {@link Transaction}, this {@link Record} holds no data in the
+     *             database
+     * @throws RetryExhaustedException if, when bound to a {@link Runway}, the
+     *             update cannot be committed within the bounds of the governing
+     *             {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has unsaved changes, is staged for
-     *             deletion, or is bound to an open {@link Transaction}
+     *             {@link Runway} instance, has unsaved changes, or is staged
+     *             for deletion
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
@@ -2396,8 +2445,8 @@ public abstract class Record implements Comparable<Record> {
      * <p>
      * The write is unconditional and takes effect on the next {@link #save()
      * save}. Use {@link #exchange(String, Object) exchange} to instead write
-     * through to the database immediately, and only if this {@link Record
-     * Record's} view of {@code key} is still current.
+     * through this {@link Record Record's} binding immediately, and only if
+     * this {@link Record Record's} view of {@code key} is still current.
      * </p>
      *
      * @param key the key name
@@ -2551,13 +2600,17 @@ public abstract class Record implements Comparable<Record> {
      *            current one; it must not return {@code null}
      * @return the value that is current immediately after the update takes
      *         effect
-     * @throws RetryExhaustedException if the update cannot be committed within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
+     * @throws DeletedRecordException if, when bound to an open
+     *             {@link Transaction}, this {@link Record} holds no data in the
+     *             database
+     * @throws RetryExhaustedException if, when bound to a {@link Runway}, the
+     *             update cannot be committed within the bounds of the governing
+     *             {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has unsaved changes, is staged for
-     *             deletion, or is bound to an open {@link Transaction}
+     *             {@link Runway} instance, has unsaved changes, or is staged
+     *             for deletion
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
@@ -4447,27 +4500,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if this {@link Record Record's} operations resolve
-     * directly against a {@link Runway}: either the {@link #binding} is a
-     * {@link Runway}, or it is a {@link Transaction} that has ended and now
-     * forwards to the enclosing {@link Runway}.
-     *
-     * @return {@code true} if this {@link Record} has a direct {@link Runway}
-     *         scope
-     */
-    private boolean hasDirectRunwayScope() {
-        if(binding instanceof Runway) {
-            return true;
-        }
-        else if(binding instanceof DatabaseTransaction) {
-            return !((DatabaseTransaction) binding).open();
-        }
-        else {
-            return false;
-        }
-    }
-
-    /**
      * Return the JSON string for this {@link Record}.
      *
      * <p>
@@ -4576,13 +4608,31 @@ public abstract class Record implements Comparable<Record> {
      * @param field an {@link #getAtomicableField(String, Record) eligible}
      *            {@link Field}
      * @param key the field's name
+     * @param requireRecord if {@code true}, refuse a record that holds no data
+     *            in the database
+     * @throws DeletedRecordException if {@code requireRecord} is {@code true}
+     *             and this {@link Record} holds no data in the database
      * @throws IllegalStateException if the field is primitive-typed and the
      *             database no longer stores a value for {@code key}
      */
-    private void refreshAtomicableField(Field field, String key) {
+    private void refreshAtomicableField(Field field, String key,
+            boolean requireRecord) {
         Concourse concourse = connections.request();
         try {
-            Object stored = Iterables.getFirst(concourse.select(key, id), null);
+            Set<Object> values;
+            if(requireRecord) {
+                Map<String, Set<Object>> data = concourse
+                        .select(ImmutableList.of(SECTION_KEY, key), id);
+                if(data.getOrDefault(SECTION_KEY, ImmutableSet.of())
+                        .isEmpty()) {
+                    throw new DeletedRecordException(id);
+                }
+                values = data.getOrDefault(key, ImmutableSet.of());
+            }
+            else {
+                values = concourse.select(key, id);
+            }
+            Object stored = Iterables.getFirst(values, null);
             Object fresh = stored != null
                     ? convert(key, field.getType(), stored, concourse,
                             new ConcurrentHashMap<>(), null)
@@ -5064,31 +5114,37 @@ public abstract class Record implements Comparable<Record> {
      * {@link AtomicUpdate} that carries both the replaced value and the value
      * that took effect.
      * <p>
-     * This is the core loop behind {@link #getAndUpdate(String, UnaryOperator)
+     * This is the core behind {@link #getAndUpdate(String, UnaryOperator)
      * getAndUpdate} and {@link #updateAndGet(String, UnaryOperator)
-     * updateAndGet}, which each return one side of the result.
+     * updateAndGet}, which each return one side of the result. The update
+     * resolves against this {@link Record Record's} binding, with the contract
+     * that {@link #getAndUpdate(String, UnaryOperator) getAndUpdate} states.
      * </p>
      *
      * @param key the name of the intrinsic field to update
      * @param update the function that produces the replacement value from the
      *            current one; it must not return {@code null}
      * @return the {@link AtomicUpdate} that took effect
-     * @throws RetryExhaustedException if the update cannot be committed within
-     *             the bounds of the governing {@link AtomicRetryPolicy}
+     * @throws DeletedRecordException if, when bound to an open
+     *             {@link Transaction}, this {@link Record} holds no data in the
+     *             database
+     * @throws RetryExhaustedException if, when bound to a {@link Runway}, the
+     *             update cannot be committed within the bounds of the governing
+     *             {@link AtomicRetryPolicy}
      * @throws IllegalArgumentException if {@code key} is not eligible for
      *             atomic operations, or {@code update} returns {@code null}
      * @throws IllegalStateException if this {@link Record} is not pinned to a
-     *             {@link Runway} instance, has unsaved changes, is staged for
-     *             deletion, or is bound to an open {@link Transaction}
+     *             {@link Runway} instance, has unsaved changes, or is staged
+     *             for deletion
      * @throws NonWritableFieldException if the governing
      *             {@link DynamicWritePolicy} does not permit writing to the
      *             field named by {@code key}
      */
     private <T> AtomicUpdate<T> updateAtomically(String key,
             UnaryOperator<T> update) {
-        Verify.that(hasDirectRunwayScope(),
-                "Cannot atomically update {} in {} because single-key atomic"
-                        + " operations require a direct Runway binding",
+        Verify.that(harness() != null,
+                "Cannot atomically update {} in {} because this Record is"
+                        + " not pinned to a Runway instance",
                 key, __);
         Verify.that(!hasUnsavedChanges(),
                 "Cannot atomically update {} in {} because this Record has"
@@ -5098,39 +5154,62 @@ public abstract class Record implements Comparable<Record> {
                 "Cannot atomically update {} in {} because this Record is"
                         + " staged for deletion",
                 key, __);
-        AtomicRetryPolicy policy = harness().properties().atomicRetryPolicy();
-        int attempts = 0;
-        for (;;) {
-            Field field = getAtomicableField(key, this);
-            T current = getAtomicableFieldValue(field, this);
-            T next = update.apply(current);
-            Verify.thatArgument(next != null,
-                    "The update function cannot return null");
-            boolean settled;
-            if(Objects.equals(current, next)) {
-                // Nothing to write, but confirm the read isn't stale before
-                // treating the no-op as settled.
-                Concourse concourse = connections.request();
-                try {
-                    settled = concourse.verify(key,
-                            serializeScalarValue(current), id);
+        if(isBoundToOpenTransaction()) {
+            DatabaseTransaction transaction = (DatabaseTransaction) binding;
+            return transaction.execute(() -> {
+                // The read joins the conflict footprint. The Transaction
+                // makes the targeted write conditional on that snapshot, so
+                // another compare-and-swap is unnecessary.
+                Field field = getAtomicableField(key, this);
+                refreshAtomicableField(field, key, true);
+                T current = getAtomicableFieldValue(field, this);
+                T next = resolveAtomicUpdate(key, this, update);
+                if(next != null) {
+                    transaction.verifyOrSet(key, serializeScalarValue(next),
+                            id);
+                    transaction.recordAtomicValue(this, key, next);
+                    applyValueChange(key, next);
                 }
-                finally {
-                    connections.release(concourse);
+                return new AtomicUpdate<>(current,
+                        next != null ? next : current);
+            });
+        }
+        else {
+            AtomicRetryPolicy policy = harness().properties()
+                    .atomicRetryPolicy();
+            int attempts = 0;
+            for (;;) {
+                Field field = getAtomicableField(key, this);
+                T current = getAtomicableFieldValue(field, this);
+                T next = update.apply(current);
+                Verify.thatArgument(next != null,
+                        "The update function cannot return null");
+                boolean settled;
+                if(Objects.equals(current, next)) {
+                    // Nothing to write, but confirm the read isn't stale
+                    // before treating the no-op as settled.
+                    Concourse concourse = connections.request();
+                    try {
+                        settled = concourse.verify(key,
+                                serializeScalarValue(current), id);
+                    }
+                    finally {
+                        connections.release(concourse);
+                    }
                 }
-            }
-            else {
-                settled = exchange(key, next);
-            }
-            if(settled) {
-                return new AtomicUpdate<>(current, next);
-            }
-            else if(++attempts > policy.limit()) {
-                throw new RetryExhaustedException(attempts);
-            }
-            else {
-                policy.backoff(attempts);
-                refreshAtomicableField(field, key);
+                else {
+                    settled = exchange(key, next);
+                }
+                if(settled) {
+                    return new AtomicUpdate<>(current, next);
+                }
+                else if(++attempts > policy.limit()) {
+                    throw new RetryExhaustedException(attempts);
+                }
+                else {
+                    policy.backoff(attempts);
+                    refreshAtomicableField(field, key, false);
+                }
             }
         }
     }
@@ -5145,7 +5224,7 @@ public abstract class Record implements Comparable<Record> {
      * @param value the scalar value the database now stores, in its
      *            unserialized form; may be {@code null}
      */
-    private void updateBaseline(String key, @Nullable Object value) {
+    void updateBaseline(String key, @Nullable Object value) {
         if(__baseline != null) {
             Map<String, Object> baseline = Maps.newHashMap(__baseline);
             if(value != null) {
