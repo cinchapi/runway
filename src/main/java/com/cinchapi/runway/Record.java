@@ -3443,7 +3443,7 @@ public abstract class Record implements Comparable<Record> {
             beforeSave();
         }
         if(!deleted && __baseline != null
-                && (changed || _author != null || hasRealmChanges())) {
+                && (changed || storableAuthor() != null || hasRealmChanges())) {
             // NOTE: A save writes only what changed, so a save of a Record
             // whose data another writer erased would restore what it writes
             // and leave a record that no writer intended to exist. A Record
@@ -3478,17 +3478,18 @@ public abstract class Record implements Comparable<Record> {
             // back for the retry.
             verifyKeys = null;
         }
-        if(_author != null) {
+        Record author = storableAuthor();
+        if(author != null) {
             // Check for self-authorship: if this record is its own author,
             // use the sentinel ID to avoid self-referential links in Concourse
-            long authorId = _author.id == this.id ? SELF_AUTHOR_SENTINEL_ID
-                    : _author.id;
+            long authorId = author.id == this.id ? SELF_AUTHOR_SENTINEL_ID
+                    : author.id;
             saver.set(AUTHOR_KEY, Link.to(authorId), id);
-            _author = null;
         }
         else {
             saver.clear(AUTHOR_KEY, id);
         }
+        _author = null;
         if(deleted) {
             deleteWithinTransaction(saver, context);
             // Deleting this Record may schedule companion deletions (e.g.,
@@ -4991,6 +4992,22 @@ public abstract class Record implements Comparable<Record> {
         else {
             return null;
         }
+    }
+
+    /**
+     * Return the {@link Record} whose authorship a save can store, or
+     * {@code null} if this {@link Record} has no author that a save can store.
+     * <p>
+     * Authorship is stored as a {@link Link} that must resolve for as long as
+     * the revision it stamps survives. An {@link AdHocRecord} is never stored,
+     * so a link to one could never resolve.
+     * </p>
+     *
+     * @return the storable author, or {@code null} if there is none
+     */
+    @Nullable
+    private Record storableAuthor() {
+        return _author instanceof AdHocRecord ? null : _author;
     }
 
     /**
