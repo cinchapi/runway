@@ -39,7 +39,6 @@ import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.CountingConcourseConnectionPool.CountingConcourse;
-import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.access.AccessControl;
 import com.cinchapi.runway.access.Audience;
 import com.cinchapi.runway.meta.Metadata;
@@ -1296,7 +1295,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 transaction.save(txItem, invalid);
                 Assert.fail("Expected the save to throw");
             }
-            catch (IllegalStateException e) {/* expected */}
+            catch (SuppressedRunwayException e) {/* expected */}
             try {
                 transaction.commit();
                 Assert.fail("Expected the commit to be refused");
@@ -1324,9 +1323,10 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <li>Call {@code abort()}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> Each attempted operation throws an
-     * {@link IllegalStateException}, the abort succeeds and a load through the
-     * enclosing {@link Runway} still observes a score of 1.
+     * <strong>Expected:</strong> The save throws a
+     * {@link SuppressedRunwayException}, each operation attempted afterwards
+     * throws an {@link IllegalStateException}, the abort succeeds and a load
+     * through the enclosing {@link Runway} still observes a score of 1.
      */
     @Test
     public void testFailedSaveWithinTransactionRefusesFurtherOperations() {
@@ -1341,7 +1341,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 transaction.save(txItem, invalid);
                 Assert.fail("Expected the save to throw");
             }
-            catch (IllegalStateException e) {/* expected */}
+            catch (SuppressedRunwayException e) {/* expected */}
             try {
                 transaction.load(Item.class, item.id());
                 Assert.fail("Expected the load to be refused");
@@ -1401,7 +1401,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 transaction.save(txItem, invalid);
                 Assert.fail("Expected the save to throw");
             }
-            catch (IllegalStateException e) {/* expected */}
+            catch (SuppressedRunwayException e) {/* expected */}
             try {
                 txItem.refresh();
                 Assert.fail("Expected the refresh to be refused");
@@ -1428,9 +1428,9 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save throws a
-     * {@link ConstraintViolationException}, the subsequent load is refused with
-     * an {@link IllegalStateException} and only one {@link Handle} named
-     * "alpha" exists after the abort.
+     * {@link SuppressedRunwayException}, the subsequent load is refused with an
+     * {@link IllegalStateException} and only one {@link Handle} named "alpha"
+     * exists after the abort.
      */
     @Test
     public void testUniqueViolationWithinTransactionPoisonsIt() {
@@ -1443,7 +1443,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 duplicate.save();
                 Assert.fail("Expected the save to throw");
             }
-            catch (ConstraintViolationException e) {/* expected */}
+            catch (SuppressedRunwayException e) {/* expected */}
             try {
                 transaction.load(Handle.class, handle.id());
                 Assert.fail("Expected the load to be refused");
@@ -1453,6 +1453,57 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         }
         Assert.assertEquals(1, runway.count(Handle.class, Criteria.where()
                 .key("name").operator(Operator.EQUALS).value("alpha").build()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save refuses the same data with the
+     * same exception whether it is bound to a {@link Runway} or to a
+     * {@link Transaction}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Handle} named "alpha".
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a second {@link Handle} named "alpha" through the {@link Runway}
+     * and drain its suppressed exceptions.</li>
+     * <li>Save a third {@link Handle} named "alpha" within a
+     * {@link Transaction}.</li>
+     * <li>Capture the message that each refusal carries.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Runway} bound save returns
+     * {@code false} and reports a {@link SuppressedRunwayException}; the
+     * {@link Transaction} bound save throws one; both carry the same message.
+     */
+    @Test
+    public void testSaveRefusesDataTheSameWayWithinAndOutsideTransaction() {
+        Handle handle = new Handle("alpha");
+        handle.assign(runway);
+        Assert.assertTrue(handle.save());
+        Handle unmediated = new Handle("alpha");
+        unmediated.assign(runway);
+        Assert.assertFalse(unmediated.save());
+        String outside = null;
+        try {
+            unmediated.throwSupressedExceptions();
+            Assert.fail("Expected the refusal to be reported");
+        }
+        catch (SuppressedRunwayException e) {
+            outside = e.getMessage();
+        }
+        String within = null;
+        try (Transaction transaction = runway.startTransaction()) {
+            Handle duplicate = transaction.create(Handle.class, "alpha");
+            try {
+                duplicate.save();
+                Assert.fail("Expected the save to throw");
+            }
+            catch (SuppressedRunwayException e) {
+                within = e.getMessage();
+            }
+            transaction.abort();
+        }
+        Assert.assertEquals(outside, within);
     }
 
     /**
@@ -1485,7 +1536,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 duplicate.save();
                 Assert.fail("Expected the save to throw");
             }
-            catch (ConstraintViolationException e) {/* expected */}
+            catch (SuppressedRunwayException e) {/* expected */}
             transaction.afterAbort(aborts::incrementAndGet);
             transaction.abort();
         }
@@ -4403,7 +4454,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 transaction.save(invalid);
                 Assert.fail("Expected the save to throw");
             }
-            catch (IllegalStateException e) {/* expected */}
+            catch (SuppressedRunwayException e) {/* expected */}
             try {
                 txCounter.bump();
                 Assert.fail("Expected the work to be refused");

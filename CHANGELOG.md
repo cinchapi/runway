@@ -48,6 +48,7 @@ Runway previously offered no way to guarantee atomicity or full ACID compliance 
     * Save and delete notifications fire only after a successful commit.
     * After a transaction ends, the view and its bound records operate against the enclosing `Runway` again; only another `commit()` and new hook registrations are refused.
 * **A failed save poisons the transaction.** A save that throws after it begins writing can never commit: every subsequent operation is refused except `abort()` (or `close()`) and `afterAbort` registration, so a partial save never becomes durable.
+    * A save that refuses data throws `SuppressedRunwayException`, which carries the refusal. It cannot report the refusal by returning `false`, the way a `Runway` bound save does, because what it staged cannot be selectively undone. Every other failure propagates as itself.
     * A save that is refused before it begins (an invalid argument) leaves the transaction usable.
 * **A deletion is final within a transaction.** Once a save deletes a record, no later save in the same transaction can bring it back, references to it are removed at commit, and its delete notification fires once.
 * **`Runway#transact` and `Runway#transactAndSupply` execute work within a managed transaction.** The work receives a `TransactionInterface` (`transact` for work with no result, `transactAndSupply` for work that returns one) and the commit happens after the work completes.
