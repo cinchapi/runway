@@ -28,7 +28,6 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.util.Random;
-import com.cinchapi.runway.Record.ConstraintViolationException;
 
 /**
  * Tests for hierarchy-scoped {@link Unique} constraints declared with
@@ -178,8 +177,8 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
      * locator, and catch the expected exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link ConstraintViolationException} is
-     * thrown and only the original {@link VideoFile} exists in the hierarchy.
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} is thrown
+     * and only the original {@link VideoFile} exists in the hierarchy.
      */
     @Test
     public void testInternFailsLoudlyWhenSiblingClassClaimsAnyIdentity() {
@@ -189,7 +188,7 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
         try {
             runway.intern(new ImageFile(locator, "image"));
         }
-        catch (ConstraintViolationException e) {
+        catch (SuppressedRunwayException e) {
             threw = true;
         }
         Assert.assertTrue(threw);
@@ -210,8 +209,8 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
      * locator but a different name, and catch the expected exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link ConstraintViolationException} is
-     * thrown and only the original {@link NamedFile} exists.
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} is thrown
+     * and only the original {@link NamedFile} exists.
      */
     @Test
     public void testInternFailsWhenMixedScopeConstraintsPartiallyAgree() {
@@ -221,7 +220,7 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
         try {
             runway.intern(new NamedFile(locator, "second"));
         }
-        catch (ConstraintViolationException e) {
+        catch (SuppressedRunwayException e) {
             threw = true;
         }
         Assert.assertTrue(threw);

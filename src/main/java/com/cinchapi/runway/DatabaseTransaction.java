@@ -33,6 +33,7 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.ForwardingConcourse;
+import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.TransactionToken;
@@ -632,7 +633,23 @@ class DatabaseTransaction extends Binding implements Transaction {
                 // selectively undone, so the transaction must never commit.
                 poisoned = true;
                 context.restore();
-                throw t;
+                if(t instanceof TransactionException
+                        || t instanceof StaleDataException
+                        || t instanceof DeletedRecordException
+                        || t instanceof Record.TransactionBoundaryException) {
+                    throw t;
+                }
+                else {
+                    // A save cannot report a refusal by returning false here,
+                    // because what it staged cannot be selectively undone. The
+                    // refusal is delivered as the exception a Runway bound
+                    // save delivers, so a caller handles a refusal the same
+                    // either way.
+                    SuppressedRunwayException refusal = new SuppressedRunwayException(
+                            t.getMessage());
+                    refusal.setStackTrace(t.getStackTrace());
+                    throw refusal;
+                }
             }
             finally {
                 operating--;

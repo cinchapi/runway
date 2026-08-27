@@ -32,7 +32,6 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
-import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.google.common.collect.Lists;
 
 /**
@@ -229,8 +228,8 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <li>Catch the expected exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link ConstraintViolationException} is
-     * thrown and only the original {@link Account} exists.
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} is thrown
+     * and only the original {@link Account} exists.
      */
     @Test
     public void testInternFailsLoudlyOnPartialIdentityCollision() {
@@ -241,7 +240,7 @@ public class InternTest extends RunwayBaseClientServerTest {
         try {
             runway.intern(probe);
         }
-        catch (ConstraintViolationException e) {
+        catch (SuppressedRunwayException e) {
             threw = true;
         }
         Assert.assertTrue(threw);
@@ -699,8 +698,8 @@ public class InternTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save throws a
-     * {@link ConstraintViolationException}, the commit attempt is refused with
-     * an {@link IllegalStateException}, and only the original {@link Account}
+     * {@link SuppressedRunwayException}, the commit attempt is refused with an
+     * {@link IllegalStateException}, and only the original {@link Account}
      * exists after the abort.
      */
     @Test
@@ -712,7 +711,7 @@ public class InternTest extends RunwayBaseClientServerTest {
                 transaction
                         .intern(new Account("e@example.com", "handle2", "x"));
             }
-            catch (ConstraintViolationException e) {
+            catch (SuppressedRunwayException e) {
                 threw = true;
             }
             Assert.assertTrue(threw);

@@ -2337,12 +2337,24 @@ public abstract class Record implements Comparable<Record> {
      * returns; when bound to a {@link Transaction}, the changes stage within it
      * and become durable when the transaction commits.
      * </p>
+     * <p>
+     * A save refuses data it cannot accept and reports the refusal through this
+     * {@link Record}: bound to a {@link Runway} it returns {@code false} and
+     * holds the reason for {@link #throwSupressedExceptions()}; bound to a
+     * {@link Transaction} it throws {@link SuppressedRunwayException}, because
+     * what it staged cannot be selectively undone. A {@link Runway} bound save
+     * also reports a commit conflict through {@code false}; every other failure
+     * propagates as itself.
+     * </p>
      *
-     * @return {@code true} if this {@link Record} is successfully saved
+     * @return {@code true} if this {@link Record} is successfully saved, or
+     *         {@code false} when a {@link Runway} bound save refuses the data
      * @throws DeletedRecordException if a {@link Record} that the save writes
      *             holds no data in the database
      * @throws StaleDataException if another writer changed a value that
      *             {@link #verifyOnSave(String...) verifyOnSave} declared
+     * @throws SuppressedRunwayException if a {@link Transaction} bound save
+     *             refuses the data
      * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save() {
@@ -2384,15 +2396,28 @@ public abstract class Record implements Comparable<Record> {
      * on what it reads as well.
      * </p>
      *
+     * <p>
+     * A save refuses data it cannot accept and reports the refusal through this
+     * {@link Record}: bound to a {@link Runway} it returns {@code false} and
+     * holds the reason for {@link #throwSupressedExceptions()}; bound to a
+     * {@link Transaction} it throws {@link SuppressedRunwayException}, because
+     * what it staged cannot be selectively undone. A {@link Runway} bound save
+     * also reports a commit conflict through {@code false}; every other failure
+     * propagates as itself.
+     * </p>
+     *
      * @param preventStaleWrite if {@code true}, reject the save if it would
      *            overwrite a value that another writer changed
-     * @return {@code true} if this {@link Record} is successfully saved
+     * @return {@code true} if this {@link Record} is successfully saved, or
+     *         {@code false} when a {@link Runway} bound save refuses the data
      * @throws DeletedRecordException if a {@link Record} that the save writes
      *             holds no data in the database
      * @throws StaleDataException if {@code preventStaleWrite} is {@code true}
      *             and the save would overwrite a value that another writer
      *             changed, or if another writer changed a value that
      *             {@link #verifyOnSave(String...) verifyOnSave} declared
+     * @throws SuppressedRunwayException if a {@link Transaction} bound save
+     *             refuses the data
      * @throws IllegalStateException if this {@link Record} has no binding
      */
     public final boolean save(boolean preventStaleWrite) {
