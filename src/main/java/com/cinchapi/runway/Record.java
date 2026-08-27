@@ -2944,10 +2944,11 @@ public abstract class Record implements Comparable<Record> {
      *             {@link Transaction} other than {@code binding}
      */
     void bind(Binding binding, ConcourseProvider connections) {
-        Verify.that(this.binding == binding || !isBoundToOpenTransaction(),
-                "Cannot bind {} to a different scope because it is bound to"
-                        + " an open Transaction",
-                __);
+        if(this.binding != binding && isBoundToOpenTransaction()) {
+            throw new TransactionBoundaryException(
+                    "Cannot bind " + __ + " to a different scope because it"
+                            + " is bound to an open Transaction");
+        }
         this.binding = binding;
         this.connections = connections;
     }
@@ -3686,10 +3687,7 @@ public abstract class Record implements Comparable<Record> {
      *             {@link Transaction} other than {@code scope}
      */
     void verifySavableThrough(Binding scope) {
-        if(binding == scope || !isBoundToOpenTransaction()) {
-            // The record is savable through the scope.
-        }
-        else {
+        if(binding != scope && isBoundToOpenTransaction()) {
             throw new TransactionBoundaryException(
                     "Cannot save " + __ + " through a different scope because"
                             + " it is bound to an open Transaction");

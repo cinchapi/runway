@@ -4083,8 +4083,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <li>After the failure, abort the transaction.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The save throws an
-     * {@link IllegalStateException} and poisons the transaction, the abort
+     * <strong>Expected:</strong> The save throws a
+     * {@link SuppressedRunwayException} and poisons the transaction, the abort
      * still works, and nothing becomes durable.
      */
     @Test
@@ -4100,7 +4100,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 transaction.save(bound);
                 Assert.fail("Expected the reentrant abort to be refused");
             }
-            catch (IllegalStateException e) {/* expected */}
+            catch (SuppressedRunwayException e) {/* expected */}
             try {
                 transaction.load(Saboteur.class, saboteur.id());
                 Assert.fail("Expected the transaction to be poisoned");
@@ -4127,8 +4127,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <li>After the failure, abort the transaction.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The save throws an
-     * {@link IllegalStateException} and poisons the transaction, the abort
+     * <strong>Expected:</strong> The save throws a
+     * {@link SuppressedRunwayException} and poisons the transaction, the abort
      * still works, and nothing becomes durable.
      */
     @Test
@@ -4145,7 +4145,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 transaction.save(bound);
                 Assert.fail("Expected the reentrant commit to be refused");
             }
-            catch (IllegalStateException e) {/* expected */}
+            catch (SuppressedRunwayException e) {/* expected */}
             try {
                 transaction.load(Saboteur.class, saboteur.id());
                 Assert.fail("Expected the transaction to be poisoned");
