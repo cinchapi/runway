@@ -2342,7 +2342,8 @@ public abstract class Record implements Comparable<Record> {
      * {@link Record}: bound to a {@link Runway} it returns {@code false} and
      * holds the reason for {@link #throwSupressedExceptions()}; bound to a
      * {@link Transaction} it throws {@link SuppressedRunwayException}, because
-     * what it staged cannot be selectively undone. Every other failure
+     * what it staged cannot be selectively undone. A {@link Runway} bound save
+     * also reports a commit conflict through {@code false}; every other failure
      * propagates as itself.
      * </p>
      *
@@ -2400,7 +2401,8 @@ public abstract class Record implements Comparable<Record> {
      * {@link Record}: bound to a {@link Runway} it returns {@code false} and
      * holds the reason for {@link #throwSupressedExceptions()}; bound to a
      * {@link Transaction} it throws {@link SuppressedRunwayException}, because
-     * what it staged cannot be selectively undone. Every other failure
+     * what it staged cannot be selectively undone. A {@link Runway} bound save
+     * also reports a commit conflict through {@code false}; every other failure
      * propagates as itself.
      * </p>
      *
