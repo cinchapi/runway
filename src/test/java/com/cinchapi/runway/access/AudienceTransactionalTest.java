@@ -25,6 +25,7 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
+import com.cinchapi.runway.SuppressedRunwayException;
 import com.cinchapi.runway.Transaction;
 import com.cinchapi.runway.TransactionInterface;
 
@@ -503,7 +504,8 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
      * <li>Call {@code abort()}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The create throws an
+     * <strong>Expected:</strong> The save throws a
+     * {@link SuppressedRunwayException}, the create is refused with an
      * {@link IllegalStateException} and the abort succeeds.
      */
     @Test
@@ -516,7 +518,7 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
                 transaction.save(invalid);
                 Assert.fail("Expected the save to throw");
             }
-            catch (IllegalStateException e) {
+            catch (SuppressedRunwayException e) {
                 // expected
             }
             try {
