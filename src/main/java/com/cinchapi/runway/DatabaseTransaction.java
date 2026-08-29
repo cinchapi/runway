@@ -22,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
@@ -347,7 +348,7 @@ class DatabaseTransaction extends Binding implements Transaction {
             verifyNotPoisoned();
         }
         T record = Reflection.newInstance(clazz, args);
-        record.bind(this, provider);
+        join(record);
         return record;
     }
 
@@ -724,6 +725,47 @@ class DatabaseTransaction extends Binding implements Transaction {
         }
         else {
             return database.select(options);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * While the transaction is open, starting another is refused because
+     * transactions do not nest. After the transaction ends, a new
+     * {@link Transaction} starts on the enclosing {@link Runway}, per the
+     * fall-through contract.
+     * </p>
+     */
+    @Override
+    public Transaction startTransaction() {
+        if(open) {
+            throw new IllegalStateException("Cannot start a Transaction"
+                    + " within an open Transaction because transactions do"
+                    + " not nest; use transact or transactAndSupply to join"
+                    + " this one");
+        }
+        else {
+            return database.startTransaction();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * While the transaction is open, the work joins it: the work runs exactly
+     * once, cannot commit or abort, and a conflict at commit belongs to the
+     * transaction's owner. After the transaction ends, the work runs in its own
+     * managed transaction on the enclosing {@link Runway}.
+     * </p>
+     */
+    @Override
+    public <T> T transactAndSupply(Function<TransactionInterface, T> work) {
+        if(open) {
+            return execute(() -> work.apply(this));
+        }
+        else {
+            return database.transactAndSupply(work);
         }
     }
 

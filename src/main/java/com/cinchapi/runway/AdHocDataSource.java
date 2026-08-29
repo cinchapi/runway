@@ -143,6 +143,20 @@ public class AdHocDataSource<T extends AdHocRecord> implements
         return loadAny(clazz, filter, realms).size();
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * An {@link AdHocDataSource} serves records that its supplier provides, so
+     * it cannot create one.
+     * </p>
+     *
+     * @throws UnsupportedOperationException always
+     */
+    @Override
+    public <R extends Record> R create(Class<R> clazz, Object... args) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     public <R extends Record> Set<R> find(Class<R> clazz, Criteria criteria,
             Order order, Page page, Predicate<R> filter, Realms realms) {

@@ -329,6 +329,23 @@ public interface DatabaseInterface {
     }
 
     /**
+     * Create a new {@link Record} of the specified {@code clazz} that is bound
+     * to this {@link DatabaseInterface}, so a direct {@link Record#save() save}
+     * persists within it. Every {@link Record} reachable from the {@code args}
+     * is bound to it as well.
+     * <p>
+     * The returned {@link Record} is not saved to the database until
+     * {@link Record#save()} is called.
+     * </p>
+     *
+     * @param clazz the type of {@link Record} to create
+     * @param args constructor arguments for the {@link Record}
+     * @param <T> the type of {@link Record}
+     * @return the newly created {@link Record}, not yet saved
+     */
+    public <T extends Record> T create(Class<T> clazz, Object... args);
+
+    /**
      * Execute a single {@link Selection} and return the result directly, cast
      * to the appropriate type.
      *

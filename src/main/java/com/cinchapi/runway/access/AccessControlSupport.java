@@ -21,13 +21,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 import javax.annotation.Nullable;
 
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.TransactionInterface;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
@@ -81,8 +81,9 @@ class AccessControlSupport {
      * </p>
      *
      * @param audience the {@link Audience} on whose behalf the update runs
-     * @param supplier supplies the {@link Record} to update within the
-     *            transactional scope
+     * @param supplier supplies the {@link Record} to update from the
+     *            {@link TransactionInterface} view it receives, so the lookup
+     *            resolves within the transactional scope
      * @param key the name of the intrinsic field to update
      * @param update the operator that produces the replacement value from the
      *            current one; it must not return {@code null}
@@ -94,41 +95,38 @@ class AccessControlSupport {
      *             atomic operations, or if {@code update} returns {@code null}
      *             or a value that is not an instance of the field's type
      * @throws UnsupportedOperationException if the {@code audience} has no
-     *             transactional scope
-     * @throws IllegalStateException if the {@code audience} has no binding, or
-     *             if it is bound to an open transaction that another thread
-     *             owns or that a failed save poisoned
+     *             binding
+     * @throws IllegalStateException if the {@code audience Audience's} database
+     *             does not support transactions, or if it is bound to an open
+     *             transaction that another thread owns or that a failed save
+     *             poisoned
      */
     @Nullable
     public static <T extends Record, V> T supplyAndUpdate(Audience audience,
-            Supplier<T> supplier, String key, UnaryOperator<V> update) {
-        if(audience instanceof Record) {
-            return ((Record) audience).transactAndSupply(transaction -> {
-                T subject = supplier.get();
-                if(isWritableByAudience(audience, ImmutableSet.of(key),
-                        subject)) {
-                    Record previous = Reflection.get("_author", subject);
+            Function<TransactionInterface, T> supplier, String key,
+            UnaryOperator<V> update) {
+        return audience.transactAndSupply(transaction -> {
+            T subject = supplier.apply(transaction);
+            if(isWritableByAudience(audience, ImmutableSet.of(key), subject)) {
+                Record previous = Reflection.get("_author", subject);
+                if(audience instanceof Record) {
                     Reflection.set("_author", (Record) audience, subject);
-                    T result = Reflection.callStatic(Record.class,
-                            "stageAtomicUpdate", transaction, subject, key,
-                            update);
-                    Record marker = Reflection.get("_author", subject);
-                    if(marker == audience) {
-                        // A staged save consumes the author marker, so one that
-                        // survived proves the update was a no-op; restore it so
-                        // a later save is not attributed to the audience.
-                        Reflection.set("_author", previous, subject);
-                    }
-                    return result;
                 }
-                else {
-                    return null;
+                T result = Reflection.callStatic(Record.class,
+                        "stageAtomicUpdate", transaction, subject, key, update);
+                Record marker = Reflection.get("_author", subject);
+                if(marker == audience) {
+                    // A staged save consumes the author marker, so one that
+                    // survived proves the update was a no-op; restore it so
+                    // a later save is not attributed to the audience.
+                    Reflection.set("_author", previous, subject);
                 }
-            });
-        }
-        else {
-            throw new UnsupportedOperationException();
-        }
+                return result;
+            }
+            else {
+                return null;
+            }
+        });
     }
 
     /**

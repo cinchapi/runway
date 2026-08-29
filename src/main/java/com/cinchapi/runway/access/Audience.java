@@ -57,7 +57,6 @@ import com.cinchapi.runway.util.KeySelection;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
-import com.google.common.collect.Sets;
 
 /**
  * A {@link Record} that can "perform" database operations on other records
@@ -106,8 +105,8 @@ import com.google.common.collect.Sets;
 public interface Audience extends DatabaseInterface, Transactional {
 
     /**
-     * Return a singleton {@link Audience} that represents an unauthenticated or
-     * unknown user.
+     * Return the {@link Audience} that represents an unauthenticated or unknown
+     * user of the single open {@link Runway} instance.
      * <p>
      * In a context where there is no known audience (e.g., an API request is
      * made without a logged-in user session), this method should be called to
@@ -116,9 +115,35 @@ public interface Audience extends DatabaseInterface, Transactional {
      * </p>
      *
      * @return the anonymous {@link Audience}
+     * @throws IllegalStateException if zero or multiple {@link Runway}
+     *             instances are open, in which case no single database can be
+     *             assumed; use {@link #anonymous(DatabaseInterface)} to name
+     *             one
      */
     public static Audience anonymous() {
-        return Anonymous.get();
+        Runway db = Runway.$pinned();
+        Verify.that(db != null,
+                "There is no single open Runway instance, so the anonymous"
+                        + " Audience has no database; use"
+                        + " Audience.anonymous(db) to name one");
+        return db.anonymous();
+    }
+
+    /**
+     * Return an {@link Audience} that represents an unauthenticated or unknown
+     * user of {@code db}.
+     * <p>
+     * The {@code db} may be any {@link DatabaseInterface}, including a
+     * {@link Transaction}, in which case the {@link Audience Audience's}
+     * operations, and the access checks that gate them, resolve within it.
+     * </p>
+     *
+     * @param db the {@link DatabaseInterface} the {@link Audience} operates
+     *            against
+     * @return the anonymous {@link Audience}
+     */
+    public static Audience anonymous(DatabaseInterface db) {
+        return Anonymous.get(db);
     }
 
     /**
@@ -188,8 +213,8 @@ public interface Audience extends DatabaseInterface, Transactional {
     }
 
     /**
-     * Return the appropriate {@link DatabaseInterface} to which database
-     * operations should be delegated.
+     * Return the {@link DatabaseInterface} against which this {@link Audience
+     * Audience's} database operations currently resolve.
      * <p>
      * This is a framework-private method and should not be called directly.
      * </p>
@@ -198,14 +223,7 @@ public interface Audience extends DatabaseInterface, Transactional {
      */
     public default DatabaseInterface $db() {
         // TODO: make private in Java 9+
-        if(this instanceof Record) {
-            return Reflection.get("db", this);
-        }
-        else {
-            throw new IllegalStateException(
-                    "Illegal attempt to apply the Audience interface to a non-Record type: "
-                            + this.getClass());
-        }
+        return Reflection.get("db", this);
     }
 
     /**
@@ -234,32 +252,13 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             {@link com.cinchapi.runway.Transaction Transaction} that
      *             another thread owns or that a failed save poisoned
      */
+    @Override
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
-        T record;
-        if(this instanceof Record) {
-            Object binding = Reflection.get("binding", this);
-            if(binding instanceof TransactionInterface) {
-                // Create through the transaction so its state checks gate a
-                // mediated create the same as an unmediated one.
-                record = ((TransactionInterface) binding).create(clazz, args);
-            }
-            else {
-                record = Reflection.newInstance(clazz, args);
-            }
-            // Bind the new record, and its reachable graph, to the same
-            // database interface that this audience operates against before
-            // the permission check runs, so the check and a later save both
-            // resolve within that context (e.g., within a Transaction).
-            if(binding != null) {
-                Reflection.call(record, "bindGraph", binding,
-                        Reflection.get("connections", this),
-                        Sets.newIdentityHashSet());
-            }
-        }
-        else {
-            record = Reflection.newInstance(clazz, args);
-        }
+        // The database binds the record, and its reachable graph, before the
+        // permission check runs, so the check and a later save both resolve
+        // within the context this Audience operates against.
+        T record = $db().create(clazz, args);
         verifyIsCreatableByAudience(this, record);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
@@ -327,10 +326,11 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             {@code update} returns {@code null} or a value that is not an
      *             instance of the field's type
      * @throws UnsupportedOperationException if this {@link Audience} has no
-     *             transactional scope
-     * @throws IllegalStateException if this {@link Audience} has no binding, or
-     *             if it is bound to an open transaction that another thread
-     *             owns or that a failed save poisoned
+     *             binding
+     * @throws IllegalStateException if this {@link Audience Audience's}
+     *             database does not support transactions, or if it is bound to
+     *             an open transaction that another thread owns or that a failed
+     *             save poisoned
      */
     @Nullable
     @Override
@@ -339,8 +339,8 @@ public interface Audience extends DatabaseInterface, Transactional {
             UnaryOperator<V> update) {
         Verify.thatArgument(order != null,
                 "findAnyFirstAndUpdate requires an Order");
-        return supplyAndUpdate(this, () -> findAnyFirst(clazz, criteria, order),
-                key, update);
+        return supplyAndUpdate(this,
+                view -> view.findAnyFirst(clazz, criteria, order), key, update);
     }
 
     /**
@@ -380,18 +380,19 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             atomic operations, or if {@code update} returns {@code null}
      *             or a value that is not an instance of the field's type
      * @throws UnsupportedOperationException if this {@link Audience} has no
-     *             transactional scope
-     * @throws IllegalStateException if this {@link Audience} has no binding, or
-     *             if it is bound to an open transaction that another thread
-     *             owns or that a failed save poisoned
+     *             binding
+     * @throws IllegalStateException if this {@link Audience Audience's}
+     *             database does not support transactions, or if it is bound to
+     *             an open transaction that another thread owns or that a failed
+     *             save poisoned
      */
     @Nullable
     @Override
     public default <T extends Record, V> T findAnyUniqueAndUpdate(
             Class<T> clazz, Criteria criteria, String key,
             UnaryOperator<V> update) {
-        return supplyAndUpdate(this, () -> findAnyUnique(clazz, criteria), key,
-                update);
+        return supplyAndUpdate(this,
+                view -> view.findAnyUnique(clazz, criteria), key, update);
     }
 
     /**
@@ -431,10 +432,11 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             {@code update} returns {@code null} or a value that is not an
      *             instance of the field's type
      * @throws UnsupportedOperationException if this {@link Audience} has no
-     *             transactional scope
-     * @throws IllegalStateException if this {@link Audience} has no binding, or
-     *             if it is bound to an open transaction that another thread
-     *             owns or that a failed save poisoned
+     *             binding
+     * @throws IllegalStateException if this {@link Audience Audience's}
+     *             database does not support transactions, or if it is bound to
+     *             an open transaction that another thread owns or that a failed
+     *             save poisoned
      */
     @Nullable
     @Override
@@ -443,8 +445,8 @@ public interface Audience extends DatabaseInterface, Transactional {
             UnaryOperator<V> update) {
         Verify.thatArgument(order != null,
                 "findFirstAndUpdate requires an Order");
-        return supplyAndUpdate(this, () -> findFirst(clazz, criteria, order),
-                key, update);
+        return supplyAndUpdate(this,
+                view -> view.findFirst(clazz, criteria, order), key, update);
     }
 
     /**
@@ -482,17 +484,18 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             atomic operations, or if {@code update} returns {@code null}
      *             or a value that is not an instance of the field's type
      * @throws UnsupportedOperationException if this {@link Audience} has no
-     *             transactional scope
-     * @throws IllegalStateException if this {@link Audience} has no binding, or
-     *             if it is bound to an open transaction that another thread
-     *             owns or that a failed save poisoned
+     *             binding
+     * @throws IllegalStateException if this {@link Audience Audience's}
+     *             database does not support transactions, or if it is bound to
+     *             an open transaction that another thread owns or that a failed
+     *             save poisoned
      */
     @Nullable
     @Override
     public default <T extends Record, V> T findUniqueAndUpdate(Class<T> clazz,
             Criteria criteria, String key, UnaryOperator<V> update) {
-        return supplyAndUpdate(this, () -> findUnique(clazz, criteria), key,
-                update);
+        return supplyAndUpdate(this, view -> view.findUnique(clazz, criteria),
+                key, update);
     }
 
     /**
@@ -946,50 +949,47 @@ public interface Audience extends DatabaseInterface, Transactional {
      * @throws IllegalArgumentException if no field under a {@link Unique}
      *             constraint of {@code record} has a non-null value
      * @throws UnsupportedOperationException if this {@link Audience} has no
-     *             transactional scope
-     * @throws IllegalStateException if this {@link Audience} has no binding, or
-     *             if it is bound to an open transaction that another thread
-     *             owns or that a failed save poisoned
+     *             binding
+     * @throws IllegalStateException if this {@link Audience Audience's}
+     *             database does not support transactions, or if it is bound to
+     *             an open transaction that another thread owns or that a failed
+     *             save poisoned
      */
     @Override
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
-        if(this instanceof Record) {
-            return ((Record) this).transactAndSupply(view -> {
-                // The checks below run against this Audience, so the raw
-                // transaction is the correct target for the staging
-                // operations; the Audience-scoped view would repeat them.
-                TransactionInterface transaction = AudienceTransaction
-                        .raw(view);
-                // Join the record and its reachable graph to the
-                // transactional scope before the permission check
-                // runs, so the check and the save both resolve within
-                // it, consistent with #create.
-                Reflection.call(transaction, "join", record);
-                verifyIsCreatableByAudience(this, record);
-                Record previous = Reflection.get("_author", record);
+        return transactAndSupply(view -> {
+            // The checks below run against this Audience, so the raw
+            // transaction is the correct target for the staging
+            // operations; the Audience-scoped view would repeat them.
+            TransactionInterface transaction = AudienceTransaction.raw(view);
+            // Join the record and its reachable graph to the
+            // transactional scope before the permission check
+            // runs, so the check and the save both resolve within
+            // it, consistent with #create.
+            Reflection.call(transaction, "join", record);
+            verifyIsCreatableByAudience(this, record);
+            Record previous = Reflection.get("_author", record);
+            if(this instanceof Record) {
                 Reflection.set("_author", (Record) this, record);
-                T interned = transaction.intern(record);
-                if(interned != record) {
-                    // The record was never saved, so nothing consumed
-                    // the author marker; restore it so a later save
-                    // is not attributed to this Audience.
-                    Reflection.set("_author", previous, record);
-                    if(!$checkIfInScopeOrVisible().test(interned)) {
-                        throw new RestrictedAccessException();
-                    }
-                    else {
-                        return interned;
-                    }
+            }
+            T interned = transaction.intern(record);
+            if(interned != record) {
+                // The record was never saved, so nothing consumed
+                // the author marker; restore it so a later save
+                // is not attributed to this Audience.
+                Reflection.set("_author", previous, record);
+                if(!$checkIfInScopeOrVisible().test(interned)) {
+                    throw new RestrictedAccessException();
                 }
                 else {
                     return interned;
                 }
-            });
-        }
-        else {
-            throw new UnsupportedOperationException();
-        }
+            }
+            else {
+                return interned;
+            }
+        });
     }
 
     /**
@@ -1022,6 +1022,16 @@ public interface Audience extends DatabaseInterface, Transactional {
         finally {
             RESTRICTED_ACCESS_DETECTED.remove();
         }
+    }
+
+    /**
+     * Return {@code true} if this {@link Audience} represents an
+     * unauthenticated or unknown user.
+     *
+     * @return {@code true} if this is an anonymous {@link Audience}
+     */
+    public default boolean isAnonymous() {
+        return this instanceof Anonymous;
     }
 
     /**
@@ -1068,12 +1078,14 @@ public interface Audience extends DatabaseInterface, Transactional {
      * operation on the view behaves the same as the operation on this
      * {@link Audience}, just within the confines of the transaction.
      * <p>
-     * This {@link Audience} must have joined the transaction, which the
+     * A {@link Record} audience must have joined the transaction, which the
      * framework guarantees when it invokes this method during
      * {@link #transact(java.util.function.Consumer) transact} and
-     * {@link #transactAndSupply(Function) transactAndSupply}. Use
+     * {@link #transactAndSupply(Function) transactAndSupply}; use
      * {@link #startTransaction()} to start a {@link Transaction} that this
-     * {@link Audience} joins.
+     * {@link Audience} joins. An {@link Audience} that holds its database, such
+     * as the {@link #anonymous() anonymous} audience, is scoped through an
+     * equal {@link Audience} that holds the transaction.
      * </p>
      * <p>
      * This is a framework-private method and should not be called directly.
@@ -1083,32 +1095,33 @@ public interface Audience extends DatabaseInterface, Transactional {
      * @return the view the work receives
      * @throws IllegalArgumentException if {@code transaction} is not a
      *             {@link Transaction}
-     * @throws IllegalStateException if this {@link Audience} has not joined
-     *             {@code transaction}
-     * @throws UnsupportedOperationException if this {@link Audience} is not a
-     *             {@link Record}
+     * @throws IllegalStateException if this {@link Audience} is a
+     *             {@link Record} that has not joined {@code transaction}
      */
     @Override
     public default TransactionInterface scope(
             TransactionInterface transaction) {
         Verify.thatArgument(transaction instanceof Transaction,
                 "An Audience can only scope a Transaction");
+        Transaction raw = (Transaction) AudienceTransaction.raw(transaction);
         if(this instanceof Record) {
-            TransactionInterface raw = AudienceTransaction.raw(transaction);
             Verify.that(Reflection.get("binding", this) == raw,
                     "An Audience can only scope a Transaction it has"
                             + " joined; use startTransaction() to start one");
-            return new AudienceTransaction(this, (Transaction) raw);
+            return new AudienceTransaction(this, raw);
         }
         else {
-            throw new UnsupportedOperationException();
+            // The Audience holds its database instead of joining the
+            // Transaction, so the view carries an equal Audience that holds
+            // the Transaction as its database.
+            return new AudienceTransaction(Anonymous.get(raw), raw);
         }
     }
 
     /**
-     * Start a {@link Transaction} that this {@link Audience} joins, so the
-     * operations it performs, and the access checks that gate them, resolve
-     * within the transaction.
+     * Start a {@link Transaction} that this {@link Audience} operates within,
+     * so the operations it performs, and the access checks that gate them,
+     * resolve within the transaction.
      * <p>
      * Every operation on the returned view behaves the same as the operation on
      * this {@link Audience}, just within the confines of the transaction: reads
@@ -1137,36 +1150,28 @@ public interface Audience extends DatabaseInterface, Transactional {
      * AtomicRetryPolicy}.
      * </p>
      *
-     * @return an open {@link Transaction} that this {@link Audience} joined
-     * @throws IllegalStateException if this {@link Audience} has no binding, or
-     *             if it is already bound to an open {@link Transaction}
-     * @throws UnsupportedOperationException if this {@link Audience} is not a
-     *             {@link Record}
+     * @return an open {@link Transaction} that scopes this {@link Audience}
+     * @throws IllegalStateException if this {@link Audience Audience's}
+     *             database does not support transactions, or if it already
+     *             operates within an open {@link Transaction}
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             binding
      */
     @Override
     public default Transaction startTransaction() {
-        if(this instanceof Record) {
-            Record record = (Record) this;
-            Runway harness = Reflection.call(record, "harness");
-            Verify.that(harness != null, "Cannot start a Transaction because"
-                    + " this Audience has no binding");
-            boolean inOpenTransaction = Reflection.call(record,
-                    "isBoundToOpenTransaction");
-            Verify.that(!inOpenTransaction, "Cannot start a Transaction"
-                    + " because this Audience is already bound to an open"
-                    + " Transaction");
-            Transaction transaction = harness.startTransaction();
-            try {
-                Reflection.call(transaction, "join", record);
+        DatabaseInterface db = $db();
+        Verify.that(db instanceof Transactional,
+                "This Audience's database does not support transactions");
+        Transaction transaction = ((Transactional) db).startTransaction();
+        try {
+            if(this instanceof Record) {
+                Reflection.call(transaction, "join", this);
             }
-            catch (Throwable t) {
-                transaction.close();
-                throw t;
-            }
-            return new AudienceTransaction(this, transaction);
+            return (Transaction) scope(transaction);
         }
-        else {
-            throw new UnsupportedOperationException();
+        catch (Throwable t) {
+            transaction.close();
+            throw t;
         }
     }
 
@@ -1188,21 +1193,21 @@ public interface Audience extends DatabaseInterface, Transactional {
      *
      * @param work the work to run
      * @return the result of {@code work}
-     * @throws IllegalStateException if this {@link Audience} has no binding, or
-     *             if it is bound to an open transaction that another thread
-     *             owns or that a failed save poisoned
-     * @throws UnsupportedOperationException if this {@link Audience} is not a
-     *             {@link Record}
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Audience Audience's}
+     *             database does not support transactions, or if it is bound to
+     *             an open transaction that another thread owns or that a failed
+     *             save poisoned
      */
     @Override
     public default <T> T transactAndSupply(
             Function<TransactionInterface, T> work) {
-        if(this instanceof Record) {
-            return ((Record) this).transactAndSupply(work);
-        }
-        else {
-            throw new UnsupportedOperationException();
-        }
+        DatabaseInterface db = $db();
+        Verify.that(db instanceof Transactional,
+                "This Audience's database does not support transactions");
+        return ((Transactional) db).transactAndSupply(
+                transaction -> work.apply(scope(transaction)));
     }
 
     /**

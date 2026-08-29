@@ -216,7 +216,7 @@ public class AdHocRecordCompositionTest {
                 () -> Arrays.asList(publicDoc, privateDoc));
 
         // Anonymous audience should only see public documents
-        Audience anonymous = Audience.anonymous();
+        Audience anonymous = anonymous();
         Predicate<AccessControlledAdHocRecord> filter = anonymous
                 .$checkIfVisible();
         Set<AccessControlledAdHocRecord> results = db
@@ -313,6 +313,28 @@ public class AdHocRecordCompositionTest {
 
         // User should always be able to see themselves
         Assert.assertTrue(filter.test(user));
+    }
+
+    /**
+     * Return an anonymous {@link Audience} that holds a database which refuses
+     * every operation, for policy-only assertions.
+     *
+     * @return the anonymous {@link Audience}
+     */
+    private static Audience anonymous() {
+        return Audience.anonymous(new DatabaseInterface() {
+
+            @Override
+            public <T extends Record> T create(Class<T> clazz, Object... args) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Selections select(Selection<?>... selections) {
+                throw new UnsupportedOperationException();
+            }
+
+        });
     }
 
     // ========================================================================

@@ -16,6 +16,7 @@
 package com.cinchapi.runway.access;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -723,55 +724,6 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the anonymous {@link Audience} refuses
-     * every transactional operation.
-     * <p>
-     * <strong>Start state:</strong> No prior state needed.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Get {@link Audience#anonymous()}.</li>
-     * <li>Call {@code startTransaction()}, {@code transactAndSupply(...)},
-     * {@code transact(...)} and {@code scope(...)} on it.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> Every call throws an
-     * {@link UnsupportedOperationException}.
-     */
-    @Test
-    public void testAnonymousAudienceRefusesTransactionalOperations() {
-        Audience anonymous = Audience.anonymous();
-        try {
-            anonymous.startTransaction();
-            Assert.fail("Expected an UnsupportedOperationException");
-        }
-        catch (UnsupportedOperationException e) {
-            // expected
-        }
-        try {
-            anonymous.transactAndSupply(transaction -> null);
-            Assert.fail("Expected an UnsupportedOperationException");
-        }
-        catch (UnsupportedOperationException e) {
-            // expected
-        }
-        try {
-            anonymous.transact(transaction -> {});
-            Assert.fail("Expected an UnsupportedOperationException");
-        }
-        catch (UnsupportedOperationException e) {
-            // expected
-        }
-        try (Transaction transaction = runway.startTransaction()) {
-            anonymous.scope(transaction);
-            Assert.fail("Expected an UnsupportedOperationException");
-        }
-        catch (UnsupportedOperationException e) {
-            // expected
-        }
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that {@code scope} refuses a
      * {@link Transaction} that the {@link Audience} has not joined, instead of
      * returning a view whose reads and writes resolve in different scopes.
@@ -891,6 +843,17 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
 
             @Override
             public boolean save(boolean preventStaleWrites, Record... records) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Transaction startTransaction() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public <T> T transactAndSupply(
+                    Function<TransactionInterface, T> work) {
                 throw new UnsupportedOperationException();
             }
 

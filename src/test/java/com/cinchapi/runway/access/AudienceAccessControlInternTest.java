@@ -182,31 +182,31 @@ public class AudienceAccessControlInternTest
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the anonymous {@link Audience}, which
-     * has no transactional scope, does not support {@code intern}, consistent
-     * with the atomic update operations.
+     * <strong>Goal:</strong> Verify that {@code intern} through an anonymous
+     * {@link Audience} is refused by the creation rules of the {@link Record},
+     * so nothing changes.
      * <p>
      * <strong>Start state:</strong> No saved {@link Employer Employers}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Call {@code intern} on {@link Audience#anonymous()} with a new
-     * {@link Employer}.</li>
+     * {@link Employer}, which an anonymous {@link Audience} cannot create.</li>
      * <li>Catch the expected exception, then load every {@link Employer}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> An {@link UnsupportedOperationException} is
-     * thrown and no {@link Employer} exists in the database.
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * and no {@link Employer} exists in the database.
      */
     @Test
-    public void testInternUnsupportedForAnonymousAudience() {
+    public void testAnonymousInternRefusedWithoutCreatePermission() {
         Employer probe = new Employer();
         probe.name = "Acme";
         boolean threw = false;
         try {
             Audience.anonymous().intern(probe);
         }
-        catch (UnsupportedOperationException e) {
+        catch (RestrictedAccessException e) {
             threw = true;
         }
         Assert.assertTrue(threw);

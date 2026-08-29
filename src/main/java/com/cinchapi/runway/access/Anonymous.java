@@ -15,15 +15,23 @@
  */
 package com.cinchapi.runway.access;
 
+import com.cinchapi.common.base.Verify;
+import com.cinchapi.runway.DatabaseInterface;
+
 /**
- * A singleton {@link Audience} that represents an unauthenticated or unknown
- * user in the access control framework.
+ * An {@link Audience} that represents an unauthenticated or unknown user in the
+ * access control framework.
  * <p>
  * The {@link Anonymous} class provides a default {@link Audience} for scenarios
  * where no specific audience context is available, such as public API endpoints
  * or unauthenticated requests. It enables the access control framework to
  * handle these cases consistently without requiring special logic for null or
  * missing {@link Audience} instances.
+ * </p>
+ * <p>
+ * Every {@link Anonymous} audience is equal to every other one, regardless of
+ * the database it operates against, because each represents the same absence of
+ * identity.
  * </p>
  * <p>
  * Access rules for {@link Anonymous} are typically more restrictive than those
@@ -35,9 +43,8 @@ package com.cinchapi.runway.access;
  * </p>
  * <h2>Usage</h2>
  * <p>
- * The {@link Anonymous} instance should be obtained through
- * {@link Audience#anonymous()} rather than directly calling {@link #get()}.
- * This ensures consistency with the {@link Audience} interface contract.
+ * Obtain an {@link Anonymous} audience through {@link Audience#anonymous()} or
+ * {@link Audience#anonymous(DatabaseInterface)}.
  * </p>
  *
  * @author Jeff Nelson
@@ -45,26 +52,44 @@ package com.cinchapi.runway.access;
 final class Anonymous implements Audience {
 
     /**
-     * The singleton instance of {@link Anonymous}.
-     */
-    private static final Anonymous INSTANCE = new Anonymous();
-
-    /**
-     * Return the singleton {@link Anonymous} instance.
-     * <p>
-     * Prefer using {@link Audience#anonymous()} over this method for
-     * consistency with the {@link Audience} interface.
-     * </p>
+     * Return an {@link Anonymous} audience that operates against {@code db}.
      *
-     * @return the {@link Anonymous} instance
+     * @param db the {@link DatabaseInterface} the audience operates against
+     * @return the {@link Anonymous} audience
      */
-    public static Anonymous get() {
-        return INSTANCE;
+    static Anonymous get(DatabaseInterface db) {
+        Verify.thatArgument(db != null,
+                "An anonymous Audience requires a database");
+        return new Anonymous(db);
     }
 
     /**
-     * Construct a new instance.
+     * The database this {@link Anonymous} audience operates against.
      */
-    private Anonymous() {/* no-init */}
+    private final DatabaseInterface db;
+
+    /**
+     * Construct a new instance.
+     *
+     * @param db the {@link DatabaseInterface} this audience operates against
+     */
+    private Anonymous(DatabaseInterface db) {
+        this.db = db;
+    }
+
+    @Override
+    public DatabaseInterface $db() {
+        return db;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        return obj instanceof Anonymous;
+    }
+
+    @Override
+    public int hashCode() {
+        return Anonymous.class.hashCode();
+    }
 
 }

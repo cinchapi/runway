@@ -6961,7 +6961,8 @@ public abstract class Record implements Comparable<Record> {
      *
      * @author Jeff Nelson
      */
-    private static class ReactiveBinding extends Binding {
+    private static class ReactiveBinding extends Binding implements
+            Transactional {
 
         /**
          * A reference to the enclosing {@link Record} whose state is watched
@@ -6976,6 +6977,11 @@ public abstract class Record implements Comparable<Record> {
          */
         private ReactiveBinding(Record tracked) {
             this.tracked = tracked;
+        }
+
+        @Override
+        public <T extends Record> T create(Class<T> clazz, Object... args) {
+            return delegate().create(clazz, args);
         }
 
         @Nullable
@@ -7024,6 +7030,16 @@ public abstract class Record implements Comparable<Record> {
         @Override
         public Selections select(Selection<?>... selections) {
             return delegate().select(selections);
+        }
+
+        @Override
+        public Transaction startTransaction() {
+            return ((Transactional) delegate()).startTransaction();
+        }
+
+        @Override
+        public <T> T transactAndSupply(Function<TransactionInterface, T> work) {
+            return ((Transactional) delegate()).transactAndSupply(work);
         }
 
         @Override

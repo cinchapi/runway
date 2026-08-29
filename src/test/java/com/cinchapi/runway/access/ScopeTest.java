@@ -25,8 +25,10 @@ import org.junit.Test;
 
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
+import com.cinchapi.runway.Selections;
 
 /**
  * Unit tests for the {@link Scope} factory methods and singleton guarantees.
@@ -345,7 +347,7 @@ public class ScopeTest {
      * <strong>Goal:</strong> Verify that
      * {@link Scope#hybrid(Criteria, Audience)} defaults the per-record
      * predicate to {@link AccessControl#$isDiscoverableByAnonymous} when the
-     * supplied {@link Audience} is {@link Audience#anonymous()}.
+     * supplied {@link Audience} is anonymous.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
@@ -353,9 +355,8 @@ public class ScopeTest {
      * <ul>
      * <li>Construct two {@link TestAccessControlRecord
      * TestAccessControlRecords}: one anonymous-discoverable, one not.</li>
-     * <li>Call
-     * {@code Scope.hybrid(criteria, Audience.anonymous()).test(record)} on
-     * each.</li>
+     * <li>Call {@code Scope.hybrid(criteria, anonymous).test(record)} with an
+     * anonymous {@link Audience} on each.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The anonymous-discoverable record passes; the
@@ -365,7 +366,7 @@ public class ScopeTest {
     public void testHybridDefaultPredicateUsesAnonymousDiscoverability() {
         Criteria criteria = Criteria.where().key("active")
                 .operator(Operator.EQUALS).value(true).build();
-        Scope scope = Scope.hybrid(criteria, Audience.anonymous());
+        Scope scope = Scope.hybrid(criteria, anonymous());
         Assert.assertTrue(scope.test(new TestAccessControlRecord(false, true)));
         Assert.assertFalse(
                 scope.test(new TestAccessControlRecord(true, false)));
@@ -430,6 +431,28 @@ public class ScopeTest {
         Selection<?> result = Scope.hybrid(scoped, r -> true).apply(selection);
         Assert.assertNotNull(result);
         Assert.assertNotSame(selection, result);
+    }
+
+    /**
+     * Return an anonymous {@link Audience} that holds a database which refuses
+     * every operation, for policy-only assertions.
+     *
+     * @return the anonymous {@link Audience}
+     */
+    private static Audience anonymous() {
+        return Audience.anonymous(new DatabaseInterface() {
+
+            @Override
+            public <T extends Record> T create(Class<T> clazz, Object... args) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Selections select(Selection<?>... selections) {
+                throw new UnsupportedOperationException();
+            }
+
+        });
     }
 
     /**

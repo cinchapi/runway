@@ -41,10 +41,17 @@ import com.cinchapi.concourse.lang.sort.Order;
  * {@link Transaction}, which adds the lifecycle verbs for the caller that owns
  * them.
  * </p>
+ * <p>
+ * A {@link TransactionInterface} is itself {@link Transactional}:
+ * {@link #transact(java.util.function.Consumer) transact} and
+ * {@link #transactAndSupply(java.util.function.Function) transactAndSupply}
+ * join the transaction, and {@link #startTransaction()} is refused while it is
+ * open, because transactions do not nest.
+ * </p>
  *
  * @author Jeff Nelson
  */
-public interface TransactionInterface extends DatabaseInterface {
+public interface TransactionInterface extends DatabaseInterface, Transactional {
 
     /**
      * Register a {@code hook} to run once, after the transaction ends without a
@@ -95,6 +102,7 @@ public interface TransactionInterface extends DatabaseInterface {
      * @throws IllegalStateException if a save failed within the open
      *             transaction
      */
+    @Override
     <T extends Record> T create(Class<T> clazz, Object... args);
 
     /**
