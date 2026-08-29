@@ -17,6 +17,7 @@ package com.cinchapi.runway.access;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import javax.annotation.Nonnull;
@@ -29,8 +30,11 @@ import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.AtomicRetryPolicy;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Record.Revision;
+import com.cinchapi.runway.RetryExhaustedException;
+import com.cinchapi.runway.Runway;
 import com.cinchapi.runway.Transaction;
 import com.cinchapi.runway.Unique;
 
@@ -791,6 +795,62 @@ public class AudienceAccessControlInternTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an {@code intern} whose retries are
+     * exhausted leaves the probe with the binding the caller chose, instead of
+     * a binding that a discarded attempt left behind.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} that permits one retry,
+     * holding one saved open {@link Gate}, with an {@link Admin} and a
+     * {@link ContendedVault} probe assigned to it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Read the probe's binding before the call.</li>
+     * <li>Call {@code intern} on the {@link Admin} with the probe, whose
+     * creation rule reads the {@link Gate} through the transaction and then
+     * changes it from outside, so every attempt fails to commit.</li>
+     * <li>Catch the expected exception and read the probe's binding.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RetryExhaustedException} is thrown
+     * after two attempts, and the probe holds the binding it had before the
+     * call.
+     */
+    @Test
+    public void testInternRetryExhaustionRestoresTheCallersBinding()
+            throws Exception {
+        try (Runway contentious = runwayBuilder()
+                .atomicRetryPolicy(AtomicRetryPolicy.create(1, 0)).build()) {
+            Gate gate = new Gate();
+            gate.open = true;
+            gate.assign(contentious);
+            Assert.assertTrue(gate.save());
+            Admin admin = new Admin();
+            admin.name = "System Admin";
+            admin.email = "admin@example.com";
+            admin.assign(contentious);
+            ContendedVault.OUTSIDE.set(contentious);
+            ContendedVault.ATTEMPTS.set(0);
+            ContendedVault probe = new ContendedVault("V-1", gate);
+            probe.assign(contentious);
+            Object original = Reflection.get("binding", probe);
+            boolean threw = false;
+            try {
+                admin.intern(probe);
+            }
+            catch (RetryExhaustedException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            Assert.assertEquals(2, ContendedVault.ATTEMPTS.get());
+            Assert.assertSame(original, Reflection.get("binding", probe));
+        }
+        finally {
+            ContendedVault.OUTSIDE.set(null);
+        }
+    }
+
+    /**
      * Return a {@link Criteria} that matches every {@link Employer} whose
      * {@code name} equals the given {@code value}.
      *
@@ -1084,6 +1144,52 @@ public class AudienceAccessControlInternTest
         @Override
         public Set<String> $writableByAnonymous() {
             return ALL_KEYS;
+        }
+    }
+
+    /**
+     * A {@link Vault} whose creation rule reads the linked {@link Gate} within
+     * the transaction and then changes it from outside, so no attempt to commit
+     * succeeds.
+     *
+     * @author Jeff Nelson
+     */
+    public static class ContendedVault extends Vault {
+
+        /**
+         * The number of creation checks that ran.
+         */
+        public static final AtomicInteger ATTEMPTS = new AtomicInteger();
+
+        /**
+         * The {@link Runway} through which the creation rule writes from
+         * outside the transaction.
+         */
+        public static final AtomicReference<Runway> OUTSIDE = new AtomicReference<>();
+
+        /**
+         * Construct a new instance.
+         */
+        public ContendedVault() {/* no-init */}
+
+        /**
+         * Construct a new instance.
+         *
+         * @param code the identity code
+         * @param gate the {@link Gate} that governs creation
+         */
+        public ContendedVault(String code, Gate gate) {
+            super(code, gate);
+        }
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            gate.isOpen();
+            Gate outside = OUTSIDE.get().load(Gate.class, gate.id());
+            outside.open = !outside.open;
+            outside.save();
+            ATTEMPTS.incrementAndGet();
+            return true;
         }
     }
 

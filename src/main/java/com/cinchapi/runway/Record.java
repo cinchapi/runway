@@ -410,14 +410,18 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Capture the binding of every loaded {@link Record} that is reachable from
-     * the {@code values}, and return a task that restores each captured
-     * binding.
+     * the {@code values} and is not bound to {@code owner}, and return a task
+     * that restores each captured binding.
      *
      * @param values the values whose reachable {@link Record Records} are
      *            captured
+     * @param owner the {@link DatabaseInterface} whose {@link Record Records}
+     *            keep the bindings they hold, or {@code null} to capture every
+     *            reachable {@link Record}
      * @return a task that restores every captured binding
      */
-    static Runnable snapshotBindings(Object[] values) {
+    static Runnable snapshotBindings(Object[] values,
+            @Nullable DatabaseInterface owner) {
         Set<Record> graph = Sets.newIdentityHashSet();
         Set<Record> seen = Sets.newIdentityHashSet();
         for (Object value : values) {
@@ -426,12 +430,14 @@ public abstract class Record implements Comparable<Record> {
         }
         List<Runnable> restores = Lists.newArrayListWithCapacity(graph.size());
         for (Record record : graph) {
-            Binding binding = record.binding;
-            ConcourseProvider connections = record.connections;
-            restores.add(() -> {
-                record.binding = binding;
-                record.connections = connections;
-            });
+            if(record.binding != owner) {
+                Binding binding = record.binding;
+                ConcourseProvider connections = record.connections;
+                restores.add(() -> {
+                    record.binding = binding;
+                    record.connections = connections;
+                });
+            }
         }
         return () -> restores.forEach(Runnable::run);
     }

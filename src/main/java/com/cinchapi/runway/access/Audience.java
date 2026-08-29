@@ -274,7 +274,7 @@ public interface Audience extends DatabaseInterface, Transactional {
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
         Runnable rollback = Reflection.callStatic(Record.class,
-                "snapshotBindings", (Object) args);
+                "snapshotBindings", (Object) args, null);
         // The database binds the record, and its reachable graph, before the
         // permission check runs, so the check and a later save both resolve
         // within the context this Audience operates against.
@@ -958,9 +958,10 @@ public interface Audience extends DatabaseInterface, Transactional {
      * <p>
      * Unless this method saves {@code record}, the {@code record} and every
      * {@link Record} reachable from it keep the bindings they had before the
-     * call. After a save fails within an open
-     * {@link com.cinchapi.runway.Transaction Transaction}, its failed-save
-     * contract governs.
+     * call. The exception is a {@link Record} that this {@link Audience} also
+     * reaches, whose binding belongs to the transactional scope. After a save
+     * fails within an open {@link com.cinchapi.runway.Transaction Transaction},
+     * its failed-save contract governs.
      * </p>
      * <p>
      * <strong>NOTE:</strong> A refusal of a hidden match still confirms that a
@@ -1004,11 +1005,14 @@ public interface Audience extends DatabaseInterface, Transactional {
                 TransactionInterface transaction = AudienceTransaction
                         .raw(view);
                 attempted.set(transaction);
-                // The capture runs after the transactional scope joins this
-                // Audience, so a Record whose binding the scope owns is
-                // captured as it stands and the rollback leaves it alone.
-                rollback.set(Reflection.callStatic(Record.class,
-                        "snapshotBindings", (Object) Array.containing(record)));
+                if(rollback.get() == null) {
+                    // Only the first attempt sees the bindings the caller
+                    // chose, and a Record that the transaction already holds
+                    // is not one this operation replaces.
+                    rollback.set(Reflection.callStatic(Record.class,
+                            "snapshotBindings",
+                            (Object) Array.containing(record), transaction));
+                }
                 // Join the record and its reachable graph to the
                 // transactional scope before the permission check
                 // runs, so the check and the save both resolve within
