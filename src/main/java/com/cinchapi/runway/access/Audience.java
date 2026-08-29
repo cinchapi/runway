@@ -1082,8 +1082,8 @@ public interface Audience extends DatabaseInterface, Transactional {
      * {@link #transactAndSupply(Function) transactAndSupply}; use
      * {@link #startTransaction()} to start a {@link Transaction} that this
      * {@link Audience} joins. An {@link Audience} that holds its database, such
-     * as the {@link #anonymous() anonymous} audience, is scoped through an
-     * equal {@link Audience} that holds the transaction.
+     * as the {@link #anonymous() anonymous} audience, can scope any
+     * {@link Transaction}.
      * </p>
      * <p>
      * This is a framework-private method and should not be called directly.

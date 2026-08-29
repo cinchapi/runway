@@ -512,6 +512,8 @@ public class AnonymousTransactionScopeTest
 
     /**
      * A note that an anonymous {@link Audience} may discover, read and vote on.
+     *
+     * @author Jeff Nelson
      */
     protected static class GuestNote extends Record implements AccessControl {
 

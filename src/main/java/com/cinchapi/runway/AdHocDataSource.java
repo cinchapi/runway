@@ -145,10 +145,6 @@ public class AdHocDataSource<T extends AdHocRecord> implements
 
     /**
      * {@inheritDoc}
-     * <p>
-     * An {@link AdHocDataSource} serves records that its supplier provides, so
-     * it cannot create one.
-     * </p>
      *
      * @throws UnsupportedOperationException always
      */

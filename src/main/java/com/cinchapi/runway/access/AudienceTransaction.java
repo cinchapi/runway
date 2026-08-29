@@ -36,8 +36,7 @@ import com.cinchapi.runway.TransactionInterface;
  * <p>
  * Every database operation delegates to the {@link Audience}, so reads observe
  * the {@link Audience Audience's} visibility and writes require its
- * permissions, and each operation resolves within the {@link Transaction}
- * because the {@link Audience} is bound to it or holds it as its database. The
+ * permissions, and each operation resolves within the {@link Transaction}. The
  * lifecycle methods drive the {@link Transaction} directly.
  * </p>
  * <p>

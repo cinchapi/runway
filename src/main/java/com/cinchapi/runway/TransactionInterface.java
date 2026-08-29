@@ -46,7 +46,7 @@ import com.cinchapi.concourse.lang.sort.Order;
  * {@link #transact(java.util.function.Consumer) transact} and
  * {@link #transactAndSupply(java.util.function.Function) transactAndSupply}
  * join the transaction, and {@link #startTransaction()} is refused while it is
- * open, because transactions do not nest.
+ * open.
  * </p>
  *
  * @author Jeff Nelson

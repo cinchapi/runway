@@ -731,10 +731,9 @@ class DatabaseTransaction extends Binding implements Transaction {
     /**
      * {@inheritDoc}
      * <p>
-     * While the transaction is open, starting another is refused because
-     * transactions do not nest. After the transaction ends, a new
-     * {@link Transaction} starts on the enclosing {@link Runway}, per the
-     * fall-through contract.
+     * While the transaction is open, starting another is refused. After the
+     * transaction ends, a new {@link Transaction} starts on the enclosing
+     * {@link Runway}.
      * </p>
      */
     @Override

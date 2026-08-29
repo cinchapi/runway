@@ -1033,13 +1033,7 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * A globally pinned {@link Runway} instance that is automatically assigned
-     * to newly created {@link Record} instances when no explicit assignment is
-     * made.
-     * <p>
-     * This field allows for automatic {@link Runway} assignment in single
-     * instance scenarios, eliminating the need for explicit assignment in most
-     * applications.
-     * </p>
+     * to a newly created {@link Record} when no explicit assignment is made.
      */
     static volatile Runway PINNED_RUNWAY_INSTANCE = null;
 

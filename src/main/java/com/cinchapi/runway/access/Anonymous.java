@@ -32,8 +32,7 @@ import com.cinchapi.runway.DatabaseInterface;
  * </p>
  * <p>
  * Every {@link Anonymous} audience is equal to every other one, regardless of
- * the database it operates against, because each represents the same absence of
- * identity.
+ * the database it operates against.
  * </p>
  * <p>
  * An {@link Anonymous} audience may name no database, in which case it answers

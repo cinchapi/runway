@@ -285,9 +285,8 @@ public interface AccessControl {
      * Authorize that the specified {@link Audience} is permitted to create this
      * {@link Record}.
      * <p>
-     * An anonymous {@link Audience}, given as either {@code null} or the
-     * {@link Audience#anonymous() anonymous} instance, is permitted when
-     * {@link #$isCreatableByAnonymous()} allows creation. Any other
+     * An anonymous {@link Audience}, including a {@code null} one, is permitted
+     * when {@link #$isCreatableByAnonymous()} allows creation. Any other
      * {@link Audience} is permitted when {@link #$isCreatableBy(Audience)}
      * allows creation. These are the same rules that govern creation through an
      * {@link Audience}.
