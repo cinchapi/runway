@@ -374,6 +374,30 @@ public class AdHocDataSourceTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an {@link AdHocDataSource} refuses to
+     * create a {@link Record}, because it serves the records its supplier
+     * provides.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} over an empty
+     * supplier.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code create}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link UnsupportedOperationException} is
+     * thrown.
+     */
+    @Test(expected = UnsupportedOperationException.class)
+    public void testCreateIsUnsupported() {
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
+                MockAdHocRecord.class, () -> Arrays.asList());
+
+        db.create(MockAdHocRecord.class);
+    }
+
+    /**
      * A mock {@link AdHocRecord} for testing.
      */
     static class MockAdHocRecord extends AdHocRecord {

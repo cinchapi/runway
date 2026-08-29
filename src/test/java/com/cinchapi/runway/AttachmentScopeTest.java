@@ -202,6 +202,38 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
         }
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} created through an
+     * {@link AttachmentScope} is bound to the underlying {@link Runway}, so a
+     * direct {@code save()} persists.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach an {@link AdHocDataSource} to the {@link #runway}.</li>
+     * <li>Call {@code create} on the returned {@link AttachmentScope}, set the
+     * name and {@code save()} the {@link Person} directly.</li>
+     * <li>Load the {@link Person} through the {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Person} is durable with the saved
+     * name.
+     */
+    @Test
+    public void testCreateBindsRecordToUnderlyingRunway() {
+        AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> Arrays.asList());
+
+        try (AttachmentScope scope = runway.attach(source)) {
+            Person person = scope.create(Person.class);
+            person.name = "TestPerson";
+            Assert.assertTrue(person.save());
+            Assert.assertEquals("TestPerson",
+                    runway.load(Person.class, person.id()).name);
+        }
+    }
+
     // ========================================================================
     // Thread Isolation Tests
     // ========================================================================
