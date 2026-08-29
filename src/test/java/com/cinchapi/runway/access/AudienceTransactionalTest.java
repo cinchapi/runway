@@ -988,6 +988,43 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code $db} refuses an
+     * {@link Audience} that is neither a {@link Record} nor anonymous with a
+     * clear exception, instead of an obscure reflection failure.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Implement {@link Audience} with a minimal custom class.</li>
+     * <li>Call {@code transactAndSupply(...)}, which resolves the database
+     * through {@code $db}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws an
+     * {@link IllegalStateException} whose message names the offending type.
+     */
+    @Test
+    public void testDbRefusesCustomAudience() {
+        Audience custom = new Audience() {
+
+            @Override
+            public Selections select(Selection<?>... selections) {
+                return null;
+            }
+
+        };
+        try {
+            custom.transactAndSupply(view -> null);
+            Assert.fail("Expected an IllegalStateException");
+        }
+        catch (IllegalStateException e) {
+            Assert.assertTrue(
+                    e.getMessage().contains(custom.getClass().getName()));
+        }
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that transactional work on an unbound
      * {@link Audience} record is refused with the documented exception.
      * <p>

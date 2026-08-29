@@ -169,6 +169,22 @@ class AccessControlSupport {
     }
 
     /**
+     * Return {@code audience} when it is non-null; otherwise, return an
+     * anonymous {@link Audience} that operates against the {@code subject
+     * Subject's} own database context.
+     *
+     * @param audience the {@link Audience} to resolve; may be {@code null}
+     * @param subject the {@link Record} on whose behalf an anonymous default
+     *            operates
+     * @return the resolved {@link Audience}, never {@code null}
+     */
+    public static Audience orAnonymous(@Nullable Audience audience,
+            Record subject) {
+        return audience != null ? audience
+                : Audience.anonymous(Reflection.get("db", subject));
+    }
+
+    /**
      * Atomically find a {@link Record} on behalf of {@code audience} and update
      * the value of {@code key} within the transactional scope of the
      * {@code audience}.

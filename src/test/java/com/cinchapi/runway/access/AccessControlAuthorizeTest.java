@@ -23,6 +23,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.Runway;
 
 /**
  * Tests for {@link AccessControl#authorize(Audience) authorize}, covering how a
@@ -182,6 +183,51 @@ public class AccessControlAuthorizeTest extends AudienceAccessControlBaseTest {
         }
         catch (RestrictedAccessException e) {
             // Expected exception
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code null} audience defaults to
+     * anonymous rules even when no single {@link Runway} instance is pinned.
+     * <p>
+     * <strong>Start state:</strong> The test {@link #runway} is open.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Open a second {@link Runway} so no instance is pinned.</li>
+     * <li>Call {@code authorize(null)} on an {@link Inquiry}, which anonymous
+     * users may create.</li>
+     * <li>Call {@code authorize(null)} on a {@link Feedback}, which anonymous
+     * users may not create, and catch the expected exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Inquiry} call does not throw and
+     * the {@link Feedback} call throws a {@link RestrictedAccessException},
+     * which proves the anonymous rules were applied instead of a failure to
+     * resolve a database.
+     */
+    @Test
+    public void testAuthorizeDefaultsNullAudienceToAnonymousWhenNoInstanceIsPinned() {
+        Runway other = runwayBuilder().build();
+        try {
+            Inquiry inquiry = new Inquiry();
+            inquiry.message = "Is the posted role still open?";
+            inquiry.authorize(null);
+            Feedback feedback = new Feedback();
+            feedback.comments = "The interview process was smooth";
+            try {
+                feedback.authorize(null);
+                Assert.fail("Expected a RestrictedAccessException");
+            }
+            catch (RestrictedAccessException e) {
+                // expected
+            }
+        }
+        finally {
+            try {
+                other.close();
+            }
+            catch (Exception ignored) {/* close failure not under test */}
         }
     }
 

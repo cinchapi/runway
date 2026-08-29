@@ -300,7 +300,7 @@ public interface AccessControl {
      */
     public default void authorize(@Nullable Audience audience)
             throws RestrictedAccessException {
-        audience = audience == null ? Audience.anonymous() : audience;
+        audience = AccessControlSupport.orAnonymous(audience, $this());
         AccessControlSupport.verifyIsCreatableByAudience(audience, $this());
     }
 
@@ -313,7 +313,7 @@ public interface AccessControl {
      *             permitted to delete this {@link Record}
      */
     public default void deleteAs(@Nullable Audience audience) {
-        audience = audience == null ? Audience.anonymous() : audience;
+        audience = AccessControlSupport.orAnonymous(audience, $this());
         audience.delete($this());
     }
 
@@ -331,7 +331,7 @@ public interface AccessControl {
      *         not discoverable at all by the {@link Audience}
      */
     public default Map<String, Object> frameAs(@Nullable Audience audience) {
-        audience = audience == null ? Audience.anonymous() : audience;
+        audience = AccessControlSupport.orAnonymous(audience, $this());
         return audience.frame($this());
     }
 
@@ -351,7 +351,7 @@ public interface AccessControl {
      */
     public default Map<String, Object> frameAs(@Nullable Audience audience,
             Collection<String> keys) {
-        audience = audience == null ? Audience.anonymous() : audience;
+        audience = AccessControlSupport.orAnonymous(audience, $this());
         return audience.frame(keys, $this());
     }
 
@@ -372,7 +372,7 @@ public interface AccessControl {
      */
     public default Map<String, Object> readAs(@Nullable Audience audience,
             Collection<String> keys) {
-        audience = audience == null ? Audience.anonymous() : audience;
+        audience = AccessControlSupport.orAnonymous(audience, $this());
         return audience.read(keys, $this());
     }
 
@@ -392,7 +392,7 @@ public interface AccessControl {
      *             permitted to read the {@code key}
      */
     public default Object readAs(@Nullable Audience audience, String key) {
-        audience = audience == null ? Audience.anonymous() : audience;
+        audience = AccessControlSupport.orAnonymous(audience, $this());
         return audience.read(key, $this());
     }
 
@@ -413,7 +413,7 @@ public interface AccessControl {
      */
     public default void writeAs(@Nullable Audience audience,
             Map<String, Object> data) {
-        audience = audience == null ? Audience.anonymous() : audience;
+        audience = AccessControlSupport.orAnonymous(audience, $this());
         audience.write(data, $this());
     }
 
@@ -434,7 +434,7 @@ public interface AccessControl {
      */
     public default void writeAs(@Nullable Audience audience, String key,
             Object value) {
-        audience = audience == null ? Audience.anonymous() : audience;
+        audience = AccessControlSupport.orAnonymous(audience, $this());
         audience.write(key, value, $this());
     }
 

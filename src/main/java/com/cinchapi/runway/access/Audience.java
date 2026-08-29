@@ -220,10 +220,20 @@ public interface Audience extends DatabaseInterface, Transactional {
      * </p>
      *
      * @return the {@link DatabaseInterface}
+     * @throws IllegalStateException if this {@link Audience} is neither a
+     *             {@link Record} nor anonymous
      */
     public default DatabaseInterface $db() {
         // TODO: make private in Java 9+
-        return Reflection.get("db", this);
+        if(this instanceof Record || this instanceof Anonymous) {
+            return Reflection.get("db", this);
+        }
+        else {
+            throw new IllegalStateException(
+                    "Illegal attempt to apply the Audience interface to a"
+                            + " type that is neither a Record nor anonymous: "
+                            + this.getClass());
+        }
     }
 
     /**
@@ -245,6 +255,8 @@ public interface Audience extends DatabaseInterface, Transactional {
      * @return the newly created {@link Record}, not yet saved
      * @throws RestrictedAccessException if this {@link Audience} is not
      *             permitted to create the {@link Record}
+     * @throws UnsupportedOperationException if this {@link Audience} has no
+     *             binding, or if its database does not support record creation
      * @throws IllegalStateException if a {@link Record} reachable from the
      *             {@code args} is bound to a different open
      *             {@link com.cinchapi.runway.Transaction Transaction}, or if
