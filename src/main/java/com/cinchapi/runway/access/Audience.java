@@ -958,7 +958,7 @@ public interface Audience extends DatabaseInterface, Transactional {
      * <p>
      * Unless this method saves {@code record}, the {@code record} and every
      * {@link Record} reachable from it keep the bindings they had before the
-     * call; after a save fails within an open
+     * call. After a save fails within an open
      * {@link com.cinchapi.runway.Transaction Transaction}, its failed-save
      * contract governs.
      * </p>
@@ -993,8 +993,8 @@ public interface Audience extends DatabaseInterface, Transactional {
             throws RestrictedAccessException {
         Runnable restore = Reflection.callStatic(Record.class,
                 "snapshotBindings", (Object) Array.containing(record));
-        // Capture the marker before the first attempt, so a retried attempt
-        // restores the true original instead of what a prior attempt wrote.
+        // The work may run more than once, so the marker to restore is the one
+        // captured before the first attempt.
         Record previous = Reflection.get("_author", record);
         try {
             return transactAndSupply(view -> {
@@ -1046,8 +1046,8 @@ public interface Audience extends DatabaseInterface, Transactional {
             });
         }
         catch (RetryExhaustedException e) {
-            // Every attempt completed its work, but no commit succeeded, so
-            // nothing durable depends on the binding or the marker.
+            // Exhausted retries commit nothing, so nothing durable depends on
+            // the binding or the marker.
             Reflection.set("_author", previous, record);
             restore.run();
             throw e;

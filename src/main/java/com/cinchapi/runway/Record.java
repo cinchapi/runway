@@ -410,14 +410,8 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Capture the binding of every loaded {@link Record} that is reachable from
-     * the {@code values}, and return a task that restores each captured binding
-     * when it runs.
-     * <p>
-     * Reachability follows the persistent (non-transient) fields of each
-     * reachable {@link Record}. The task restores state that already held, so
-     * it may restore a binding that {@link #bind(Binding, ConcourseProvider)
-     * bind} would refuse.
-     * </p>
+     * the {@code values}, and return a task that restores each captured
+     * binding.
      *
      * @param values the values whose reachable {@link Record Records} are
      *            captured
