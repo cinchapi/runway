@@ -22,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
@@ -343,12 +344,33 @@ class DatabaseTransaction extends Binding implements Transaction {
      */
     @Override
     public <T extends Record> T create(Class<T> clazz, Object... args) {
+        return $create(clazz, record -> {}, args);
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The {@code gate} runs after the new {@link Record}, and its reachable
+     * graph, joins this {@link Transaction}. If the gate throws, then every
+     * binding is restored.
+     * </p>
+     */
+    @Override
+    public <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
         if(open) {
             verifyOwner();
             verifyNotPoisoned();
         }
         T record = Reflection.newInstance(clazz, args);
-        join(record);
+        Runnable restore = join(record);
+        try {
+            gate.accept(record);
+        }
+        catch (Throwable t) {
+            restore.run();
+            throw t;
+        }
         return record;
     }
 
@@ -824,9 +846,10 @@ class DatabaseTransaction extends Binding implements Transaction {
      * so each {@link Record#save() save} stages within it.
      *
      * @param record the {@link Record} that joins this {@link Transaction}
+     * @return an action that restores every binding the join changed
      */
-    void join(Record record) {
-        record.bindGraph(this, provider, Sets.newIdentityHashSet());
+    Runnable join(Record record) {
+        return record.bindGraph(this, provider, Sets.newIdentityHashSet());
     }
 
     @Override

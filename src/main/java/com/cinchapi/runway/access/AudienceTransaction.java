@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway.access;
 
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 
@@ -120,6 +121,13 @@ final class AudienceTransaction implements Transaction {
     public <T extends Record> T create(Class<T> clazz, Object... args) {
         verifyAudienceScope();
         return audience.create(clazz, args);
+    }
+
+    @Override
+    public <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
+        verifyAudienceScope();
+        return audience.$create(clazz, gate, args);
     }
 
     @Nullable

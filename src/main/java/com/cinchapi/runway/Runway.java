@@ -771,8 +771,30 @@ public final class Runway extends Binding implements
      */
     @Override
     public <T extends Record> T create(Class<T> clazz, Object... args) {
+        return $create(clazz, record -> {}, args);
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The {@code gate} runs after the new {@link Record}, and its reachable
+     * graph, is bound to this {@link Runway} instance. If the gate throws, then
+     * every binding is restored.
+     * </p>
+     */
+    @Override
+    public <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
         T record = Reflection.newInstance(clazz, args);
-        record.bindGraph(this, connections, Sets.newIdentityHashSet());
+        Runnable restore = record.bindGraph(this, connections,
+                Sets.newIdentityHashSet());
+        try {
+            gate.accept(record);
+        }
+        catch (Throwable t) {
+            restore.run();
+            throw t;
+        }
         return record;
     }
 

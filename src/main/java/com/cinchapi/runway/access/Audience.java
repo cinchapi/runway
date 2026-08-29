@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
@@ -249,7 +250,8 @@ public interface Audience extends DatabaseInterface, Transactional {
      * The returned {@link Record} is not saved to the database until
      * {@link Record#save()} is called, and it is bound to that same context, so
      * a direct {@link Record#save() save} persists within it (e.g., within a
-     * {@link com.cinchapi.runway.Transaction Transaction}).
+     * {@link com.cinchapi.runway.Transaction Transaction}). If the create is
+     * refused, then every binding is as it was before the call.
      * </p>
      *
      * @param clazz the type of {@link Record} to create
@@ -270,15 +272,33 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
-        // The database binds the record, and its reachable graph, before the
-        // permission check runs, so the check and a later save both resolve
-        // within the context this Audience operates against.
-        T record = $db().create(clazz, args);
-        verifyIsCreatableByAudience(this, record);
+        T record = $create(clazz, created -> {}, args);
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
         }
         return record;
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The database binds the record, and its reachable graph, before the
+     * permission check and the {@code gate} run, so both resolve within the
+     * context this {@link Audience} operates against. If either throws, then
+     * every binding is restored, so a refused create leaves the {@code args},
+     * and every {@link Record} reachable from them, bound as they were.
+     * </p>
+     *
+     * @throws RestrictedAccessException if this {@link Audience} is not
+     *             permitted to create the {@link Record}
+     */
+    @Override
+    public default <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
+        return $db().$create(clazz, created -> {
+            verifyIsCreatableByAudience(this, created);
+            gate.accept(created);
+        }, args);
     }
 
     /**
@@ -949,6 +969,9 @@ public interface Audience extends DatabaseInterface, Transactional {
      * {@link Record} with the identity exists, even though this
      * {@link Audience} cannot see it.
      * </p>
+     * <p>
+     * If the intern throws, then every binding is as it was before the call.
+     * </p>
      *
      * @param record the {@link Record} whose identity is interned
      * @param <T> the type of {@link Record}
@@ -982,27 +1005,35 @@ public interface Audience extends DatabaseInterface, Transactional {
             // transactional scope before the permission check
             // runs, so the check and the save both resolve within
             // it, consistent with #create.
-            Reflection.call(transaction, "join", record);
-            verifyIsCreatableByAudience(this, record);
-            Record previous = Reflection.get("_author", record);
-            if(this instanceof Record) {
-                Reflection.set("_author", (Record) this, record);
-            }
-            T interned = transaction.intern(record);
-            if(interned != record) {
-                // The record was never saved, so nothing consumed
-                // the author marker; restore it so a later save
-                // is not attributed to this Audience.
-                Reflection.set("_author", previous, record);
-                if(!$checkIfInScopeOrVisible().test(interned)) {
-                    throw new RestrictedAccessException();
+            Runnable restore = Reflection.call(transaction, "join", record);
+            try {
+                verifyIsCreatableByAudience(this, record);
+                Record previous = Reflection.get("_author", record);
+                if(this instanceof Record) {
+                    Reflection.set("_author", (Record) this, record);
+                }
+                T interned = transaction.intern(record);
+                if(interned != record) {
+                    // The record was never saved, so nothing consumed
+                    // the author marker; restore it so a later save
+                    // is not attributed to this Audience.
+                    Reflection.set("_author", previous, record);
+                    if(!$checkIfInScopeOrVisible().test(interned)) {
+                        throw new RestrictedAccessException();
+                    }
+                    else {
+                        return interned;
+                    }
                 }
                 else {
                     return interned;
                 }
             }
-            else {
-                return interned;
+            catch (Throwable t) {
+                // A refused or failed intern must leave every binding as it
+                // was before the call.
+                restore.run();
+                throw t;
             }
         });
     }
@@ -1185,13 +1216,17 @@ public interface Audience extends DatabaseInterface, Transactional {
         Verify.that(db instanceof Transactional,
                 "This Audience's database does not support transactions");
         Transaction transaction = ((Transactional) db).startTransaction();
+        Runnable restore = null;
         try {
             if(this instanceof Record) {
-                Reflection.call(transaction, "join", this);
+                restore = Reflection.call(transaction, "join", this);
             }
             return (Transaction) scope(transaction);
         }
         catch (Throwable t) {
+            if(restore != null) {
+                restore.run();
+            }
             transaction.close();
             throw t;
         }

@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway;
 
+import java.util.function.Consumer;
+
 /**
  * A scoped attachment of {@link AdHocDataSource AdHocDataSources} to a
  * {@link Runway} instance.
@@ -81,6 +83,12 @@ public class AttachmentScope implements DatabaseInterface, AutoCloseable {
     @Override
     public <T extends Record> T create(Class<T> clazz, Object... args) {
         return runway.create(clazz, args);
+    }
+
+    @Override
+    public <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
+        return runway.$create(clazz, gate, args);
     }
 
     @Override

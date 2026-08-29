@@ -18,6 +18,7 @@ package com.cinchapi.runway;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
@@ -351,6 +352,32 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> T create(Class<T> clazz, Object... args) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Create a new {@link Record} of the specified {@code clazz} the same as
+     * {@link #create(Class, Object...)}, run {@code gate} against it after it
+     * is bound, and restore every binding the creation changed if the gate
+     * throws.
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
+     *
+     * @param clazz the type of {@link Record} to create
+     * @param gate the check to run against the bound {@link Record}
+     * @param args constructor arguments for the {@link Record}
+     * @param <T> the type of {@link Record}
+     * @return the newly created {@link Record}, not yet saved
+     * @throws UnsupportedOperationException if the implementation does not
+     *             support record creation
+     */
+    public default <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
+        // The default implementation binds nothing, so there is nothing to
+        // restore when the gate throws.
+        T record = create(clazz, args);
+        gate.accept(record);
+        return record;
     }
 
     /**

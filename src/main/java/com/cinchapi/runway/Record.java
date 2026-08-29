@@ -31,6 +31,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -2964,18 +2965,32 @@ public abstract class Record implements Comparable<Record> {
      *            connections within the scope of the binding
      * @param seen the identity set of {@link Record Records} that are already
      *            bound
+     * @return an action that restores every binding this call changed
      */
-    void bindGraph(Binding binding, ConcourseProvider connections,
+    Runnable bindGraph(Binding binding, ConcourseProvider connections,
             Set<Record> seen) {
         Set<Record> graph = Sets.newIdentityHashSet();
         collectGraph(graph, seen);
         for (Record record : graph) {
             record.verifyCanBind(binding);
         }
+        Map<Record, Binding> bindings = new IdentityHashMap<>();
+        Map<Record, ConcourseProvider> providers = new IdentityHashMap<>();
         for (Record record : graph) {
+            bindings.put(record, record.binding);
+            providers.put(record, record.connections);
             record.bind(binding, connections);
             seen.add(record);
         }
+        // NOTE: The restore writes the fields directly instead of calling
+        // bind(), because verifyCanBind refuses to move a Record out of an
+        // open Transaction and a rollback must not be refusable.
+        return () -> {
+            for (Record record : graph) {
+                record.binding = bindings.get(record);
+                record.connections = providers.get(record);
+            }
+        };
     }
 
     /**
@@ -7020,6 +7035,12 @@ public abstract class Record implements Comparable<Record> {
         @Override
         public <T extends Record> T create(Class<T> clazz, Object... args) {
             return delegate().create(clazz, args);
+        }
+
+        @Override
+        public <T extends Record> T $create(Class<T> clazz,
+                Consumer<? super T> gate, Object... args) {
+            return delegate().$create(clazz, gate, args);
         }
 
         @Nullable
