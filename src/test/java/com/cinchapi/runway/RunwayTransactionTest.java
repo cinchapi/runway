@@ -4988,6 +4988,55 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a refused {@code create} does not
+     * rebind any {@link Record} it visited before the refusal.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Node Nodes} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load one {@link Node} through a second open {@link Transaction}.</li>
+     * <li>Point the other {@link Node Node's} {@code next} at that instance, in
+     * memory only.</li>
+     * <li>Call {@code transaction.create(Node.class, "root", safe)} and catch
+     * the refusal.</li>
+     * <li>Clear the link, rename {@code safe} and {@code save()} it while the
+     * transaction is still open.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The create throws an
+     * {@link IllegalStateException} and the rename is durable outside the
+     * transaction, which proves {@code safe} was not rebound to it.
+     */
+    @Test
+    public void testRefusedCreateDoesNotPartiallyRebindTheGraph() {
+        Node target = new Node("target", null);
+        target.assign(runway);
+        Assert.assertTrue(target.save());
+        Node safe = new Node("safe", null);
+        safe.assign(runway);
+        Assert.assertTrue(safe.save());
+        try (Transaction other = runway.startTransaction()) {
+            safe.next = other.load(Node.class, target.id());
+            try (Transaction transaction = runway.startTransaction()) {
+                try {
+                    transaction.create(Node.class, "root", safe);
+                    Assert.fail("Expected an IllegalStateException");
+                }
+                catch (IllegalStateException e) {
+                    // expected
+                }
+                safe.next = null;
+                safe.name = "updated";
+                Assert.assertTrue(safe.save());
+                Assert.assertEquals("updated",
+                        runway.load(Node.class, safe.id()).name);
+            }
+        }
+    }
+
+    /**
      * A container with a lazy link to an {@link Item}.
      *
      * @author Jeff Nelson
@@ -5219,6 +5268,36 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 }
             });
         }
+    }
+
+    /**
+     * A named {@link Record} with a link to another {@link Node}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Node extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The next {@link Node} in the chain.
+         */
+        Node next;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param next the next {@link Node}
+         */
+        public Node(String name, Node next) {
+            this.name = name;
+            this.next = next;
+        }
+
     }
 
     /**

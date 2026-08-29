@@ -24,6 +24,7 @@ import org.junit.Test;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.Runway;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
 import com.cinchapi.runway.SuppressedRunwayException;
@@ -946,6 +947,87 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
                     user.id());
             RestrictedUser interned = inside.intern();
             Assert.assertEquals(user.id(), interned.id());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code scope} refuses an
+     * {@link Audience} that is neither a {@link Record} nor anonymous, instead
+     * of returning a view governed by anonymous rules.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Implement {@link Audience} with a minimal custom class.</li>
+     * <li>Start a {@link Transaction} and call {@code scope} on it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws an
+     * {@link UnsupportedOperationException}.
+     */
+    @Test
+    public void testScopeRefusesCustomAudience() {
+        Audience custom = new Audience() {
+
+            @Override
+            public Selections select(Selection<?>... selections) {
+                return null;
+            }
+
+        };
+        try (Transaction transaction = runway.startTransaction()) {
+            try {
+                custom.scope(transaction);
+                Assert.fail("Expected an UnsupportedOperationException");
+            }
+            catch (UnsupportedOperationException e) {
+                // expected
+            }
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that transactional work on an unbound
+     * {@link Audience} record is refused with the documented exception.
+     * <p>
+     * <strong>Start state:</strong> The test {@link #runway} is open.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Open a second {@link Runway} so no instance is pinned.</li>
+     * <li>Construct an {@link Admin} without assigning it.</li>
+     * <li>Call {@code transactAndSupply(...)} and {@code transact(...)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both calls throw an
+     * {@link UnsupportedOperationException}.
+     */
+    @Test
+    public void testUnboundAudienceTransactionalWorkRefused() {
+        Runway other = runwayBuilder().build();
+        try {
+            Admin admin = new Admin();
+            try {
+                admin.transactAndSupply(view -> null);
+                Assert.fail("Expected an UnsupportedOperationException");
+            }
+            catch (UnsupportedOperationException e) {
+                // expected
+            }
+            try {
+                admin.transact(view -> {});
+                Assert.fail("Expected an UnsupportedOperationException");
+            }
+            catch (UnsupportedOperationException e) {
+                // expected
+            }
+        }
+        finally {
+            try {
+                other.close();
+            }
+            catch (Exception ignored) {/* close failure not under test */}
         }
     }
 

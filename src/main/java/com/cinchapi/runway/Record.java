@@ -1892,9 +1892,11 @@ public abstract class Record implements Comparable<Record> {
      *             identity
      * @throws IllegalArgumentException if no field under a {@link Unique}
      *             constraint has a non-null value
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
@@ -2541,9 +2543,11 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * @param work the work to run
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
@@ -2591,9 +2595,11 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param work the work to run
      * @return the result of {@code work}
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
@@ -2944,11 +2950,7 @@ public abstract class Record implements Comparable<Record> {
      *             {@link Transaction} other than {@code binding}
      */
     void bind(Binding binding, ConcourseProvider connections) {
-        if(this.binding != binding && isBoundToOpenTransaction()) {
-            throw new TransactionBoundaryException(
-                    "Cannot bind " + __ + " to a different scope because it"
-                            + " is bound to an open Transaction");
-        }
+        verifyCanBind(binding);
         this.binding = binding;
         this.connections = connections;
     }
@@ -2971,14 +2973,14 @@ public abstract class Record implements Comparable<Record> {
      */
     void bindGraph(Binding binding, ConcourseProvider connections,
             Set<Record> seen) {
-        if(seen.add(this)) {
-            bind(binding, connections);
-            fields().stream().filter(
-                    field -> !Modifier.isTransient(field.getModifiers()))
-                    .map(field -> Reflection.get(field.getName(), this))
-                    .forEach(value -> forEachReachableRecord(value,
-                            record -> record.bindGraph(binding, connections,
-                                    seen)));
+        Set<Record> graph = Sets.newIdentityHashSet();
+        collectGraph(graph, seen);
+        for (Record record : graph) {
+            record.verifyCanBind(binding);
+        }
+        for (Record record : graph) {
+            record.bind(binding, connections);
+            seen.add(record);
         }
     }
 
@@ -3826,9 +3828,11 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param work the work to run
      * @return the result of {@code work}
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
@@ -3839,14 +3843,20 @@ public abstract class Record implements Comparable<Record> {
         }
         else {
             Runway runway = harness();
-            Verify.that(runway != null, "Cannot execute transactional work"
-                    + " because this Record has no binding");
-            return runway.transactAndSupply(transaction -> {
-                // The lambda receives the Transaction that supply constructs,
-                // so the cast to reach the package-private join is safe.
-                ((DatabaseTransaction) transaction).join(this);
-                return work.apply(transaction);
-            });
+            if(runway != null) {
+                return runway.transactAndSupply(transaction -> {
+                    // The lambda receives the Transaction that supply
+                    // constructs, so the cast to reach the package-private
+                    // join is safe.
+                    ((DatabaseTransaction) transaction).join(this);
+                    return work.apply(transaction);
+                });
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "Cannot execute transactional work because this"
+                                + " Record has no binding");
+            }
         }
     }
 
@@ -3974,6 +3984,25 @@ public abstract class Record implements Comparable<Record> {
             enqueueUniquenessCheck(saver, values, errorName, constraint.any(),
                     uniqueConstraintWindow(name, members));
             alreadyVerifiedUniqueConstraints.add(name);
+        }
+    }
+
+    /**
+     * Collect this {@link Record}, and every loaded {@link Record} reachable
+     * from its persistent (non-transient) fields, in {@code graph}, skipping
+     * any {@link Record} in {@code seen} and the graph behind it.
+     *
+     * @param graph the identity set that receives the graph
+     * @param seen the identity set of {@link Record Records} that are already
+     *            bound
+     */
+    private void collectGraph(Set<Record> graph, Set<Record> seen) {
+        if(!seen.contains(this) && graph.add(this)) {
+            fields().stream().filter(
+                    field -> !Modifier.isTransient(field.getModifiers()))
+                    .map(field -> Reflection.get(field.getName(), this))
+                    .forEach(value -> forEachReachableRecord(value,
+                            record -> record.collectGraph(graph, seen)));
         }
     }
 
@@ -5274,6 +5303,21 @@ public abstract class Record implements Comparable<Record> {
                     refreshAtomicableField(field, key, false);
                 }
             }
+        }
+    }
+
+    /**
+     * Verify that this {@link Record} can bind to {@code binding}.
+     *
+     * @param binding the target {@link Binding}
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} other than {@code binding}
+     */
+    private void verifyCanBind(Binding binding) {
+        if(this.binding != binding && isBoundToOpenTransaction()) {
+            throw new TransactionBoundaryException(
+                    "Cannot bind " + __ + " to a different scope because it"
+                            + " is bound to an open Transaction");
         }
     }
 

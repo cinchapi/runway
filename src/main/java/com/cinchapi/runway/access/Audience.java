@@ -1080,6 +1080,8 @@ public interface Audience extends DatabaseInterface, Transactional {
      *             {@link Transaction}
      * @throws IllegalStateException if this {@link Audience} is a
      *             {@link Record} that has not joined {@code transaction}
+     * @throws UnsupportedOperationException if this {@link Audience} is neither
+     *             a {@link Record} nor anonymous
      */
     @Override
     public default TransactionInterface scope(
@@ -1093,11 +1095,16 @@ public interface Audience extends DatabaseInterface, Transactional {
                             + " joined; use startTransaction() to start one");
             return new AudienceTransaction(this, raw);
         }
-        else {
+        else if(this instanceof Anonymous) {
             // The Audience holds its database instead of joining the
             // Transaction, so the view carries an equal Audience that holds
             // the Transaction as its database.
             return new AudienceTransaction(Anonymous.get(raw), raw);
+        }
+        else {
+            throw new UnsupportedOperationException(
+                    "Only a Record or anonymous Audience can scope a"
+                            + " Transaction");
         }
     }
 
