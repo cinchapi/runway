@@ -2982,9 +2982,9 @@ public abstract class Record implements Comparable<Record> {
             record.bind(binding, connections);
             seen.add(record);
         }
-        // NOTE: The restore writes the fields directly instead of calling
-        // bind(), because verifyCanBind refuses to move a Record out of an
-        // open Transaction and a rollback must not be refusable.
+        // NOTE: The restore must not be refusable, so it writes the fields
+        // directly; bind() refuses to move a Record out of an open
+        // Transaction.
         return () -> {
             for (Record record : graph) {
                 record.binding = bindings.get(record);

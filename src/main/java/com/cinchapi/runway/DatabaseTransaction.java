@@ -347,14 +347,6 @@ class DatabaseTransaction extends Binding implements Transaction {
         return $create(clazz, record -> {}, args);
     }
 
-    /**
-     * {@inheritDoc}
-     * <p>
-     * The {@code gate} runs after the new {@link Record}, and its reachable
-     * graph, joins this {@link Transaction}. If the gate throws, then every
-     * binding is restored.
-     * </p>
-     */
     @Override
     public <T extends Record> T $create(Class<T> clazz,
             Consumer<? super T> gate, Object... args) {

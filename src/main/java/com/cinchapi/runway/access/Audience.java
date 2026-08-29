@@ -221,11 +221,7 @@ public interface Audience extends DatabaseInterface, Transactional {
      * </p>
      *
      * @return the {@link DatabaseInterface}
-     * @throws IllegalStateException if this {@link Audience} names no database,
-     *             which is the case for an {@link Audience} that is neither a
-     *             {@link Record} nor anonymous, and for an {@link #anonymous()
-     *             anonymous} {@link Audience} that resolved against zero or
-     *             multiple open {@link Runway} instances
+     * @throws IllegalStateException if this {@link Audience} names no database
      */
     public default DatabaseInterface $db() {
         // TODO: make private in Java 9+
@@ -278,11 +274,11 @@ public interface Audience extends DatabaseInterface, Transactional {
     /**
      * {@inheritDoc}
      * <p>
-     * The database binds the record, and its reachable graph, before the
-     * permission check and the {@code gate} run, so both resolve within the
-     * context this {@link Audience} operates against. If either throws, then
-     * every binding is restored, so a refused create leaves the {@code args},
-     * and every {@link Record} reachable from them, bound as they were.
+     * The permission check and the {@code gate} run against the bound
+     * {@link Record}, within the context this {@link Audience} operates
+     * against. If either throws, then the {@code args}, and every
+     * {@link Record} reachable from them, are bound as they were before the
+     * call.
      * </p>
      *
      * @throws RestrictedAccessException if this {@link Audience} is not
