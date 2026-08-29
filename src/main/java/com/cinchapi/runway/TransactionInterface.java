@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway;
 
+import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 
 import javax.annotation.Nullable;
@@ -293,6 +294,17 @@ public interface TransactionInterface extends DatabaseInterface, Transactional {
      */
     @Override
     <T extends Record> T create(Class<T> clazz, Object... args);
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * A {@link TransactionInterface} always supports creation, so this is not
+     * an optional operation.
+     * </p>
+     */
+    @Override
+    <T extends Record> T $create(Class<T> clazz, Consumer<? super T> gate,
+            Object... args);
 
     /**
      * Return the unique {@link Record} that agrees with every {@link Unique}

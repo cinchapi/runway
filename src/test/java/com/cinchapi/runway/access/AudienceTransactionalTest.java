@@ -16,6 +16,7 @@
 package com.cinchapi.runway.access;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.junit.Assert;
@@ -821,6 +822,12 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
     public void testScopeRefusesViewThatIsNotATransaction() {
         Admin admin = createAdmin();
         TransactionInterface view = new TransactionInterface() {
+
+            @Override
+            public <T extends Record> T $create(Class<T> clazz,
+                    Consumer<? super T> gate, Object... args) {
+                throw new UnsupportedOperationException();
+            }
 
             @Override
             public void afterAbort(Runnable hook) {
