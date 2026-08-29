@@ -46,6 +46,7 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.Computed;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.RetryExhaustedException;
 import com.cinchapi.runway.Runway;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
@@ -966,7 +967,8 @@ public interface Audience extends DatabaseInterface, Transactional {
      * {@link Audience} cannot see it.
      * </p>
      * <p>
-     * If the intern throws, then every binding is as it was before the call.
+     * If the intern throws without persisting the {@code record}, then every
+     * binding is as it was before the call.
      * </p>
      *
      * @param record the {@link Record} whose identity is interned
@@ -996,46 +998,60 @@ public interface Audience extends DatabaseInterface, Transactional {
         // the caller's state, not a discarded retry attempt's.
         Runnable restore = Reflection.call(record, "snapshotGraphBindings");
         Record previous = Reflection.get("_author", record);
+        Runnable rollback = () -> {
+            Reflection.set("_author", previous, record);
+            restore.run();
+        };
         try {
             return transactAndSupply(view -> {
-                // The checks below run against this Audience, so the raw
-                // transaction is the correct target for the staging
-                // operations; the Audience-scoped view would repeat them.
-                TransactionInterface transaction = AudienceTransaction
-                        .raw(view);
-                // Join the record and its reachable graph to the
-                // transactional scope before the permission check
-                // runs, so the check and the save both resolve within
-                // it, consistent with #create.
-                Reflection.call(transaction, "join", record);
-                verifyIsCreatableByAudience(this, record);
-                if(this instanceof Record) {
-                    Reflection.set("_author", (Record) this, record);
-                }
-                T interned = transaction.intern(record);
-                if(interned != record) {
-                    // The record was never saved, so nothing consumed
-                    // the author marker; restore it so a later save
-                    // is not attributed to this Audience.
-                    Reflection.set("_author", previous, record);
-                    if(!$checkIfInScopeOrVisible().test(interned)) {
-                        throw new RestrictedAccessException();
+                try {
+                    // The checks below run against this Audience, so the raw
+                    // transaction is the correct target for the staging
+                    // operations; the Audience-scoped view would repeat them.
+                    TransactionInterface transaction = AudienceTransaction
+                            .raw(view);
+                    // Join the record and its reachable graph to the
+                    // transactional scope before the permission check
+                    // runs, so the check and the save both resolve within
+                    // it, consistent with #create.
+                    Reflection.call(transaction, "join", record);
+                    verifyIsCreatableByAudience(this, record);
+                    if(this instanceof Record) {
+                        Reflection.set("_author", (Record) this, record);
+                    }
+                    T interned = transaction.intern(record);
+                    if(interned != record) {
+                        // The record was never saved, so nothing consumed
+                        // the author marker; restore it so a later save
+                        // is not attributed to this Audience.
+                        Reflection.set("_author", previous, record);
+                        if(!$checkIfInScopeOrVisible().test(interned)) {
+                            throw new RestrictedAccessException();
+                        }
+                        else {
+                            return interned;
+                        }
                     }
                     else {
                         return interned;
                     }
                 }
-                else {
-                    return interned;
+                catch (Throwable t) {
+                    // NOTE: The rollback belongs to the work, so it cannot
+                    // reach a commit that succeeded and then threw while its
+                    // consequences dispatched; that record is durable and
+                    // keeps the state the commit gave it.
+                    rollback.run();
+                    throw t;
                 }
             });
         }
-        catch (Throwable t) {
-            // A refused or failed intern must leave every binding, and the
-            // author marker, as they were before the call.
-            Reflection.set("_author", previous, record);
-            restore.run();
-            throw t;
+        catch (RetryExhaustedException e) {
+            // A conflict retry discards its attempt without unwinding the
+            // work, so an exhausted retry leaves the last attempt's binding
+            // behind and nothing committed.
+            rollback.run();
+            throw e;
         }
     }
 
