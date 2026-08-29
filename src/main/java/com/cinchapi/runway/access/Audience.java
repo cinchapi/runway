@@ -113,20 +113,19 @@ public interface Audience extends DatabaseInterface, Transactional {
      * get an {@link Audience} that is interoperable with the rest of the access
      * control framework.
      * </p>
+     * <p>
+     * The returned {@link Audience} names a database only when a single
+     * {@link Runway} instance is open. Otherwise it answers access policy
+     * questions, such as {@link #$checkIfVisible()}, and refuses every database
+     * operation with an {@link IllegalStateException}; use
+     * {@link #anonymous(DatabaseInterface)} to name a database in that state.
+     * </p>
      *
      * @return the anonymous {@link Audience}
-     * @throws IllegalStateException if zero or multiple {@link Runway}
-     *             instances are open, in which case no single database can be
-     *             assumed; use {@link #anonymous(DatabaseInterface)} to name
-     *             one
      */
     public static Audience anonymous() {
         Runway db = Runway.$pinned();
-        Verify.that(db != null,
-                "There is no single open Runway instance, so the anonymous"
-                        + " Audience has no database; use"
-                        + " Audience.anonymous(db) to name one");
-        return db.anonymous();
+        return db != null ? db.anonymous() : Anonymous.unbound();
     }
 
     /**
@@ -141,6 +140,7 @@ public interface Audience extends DatabaseInterface, Transactional {
      * @param db the {@link DatabaseInterface} the {@link Audience} operates
      *            against
      * @return the anonymous {@link Audience}
+     * @throws IllegalArgumentException if {@code db} is {@code null}
      */
     public static Audience anonymous(DatabaseInterface db) {
         return Anonymous.get(db);
@@ -220,12 +220,15 @@ public interface Audience extends DatabaseInterface, Transactional {
      * </p>
      *
      * @return the {@link DatabaseInterface}
-     * @throws IllegalStateException if this {@link Audience} is neither a
-     *             {@link Record} nor anonymous
+     * @throws IllegalStateException if this {@link Audience} names no database,
+     *             which is the case for an {@link Audience} that is neither a
+     *             {@link Record} nor anonymous, and for an {@link #anonymous()
+     *             anonymous} {@link Audience} that resolved against zero or
+     *             multiple open {@link Runway} instances
      */
     public default DatabaseInterface $db() {
         // TODO: make private in Java 9+
-        if(this instanceof Record || this instanceof Anonymous) {
+        if(this instanceof Record) {
             return Reflection.get("db", this);
         }
         else {

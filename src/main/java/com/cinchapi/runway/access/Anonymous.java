@@ -15,6 +15,8 @@
  */
 package com.cinchapi.runway.access;
 
+import javax.annotation.Nullable;
+
 import com.cinchapi.common.base.Verify;
 import com.cinchapi.runway.DatabaseInterface;
 
@@ -32,6 +34,10 @@ import com.cinchapi.runway.DatabaseInterface;
  * Every {@link Anonymous} audience is equal to every other one, regardless of
  * the database it operates against, because each represents the same absence of
  * identity.
+ * </p>
+ * <p>
+ * An {@link Anonymous} audience may name no database, in which case it answers
+ * access policy questions and refuses every database operation.
  * </p>
  * <p>
  * Access rules for {@link Anonymous} are typically more restrictive than those
@@ -52,10 +58,16 @@ import com.cinchapi.runway.DatabaseInterface;
 final class Anonymous implements Audience {
 
     /**
+     * The {@link Anonymous} audience that names no database.
+     */
+    private static final Anonymous UNBOUND = new Anonymous(null);
+
+    /**
      * Return an {@link Anonymous} audience that operates against {@code db}.
      *
      * @param db the {@link DatabaseInterface} the audience operates against
      * @return the {@link Anonymous} audience
+     * @throws IllegalArgumentException if {@code db} is {@code null}
      */
     static Anonymous get(DatabaseInterface db) {
         Verify.thatArgument(db != null,
@@ -64,22 +76,43 @@ final class Anonymous implements Audience {
     }
 
     /**
-     * The database this {@link Anonymous} audience operates against.
+     * Return the {@link Anonymous} audience that names no database, which
+     * answers access policy questions and refuses every database operation.
+     *
+     * @return the unbound {@link Anonymous} audience
      */
+    static Anonymous unbound() {
+        return UNBOUND;
+    }
+
+    /**
+     * The database this {@link Anonymous} audience operates against, or
+     * {@code null} when it names none.
+     */
+    @Nullable
     private final DatabaseInterface db;
 
     /**
      * Construct a new instance.
      *
-     * @param db the {@link DatabaseInterface} this audience operates against
+     * @param db the {@link DatabaseInterface} this audience operates against,
+     *            or {@code null} to name none
      */
-    private Anonymous(DatabaseInterface db) {
+    private Anonymous(@Nullable DatabaseInterface db) {
         this.db = db;
     }
 
     @Override
     public DatabaseInterface $db() {
-        return db;
+        if(db != null) {
+            return db;
+        }
+        else {
+            throw new IllegalStateException(
+                    "This anonymous Audience names no database because zero or"
+                            + " multiple Runway instances are open; use"
+                            + " Audience.anonymous(db) to name one");
+        }
     }
 
     @Override

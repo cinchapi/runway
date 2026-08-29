@@ -376,34 +376,46 @@ public class AnonymousTransactionScopeTest
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link Audience#anonymous()} fails
-     * fast when no single {@link Runway} instance is open, and that the
-     * explicit {@link Audience#anonymous(com.cinchapi.runway.DatabaseInterface)
+     * <strong>Goal:</strong> Verify that {@link Audience#anonymous()} names no
+     * database when no single {@link Runway} instance is open, so it still
+     * answers access policy questions but refuses a database operation, and
+     * that the explicit
+     * {@link Audience#anonymous(com.cinchapi.runway.DatabaseInterface)
      * anonymous(db)} form still works in that state.
      * <p>
-     * <strong>Start state:</strong> The test {@link #runway} is open.
+     * <strong>Start state:</strong> One saved published {@link Job} and one
+     * saved unpublished {@link Job}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Open a second {@link Runway} against the test server.</li>
-     * <li>Call {@link Audience#anonymous()} and catch the expected
+     * <li>Apply the {@code $checkIfVisible()} predicate of
+     * {@link Audience#anonymous()} to each {@link Job}.</li>
+     * <li>Call {@code startTransaction()} on it and catch the expected
      * exception.</li>
      * <li>Call {@code Audience.anonymous(runway)}.</li>
      * <li>Close the second {@link Runway} and call {@link Audience#anonymous()}
      * again.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> While two instances are open, the no-arg call
+     * <strong>Expected:</strong> The predicate accepts the published
+     * {@link Job} and rejects the unpublished one; {@code startTransaction()}
      * throws an {@link IllegalStateException} whose message names
-     * {@code anonymous(db)} and the explicit form works; after the second
-     * instance closes, the no-arg call works again.
+     * {@code anonymous(db)}; the explicit form works; and after the second
+     * instance closes, the no-arg call names a database again.
      */
     @Test
-    public void testAnonymousRequiresSingleOpenRunwayInstance() {
+    public void testAnonymousWithoutSingleOpenRunwayInstanceIsPolicyOnly() {
+        Employer employer = createEmployer();
+        Job published = createJob(employer, true);
+        Job draft = createJob(employer, false);
         Runway other = runwayBuilder().build();
         try {
+            Audience anonymous = Audience.anonymous();
+            Assert.assertTrue(anonymous.$checkIfVisible().test(published));
+            Assert.assertFalse(anonymous.$checkIfVisible().test(draft));
             try {
-                Audience.anonymous();
+                anonymous.startTransaction();
                 Assert.fail("Expected an IllegalStateException");
             }
             catch (IllegalStateException e) {
@@ -417,7 +429,7 @@ public class AnonymousTransactionScopeTest
             }
             catch (Exception ignored) {/* close failure not under test */}
         }
-        Assert.assertTrue(Audience.anonymous().isAnonymous());
+        Assert.assertSame(runway.anonymous(), Audience.anonymous());
     }
 
     /**
