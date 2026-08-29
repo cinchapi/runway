@@ -1041,7 +1041,7 @@ public abstract class Record implements Comparable<Record> {
      * applications.
      * </p>
      */
-    static Runway PINNED_RUNWAY_INSTANCE = null;
+    static volatile Runway PINNED_RUNWAY_INSTANCE = null;
 
     /**
      * The key used to hold the {@link #_realms} metadata.
