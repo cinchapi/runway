@@ -139,6 +139,21 @@ public final class Runway extends Binding implements
     // class.
 
     /**
+     * Return the {@link Runway} instance that a caller which names no database
+     * operates against, or {@code null} when zero or multiple {@link Runway}
+     * instances are open.
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
+     *
+     * @return the pinned {@link Runway} instance, or {@code null}
+     */
+    @Nullable
+    public static Runway $pinned() {
+        return Record.PINNED_RUNWAY_INSTANCE;
+    }
+
+    /**
      * Return a builder that can be used to precisely configure a {@link Runway}
      * instance.
      *
@@ -202,21 +217,6 @@ public final class Runway extends Binding implements
      */
     public static Set<Class<? extends Record>> getKnownRecordTypes() {
         return Record.StaticAnalysis.instance().types();
-    }
-
-    /**
-     * Return the {@link Runway} instance that a caller which names no database
-     * operates against, or {@code null} when zero or multiple {@link Runway}
-     * instances are open.
-     * <p>
-     * This is a framework-private method and should not be called directly.
-     * </p>
-     *
-     * @return the pinned {@link Runway} instance, or {@code null}
-     */
-    @Nullable
-    public static Runway $pinned() {
-        return Record.PINNED_RUNWAY_INSTANCE;
     }
 
     /**

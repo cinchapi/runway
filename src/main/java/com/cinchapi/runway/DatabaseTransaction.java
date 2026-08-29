@@ -789,6 +789,26 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
+     * Run {@code operation} within this transaction's operation window, so the
+     * transaction cannot end while the operation is in flight.
+     *
+     * @param operation the work to run
+     * @param <T> the operation's result type
+     * @return the operation's result
+     */
+    <T> T execute(Supplier<T> operation) {
+        verifyOwner();
+        verifyNotPoisoned();
+        operating++;
+        try {
+            return operation.get();
+        }
+        finally {
+            operating--;
+        }
+    }
+
+    /**
      * Return {@code true} if an {@link #afterCommit(Runnable) afterCommit} or
      * {@link #afterAbort(Runnable) afterAbort} hook threw while the transaction
      * was ending.
@@ -808,21 +828,6 @@ class DatabaseTransaction extends Binding implements Transaction {
      */
     void join(Record record) {
         record.bindGraph(this, provider, Sets.newIdentityHashSet());
-    }
-
-    /**
-     * Record that a single-key atomic operation wrote {@code value} for
-     * {@code key} in {@code record}. If this transaction ends without a
-     * successful commit, then {@code record} does not carry the write as an
-     * unsaved change.
-     *
-     * @param record the {@link Record} that the operation wrote
-     * @param key the name of the field the operation wrote
-     * @param value the value the operation wrote, in its unserialized form
-     */
-    void recordAtomicValue(Record record, String key, Object value) {
-        atomicValues.computeIfAbsent(record, ignore -> new HashMap<>()).put(key,
-                value);
     }
 
     @Override
@@ -850,26 +855,6 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Run {@code operation} within this transaction's operation window, so the
-     * transaction cannot end while the operation is in flight.
-     *
-     * @param operation the work to run
-     * @param <T> the operation's result type
-     * @return the operation's result
-     */
-    <T> T execute(Supplier<T> operation) {
-        verifyOwner();
-        verifyNotPoisoned();
-        operating++;
-        try {
-            return operation.get();
-        }
-        finally {
-            operating--;
-        }
-    }
-
-    /**
      * Return the {@link ConcourseProvider} that scopes a bound {@link Record
      * Record's} operations to this transaction.
      *
@@ -877,6 +862,21 @@ class DatabaseTransaction extends Binding implements Transaction {
      */
     ConcourseProvider provider() {
         return provider;
+    }
+
+    /**
+     * Record that a single-key atomic operation wrote {@code value} for
+     * {@code key} in {@code record}. If this transaction ends without a
+     * successful commit, then {@code record} does not carry the write as an
+     * unsaved change.
+     *
+     * @param record the {@link Record} that the operation wrote
+     * @param key the name of the field the operation wrote
+     * @param value the value the operation wrote, in its unserialized form
+     */
+    void recordAtomicValue(Record record, String key, Object value) {
+        atomicValues.computeIfAbsent(record, ignore -> new HashMap<>()).put(key,
+                value);
     }
 
     /**

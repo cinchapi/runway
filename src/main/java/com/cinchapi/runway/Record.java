@@ -3677,6 +3677,29 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Record in the {@link #__baseline baseline} that the database now stores
+     * {@code value} (or, when {@code value} is {@code null}, nothing) for
+     * {@code key}, without affecting any other key. A no-op when this
+     * {@link Record} has never been synchronized with the database.
+     *
+     * @param key the key whose stored state changed
+     * @param value the scalar value the database now stores, in its
+     *            unserialized form; may be {@code null}
+     */
+    void updateBaseline(String key, @Nullable Object value) {
+        if(__baseline != null) {
+            Map<String, Object> baseline = Maps.newHashMap(__baseline);
+            if(value != null) {
+                baseline.put(key, serializeScalarValue(value));
+            }
+            else {
+                baseline.remove(key);
+            }
+            __baseline = baseline;
+        }
+    }
+
+    /**
      * Verify that a save of this {@link Record} through {@code scope} does not
      * cross the boundary of an open {@link Transaction}: the save must resolve
      * against the transaction this {@link Record} is bound to, or this
@@ -4524,6 +4547,19 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if this {@link Record Record's} realm membership
+     * differs from its {@link #__baseline baseline}.
+     *
+     * @return {@code true} if a save would write a realm change
+     */
+    private boolean hasRealmChanges() {
+        boolean[] changed = new boolean[1];
+        forEachSequenceDelta(ImmutableSet.copyOf(_realms), baseline(REALMS_KEY),
+                $ -> changed[0] = true, $ -> changed[0] = true);
+        return changed[0];
+    }
+
+    /**
      * Return the JSON string for this {@link Record}.
      *
      * <p>
@@ -4815,19 +4851,6 @@ public abstract class Record implements Comparable<Record> {
         else {
             return serializeScalarValue(value);
         }
-    }
-
-    /**
-     * Return {@code true} if this {@link Record Record's} realm membership
-     * differs from its {@link #__baseline baseline}.
-     *
-     * @return {@code true} if a save would write a realm change
-     */
-    private boolean hasRealmChanges() {
-        boolean[] changed = new boolean[1];
-        forEachSequenceDelta(ImmutableSet.copyOf(_realms), baseline(REALMS_KEY),
-                $ -> changed[0] = true, $ -> changed[0] = true);
-        return changed[0];
     }
 
     /**
@@ -5251,29 +5274,6 @@ public abstract class Record implements Comparable<Record> {
                     refreshAtomicableField(field, key, false);
                 }
             }
-        }
-    }
-
-    /**
-     * Record in the {@link #__baseline baseline} that the database now stores
-     * {@code value} (or, when {@code value} is {@code null}, nothing) for
-     * {@code key}, without affecting any other key. A no-op when this
-     * {@link Record} has never been synchronized with the database.
-     *
-     * @param key the key whose stored state changed
-     * @param value the scalar value the database now stores, in its
-     *            unserialized form; may be {@code null}
-     */
-    void updateBaseline(String key, @Nullable Object value) {
-        if(__baseline != null) {
-            Map<String, Object> baseline = Maps.newHashMap(__baseline);
-            if(value != null) {
-                baseline.put(key, serializeScalarValue(value));
-            }
-            else {
-                baseline.remove(key);
-            }
-            __baseline = baseline;
         }
     }
 

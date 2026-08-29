@@ -993,6 +993,16 @@ public interface Audience extends DatabaseInterface, Transactional {
     }
 
     /**
+     * Return {@code true} if this {@link Audience} represents an
+     * unauthenticated or unknown user.
+     *
+     * @return {@code true} if this is an anonymous {@link Audience}
+     */
+    public default boolean isAnonymous() {
+        return this instanceof Anonymous;
+    }
+
+    /**
      * Read the values from the specified {@code keys} in the {@code record} on
      * behalf of this {@link Audience}.
      * <p>
@@ -1025,16 +1035,6 @@ public interface Audience extends DatabaseInterface, Transactional {
     }
 
     /**
-     * Return {@code true} if this {@link Audience} represents an
-     * unauthenticated or unknown user.
-     *
-     * @return {@code true} if this is an anonymous {@link Audience}
-     */
-    public default boolean isAnonymous() {
-        return this instanceof Anonymous;
-    }
-
-    /**
      * Read the value from the {@code key} in the {@code record} on behalf of
      * this {@link Audience}.
      * <p>
@@ -1053,23 +1053,6 @@ public interface Audience extends DatabaseInterface, Transactional {
             throws RestrictedAccessException {
         Map<String, Object> data = frame(ImmutableSet.of(key), record);
         return data.getOrDefault(key, null);
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public default Selections select(Selection<?>... selections) {
-        selections = Arrays.stream(selections).map(selection -> {
-            Class<?> clazz = selection.clazz();
-            if(clazz != null && AccessControl.class.isAssignableFrom(clazz)) {
-                Scope scope = AccessControl.resolveVisibilityScope(clazz, this);
-                if(scope != null && scope.isApplicable()) {
-                    return scope.apply(selection);
-                }
-            }
-            return Selection.withInjectedFilter((Selection<Record>) selection,
-                    $checkIfVisible());
-        }).toArray(Selection[]::new);
-        return $db().select(selections);
     }
 
     /**
@@ -1116,6 +1099,23 @@ public interface Audience extends DatabaseInterface, Transactional {
             // the Transaction as its database.
             return new AudienceTransaction(Anonymous.get(raw), raw);
         }
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public default Selections select(Selection<?>... selections) {
+        selections = Arrays.stream(selections).map(selection -> {
+            Class<?> clazz = selection.clazz();
+            if(clazz != null && AccessControl.class.isAssignableFrom(clazz)) {
+                Scope scope = AccessControl.resolveVisibilityScope(clazz, this);
+                if(scope != null && scope.isApplicable()) {
+                    return scope.apply(selection);
+                }
+            }
+            return Selection.withInjectedFilter((Selection<Record>) selection,
+                    $checkIfVisible());
+        }).toArray(Selection[]::new);
+        return $db().select(selections);
     }
 
     /**

@@ -54,58 +54,6 @@ import com.cinchapi.concourse.lang.sort.Order;
 public interface TransactionInterface extends DatabaseInterface, Transactional {
 
     /**
-     * Register a {@code hook} to run once, after the transaction ends without a
-     * successful commit.
-     * <p>
-     * Hooks run synchronously, in registration order, after the transaction
-     * ends. A hook that throws does not affect the outcome: the exception
-     * propagates to the caller and any remaining hooks are skipped. A failed
-     * save within the transaction does not refuse registration.
-     * </p>
-     *
-     * @param hook the side effect to run after the transaction ends without a
-     *            successful commit
-     * @throws IllegalStateException if the transaction already ended
-     */
-    void afterAbort(Runnable hook);
-
-    /**
-     * Register a {@code hook} to run once, after the transaction successfully
-     * commits.
-     * <p>
-     * Hooks run synchronously, in registration order, after the commit
-     * succeeds. A hook that throws does not affect the outcome: the transaction
-     * remains committed, the exception propagates to the caller and any
-     * remaining hooks are skipped. A failure while the commit's consequences
-     * dispatch skips the hooks the same way.
-     * </p>
-     *
-     * @param hook the side effect to run after a successful commit
-     * @throws IllegalStateException if the transaction already ended, or if a
-     *             save failed within it
-     */
-    void afterCommit(Runnable hook);
-
-    /**
-     * Create a new {@link Record} of the specified {@code clazz} that is bound
-     * to the transaction, so a direct {@link Record#save() save} stages within
-     * it.
-     * <p>
-     * The returned {@link Record} is not saved to the database until
-     * {@link Record#save()} is called.
-     * </p>
-     *
-     * @param clazz the type of {@link Record} to create
-     * @param args constructor arguments for the {@link Record}
-     * @param <T> the type of {@link Record}
-     * @return the newly created {@link Record}, not yet saved
-     * @throws IllegalStateException if a save failed within the open
-     *             transaction
-     */
-    @Override
-    <T extends Record> T create(Class<T> clazz, Object... args);
-
-    /**
      * Atomically find the first {@link Record} in the hierarchy of
      * {@code clazz} that matches the {@code criteria} under the supplied
      * {@code order} and update the value of {@code key} by applying the
@@ -293,6 +241,58 @@ public interface TransactionInterface extends DatabaseInterface, Transactional {
         return Record.stageAtomicUpdate(this, findUnique(clazz, criteria), key,
                 update);
     }
+
+    /**
+     * Register a {@code hook} to run once, after the transaction ends without a
+     * successful commit.
+     * <p>
+     * Hooks run synchronously, in registration order, after the transaction
+     * ends. A hook that throws does not affect the outcome: the exception
+     * propagates to the caller and any remaining hooks are skipped. A failed
+     * save within the transaction does not refuse registration.
+     * </p>
+     *
+     * @param hook the side effect to run after the transaction ends without a
+     *            successful commit
+     * @throws IllegalStateException if the transaction already ended
+     */
+    void afterAbort(Runnable hook);
+
+    /**
+     * Register a {@code hook} to run once, after the transaction successfully
+     * commits.
+     * <p>
+     * Hooks run synchronously, in registration order, after the commit
+     * succeeds. A hook that throws does not affect the outcome: the transaction
+     * remains committed, the exception propagates to the caller and any
+     * remaining hooks are skipped. A failure while the commit's consequences
+     * dispatch skips the hooks the same way.
+     * </p>
+     *
+     * @param hook the side effect to run after a successful commit
+     * @throws IllegalStateException if the transaction already ended, or if a
+     *             save failed within it
+     */
+    void afterCommit(Runnable hook);
+
+    /**
+     * Create a new {@link Record} of the specified {@code clazz} that is bound
+     * to the transaction, so a direct {@link Record#save() save} stages within
+     * it.
+     * <p>
+     * The returned {@link Record} is not saved to the database until
+     * {@link Record#save()} is called.
+     * </p>
+     *
+     * @param clazz the type of {@link Record} to create
+     * @param args constructor arguments for the {@link Record}
+     * @param <T> the type of {@link Record}
+     * @return the newly created {@link Record}, not yet saved
+     * @throws IllegalStateException if a save failed within the open
+     *             transaction
+     */
+    @Override
+    <T extends Record> T create(Class<T> clazz, Object... args);
 
     /**
      * Return the unique {@link Record} that agrees with every {@link Unique}
