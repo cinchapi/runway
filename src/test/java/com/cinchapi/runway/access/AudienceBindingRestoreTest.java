@@ -25,6 +25,7 @@ import org.junit.Test;
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Transaction;
+import com.cinchapi.runway.Unique;
 
 /**
  * Tests that a refused {@code create} or {@code intern} through an
@@ -296,6 +297,59 @@ public class AudienceBindingRestoreTest extends AudienceAccessControlBaseTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an {@code intern} refusal on a retry
+     * attempt restores the probe {@link Record} to its pre-call binding, not to
+     * a discarded attempt's transaction.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Admin} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Arrange for the first attempt to commit a {@link Contended} duplicate
+     * of the probe's identity, which no {@link Audience} may discover, after
+     * the attempt's save but before its commit.</li>
+     * <li>Call {@code intern} on the {@link Admin} audience with a
+     * {@link Contended} probe and catch the expected refusal of the hidden
+     * duplicate on the retry.</li>
+     * <li>Read the probe's binding and author marker.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The probe's binding and author marker are both
+     * as they were before the call.
+     */
+    @Test
+    public void testRefusedInternAfterCommitConflictRestoresOriginalBinding() {
+        Admin admin = new Admin();
+        admin.name = "Root";
+        admin.email = "root@example.com";
+        admin.assign(runway);
+        Assert.assertTrue(admin.save());
+        Contended probe = new Contended();
+        probe.name = "acme";
+        Object original = Reflection.get("binding", probe);
+        Contended.conflict = () -> {
+            Contended.conflict = null;
+            Contended duplicate = new Contended();
+            duplicate.name = "acme";
+            duplicate.assign(runway);
+            Assert.assertTrue(duplicate.save());
+        };
+        try {
+            admin.intern(probe);
+            Assert.fail("Expected a RestrictedAccessException");
+        }
+        catch (RestrictedAccessException e) {
+            // expected
+        }
+        finally {
+            Contended.conflict = null;
+        }
+        Assert.assertSame(original, Reflection.get("binding", probe));
+        Assert.assertNull(Reflection.get("_author", probe));
+    }
+
+    /**
      * A caller-owned {@link Record} that is passed as a constructor argument.
      *
      * @author Jeff Nelson
@@ -306,6 +360,81 @@ public class AudienceBindingRestoreTest extends AudienceAccessControlBaseTest {
          * The display label.
          */
         public String label;
+
+    }
+
+    /**
+     * A {@link Record} that any {@link Audience} may create but none may
+     * discover, whose load runs a test-supplied action.
+     *
+     * @author Jeff Nelson
+     */
+    protected static class Contended extends Record implements AccessControl {
+
+        /**
+         * The action {@link #onLoad()} runs. An intern attempt loads its own
+         * staged save back, so a test can commit a conflicting write after the
+         * attempt's save but before its commit.
+         */
+        static Runnable conflict = null;
+
+        /**
+         * The unique identity.
+         */
+        @Unique
+        public String name;
+
+        @Override
+        protected void onLoad() {
+            if(conflict != null) {
+                conflict.run();
+            }
+        }
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return true;
+        }
+
+        @Override
+        public boolean $isDeletableBy(@Nonnull Audience audience) {
+            return false;
+        }
+
+        @Override
+        public boolean $isDiscoverableBy(@Nonnull Audience audience) {
+            return false;
+        }
+
+        @Override
+        public boolean $isDiscoverableByAnonymous() {
+            return false;
+        }
+
+        @Override
+        public Set<String> $readableBy(@Nonnull Audience audience) {
+            return NO_KEYS;
+        }
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return NO_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableBy(@Nonnull Audience audience) {
+            return NO_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableByAnonymous() {
+            return NO_KEYS;
+        }
 
     }
 

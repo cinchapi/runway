@@ -992,18 +992,22 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
-        return transactAndSupply(view -> {
-            // The checks below run against this Audience, so the raw
-            // transaction is the correct target for the staging
-            // operations; the Audience-scoped view would repeat them.
-            TransactionInterface transaction = AudienceTransaction.raw(view);
-            // Join the record and its reachable graph to the
-            // transactional scope before the permission check
-            // runs, so the check and the save both resolve within
-            // it, consistent with #create.
-            Runnable restore = Reflection.call(transaction, "join", record);
-            Record previous = Reflection.get("_author", record);
-            try {
+        // The snapshot must predate the first attempt, so a failure restores
+        // the caller's state, not a discarded retry attempt's.
+        Runnable restore = Reflection.call(record, "snapshotGraphBindings");
+        Record previous = Reflection.get("_author", record);
+        try {
+            return transactAndSupply(view -> {
+                // The checks below run against this Audience, so the raw
+                // transaction is the correct target for the staging
+                // operations; the Audience-scoped view would repeat them.
+                TransactionInterface transaction = AudienceTransaction
+                        .raw(view);
+                // Join the record and its reachable graph to the
+                // transactional scope before the permission check
+                // runs, so the check and the save both resolve within
+                // it, consistent with #create.
+                Reflection.call(transaction, "join", record);
                 verifyIsCreatableByAudience(this, record);
                 if(this instanceof Record) {
                     Reflection.set("_author", (Record) this, record);
@@ -1024,15 +1028,15 @@ public interface Audience extends DatabaseInterface, Transactional {
                 else {
                     return interned;
                 }
-            }
-            catch (Throwable t) {
-                // A refused or failed intern must leave every binding, and the
-                // author marker, as they were before the call.
-                Reflection.set("_author", previous, record);
-                restore.run();
-                throw t;
-            }
-        });
+            });
+        }
+        catch (Throwable t) {
+            // A refused or failed intern must leave every binding, and the
+            // author marker, as they were before the call.
+            Reflection.set("_author", previous, record);
+            restore.run();
+            throw t;
+        }
     }
 
     /**

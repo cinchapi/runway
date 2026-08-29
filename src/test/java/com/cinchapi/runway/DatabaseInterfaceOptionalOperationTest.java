@@ -54,6 +54,26 @@ public class DatabaseInterfaceOptionalOperationTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the {@code $create} default is an
+     * optional operation.
+     * <p>
+     * <strong>Start state:</strong> A {@link DatabaseInterface} that implements
+     * only {@code select}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code $create}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link UnsupportedOperationException} is
+     * thrown.
+     */
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGatedCreateDefaultIsUnsupported() {
+        db.$create(Record.class, record -> {});
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that the {@code intern} default is an
      * optional operation.
      * <p>

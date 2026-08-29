@@ -2974,23 +2974,25 @@ public abstract class Record implements Comparable<Record> {
         for (Record record : graph) {
             record.verifyCanBind(binding);
         }
-        Map<Record, Binding> bindings = new IdentityHashMap<>();
-        Map<Record, ConcourseProvider> providers = new IdentityHashMap<>();
+        Runnable restore = snapshotBindings(graph);
         for (Record record : graph) {
-            bindings.put(record, record.binding);
-            providers.put(record, record.connections);
             record.bind(binding, connections);
             seen.add(record);
         }
-        // NOTE: The restore must not be refusable, so it writes the fields
-        // directly; bind() refuses to move a Record out of an open
-        // Transaction.
-        return () -> {
-            for (Record record : graph) {
-                record.binding = bindings.get(record);
-                record.connections = providers.get(record);
-            }
-        };
+        return restore;
+    }
+
+    /**
+     * Capture the binding of this {@link Record}, and of every loaded
+     * {@link Record} reachable from its persistent (non-transient) fields, and
+     * return an action that restores what was captured.
+     *
+     * @return an action that restores the captured bindings
+     */
+    Runnable snapshotGraphBindings() {
+        Set<Record> graph = Sets.newIdentityHashSet();
+        collectGraph(graph, Sets.newIdentityHashSet());
+        return snapshotBindings(graph);
     }
 
     /**
@@ -3994,6 +3996,32 @@ public abstract class Record implements Comparable<Record> {
                     uniqueConstraintWindow(name, members));
             alreadyVerifiedUniqueConstraints.add(name);
         }
+    }
+
+    /**
+     * Capture the binding of every {@link Record} in {@code graph} and return
+     * an action that restores what was captured.
+     *
+     * @param graph the identity set of {@link Record Records} whose bindings
+     *            are captured
+     * @return an action that restores the captured bindings
+     */
+    private static Runnable snapshotBindings(Set<Record> graph) {
+        Map<Record, Binding> bindings = new IdentityHashMap<>();
+        Map<Record, ConcourseProvider> providers = new IdentityHashMap<>();
+        for (Record record : graph) {
+            bindings.put(record, record.binding);
+            providers.put(record, record.connections);
+        }
+        // NOTE: The restore must not be refusable, so it writes the fields
+        // directly; bind() refuses to move a Record out of an open
+        // Transaction.
+        return () -> {
+            for (Record record : graph) {
+                record.binding = bindings.get(record);
+                record.connections = providers.get(record);
+            }
+        };
     }
 
     /**

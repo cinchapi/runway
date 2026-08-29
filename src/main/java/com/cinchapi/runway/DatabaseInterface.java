@@ -363,8 +363,8 @@ public interface DatabaseInterface {
      * This is a framework-private method and should not be called directly.
      * </p>
      * <p>
-     * An implementation whose {@link #create(Class, Object...)} binds the new
-     * {@link Record} must override this method.
+     * An implementation that supports {@link #create(Class, Object...)
+     * creation} must override this method.
      * </p>
      *
      * @param clazz the type of {@link Record} to create
@@ -377,11 +377,7 @@ public interface DatabaseInterface {
      */
     public default <T extends Record> T $create(Class<T> clazz,
             Consumer<? super T> gate, Object... args) {
-        // The default implementation binds nothing, so there is nothing to
-        // restore when the gate throws.
-        T record = create(clazz, args);
-        gate.accept(record);
-        return record;
+        throw new UnsupportedOperationException();
     }
 
     /**
