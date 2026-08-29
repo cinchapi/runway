@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
@@ -45,7 +46,6 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.Computed;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
-import com.cinchapi.runway.RetryExhaustedException;
 import com.cinchapi.runway.Runway;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
@@ -273,8 +273,9 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
+        Record self = this instanceof Record ? (Record) this : null;
         Runnable restore = Reflection.callStatic(Record.class,
-                "snapshotBindings", (Object) args);
+                "snapshotBindingsExcept", (Object) args, self);
         // The database binds the record, and its reachable graph, before the
         // permission check runs, so the check and a later save both resolve
         // within the context this Audience operates against.
@@ -991,11 +992,16 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
+        Record self = this instanceof Record ? (Record) this : null;
+        // The transactional scope owns the binding of the Audience and of
+        // every Record it reaches, so the capture leaves that graph out.
         Runnable restore = Reflection.callStatic(Record.class,
-                "snapshotBindings", (Object) Array.containing(record));
+                "snapshotBindingsExceptGraphOf",
+                (Object) Array.containing(record), self);
         // The work may run more than once, so the marker to restore is the one
         // captured before the first attempt.
         Record previous = Reflection.get("_author", record);
+        AtomicReference<TransactionInterface> attempted = new AtomicReference<>();
         try {
             return transactAndSupply(view -> {
                 // The checks below run against this Audience, so the raw
@@ -1003,30 +1009,17 @@ public interface Audience extends DatabaseInterface, Transactional {
                 // operations; the Audience-scoped view would repeat them.
                 TransactionInterface transaction = AudienceTransaction
                         .raw(view);
+                attempted.set(transaction);
                 // Join the record and its reachable graph to the
                 // transactional scope before the permission check
                 // runs, so the check and the save both resolve within
                 // it, consistent with #create.
                 Reflection.call(transaction, "join", record);
-                T interned;
-                try {
-                    verifyIsCreatableByAudience(this, record);
-                    if(this instanceof Record) {
-                        Reflection.set("_author", (Record) this, record);
-                    }
-                    interned = transaction.intern(record);
+                verifyIsCreatableByAudience(this, record);
+                if(this instanceof Record) {
+                    Reflection.set("_author", (Record) this, record);
                 }
-                catch (Throwable t) {
-                    if(!(boolean) Reflection.call(transaction, "poisoned")) {
-                        // The record was never saved, so nothing consumed
-                        // the author marker and nothing staged depends on
-                        // the binding. A poisoned transaction keeps both,
-                        // per the failed-save contract.
-                        Reflection.set("_author", previous, record);
-                        restore.run();
-                    }
-                    throw t;
-                }
+                T interned = transaction.intern(record);
                 if(interned != record) {
                     // The record was never saved, so nothing consumed
                     // the author marker; restore it so a later save
@@ -1045,12 +1038,20 @@ public interface Audience extends DatabaseInterface, Transactional {
                 }
             });
         }
-        catch (RetryExhaustedException e) {
-            // Exhausted retries commit nothing, so nothing durable depends on
-            // the binding or the marker.
-            Reflection.set("_author", previous, record);
-            restore.run();
-            throw e;
+        catch (Throwable t) {
+            // A staged save survives only in a transaction that outlives this
+            // call, and a durable one owns the record it saved.
+            TransactionInterface transaction = attempted.get();
+            boolean durable = transaction != null
+                    && (boolean) Reflection.call(transaction, "committed");
+            boolean surviving = transaction != null
+                    && (boolean) Reflection.call(transaction, "open")
+                    && (boolean) Reflection.call(transaction, "poisoned");
+            if(!durable && !surviving) {
+                Reflection.set("_author", previous, record);
+                restore.run();
+            }
+            throw t;
         }
     }
 

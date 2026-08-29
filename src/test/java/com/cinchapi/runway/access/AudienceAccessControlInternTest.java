@@ -17,12 +17,14 @@ package com.cinchapi.runway.access;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.annotation.Nonnull;
 
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
@@ -748,6 +750,47 @@ public class AudienceAccessControlInternTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a non-adopting {@code intern} leaves
+     * the bindings of the records that the {@link Audience Audience's}
+     * transactional scope owns, so an access rule that reads through one of
+     * them still resolves within the transaction.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Ledger}, one saved
+     * {@link Officer} that links it, and one saved {@link Seal} that claims the
+     * identity.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link Seal} probe that has the saved identity and links the
+     * {@link Officer}, so the {@link Officer} and the {@link Ledger} are
+     * reachable from the probe.</li>
+     * <li>Call {@code intern} on the {@link Officer} with the probe, which
+     * matches the saved {@link Seal} and never saves the probe.</li>
+     * <li>Read the binding that the {@link Ledger} held while the visibility
+     * check ran.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The saved {@link Seal} is returned, and the
+     * {@link Ledger} was bound to the transaction, not to the
+     * {@link com.cinchapi.runway.Runway Runway}, while the check ran.
+     */
+    @Test
+    public void testInternLeavesTransactionScopeBindingsAlone() {
+        Ledger ledger = new Ledger();
+        ledger.label = "L-1";
+        Officer officer = new Officer();
+        officer.ledger = ledger;
+        Seal existing = new Seal("S-1", officer);
+        runway.save(ledger, officer, existing);
+        Seal.LEDGER_BINDING.set(null);
+        Seal probe = new Seal("S-1", officer);
+        Seal interned = officer.intern(probe);
+        Assert.assertEquals(existing.id(), interned.id());
+        Assert.assertNotNull(Seal.LEDGER_BINDING.get());
+        Assert.assertNotSame(runway, Seal.LEDGER_BINDING.get());
+    }
+
+    /**
      * Return a {@link Criteria} that matches every {@link Employer} whose
      * {@code name} equals the given {@code value}.
      *
@@ -897,6 +940,124 @@ public class AudienceAccessControlInternTest
 
         @Override
         public boolean $isDiscoverableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableByAnonymous() {
+            return true;
+        }
+
+        @Override
+        public Set<String> $readableBy(@Nonnull Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableBy(@Nonnull Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableByAnonymous() {
+            return ALL_KEYS;
+        }
+    }
+
+    /**
+     * A plain {@link Record} that an {@link Officer} links, so it is reachable
+     * from the {@link Officer} instead of from a probe directly.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Ledger extends Record {
+
+        /**
+         * The label that identifies this {@link Ledger}.
+         */
+        public String label;
+    }
+
+    /**
+     * An {@link Audience} that links a {@link Ledger}, so its transactional
+     * scope owns the {@link Ledger Ledger's} binding.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Officer extends Record implements Audience {
+
+        /**
+         * The {@link Ledger} this {@link Officer} links.
+         */
+        public Ledger ledger;
+    }
+
+    /**
+     * An access controlled {@link Record} with a {@link Unique} identity that
+     * links an {@link Officer} and records the binding that the {@link Officer
+     * Officer's} {@link Ledger} holds while the visibility check runs.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Seal extends Record implements AccessControl {
+
+        /**
+         * The binding that the {@link Officer Officer's} {@link Ledger} held
+         * the last time a visibility check ran.
+         */
+        public static final AtomicReference<Object> LEDGER_BINDING = new AtomicReference<>();
+
+        /**
+         * The identity code.
+         */
+        @Unique
+        public String code;
+
+        /**
+         * The {@link Officer} that holds this {@link Seal}.
+         */
+        public Officer officer;
+
+        /**
+         * Construct a new instance.
+         */
+        public Seal() {/* no-init */}
+
+        /**
+         * Construct a new instance.
+         *
+         * @param code the identity code
+         * @param officer the {@link Officer} that holds this {@link Seal}
+         */
+        public Seal(String code, Officer officer) {
+            this.code = code;
+            this.officer = officer;
+        }
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return true;
+        }
+
+        @Override
+        public boolean $isDeletableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableBy(@Nonnull Audience audience) {
+            LEDGER_BINDING.set(
+                    Reflection.get("binding", ((Officer) audience).ledger));
             return true;
         }
 
