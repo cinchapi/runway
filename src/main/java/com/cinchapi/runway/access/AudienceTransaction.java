@@ -93,6 +93,13 @@ final class AudienceTransaction implements Transaction {
     }
 
     @Override
+    public <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
+        verifyAudienceScope();
+        return audience.$create(clazz, gate, args);
+    }
+
+    @Override
     public void abort() {
         transaction.abort();
     }
@@ -121,13 +128,6 @@ final class AudienceTransaction implements Transaction {
     public <T extends Record> T create(Class<T> clazz, Object... args) {
         verifyAudienceScope();
         return audience.create(clazz, args);
-    }
-
-    @Override
-    public <T extends Record> T $create(Class<T> clazz,
-            Consumer<? super T> gate, Object... args) {
-        verifyAudienceScope();
-        return audience.$create(clazz, gate, args);
     }
 
     @Nullable

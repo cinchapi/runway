@@ -214,6 +214,32 @@ public interface Audience extends DatabaseInterface, Transactional {
     }
 
     /**
+     * {@inheritDoc}
+     * <p>
+     * The permission check and the {@code gate} run against the bound
+     * {@link Record}, within the context this {@link Audience} operates
+     * against. If either throws, then the {@code args}, and every
+     * {@link Record} reachable from them, are bound as they were before the
+     * call.
+     * </p>
+     *
+     * @throws RestrictedAccessException if this {@link Audience} is not
+     *             permitted to create the {@link Record}
+     */
+    @Override
+    public default <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
+        T record = $db().$create(clazz, created -> {
+            verifyIsCreatableByAudience(this, created);
+            gate.accept(created);
+        }, args);
+        if(this instanceof Record) {
+            Reflection.set("_author", (Record) this, record);
+        }
+        return record;
+    }
+
+    /**
      * Return the {@link DatabaseInterface} against which this {@link Audience
      * Audience's} database operations currently resolve.
      * <p>
@@ -269,32 +295,6 @@ public interface Audience extends DatabaseInterface, Transactional {
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
         return $create(clazz, created -> {}, args);
-    }
-
-    /**
-     * {@inheritDoc}
-     * <p>
-     * The permission check and the {@code gate} run against the bound
-     * {@link Record}, within the context this {@link Audience} operates
-     * against. If either throws, then the {@code args}, and every
-     * {@link Record} reachable from them, are bound as they were before the
-     * call.
-     * </p>
-     *
-     * @throws RestrictedAccessException if this {@link Audience} is not
-     *             permitted to create the {@link Record}
-     */
-    @Override
-    public default <T extends Record> T $create(Class<T> clazz,
-            Consumer<? super T> gate, Object... args) {
-        T record = $db().$create(clazz, created -> {
-            verifyIsCreatableByAudience(this, created);
-            gate.accept(created);
-        }, args);
-        if(this instanceof Record) {
-            Reflection.set("_author", (Record) this, record);
-        }
-        return record;
     }
 
     /**

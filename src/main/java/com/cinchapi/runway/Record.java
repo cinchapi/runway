@@ -2980,33 +2980,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Capture the binding of this {@link Record}, and of every loaded
-     * {@link Record} reachable from its persistent (non-transient) fields, and
-     * return an action that restores what was captured.
-     *
-     * @return an action that restores the captured bindings
-     */
-    Runnable snapshotGraphBindings() {
-        Set<Record> graph = Sets.newIdentityHashSet();
-        collectGraph(graph, Sets.newIdentityHashSet());
-        Map<Record, Binding> bindings = new IdentityHashMap<>();
-        Map<Record, ConcourseProvider> providers = new IdentityHashMap<>();
-        for (Record record : graph) {
-            bindings.put(record, record.binding);
-            providers.put(record, record.connections);
-        }
-        // NOTE: The restore must not be refusable, so it writes the fields
-        // directly; bind() refuses to move a Record out of an open
-        // Transaction.
-        return () -> {
-            for (Record record : graph) {
-                record.binding = bindings.get(record);
-                record.connections = providers.get(record);
-            }
-        };
-    }
-
-    /**
      * Return {@link #db} under its {@link Binding} type, so the caller can also
      * save and {@link Binding#load(long) load} through it.
      *
@@ -3630,6 +3603,33 @@ public abstract class Record implements Comparable<Record> {
      */
     Snapshot snapshot() {
         return new Snapshot();
+    }
+
+    /**
+     * Capture the binding of this {@link Record}, and of every loaded
+     * {@link Record} reachable from its persistent (non-transient) fields, and
+     * return an action that restores what was captured.
+     *
+     * @return an action that restores the captured bindings
+     */
+    Runnable snapshotGraphBindings() {
+        Set<Record> graph = Sets.newIdentityHashSet();
+        collectGraph(graph, Sets.newIdentityHashSet());
+        Map<Record, Binding> bindings = new IdentityHashMap<>();
+        Map<Record, ConcourseProvider> providers = new IdentityHashMap<>();
+        for (Record record : graph) {
+            bindings.put(record, record.binding);
+            providers.put(record, record.connections);
+        }
+        // NOTE: The restore must not be refusable, so it writes the fields
+        // directly; bind() refuses to move a Record out of an open
+        // Transaction.
+        return () -> {
+            for (Record record : graph) {
+                record.binding = bindings.get(record);
+                record.connections = providers.get(record);
+            }
+        };
     }
 
     /**
@@ -7046,14 +7046,14 @@ public abstract class Record implements Comparable<Record> {
         }
 
         @Override
-        public <T extends Record> T create(Class<T> clazz, Object... args) {
-            return delegate().create(clazz, args);
-        }
-
-        @Override
         public <T extends Record> T $create(Class<T> clazz,
                 Consumer<? super T> gate, Object... args) {
             return delegate().$create(clazz, gate, args);
+        }
+
+        @Override
+        public <T extends Record> T create(Class<T> clazz, Object... args) {
+            return delegate().create(clazz, args);
         }
 
         @Nullable

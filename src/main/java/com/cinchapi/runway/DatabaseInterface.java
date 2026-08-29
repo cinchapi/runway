@@ -101,6 +101,32 @@ public interface DatabaseInterface {
     static final Page FIRST_PAGINATION = Page.limit(1);
 
     /**
+     * Create a new {@link Record} of the specified {@code clazz} the same as
+     * {@link #create(Class, Object...)}, run {@code gate} against it after it
+     * is bound, and restore every binding the creation changed if the gate
+     * throws.
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
+     * <p>
+     * An implementation that supports {@link #create(Class, Object...)
+     * creation} must override this method.
+     * </p>
+     *
+     * @param clazz the type of {@link Record} to create
+     * @param gate the check to run against the bound {@link Record}
+     * @param args constructor arguments for the {@link Record}
+     * @param <T> the type of {@link Record}
+     * @return the newly created {@link Record}, not yet saved
+     * @throws UnsupportedOperationException if the implementation does not
+     *             support record creation
+     */
+    public default <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Return the number of {@link Records} in the {@code clazz}.
      *
      * @param clazz
@@ -351,32 +377,6 @@ public interface DatabaseInterface {
      *             support record creation
      */
     public default <T extends Record> T create(Class<T> clazz, Object... args) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Create a new {@link Record} of the specified {@code clazz} the same as
-     * {@link #create(Class, Object...)}, run {@code gate} against it after it
-     * is bound, and restore every binding the creation changed if the gate
-     * throws.
-     * <p>
-     * This is a framework-private method and should not be called directly.
-     * </p>
-     * <p>
-     * An implementation that supports {@link #create(Class, Object...)
-     * creation} must override this method.
-     * </p>
-     *
-     * @param clazz the type of {@link Record} to create
-     * @param gate the check to run against the bound {@link Record}
-     * @param args constructor arguments for the {@link Record}
-     * @param <T> the type of {@link Record}
-     * @return the newly created {@link Record}, not yet saved
-     * @throws UnsupportedOperationException if the implementation does not
-     *             support record creation
-     */
-    public default <T extends Record> T $create(Class<T> clazz,
-            Consumer<? super T> gate, Object... args) {
         throw new UnsupportedOperationException();
     }
 

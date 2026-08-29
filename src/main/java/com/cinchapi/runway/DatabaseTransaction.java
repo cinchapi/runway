@@ -229,6 +229,26 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     @Override
+    public <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
+        if(open) {
+            verifyOwner();
+            verifyNotPoisoned();
+        }
+        T record = Reflection.newInstance(clazz, args);
+        Runnable restore = record.snapshotGraphBindings();
+        join(record);
+        try {
+            gate.accept(record);
+        }
+        catch (Throwable t) {
+            restore.run();
+            throw t;
+        }
+        return record;
+    }
+
+    @Override
     public void abort() {
         if(open) {
             verifyOwner();
@@ -345,26 +365,6 @@ class DatabaseTransaction extends Binding implements Transaction {
     @Override
     public <T extends Record> T create(Class<T> clazz, Object... args) {
         return $create(clazz, record -> {}, args);
-    }
-
-    @Override
-    public <T extends Record> T $create(Class<T> clazz,
-            Consumer<? super T> gate, Object... args) {
-        if(open) {
-            verifyOwner();
-            verifyNotPoisoned();
-        }
-        T record = Reflection.newInstance(clazz, args);
-        Runnable restore = record.snapshotGraphBindings();
-        join(record);
-        try {
-            gate.accept(record);
-        }
-        catch (Throwable t) {
-            restore.run();
-            throw t;
-        }
-        return record;
     }
 
     /**

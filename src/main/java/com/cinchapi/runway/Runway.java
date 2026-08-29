@@ -681,6 +681,22 @@ public final class Runway extends Binding implements
                 .create(Runtime.getRuntime().availableProcessors());
     }
 
+    @Override
+    public <T extends Record> T $create(Class<T> clazz,
+            Consumer<? super T> gate, Object... args) {
+        T record = Reflection.newInstance(clazz, args);
+        Runnable restore = record.snapshotGraphBindings();
+        record.bindGraph(this, connections, Sets.newIdentityHashSet());
+        try {
+            gate.accept(record);
+        }
+        catch (Throwable t) {
+            restore.run();
+            throw t;
+        }
+        return record;
+    }
+
     /**
      * Return the {@link Audience} that represents an unauthenticated or unknown
      * user of this {@link Runway} instance.
@@ -772,22 +788,6 @@ public final class Runway extends Binding implements
     @Override
     public <T extends Record> T create(Class<T> clazz, Object... args) {
         return $create(clazz, record -> {}, args);
-    }
-
-    @Override
-    public <T extends Record> T $create(Class<T> clazz,
-            Consumer<? super T> gate, Object... args) {
-        T record = Reflection.newInstance(clazz, args);
-        Runnable restore = record.snapshotGraphBindings();
-        record.bindGraph(this, connections, Sets.newIdentityHashSet());
-        try {
-            gate.accept(record);
-        }
-        catch (Throwable t) {
-            restore.run();
-            throw t;
-        }
-        return record;
     }
 
     /**
