@@ -178,12 +178,9 @@ final class AudienceTransaction implements Transaction {
      * Verify that the {@link #audience} still operates in the
      * {@link #transaction transaction's} scope, so a delegated operation cannot
      * resolve in a different scope that the {@link Audience} later joined.
-     * <p>
-     * An {@link Audience} that holds no scope of its own has none to diverge
-     * from, so there is nothing to verify.
-     * </p>
      */
     private void verifyAudienceScope() {
+        // An Audience that holds no scope of its own has none to diverge from.
         if(audience instanceof Record) {
             Verify.that(Reflection.get("binding", audience) == transaction,
                     "The Audience behind this view no longer operates in this"
