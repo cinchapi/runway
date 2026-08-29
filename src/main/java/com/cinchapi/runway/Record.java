@@ -410,43 +410,30 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Capture the binding of every loaded {@link Record} that is reachable from
-     * the {@code values}, apart from {@code excluded}, and return a task that
-     * restores each captured binding.
+     * the {@code values}, and return a task that restores each captured
+     * binding.
      *
      * @param values the values whose reachable {@link Record Records} are
      *            captured
-     * @param excluded the {@link Record} whose binding is left as it is, or
-     *            {@code null} to capture every reachable {@link Record}
      * @return a task that restores every captured binding
      */
-    static Runnable snapshotBindingsExcept(Object[] values,
-            @Nullable Record excluded) {
-        Set<Record> exclusions = Sets.newIdentityHashSet();
-        if(excluded != null) {
-            exclusions.add(excluded);
+    static Runnable snapshotBindings(Object[] values) {
+        Set<Record> graph = Sets.newIdentityHashSet();
+        Set<Record> seen = Sets.newIdentityHashSet();
+        for (Object value : values) {
+            forEachReachableRecord(value,
+                    record -> record.collectGraph(graph, seen));
         }
-        return snapshotBindings(values, exclusions);
-    }
-
-    /**
-     * Capture the binding of every loaded {@link Record} that is reachable from
-     * the {@code values}, apart from {@code excluded} and every {@link Record}
-     * reachable from it, and return a task that restores each captured binding.
-     *
-     * @param values the values whose reachable {@link Record Records} are
-     *            captured
-     * @param excluded the {@link Record} whose reachable {@link Record Records}
-     *            keep the bindings they hold, or {@code null} to capture every
-     *            reachable {@link Record}
-     * @return a task that restores every captured binding
-     */
-    static Runnable snapshotBindingsExceptGraphOf(Object[] values,
-            @Nullable Record excluded) {
-        Set<Record> exclusions = Sets.newIdentityHashSet();
-        if(excluded != null) {
-            excluded.collectGraph(exclusions, Sets.newIdentityHashSet());
+        List<Runnable> restores = Lists.newArrayListWithCapacity(graph.size());
+        for (Record record : graph) {
+            Binding binding = record.binding;
+            ConcourseProvider connections = record.connections;
+            restores.add(() -> {
+                record.binding = binding;
+                record.connections = connections;
+            });
         }
-        return snapshotBindings(values, exclusions);
+        return () -> restores.forEach(Runnable::run);
     }
 
     /**
@@ -1012,38 +999,6 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return sequence;
-    }
-
-    /**
-     * Capture the binding of every loaded {@link Record} that is reachable from
-     * the {@code values} and is not in {@code excluded}, and return a task that
-     * restores each captured binding.
-     *
-     * @param values the values whose reachable {@link Record Records} are
-     *            captured
-     * @param excluded the {@link Record Records} whose bindings are left as
-     *            they are
-     * @return a task that restores every captured binding
-     */
-    private static Runnable snapshotBindings(Object[] values,
-            Set<Record> excluded) {
-        Set<Record> graph = Sets.newIdentityHashSet();
-        Set<Record> seen = Sets.newIdentityHashSet();
-        for (Object value : values) {
-            forEachReachableRecord(value,
-                    record -> record.collectGraph(graph, seen));
-        }
-        graph.removeAll(excluded);
-        List<Runnable> restores = Lists.newArrayListWithCapacity(graph.size());
-        for (Record record : graph) {
-            Binding binding = record.binding;
-            ConcourseProvider connections = record.connections;
-            restores.add(() -> {
-                record.binding = binding;
-                record.connections = connections;
-            });
-        }
-        return () -> restores.forEach(Runnable::run);
     }
 
     /**

@@ -273,9 +273,8 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
-        Record self = this instanceof Record ? (Record) this : null;
-        Runnable restore = Reflection.callStatic(Record.class,
-                "snapshotBindingsExcept", (Object) args, self);
+        Runnable rollback = Reflection.callStatic(Record.class,
+                "snapshotBindings", (Object) args);
         // The database binds the record, and its reachable graph, before the
         // permission check runs, so the check and a later save both resolve
         // within the context this Audience operates against.
@@ -284,7 +283,7 @@ public interface Audience extends DatabaseInterface, Transactional {
             verifyIsCreatableByAudience(this, record);
         }
         catch (Throwable t) {
-            restore.run();
+            rollback.run();
             throw t;
         }
         if(this instanceof Record) {
@@ -992,16 +991,11 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
-        Record self = this instanceof Record ? (Record) this : null;
-        // The transactional scope owns the binding of the Audience and of
-        // every Record it reaches, so the capture leaves that graph out.
-        Runnable restore = Reflection.callStatic(Record.class,
-                "snapshotBindingsExceptGraphOf",
-                (Object) Array.containing(record), self);
-        // The work may run more than once, so the marker to restore is the one
-        // captured before the first attempt.
+        // The work may run more than once, so the marker to restore is the
+        // one captured before the first attempt.
         Record previous = Reflection.get("_author", record);
         AtomicReference<TransactionInterface> attempted = new AtomicReference<>();
+        AtomicReference<Runnable> rollback = new AtomicReference<>();
         try {
             return transactAndSupply(view -> {
                 // The checks below run against this Audience, so the raw
@@ -1010,6 +1004,11 @@ public interface Audience extends DatabaseInterface, Transactional {
                 TransactionInterface transaction = AudienceTransaction
                         .raw(view);
                 attempted.set(transaction);
+                // The capture runs after the transactional scope joins this
+                // Audience, so a Record whose binding the scope owns is
+                // captured as it stands and the rollback leaves it alone.
+                rollback.set(Reflection.callStatic(Record.class,
+                        "snapshotBindings", (Object) Array.containing(record)));
                 // Join the record and its reachable graph to the
                 // transactional scope before the permission check
                 // runs, so the check and the save both resolve within
@@ -1025,7 +1024,7 @@ public interface Audience extends DatabaseInterface, Transactional {
                     // the author marker; restore it so a later save
                     // is not attributed to this Audience.
                     Reflection.set("_author", previous, record);
-                    restore.run();
+                    rollback.get().run();
                     if(!$checkIfInScopeOrVisible().test(interned)) {
                         throw new RestrictedAccessException();
                     }
@@ -1042,14 +1041,15 @@ public interface Audience extends DatabaseInterface, Transactional {
             // A staged save survives only in a transaction that outlives this
             // call, and a durable one owns the record it saved.
             TransactionInterface transaction = attempted.get();
+            Runnable undo = rollback.get();
             boolean durable = transaction != null
                     && (boolean) Reflection.call(transaction, "committed");
             boolean surviving = transaction != null
                     && (boolean) Reflection.call(transaction, "open")
                     && (boolean) Reflection.call(transaction, "poisoned");
-            if(!durable && !surviving) {
+            if(undo != null && !durable && !surviving) {
                 Reflection.set("_author", previous, record);
-                restore.run();
+                undo.run();
             }
             throw t;
         }
