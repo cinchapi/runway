@@ -684,6 +684,8 @@ public final class Runway extends Binding implements
     @Override
     public <T extends Record> T $create(Class<T> clazz,
             Consumer<? super T> gate, Object... args) {
+        // NOTE: #create duplicates this body without the rollback. Change both
+        // together.
         T record = Reflection.newInstance(clazz, args);
         Runnable restore = record.snapshotGraphBindings();
         record.bindGraph(this, connections, Sets.newIdentityHashSet());
@@ -787,7 +789,12 @@ public final class Runway extends Binding implements
      */
     @Override
     public <T extends Record> T create(Class<T> clazz, Object... args) {
-        return $create(clazz, record -> {}, args);
+        // NOTE: This duplicates the body of #$create, minus the rollback that
+        // no gate here can run, so a creation walks the record's graph once
+        // instead of twice. Change both together.
+        T record = Reflection.newInstance(clazz, args);
+        record.bindGraph(this, connections, Sets.newIdentityHashSet());
+        return record;
     }
 
     /**
