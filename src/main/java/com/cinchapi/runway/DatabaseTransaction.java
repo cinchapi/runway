@@ -854,6 +854,16 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
+     * Return {@code true} if a failure poisoned the transaction, so its staged
+     * writes can never commit.
+     *
+     * @return {@code true} if the transaction is {@link #poisoned}
+     */
+    boolean poisoned() {
+        return poisoned;
+    }
+
+    /**
      * Return the {@link ConcourseProvider} that scopes a bound {@link Record
      * Record's} operations to this transaction.
      *

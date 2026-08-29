@@ -45,6 +45,7 @@ import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.runway.Computed;
 import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.RetryExhaustedException;
 import com.cinchapi.runway.Runway;
 import com.cinchapi.runway.Selection;
 import com.cinchapi.runway.Selections;
@@ -249,7 +250,9 @@ public interface Audience extends DatabaseInterface, Transactional {
      * The returned {@link Record} is not saved to the database until
      * {@link Record#save()} is called, and it is bound to that same context, so
      * a direct {@link Record#save() save} persists within it (e.g., within a
-     * {@link com.cinchapi.runway.Transaction Transaction}).
+     * {@link com.cinchapi.runway.Transaction Transaction}). If this method
+     * throws, then every {@link Record} reachable from the {@code args} keeps
+     * the binding it had.
      * </p>
      *
      * @param clazz the type of {@link Record} to create
@@ -270,11 +273,19 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
+        Runnable restore = Reflection.callStatic(Record.class,
+                "snapshotBindings", (Object) args);
         // The database binds the record, and its reachable graph, before the
         // permission check runs, so the check and a later save both resolve
         // within the context this Audience operates against.
         T record = $db().create(clazz, args);
-        verifyIsCreatableByAudience(this, record);
+        try {
+            verifyIsCreatableByAudience(this, record);
+        }
+        catch (Throwable t) {
+            restore.run();
+            throw t;
+        }
         if(this instanceof Record) {
             Reflection.set("_author", (Record) this, record);
         }
@@ -945,6 +956,13 @@ public interface Audience extends DatabaseInterface, Transactional {
      * audience mediates.
      * </p>
      * <p>
+     * Unless this method saves {@code record}, the {@code record} and every
+     * {@link Record} reachable from it keep the bindings they had before the
+     * call; after a save fails within an open
+     * {@link com.cinchapi.runway.Transaction Transaction}, its failed-save
+     * contract governs.
+     * </p>
+     * <p>
      * <strong>NOTE:</strong> A refusal of a hidden match still confirms that a
      * {@link Record} with the identity exists, even though this
      * {@link Audience} cannot see it.
@@ -973,38 +991,67 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T extends Record> T intern(T record)
             throws RestrictedAccessException {
-        return transactAndSupply(view -> {
-            // The checks below run against this Audience, so the raw
-            // transaction is the correct target for the staging
-            // operations; the Audience-scoped view would repeat them.
-            TransactionInterface transaction = AudienceTransaction.raw(view);
-            // Join the record and its reachable graph to the
-            // transactional scope before the permission check
-            // runs, so the check and the save both resolve within
-            // it, consistent with #create.
-            Reflection.call(transaction, "join", record);
-            verifyIsCreatableByAudience(this, record);
-            Record previous = Reflection.get("_author", record);
-            if(this instanceof Record) {
-                Reflection.set("_author", (Record) this, record);
-            }
-            T interned = transaction.intern(record);
-            if(interned != record) {
-                // The record was never saved, so nothing consumed
-                // the author marker; restore it so a later save
-                // is not attributed to this Audience.
-                Reflection.set("_author", previous, record);
-                if(!$checkIfInScopeOrVisible().test(interned)) {
-                    throw new RestrictedAccessException();
+        Runnable restore = Reflection.callStatic(Record.class,
+                "snapshotBindings", (Object) Array.containing(record));
+        // Capture the marker before the first attempt, so a retried attempt
+        // restores the true original instead of what a prior attempt wrote.
+        Record previous = Reflection.get("_author", record);
+        try {
+            return transactAndSupply(view -> {
+                // The checks below run against this Audience, so the raw
+                // transaction is the correct target for the staging
+                // operations; the Audience-scoped view would repeat them.
+                TransactionInterface transaction = AudienceTransaction
+                        .raw(view);
+                // Join the record and its reachable graph to the
+                // transactional scope before the permission check
+                // runs, so the check and the save both resolve within
+                // it, consistent with #create.
+                Reflection.call(transaction, "join", record);
+                T interned;
+                try {
+                    verifyIsCreatableByAudience(this, record);
+                    if(this instanceof Record) {
+                        Reflection.set("_author", (Record) this, record);
+                    }
+                    interned = transaction.intern(record);
+                }
+                catch (Throwable t) {
+                    if(!(boolean) Reflection.call(transaction, "poisoned")) {
+                        // The record was never saved, so nothing consumed
+                        // the author marker and nothing staged depends on
+                        // the binding. A poisoned transaction keeps both,
+                        // per the failed-save contract.
+                        Reflection.set("_author", previous, record);
+                        restore.run();
+                    }
+                    throw t;
+                }
+                if(interned != record) {
+                    // The record was never saved, so nothing consumed
+                    // the author marker; restore it so a later save
+                    // is not attributed to this Audience.
+                    Reflection.set("_author", previous, record);
+                    restore.run();
+                    if(!$checkIfInScopeOrVisible().test(interned)) {
+                        throw new RestrictedAccessException();
+                    }
+                    else {
+                        return interned;
+                    }
                 }
                 else {
                     return interned;
                 }
-            }
-            else {
-                return interned;
-            }
-        });
+            });
+        }
+        catch (RetryExhaustedException e) {
+            // Every attempt completed its work, but no commit succeeded, so
+            // nothing durable depends on the binding or the marker.
+            Reflection.set("_author", previous, record);
+            restore.run();
+            throw e;
+        }
     }
 
     /**

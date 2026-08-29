@@ -537,6 +537,217 @@ public class AudienceAccessControlInternTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a refused {@code intern} through an
+     * {@link Audience} that is bound to an open {@link Transaction} leaves the
+     * probe, and every record reachable from it, bound as they were, so a later
+     * direct save of one does not stage into the transaction.
+     * <p>
+     * <strong>Start state:</strong> One saved closed {@link Gate} and one saved
+     * {@link Admin}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} in a try-with-resources block and load
+     * the {@link Admin} through it.</li>
+     * <li>Load the {@link Gate} outside the {@link Transaction} and build a
+     * {@link Vault} probe that links it.</li>
+     * <li>Call {@code intern} on the loaded {@link Admin} with the probe, and
+     * catch the expected exception.</li>
+     * <li>Set {@code open = true} on the outside {@link Gate}, save it
+     * directly, and save the probe directly.</li>
+     * <li>{@code abort()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * because the {@link Gate} is closed, and both direct saves survive the
+     * abort: a fresh load shows the {@link Gate} open and exactly one
+     * {@link Vault} exists.
+     */
+    @Test
+    public void testRefusedInternLeavesProbeAndGraphUnbound() {
+        Gate gate = new Gate();
+        gate.open = false;
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@example.com";
+        runway.save(gate, admin);
+        try (Transaction transaction = runway.startTransaction()) {
+            Admin audience = transaction.load(Admin.class, admin.id());
+            Gate outside = runway.load(Gate.class, gate.id());
+            Vault probe = new Vault("V-1", outside);
+            boolean threw = false;
+            try {
+                audience.intern(probe);
+            }
+            catch (RestrictedAccessException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            outside.open = true;
+            Assert.assertTrue(outside.save());
+            Assert.assertTrue(probe.save());
+            transaction.abort();
+        }
+        Assert.assertTrue(runway.load(Gate.class, gate.id()).open);
+        Assert.assertEquals(1, runway.count(Vault.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a hidden-match refusal of
+     * {@code intern} through an {@link Audience} that is bound to an open
+     * {@link Transaction} leaves the probe bound as it was, instead of bound to
+     * the transaction.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Badge}, which only an
+     * {@link Admin} may see, and one saved {@link Candidate}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} in a try-with-resources block and load
+     * the {@link Candidate} through it.</li>
+     * <li>Call {@code intern} on the loaded {@link Candidate} with a new
+     * {@link Badge} that has the same serial, and catch the expected
+     * exception.</li>
+     * <li>Call {@code assign(...)} on the probe with the
+     * {@link com.cinchapi.runway.Runway Runway}.</li>
+     * <li>{@code commit()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown,
+     * the {@code assign} succeeds because the probe is not bound to the open
+     * {@link Transaction}, and the {@link Transaction} still commits.
+     */
+    @Test
+    public void testInternHiddenMatchRefusalLeavesProbeUnbound() {
+        Badge existing = new Badge();
+        existing.serial = "X-1";
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@example.com";
+        runway.save(existing, candidate);
+        try (Transaction transaction = runway.startTransaction()) {
+            Candidate audience = transaction.load(Candidate.class,
+                    candidate.id());
+            Badge probe = new Badge();
+            probe.serial = "X-1";
+            boolean threw = false;
+            try {
+                audience.intern(probe);
+            }
+            catch (RestrictedAccessException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            probe.assign(runway);
+            Assert.assertTrue(transaction.commit());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code intern} through an
+     * {@link Audience} that returns an existing match leaves the probe, and
+     * every record reachable from it, bound as they were, so a later direct
+     * save of one does not stage into the transaction.
+     * <p>
+     * <strong>Start state:</strong> One saved open {@link Gate}, one saved
+     * {@link Admin}, and one saved {@link Vault} that claims the identity.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} in a try-with-resources block and load
+     * the {@link Admin} through it.</li>
+     * <li>Load the {@link Gate} outside the {@link Transaction} and build a
+     * {@link Vault} probe with the saved identity that links it.</li>
+     * <li>Call {@code intern} on the loaded {@link Admin} with the probe.</li>
+     * <li>Set {@code open = false} on the outside {@link Gate} and save it
+     * directly.</li>
+     * <li>{@code abort()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The existing {@link Vault} is returned, and
+     * the direct save survives the abort: a fresh load shows the {@link Gate}
+     * closed.
+     */
+    @Test
+    public void testInternMatchLeavesProbeAndGraphUnbound() {
+        Gate gate = new Gate();
+        gate.open = true;
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@example.com";
+        Vault existing = new Vault("V-1", gate);
+        runway.save(gate, admin, existing);
+        try (Transaction transaction = runway.startTransaction()) {
+            Admin audience = transaction.load(Admin.class, admin.id());
+            Gate outside = runway.load(Gate.class, gate.id());
+            Vault probe = new Vault("V-1", outside);
+            Vault interned = audience.intern(probe);
+            Assert.assertEquals(existing.id(), interned.id());
+            outside.open = false;
+            Assert.assertTrue(outside.save());
+            transaction.abort();
+        }
+        Assert.assertFalse(runway.load(Gate.class, gate.id()).open);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code intern} through an
+     * {@link Audience} that throws {@link DuplicateEntryException} leaves the
+     * probe bound as it was, instead of bound to the transaction.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Badge Badges} whose
+     * serials are rewritten to the same value through the raw client, and one
+     * saved {@link Candidate}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Badge Badges} with distinct serials and set both
+     * serial values to the same one with {@code client.set(...)}.</li>
+     * <li>Start a {@link Transaction} in a try-with-resources block and load
+     * the {@link Candidate} through it.</li>
+     * <li>Call {@code intern} on the loaded {@link Candidate} with a new
+     * {@link Badge} that has the shared serial, and catch the expected
+     * exception.</li>
+     * <li>Call {@code assign(...)} on the probe with the
+     * {@link com.cinchapi.runway.Runway Runway}.</li>
+     * <li>{@code commit()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown,
+     * the {@code assign} succeeds because the probe is not bound to the open
+     * {@link Transaction}, and the {@link Transaction} still commits.
+     */
+    @Test
+    public void testInternDuplicateIdentityLeavesProbeUnbound() {
+        Badge one = new Badge();
+        one.serial = "A";
+        Badge two = new Badge();
+        two.serial = "B";
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@example.com";
+        runway.save(one, two, candidate);
+        client.set("serial", "X-1", one.id());
+        client.set("serial", "X-1", two.id());
+        try (Transaction transaction = runway.startTransaction()) {
+            Candidate audience = transaction.load(Candidate.class,
+                    candidate.id());
+            Badge probe = new Badge();
+            probe.serial = "X-1";
+            boolean threw = false;
+            try {
+                audience.intern(probe);
+            }
+            catch (DuplicateEntryException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            probe.assign(runway);
+            Assert.assertTrue(transaction.commit());
+        }
+    }
+
+    /**
      * Return a {@link Criteria} that matches every {@link Employer} whose
      * {@code name} equals the given {@code value}.
      *

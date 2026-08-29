@@ -409,6 +409,40 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Capture the binding of every loaded {@link Record} that is reachable from
+     * the {@code values}, and return a task that restores each captured binding
+     * when it runs.
+     * <p>
+     * Reachability follows the persistent (non-transient) fields of each
+     * reachable {@link Record}. The task restores state that already held, so
+     * it may restore a binding that {@link #bind(Binding, ConcourseProvider)
+     * bind} would refuse.
+     * </p>
+     *
+     * @param values the values whose reachable {@link Record Records} are
+     *            captured
+     * @return a task that restores every captured binding
+     */
+    static Runnable snapshotBindings(Object[] values) {
+        Set<Record> graph = Sets.newIdentityHashSet();
+        Set<Record> seen = Sets.newIdentityHashSet();
+        for (Object value : values) {
+            forEachReachableRecord(value,
+                    record -> record.collectGraph(graph, seen));
+        }
+        List<Runnable> restores = Lists.newArrayListWithCapacity(graph.size());
+        for (Record record : graph) {
+            Binding binding = record.binding;
+            ConcourseProvider connections = record.connections;
+            restores.add(() -> {
+                record.binding = binding;
+                record.connections = connections;
+            });
+        }
+        return () -> restores.forEach(Runnable::run);
+    }
+
+    /**
      * Stage a single-key atomic update of {@code key} on {@code record} within
      * {@code transaction} and return the {@code record}, or {@code null} when
      * there is no record to update.
