@@ -355,7 +355,8 @@ class DatabaseTransaction extends Binding implements Transaction {
             verifyNotPoisoned();
         }
         T record = Reflection.newInstance(clazz, args);
-        Runnable restore = join(record);
+        Runnable restore = record.snapshotGraphBindings();
+        join(record);
         try {
             gate.accept(record);
         }
@@ -838,10 +839,9 @@ class DatabaseTransaction extends Binding implements Transaction {
      * so each {@link Record#save() save} stages within it.
      *
      * @param record the {@link Record} that joins this {@link Transaction}
-     * @return an action that restores every binding the join changed
      */
-    Runnable join(Record record) {
-        return record.bindGraph(this, provider, Sets.newIdentityHashSet());
+    void join(Record record) {
+        record.bindGraph(this, provider, Sets.newIdentityHashSet());
     }
 
     @Override

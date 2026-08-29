@@ -778,8 +778,8 @@ public final class Runway extends Binding implements
     public <T extends Record> T $create(Class<T> clazz,
             Consumer<? super T> gate, Object... args) {
         T record = Reflection.newInstance(clazz, args);
-        Runnable restore = record.bindGraph(this, connections,
-                Sets.newIdentityHashSet());
+        Runnable restore = record.snapshotGraphBindings();
+        record.bindGraph(this, connections, Sets.newIdentityHashSet());
         try {
             gate.accept(record);
         }

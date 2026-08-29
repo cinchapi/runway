@@ -1217,17 +1217,13 @@ public interface Audience extends DatabaseInterface, Transactional {
         Verify.that(db instanceof Transactional,
                 "This Audience's database does not support transactions");
         Transaction transaction = ((Transactional) db).startTransaction();
-        Runnable restore = null;
         try {
             if(this instanceof Record) {
-                restore = Reflection.call(transaction, "join", this);
+                Reflection.call(transaction, "join", this);
             }
             return (Transaction) scope(transaction);
         }
         catch (Throwable t) {
-            if(restore != null) {
-                restore.run();
-            }
             transaction.close();
             throw t;
         }
