@@ -362,6 +362,10 @@ public interface DatabaseInterface {
      * <p>
      * This is a framework-private method and should not be called directly.
      * </p>
+     * <p>
+     * An implementation whose {@link #create(Class, Object...)} binds the new
+     * {@link Record} must override this method.
+     * </p>
      *
      * @param clazz the type of {@link Record} to create
      * @param gate the check to run against the bound {@link Record}

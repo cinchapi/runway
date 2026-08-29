@@ -257,6 +257,45 @@ public class AudienceBindingRestoreTest extends AudienceAccessControlBaseTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a failed {@code intern} through a
+     * {@link Record} audience leaves the probe {@link Record Record's} author
+     * marker as it was, so a later direct save is not attributed to the
+     * audience.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Admin} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code intern} on the {@link Admin} audience with an
+     * {@link Employer} probe whose {@link com.cinchapi.runway.Unique Unique}
+     * field is {@code null} and catch the expected failure.</li>
+     * <li>Read the probe's author marker.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The intern fails with an
+     * {@link IllegalArgumentException} and the probe's author marker is still
+     * {@code null}.
+     */
+    @Test
+    public void testFailedInternRestoresAuthorMarker() {
+        Admin admin = new Admin();
+        admin.name = "Root";
+        admin.email = "root@example.com";
+        admin.assign(runway);
+        Assert.assertTrue(admin.save());
+        Employer probe = new Employer();
+        try {
+            admin.intern(probe);
+            Assert.fail("Expected an IllegalArgumentException");
+        }
+        catch (IllegalArgumentException e) {
+            // expected
+        }
+        Assert.assertNull(Reflection.get("_author", probe));
+    }
+
+    /**
      * A caller-owned {@link Record} that is passed as a constructor argument.
      *
      * @author Jeff Nelson

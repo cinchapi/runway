@@ -272,11 +272,7 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T extends Record> T create(Class<T> clazz, Object... args)
             throws RestrictedAccessException {
-        T record = $create(clazz, created -> {}, args);
-        if(this instanceof Record) {
-            Reflection.set("_author", (Record) this, record);
-        }
-        return record;
+        return $create(clazz, created -> {}, args);
     }
 
     /**
@@ -295,10 +291,14 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T extends Record> T $create(Class<T> clazz,
             Consumer<? super T> gate, Object... args) {
-        return $db().$create(clazz, created -> {
+        T record = $db().$create(clazz, created -> {
             verifyIsCreatableByAudience(this, created);
             gate.accept(created);
         }, args);
+        if(this instanceof Record) {
+            Reflection.set("_author", (Record) this, record);
+        }
+        return record;
     }
 
     /**
@@ -1006,9 +1006,9 @@ public interface Audience extends DatabaseInterface, Transactional {
             // runs, so the check and the save both resolve within
             // it, consistent with #create.
             Runnable restore = Reflection.call(transaction, "join", record);
+            Record previous = Reflection.get("_author", record);
             try {
                 verifyIsCreatableByAudience(this, record);
-                Record previous = Reflection.get("_author", record);
                 if(this instanceof Record) {
                     Reflection.set("_author", (Record) this, record);
                 }
@@ -1030,8 +1030,9 @@ public interface Audience extends DatabaseInterface, Transactional {
                 }
             }
             catch (Throwable t) {
-                // A refused or failed intern must leave every binding as it
-                // was before the call.
+                // A refused or failed intern must leave every binding, and the
+                // author marker, as they were before the call.
+                Reflection.set("_author", previous, record);
                 restore.run();
                 throw t;
             }
