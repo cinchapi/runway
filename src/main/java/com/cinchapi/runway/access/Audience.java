@@ -1045,10 +1045,21 @@ public interface Audience extends DatabaseInterface, Transactional {
         return data.getOrDefault(key, null);
     }
 
-    @Override
+    /**
+     * Return the {@code selections} constrained by this {@link Audience
+     * Audience's} visibility, so that running them against any
+     * {@link DatabaseInterface} yields only what this {@link Audience} may see.
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
+     *
+     * @param selections the {@link Selection Selections} to constrain
+     * @return the constrained {@link Selection Selections}
+     */
     @SuppressWarnings("unchecked")
-    public default Selections select(Selection<?>... selections) {
-        selections = Arrays.stream(selections).map(selection -> {
+    public default Selection<?>[] $scope(Selection<?>... selections) {
+        // TODO: make private in Java 9+
+        return Arrays.stream(selections).map(selection -> {
             Class<?> clazz = selection.clazz();
             if(clazz != null && AccessControl.class.isAssignableFrom(clazz)) {
                 Scope scope = AccessControl.resolveVisibilityScope(clazz, this);
@@ -1059,7 +1070,11 @@ public interface Audience extends DatabaseInterface, Transactional {
             return Selection.withInjectedFilter((Selection<Record>) selection,
                     $checkIfVisible());
         }).toArray(Selection[]::new);
-        return $db().select(selections);
+    }
+
+    @Override
+    public default Selections select(Selection<?>... selections) {
+        return $db().select($scope(selections));
     }
 
     /**

@@ -15,6 +15,10 @@
  */
 package com.cinchapi.runway.access;
 
+import com.cinchapi.common.base.Verify;
+import com.cinchapi.runway.Transaction;
+import com.cinchapi.runway.TransactionInterface;
+
 /**
  * A singleton {@link Audience} that represents an unauthenticated or unknown
  * user in the access control framework.
@@ -66,5 +70,13 @@ final class Anonymous implements Audience {
      * Construct a new instance.
      */
     private Anonymous() {/* no-init */}
+
+    @Override
+    public TransactionInterface scope(TransactionInterface transaction) {
+        Verify.thatArgument(transaction instanceof Transaction,
+                "An Audience can only scope a Transaction");
+        return new AudienceTransaction(this,
+                (Transaction) AudienceTransaction.raw(transaction));
+    }
 
 }

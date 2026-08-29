@@ -171,18 +171,24 @@ final class AudienceTransaction implements Transaction {
     @Override
     public Selections select(Selection<?>... selections) {
         verifyAudienceScope();
-        return audience.select(selections);
+        return transaction.select(audience.$scope(selections));
     }
 
     /**
      * Verify that the {@link #audience} still operates in the
      * {@link #transaction transaction's} scope, so a delegated operation cannot
      * resolve in a different scope that the {@link Audience} later joined.
+     * <p>
+     * An {@link Audience} that holds no scope of its own has none to diverge
+     * from, so there is nothing to verify.
+     * </p>
      */
     private void verifyAudienceScope() {
-        Verify.that(Reflection.get("binding", audience) == transaction,
-                "The Audience behind this view no longer operates in this"
-                        + " Transaction's scope");
+        if(audience instanceof Record) {
+            Verify.that(Reflection.get("binding", audience) == transaction,
+                    "The Audience behind this view no longer operates in this"
+                            + " Transaction's scope");
+        }
     }
 
 }

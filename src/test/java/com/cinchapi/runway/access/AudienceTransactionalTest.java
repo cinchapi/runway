@@ -724,22 +724,23 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
 
     /**
      * <strong>Goal:</strong> Verify that the anonymous {@link Audience} refuses
-     * every transactional operation.
+     * to start a {@link Transaction}, because it holds no database of its own
+     * to start one against.
      * <p>
      * <strong>Start state:</strong> No prior state needed.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Get {@link Audience#anonymous()}.</li>
-     * <li>Call {@code startTransaction()}, {@code transactAndSupply(...)},
-     * {@code transact(...)} and {@code scope(...)} on it.</li>
+     * <li>Call {@code startTransaction()}, {@code transactAndSupply(...)} and
+     * {@code transact(...)} on it.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> Every call throws an
      * {@link UnsupportedOperationException}.
      */
     @Test
-    public void testAnonymousAudienceRefusesTransactionalOperations() {
+    public void testAnonymousAudienceRefusesToStartATransaction() {
         Audience anonymous = Audience.anonymous();
         try {
             anonymous.startTransaction();
@@ -757,13 +758,6 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
         }
         try {
             anonymous.transact(transaction -> {});
-            Assert.fail("Expected an UnsupportedOperationException");
-        }
-        catch (UnsupportedOperationException e) {
-            // expected
-        }
-        try (Transaction transaction = runway.startTransaction()) {
-            anonymous.scope(transaction);
             Assert.fail("Expected an UnsupportedOperationException");
         }
         catch (UnsupportedOperationException e) {
