@@ -25,10 +25,8 @@ import org.junit.Test;
 
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
-import com.cinchapi.runway.DatabaseInterface;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Selection;
-import com.cinchapi.runway.Selections;
 
 /**
  * Unit tests for the {@link Scope} factory methods and singleton guarantees.
@@ -440,18 +438,8 @@ public class ScopeTest {
      * @return the anonymous {@link Audience}
      */
     private static Audience anonymous() {
-        return Audience.anonymous(new DatabaseInterface() {
-
-            @Override
-            public <T extends Record> T create(Class<T> clazz, Object... args) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public Selections select(Selection<?>... selections) {
-                throw new UnsupportedOperationException();
-            }
-
+        return Audience.anonymous(selections -> {
+            throw new UnsupportedOperationException();
         });
     }
 

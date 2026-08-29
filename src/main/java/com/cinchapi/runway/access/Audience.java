@@ -1203,6 +1203,9 @@ public interface Audience extends DatabaseInterface, Transactional {
     @Override
     public default <T> T transactAndSupply(
             Function<TransactionInterface, T> work) {
+        // NOTE: An Audience that is an instanceof Record never reaches this
+        // default because Record#transactAndSupply is final and shadows it;
+        // this body serves an Audience that holds its database.
         DatabaseInterface db = $db();
         Verify.that(db instanceof Transactional,
                 "This Audience's database does not support transactions");

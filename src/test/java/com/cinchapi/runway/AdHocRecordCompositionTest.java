@@ -322,18 +322,8 @@ public class AdHocRecordCompositionTest {
      * @return the anonymous {@link Audience}
      */
     private static Audience anonymous() {
-        return Audience.anonymous(new DatabaseInterface() {
-
-            @Override
-            public <T extends Record> T create(Class<T> clazz, Object... args) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public Selections select(Selection<?>... selections) {
-                throw new UnsupportedOperationException();
-            }
-
+        return Audience.anonymous(selections -> {
+            throw new UnsupportedOperationException();
         });
     }
 

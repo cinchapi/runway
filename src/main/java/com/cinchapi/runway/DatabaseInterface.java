@@ -337,13 +337,21 @@ public interface DatabaseInterface {
      * The returned {@link Record} is not saved to the database until
      * {@link Record#save()} is called.
      * </p>
+     * <p>
+     * This is an optional operation. The default implementation throws an
+     * {@link UnsupportedOperationException}.
+     * </p>
      *
      * @param clazz the type of {@link Record} to create
      * @param args constructor arguments for the {@link Record}
      * @param <T> the type of {@link Record}
      * @return the newly created {@link Record}, not yet saved
+     * @throws UnsupportedOperationException if the implementation does not
+     *             support record creation
      */
-    public <T extends Record> T create(Class<T> clazz, Object... args);
+    public default <T extends Record> T create(Class<T> clazz, Object... args) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Execute a single {@link Selection} and return the result directly, cast

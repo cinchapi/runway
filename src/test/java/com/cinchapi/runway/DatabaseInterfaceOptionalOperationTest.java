@@ -28,21 +28,30 @@ import com.cinchapi.concourse.lang.sort.Order;
 public class DatabaseInterfaceOptionalOperationTest {
 
     /**
-     * A {@link DatabaseInterface} that supplies only the required primitives.
+     * A {@link DatabaseInterface} that supplies only the required read
+     * primitive.
      */
-    private final DatabaseInterface db = new DatabaseInterface() {
+    private final DatabaseInterface db = selections -> null;
 
-        @Override
-        public <T extends Record> T create(Class<T> clazz, Object... args) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Selections select(Selection<?>... selections) {
-            return null;
-        }
-
-    };
+    /**
+     * <strong>Goal:</strong> Verify that the {@code create} default is an
+     * optional operation.
+     * <p>
+     * <strong>Start state:</strong> A {@link DatabaseInterface} that implements
+     * only {@code select}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code create}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link UnsupportedOperationException} is
+     * thrown.
+     */
+    @Test(expected = UnsupportedOperationException.class)
+    public void testCreateDefaultIsUnsupported() {
+        db.create(Record.class);
+    }
 
     /**
      * <strong>Goal:</strong> Verify that the {@code intern} default is an
