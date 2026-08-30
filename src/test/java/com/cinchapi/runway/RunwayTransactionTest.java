@@ -2549,6 +2549,63 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code commit()} and {@code abort()}
+     * are refused from a thread that does not own the {@link Transaction}, so
+     * the owner keeps control of its staged writes.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, set the score to
+     * 2 and {@code save()}.</li>
+     * <li>Submit {@code commit()} to a different thread, then submit
+     * {@code abort()}.</li>
+     * <li>Commit from the test thread.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both cross-thread calls throw
+     * {@link IllegalStateException}, the owner's commit succeeds and the staged
+     * score of 2 is durable.
+     */
+    @Test
+    public void testCommitAndAbortAreRefusedFromNonOwnerThread()
+            throws Exception {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            Future<?> commitAttempt = executor.submit(transaction::commit);
+            try {
+                commitAttempt.get();
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (ExecutionException e) {
+                Assert.assertTrue(
+                        e.getCause() instanceof IllegalStateException);
+            }
+            Future<?> abortAttempt = executor.submit(transaction::abort);
+            try {
+                abortAttempt.get();
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (ExecutionException e) {
+                Assert.assertTrue(
+                        e.getCause() instanceof IllegalStateException);
+            }
+            Assert.assertTrue(transaction.commit());
+        }
+        finally {
+            executor.shutdownNow();
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a linked {@link Record} loaded within
      * a {@link Transaction} is bound to it, so a save through the link stays
      * invisible until the commit.
