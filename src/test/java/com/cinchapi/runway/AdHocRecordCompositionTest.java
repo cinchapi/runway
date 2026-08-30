@@ -245,9 +245,9 @@ public class AdHocRecordCompositionTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the single-key {@code readAs} returns
-     * {@code null} for a key the {@link Audience} may not read, instead of
-     * throwing.
+     * <strong>Goal:</strong> Verify that the single-key {@code readAs} throws
+     * for a key the {@link Audience} may not read, the same as the
+     * collection-based {@code read}.
      * <p>
      * <strong>Start state:</strong> One document with a confidential field that
      * a guest may not read.
@@ -257,20 +257,16 @@ public class AdHocRecordCompositionTest {
      * <li>Call {@code readAs(guest, "confidential")}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The result is {@code null}.
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown.
      */
-    @Test
-    public void testAccessControlledAdHocRecordReadAsReturnsNullWhenRestricted() {
+    @Test(expected = RestrictedAccessException.class)
+    public void testAccessControlledAdHocRecordReadAsThrowsWhenRestricted() {
         AudienceAdHocRecord guest = new AudienceAdHocRecord("Guest", "guest");
 
         FieldLevelAccessAdHocRecord doc = new FieldLevelAccessAdHocRecord(
                 "Document", "summary", "secret");
 
-        // Guest trying to read confidential field should get null
-        // (the single-key readAs filters data, the Collection-based read
-        // throws)
-        Object result = doc.readAs(guest, "confidential");
-        Assert.assertNull(result);
+        doc.readAs(guest, "confidential");
     }
 
     /**

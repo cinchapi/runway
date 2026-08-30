@@ -1083,7 +1083,9 @@ public interface Audience extends DatabaseInterface, Transactional {
      * @param <T> the type of the {@link Record}
      * @return a map from each key to its value
      * @throws RestrictedAccessException if this {@link Audience} is not
-     *             permitted to read one or more of the {@code keys}
+     *             permitted to read one or more of the {@code keys}, or if this
+     *             {@link Audience} is not permitted to discover the
+     *             {@code record} at all
      */
     public default <T extends Record> Map<String, Object> read(
             Collection<String> keys, T record)
@@ -1091,7 +1093,7 @@ public interface Audience extends DatabaseInterface, Transactional {
         try {
             RESTRICTED_ACCESS_DETECTED.remove();
             Map<String, Object> data = frame(keys, record);
-            if(RESTRICTED_ACCESS_DETECTED.get()) {
+            if(data == null || RESTRICTED_ACCESS_DETECTED.get()) {
                 throw new RestrictedAccessException();
             }
             else {
@@ -1116,12 +1118,13 @@ public interface Audience extends DatabaseInterface, Transactional {
      * @param <T> the type of the {@link Record}
      * @return the value of the {@code key}
      * @throws RestrictedAccessException if this {@link Audience} is not
-     *             permitted to read the {@code key}
+     *             permitted to read the {@code key}, or if this
+     *             {@link Audience} is not permitted to discover the
+     *             {@code record} at all
      */
     public default <T extends Record> Object read(String key, T record)
             throws RestrictedAccessException {
-        Map<String, Object> data = frame(ImmutableSet.of(key), record);
-        return data.getOrDefault(key, null);
+        return read(ImmutableSet.of(key), record).get(key);
     }
 
     /**

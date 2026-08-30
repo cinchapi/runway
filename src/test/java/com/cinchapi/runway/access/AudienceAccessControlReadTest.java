@@ -494,4 +494,45 @@ public class AudienceAccessControlReadTest
         Assert.assertEquals(120000.0, result.get("salary"));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that the single-key {@code read} throws for
+     * a denied key, and that the refusal has no effect on a later, fully
+     * permitted {@code read} on the same thread.
+     * <p>
+     * <strong>Start state:</strong> A {@link Candidate} whose {@code resume} an
+     * {@link EmployerUser} may not read, but whose {@code name} it may.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code read} for the denied {@code resume} key and catch the
+     * expected exception.</li>
+     * <li>Call {@code read} for the permitted {@code name} key.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first {@code read} throws
+     * {@link RestrictedAccessException}; the second returns the {@code name}
+     * value.
+     */
+    @Test
+    public void testReadSingleKeyDeniedThrowsException() {
+        EmployerUser employerUser = new EmployerUser();
+        employerUser.name = "HR Manager";
+
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.resume = "Jane's private resume";
+
+        try {
+            employerUser.read("resume", candidate);
+            Assert.fail("Expected a RestrictedAccessException");
+        }
+        catch (RestrictedAccessException e) {
+            // Expected exception
+        }
+
+        Map<String, Object> data = employerUser.read(ImmutableSet.of("name"),
+                candidate);
+        Assert.assertEquals("Jane Developer", data.get("name"));
+    }
+
 }
