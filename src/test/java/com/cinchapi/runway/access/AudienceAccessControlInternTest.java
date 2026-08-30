@@ -17,6 +17,7 @@ package com.cinchapi.runway.access;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -33,10 +34,13 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.AtomicRetryPolicy;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.Record.Revision;
+import com.cinchapi.runway.Required;
 import com.cinchapi.runway.RetryExhaustedException;
 import com.cinchapi.runway.Runway;
+import com.cinchapi.runway.SuppressedRunwayException;
 import com.cinchapi.runway.Transaction;
 import com.cinchapi.runway.Unique;
+import com.google.common.collect.Iterables;
 
 /**
  * Tests for {@link Audience#intern(Record) intern} performed through an
@@ -851,6 +855,121 @@ public class AudienceAccessControlInternTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a save failure that poisons an open
+     * {@link Transaction} leaves the probe bound to that {@link Transaction},
+     * so the failed-save contract governs instead of the restore.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Admin}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} in a try-with-resources block and load
+     * the {@link Admin} through it.</li>
+     * <li>Call {@code intern} on the loaded {@link Admin} with a
+     * {@link Strongbox} probe that has an identity but no {@code label}, so the
+     * staged save fails its {@link Required} check, and catch the expected
+     * exception.</li>
+     * <li>{@code assign} the probe to the {@link com.cinchapi.runway.Runway
+     * Runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} is thrown
+     * and the {@code assign} is refused with an {@link IllegalStateException},
+     * because the probe is still bound to the poisoned {@link Transaction}.
+     */
+    @Test
+    public void testInternSaveFailureLeavesProbeBoundToPoisonedTransaction() {
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@example.com";
+        runway.save(admin);
+        try (Transaction transaction = runway.startTransaction()) {
+            Admin audience = transaction.load(Admin.class, admin.id());
+            Strongbox probe = new Strongbox();
+            probe.code = "S-1";
+            boolean threw = false;
+            try {
+                audience.intern(probe);
+            }
+            catch (SuppressedRunwayException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            boolean refused = false;
+            try {
+                probe.assign(runway);
+            }
+            catch (IllegalStateException e) {
+                refused = true;
+            }
+            Assert.assertTrue(refused);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code intern} whose commit
+     * succeeds before a post-commit hook throws keeps the state the save left,
+     * so the author marker the save consumed does not come back.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Admin Admins}, and a
+     * {@link HookedStrongbox} probe that the first one created, so the probe
+     * carries the first {@link Admin Admin's} marker.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code create} on the first {@link Admin} for a
+     * {@link HookedStrongbox}, and give it an identity and a label.</li>
+     * <li>Arm the probe's post-commit hook.</li>
+     * <li>Call {@code intern} on the second {@link Admin} with the probe, whose
+     * creation rule now registers a post-commit hook that throws, and catch the
+     * expected exception.</li>
+     * <li>Change the probe's {@code label}, save it directly, and audit the
+     * probe.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown,
+     * the interned probe is durable, and the revision that the later save
+     * produced is not attributed.
+     */
+    @Test
+    public void testInternKeepsTheSavedStateAfterPostCommitFailure() {
+        Admin creator = new Admin();
+        creator.name = "Creating Admin";
+        creator.email = "creator@example.com";
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@example.com";
+        runway.save(creator, admin);
+        HookedStrongbox probe = creator.create(HookedStrongbox.class);
+        probe.code = "S-1";
+        probe.label = "first";
+        HookedStrongbox.ARMED.set(true);
+        try {
+            boolean threw = false;
+            try {
+                admin.intern(probe);
+            }
+            catch (IllegalStateException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            Assert.assertEquals("first",
+                    runway.load(HookedStrongbox.class, probe.id()).label);
+            HookedStrongbox.ARMED.set(false);
+            probe.label = "second";
+            Assert.assertTrue(probe.save());
+            Map<Timestamp, Map<String, Revision>> audit = probe.audit();
+            Timestamp latest = Iterables.getLast(audit.keySet());
+            Revision revision = audit.get(latest).get("label");
+            Assert.assertNotNull(revision);
+            Assert.assertFalse(revision.isAttributed());
+        }
+        finally {
+            HookedStrongbox.ARMED.set(false);
+        }
+    }
+
+    /**
      * Return a {@link Criteria} that matches every {@link Employer} whose
      * {@code name} equals the given {@code value}.
      *
@@ -1189,6 +1308,98 @@ public class AudienceAccessControlInternTest
             outside.open = !outside.open;
             outside.save();
             ATTEMPTS.incrementAndGet();
+            return true;
+        }
+    }
+
+    /**
+     * An access controlled {@link Record} with a {@link Unique} identity and a
+     * {@link Required} label, so a probe that omits the label fails its staged
+     * save.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Strongbox extends Record implements AccessControl {
+
+        /**
+         * The identity code.
+         */
+        @Unique
+        public String code;
+
+        /**
+         * The label, which every save requires.
+         */
+        @Required
+        public String label;
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isCreatableByAnonymous() {
+            return true;
+        }
+
+        @Override
+        public boolean $isDeletableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableBy(@Nonnull Audience audience) {
+            return true;
+        }
+
+        @Override
+        public boolean $isDiscoverableByAnonymous() {
+            return true;
+        }
+
+        @Override
+        public Set<String> $readableBy(@Nonnull Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $readableByAnonymous() {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableBy(@Nonnull Audience audience) {
+            return ALL_KEYS;
+        }
+
+        @Override
+        public Set<String> $writableByAnonymous() {
+            return ALL_KEYS;
+        }
+    }
+
+    /**
+     * A {@link Strongbox} whose creation rule registers a post-commit hook that
+     * throws, so the commit succeeds and the operation still fails.
+     *
+     * @author Jeff Nelson
+     */
+    public static class HookedStrongbox extends Strongbox {
+
+        /**
+         * Whether the creation rule registers the hook.
+         */
+        public static final AtomicBoolean ARMED = new AtomicBoolean();
+
+        @Override
+        public boolean $isCreatableBy(@Nonnull Audience audience) {
+            if(ARMED.get()) {
+                audience.transact(view -> view.afterCommit(() -> {
+                    throw new IllegalStateException(
+                            "The post-commit hook failed");
+                }));
+            }
             return true;
         }
     }
