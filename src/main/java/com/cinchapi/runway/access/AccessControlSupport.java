@@ -21,13 +21,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 import javax.annotation.Nullable;
 
 import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.runway.Record;
+import com.cinchapi.runway.TransactionInterface;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multiset;
@@ -61,75 +61,6 @@ import com.google.common.collect.Multiset;
  * @author Jeff Nelson
  */
 class AccessControlSupport {
-
-    /**
-     * Atomically find a {@link Record} on behalf of {@code audience} and update
-     * the value of {@code key} within the transactional scope of the
-     * {@code audience}.
-     * <p>
-     * If the {@code audience} is bound to an open transaction, then the
-     * {@code supplier}, the access checks and the update stage within it;
-     * otherwise, they commit together in their own transaction. The
-     * {@code supplier} runs within that scope, so a lookup through the
-     * {@code audience} matches among the records that are visible to it. The
-     * update proceeds only if the supplied {@link Record}
-     * {@link #isWritableByAudience(Audience, Collection, Record) is writable}
-     * by the {@code audience}; otherwise the result is {@code null} and nothing
-     * is updated. The replacement is validated under the same rules as every
-     * single-key atomic operation, and the {@code update} operator may run more
-     * than once, so it must be free of side effects.
-     * </p>
-     *
-     * @param audience the {@link Audience} on whose behalf the update runs
-     * @param supplier supplies the {@link Record} to update within the
-     *            transactional scope
-     * @param key the name of the intrinsic field to update
-     * @param update the operator that produces the replacement value from the
-     *            current one; it must not return {@code null}
-     * @param <T> the type of {@link Record}
-     * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if there is no match
-     *         that the {@code audience} can update
-     * @throws IllegalArgumentException if {@code key} is not eligible for
-     *             atomic operations, or if {@code update} returns {@code null}
-     *             or a value that is not an instance of the field's type
-     * @throws UnsupportedOperationException if the {@code audience} has no
-     *             transactional scope
-     * @throws IllegalStateException if the {@code audience} has no binding, or
-     *             if it is bound to an open transaction that another thread
-     *             owns or that a failed save poisoned
-     */
-    @Nullable
-    public static <T extends Record, V> T supplyAndUpdate(Audience audience,
-            Supplier<T> supplier, String key, UnaryOperator<V> update) {
-        if(audience instanceof Record) {
-            return ((Record) audience).transactAndSupply(transaction -> {
-                T subject = supplier.get();
-                if(isWritableByAudience(audience, ImmutableSet.of(key),
-                        subject)) {
-                    Record previous = Reflection.get("_author", subject);
-                    Reflection.set("_author", (Record) audience, subject);
-                    T result = Reflection.callStatic(Record.class,
-                            "stageAtomicUpdate", transaction, subject, key,
-                            update);
-                    Record marker = Reflection.get("_author", subject);
-                    if(marker == audience) {
-                        // A staged save consumes the author marker, so one that
-                        // survived proves the update was a no-op; restore it so
-                        // a later save is not attributed to the audience.
-                        Reflection.set("_author", previous, subject);
-                    }
-                    return result;
-                }
-                else {
-                    return null;
-                }
-            });
-        }
-        else {
-            throw new UnsupportedOperationException();
-        }
-    }
 
     /**
      * Return {@code true} if {@code audience} is permitted to create
@@ -235,6 +166,89 @@ class AccessControlSupport {
         else {
             return true;
         }
+    }
+
+    /**
+     * Return {@code audience} when it is non-null; otherwise, return an
+     * anonymous {@link Audience} that operates against the {@code subject
+     * Subject's} own database context.
+     *
+     * @param audience the {@link Audience} to resolve; may be {@code null}
+     * @param subject the {@link Record} on whose behalf an anonymous default
+     *            operates
+     * @return the resolved {@link Audience}, never {@code null}
+     */
+    public static Audience orAnonymous(@Nullable Audience audience,
+            Record subject) {
+        return audience != null ? audience
+                : Audience.anonymous(Reflection.get("db", subject));
+    }
+
+    /**
+     * Atomically find a {@link Record} on behalf of {@code audience} and update
+     * the value of {@code key} within the transactional scope of the
+     * {@code audience}.
+     * <p>
+     * If the {@code audience} is bound to an open transaction, then the
+     * {@code supplier}, the access checks and the update stage within it;
+     * otherwise, they commit together in their own transaction. The
+     * {@code supplier} runs within that scope, so a lookup through the
+     * {@code audience} matches among the records that are visible to it. The
+     * update proceeds only if the supplied {@link Record}
+     * {@link #isWritableByAudience(Audience, Collection, Record) is writable}
+     * by the {@code audience}; otherwise the result is {@code null} and nothing
+     * is updated. The replacement is validated under the same rules as every
+     * single-key atomic operation, and the {@code update} operator may run more
+     * than once, so it must be free of side effects.
+     * </p>
+     *
+     * @param audience the {@link Audience} on whose behalf the update runs
+     * @param supplier supplies the {@link Record} to update from the
+     *            {@link TransactionInterface} view it receives, so the lookup
+     *            resolves within the transactional scope
+     * @param key the name of the intrinsic field to update
+     * @param update the operator that produces the replacement value from the
+     *            current one; it must not return {@code null}
+     * @param <T> the type of {@link Record}
+     * @param <V> the type of the value stored under {@code key}
+     * @return the updated {@link Record}, or {@code null} if there is no match
+     *         that the {@code audience} can update
+     * @throws IllegalArgumentException if {@code key} is not eligible for
+     *             atomic operations, or if {@code update} returns {@code null}
+     *             or a value that is not an instance of the field's type
+     * @throws UnsupportedOperationException if the {@code audience} has no
+     *             binding
+     * @throws IllegalStateException if the {@code audience Audience's} database
+     *             does not support transactions, or if it is bound to an open
+     *             transaction that another thread owns or that a failed save
+     *             poisoned
+     */
+    @Nullable
+    public static <T extends Record, V> T supplyAndUpdate(Audience audience,
+            Function<TransactionInterface, T> supplier, String key,
+            UnaryOperator<V> update) {
+        return audience.transactAndSupply(transaction -> {
+            T subject = supplier.apply(transaction);
+            if(isWritableByAudience(audience, ImmutableSet.of(key), subject)) {
+                Record previous = Reflection.get("_author", subject);
+                if(audience instanceof Record) {
+                    Reflection.set("_author", (Record) audience, subject);
+                }
+                T result = Reflection.callStatic(Record.class,
+                        "stageAtomicUpdate", transaction, subject, key, update);
+                Record marker = Reflection.get("_author", subject);
+                if(marker == audience) {
+                    // A staged save consumes the author marker, so one that
+                    // survived proves the update was a no-op; restore it so
+                    // a later save is not attributed to the audience.
+                    Reflection.set("_author", previous, subject);
+                }
+                return result;
+            }
+            else {
+                return null;
+            }
+        });
     }
 
     /**

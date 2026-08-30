@@ -143,6 +143,16 @@ public class AdHocDataSource<T extends AdHocRecord> implements
         return loadAny(clazz, filter, realms).size();
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @throws UnsupportedOperationException always
+     */
+    @Override
+    public <R extends Record> R create(Class<R> clazz, Object... args) {
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     public <R extends Record> Set<R> find(Class<R> clazz, Criteria criteria,
             Order order, Page page, Predicate<R> filter, Realms realms) {
@@ -510,21 +520,6 @@ public class AdHocDataSource<T extends AdHocRecord> implements
     }
 
     /**
-     * Load all {@link Record Records} from the supplier that pass the
-     * {@code inputFilter}.
-     *
-     * @param inputFilter a predicate that each record must satisfy to be
-     *            included
-     * @return matching records
-     */
-    @SuppressWarnings("unchecked")
-    private <R extends Record> Set<R> doLoad(Predicate<R> inputFilter) {
-        return supplier.get().stream().map(record -> (R) record)
-                .filter(inputFilter)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-    }
-
-    /**
      * Load a specific {@link Record} by id that passes the {@code inputFilter}.
      *
      * @param id the record id
@@ -537,6 +532,21 @@ public class AdHocDataSource<T extends AdHocRecord> implements
         return supplier.get().stream().filter(record -> record.id() == id)
                 .map(record -> (R) record).filter(inputFilter).findFirst()
                 .orElse(null);
+    }
+
+    /**
+     * Load all {@link Record Records} from the supplier that pass the
+     * {@code inputFilter}.
+     *
+     * @param inputFilter a predicate that each record must satisfy to be
+     *            included
+     * @return matching records
+     */
+    @SuppressWarnings("unchecked")
+    private <R extends Record> Set<R> doLoad(Predicate<R> inputFilter) {
+        return supplier.get().stream().map(record -> (R) record)
+                .filter(inputFilter)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     /**

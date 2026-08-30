@@ -15,6 +15,7 @@
  */
 package com.cinchapi.runway.access;
 
+import java.util.function.Function;
 import java.util.function.UnaryOperator;
 
 import javax.annotation.Nullable;
@@ -35,9 +36,8 @@ import com.cinchapi.runway.TransactionInterface;
  * <p>
  * Every database operation delegates to the {@link Audience}, so reads observe
  * the {@link Audience Audience's} visibility and writes require its
- * permissions, and each operation resolves within the {@link Transaction}
- * because the {@link Audience} is bound to it. The lifecycle methods drive the
- * {@link Transaction} directly.
+ * permissions, and each operation resolves within the {@link Transaction}. The
+ * lifecycle methods drive the {@link Transaction} directly.
  * </p>
  * <p>
  * The delegation is only valid while the {@link Audience} operates in the
@@ -174,15 +174,31 @@ final class AudienceTransaction implements Transaction {
         return audience.select(selections);
     }
 
+    @Override
+    public Transaction startTransaction() {
+        verifyAudienceScope();
+        return audience.startTransaction();
+    }
+
+    @Override
+    public <T> T transactAndSupply(Function<TransactionInterface, T> work) {
+        verifyAudienceScope();
+        return audience.transactAndSupply(work);
+    }
+
     /**
      * Verify that the {@link #audience} still operates in the
      * {@link #transaction transaction's} scope, so a delegated operation cannot
      * resolve in a different scope that the {@link Audience} later joined.
      */
     private void verifyAudienceScope() {
-        Verify.that(Reflection.get("binding", audience) == transaction,
-                "The Audience behind this view no longer operates in this"
-                        + " Transaction's scope");
+        // An Audience that holds its database was constructed with this
+        // Transaction and cannot diverge from it.
+        if(audience instanceof Record) {
+            Verify.that(Reflection.get("binding", audience) == transaction,
+                    "The Audience behind this view no longer operates in this"
+                            + " Transaction's scope");
+        }
     }
 
 }

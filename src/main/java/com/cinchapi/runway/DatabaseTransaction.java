@@ -22,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
@@ -347,7 +348,7 @@ class DatabaseTransaction extends Binding implements Transaction {
             verifyNotPoisoned();
         }
         T record = Reflection.newInstance(clazz, args);
-        record.bind(this, provider);
+        join(record);
         return record;
     }
 
@@ -728,6 +729,46 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
+     * {@inheritDoc}
+     * <p>
+     * While the transaction is open, starting another is refused. After the
+     * transaction ends, a new {@link Transaction} starts on the enclosing
+     * {@link Runway}.
+     * </p>
+     */
+    @Override
+    public Transaction startTransaction() {
+        if(open) {
+            throw new IllegalStateException("Cannot start a Transaction"
+                    + " within an open Transaction because transactions do"
+                    + " not nest; use transact or transactAndSupply to join"
+                    + " this one");
+        }
+        else {
+            return database.startTransaction();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * While the transaction is open, the work joins it: the work runs exactly
+     * once, cannot commit or abort, and a conflict at commit belongs to the
+     * transaction's owner. After the transaction ends, the work runs in its own
+     * managed transaction on the enclosing {@link Runway}.
+     * </p>
+     */
+    @Override
+    public <T> T transactAndSupply(Function<TransactionInterface, T> work) {
+        if(open) {
+            return execute(() -> work.apply(this));
+        }
+        else {
+            return database.transactAndSupply(work);
+        }
+    }
+
+    /**
      * Return {@code true} if the transaction successfully committed.
      *
      * @return {@code true} if the transaction {@link #committed}
@@ -744,6 +785,26 @@ class DatabaseTransaction extends Binding implements Transaction {
      */
     Runway database() {
         return database;
+    }
+
+    /**
+     * Run {@code operation} within this transaction's operation window, so the
+     * transaction cannot end while the operation is in flight.
+     *
+     * @param operation the work to run
+     * @param <T> the operation's result type
+     * @return the operation's result
+     */
+    <T> T execute(Supplier<T> operation) {
+        verifyOwner();
+        verifyNotPoisoned();
+        operating++;
+        try {
+            return operation.get();
+        }
+        finally {
+            operating--;
+        }
     }
 
     /**
@@ -766,21 +827,6 @@ class DatabaseTransaction extends Binding implements Transaction {
      */
     void join(Record record) {
         record.bindGraph(this, provider, Sets.newIdentityHashSet());
-    }
-
-    /**
-     * Record that a single-key atomic operation wrote {@code value} for
-     * {@code key} in {@code record}. If this transaction ends without a
-     * successful commit, then {@code record} does not carry the write as an
-     * unsaved change.
-     *
-     * @param record the {@link Record} that the operation wrote
-     * @param key the name of the field the operation wrote
-     * @param value the value the operation wrote, in its unserialized form
-     */
-    void recordAtomicValue(Record record, String key, Object value) {
-        atomicValues.computeIfAbsent(record, ignore -> new HashMap<>()).put(key,
-                value);
     }
 
     @Override
@@ -808,23 +854,13 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Run {@code operation} within this transaction's operation window, so the
-     * transaction cannot end while the operation is in flight.
+     * Return {@code true} if a failure poisoned the transaction, so its staged
+     * writes can never commit.
      *
-     * @param operation the work to run
-     * @param <T> the operation's result type
-     * @return the operation's result
+     * @return {@code true} if the transaction is {@link #poisoned}
      */
-    <T> T execute(Supplier<T> operation) {
-        verifyOwner();
-        verifyNotPoisoned();
-        operating++;
-        try {
-            return operation.get();
-        }
-        finally {
-            operating--;
-        }
+    boolean poisoned() {
+        return poisoned;
     }
 
     /**
@@ -835,6 +871,21 @@ class DatabaseTransaction extends Binding implements Transaction {
      */
     ConcourseProvider provider() {
         return provider;
+    }
+
+    /**
+     * Record that a single-key atomic operation wrote {@code value} for
+     * {@code key} in {@code record}. If this transaction ends without a
+     * successful commit, then {@code record} does not carry the write as an
+     * unsaved change.
+     *
+     * @param record the {@link Record} that the operation wrote
+     * @param key the name of the field the operation wrote
+     * @param value the value the operation wrote, in its unserialized form
+     */
+    void recordAtomicValue(Record record, String key, Object value) {
+        atomicValues.computeIfAbsent(record, ignore -> new HashMap<>()).put(key,
+                value);
     }
 
     /**
