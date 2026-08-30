@@ -664,38 +664,6 @@ class DatabaseTransaction extends Binding implements Transaction {
         }
     }
 
-    /**
-     * Save all changes in the provided {@code records} within this transaction.
-     * <p>
-     * The records, and every {@link Record} linked from them, are bound to this
-     * transaction, and the staged changes become durable when {@link #commit()}
-     * succeeds. Until then, no reader outside the transaction can observe them.
-     * </p>
-     * <p>
-     * A {@code records} argument that fails its checks (one that is
-     * {@code null}, overrides the save pipeline, throws from its
-     * {@code overrideSave} accessor, or is bound to a different open
-     * {@link Transaction}) is rejected before anything is staged, and the
-     * transaction remains usable. Any failure after the arguments are accepted,
-     * including a linked {@link Record} that is bound to a different open
-     * {@link Transaction}, poisons the transaction: the writes that were staged
-     * before the failure can never commit, and every subsequent operation is
-     * refused except {@link #abort()} (or {@link #close()}) and
-     * {@link #afterAbort(Runnable) afterAbort} registration.
-     * </p>
-     *
-     * @param records one or more {@link Record Records} to save
-     * @return {@code true} when the changes are staged
-     * @throws IllegalStateException if any of the {@code records} overrides the
-     *             save pipeline, if any {@link Record} that the save processes
-     *             is bound to a different open {@link Transaction}, or if a
-     *             prior save failed within the transaction
-     */
-    @Override
-    public boolean save(Record... records) {
-        return save(false, records);
-    }
-
     @Override
     public Selections select(Selection<?>... options) {
         if(open) {
