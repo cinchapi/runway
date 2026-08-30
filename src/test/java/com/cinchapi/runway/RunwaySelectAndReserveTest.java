@@ -498,28 +498,32 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
      * results in submission order.
      * <p>
      * <strong>Start state:</strong> Saved {@link Widget Widgets} and
-     * {@link Gadget Gadgets}.
+     * {@link Gadget Gadgets} with distinguishable cardinalities, so an order
+     * inversion produces a size mismatch.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Create and save records of both types.</li>
-     * <li>Execute a multi-select.</li>
+     * <li>Create and save two {@link Widget Widgets} and one
+     * {@link Gadget}.</li>
+     * <li>Execute a multi-select with the {@link Widget} {@link Selection}
+     * first.</li>
      * <li>Call {@link Selections#next()} twice.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> First call returns {@link Widget Widgets},
-     * second returns {@link Gadget Gadgets}.
+     * <strong>Expected:</strong> First call returns the two {@link Widget
+     * Widgets}, second returns the one {@link Gadget}.
      */
     @Test
     public void testNextReturnsResultsInOrder() {
         new Widget("w1").save();
+        new Widget("w2").save();
         new Gadget("g1", "red").save();
         Selection<Widget> widgetSel = Selection.of(Widget.class).build();
         Selection<Gadget> gadgetSel = Selection.of(Gadget.class).build();
         Selections results = runway.select(widgetSel, gadgetSel);
         Set<Widget> widgets = results.next();
         Set<Gadget> gadgets = results.next();
-        Assert.assertEquals(1, widgets.size());
+        Assert.assertEquals(2, widgets.size());
         Assert.assertEquals(1, gadgets.size());
     }
 
@@ -741,7 +745,7 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
     /**
      * <strong>Goal:</strong> Verify that executing a {@link Selection} reserves
      * the count so that a subsequent {@link Runway#count} call with the same
-     * parameters returns the cached value.
+     * parameters returns the cached value instead of querying the database.
      * <p>
      * <strong>Start state:</strong> Saved {@link Widget Widgets} with varying
      * scores.
@@ -749,14 +753,15 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Create and save {@link Widget Widgets} with varying scores.</li>
-     * <li>Create a {@link Selection} with criteria filtering score &gt; 50 and
-     * execute it.</li>
+     * <li>Create a count {@link Selection} with criteria filtering score &gt;
+     * 50 and execute it.</li>
+     * <li>Save another matching {@link Widget} to mutate the database.</li>
      * <li>Call {@link Runway#count(Class, Criteria)} with the same
      * parameters.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The result from {@code count()} matches the
-     * {@link Selection Selection's} result.
+     * <strong>Expected:</strong> {@code count()} returns the cached count
+     * ({@code 2}), not the fresh database count ({@code 3}).
      */
     @Test
     public void testCountSelectionReservedForSubsequentCountMethod() {
@@ -770,14 +775,20 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         runway.reserve();
         runway.select(sel);
         int fromSelect = sel.get();
+        Assert.assertEquals(2, fromSelect);
+        new Widget("extra", 95).save();
         int fromCount = runway.count(Widget.class, criteria);
-        Assert.assertEquals(fromSelect, fromCount);
+        Assert.assertEquals(
+                "count() must return the reserved value, not the fresh "
+                        + "database count",
+                fromSelect, fromCount);
     }
 
     /**
      * <strong>Goal:</strong> Verify that executing a {@link Selection} reserves
-     * the result so that a subsequent {@link Runway#count} call with the same
-     * parameters returns the size of the cached find result.
+     * the find result so that a subsequent filtered {@link Runway#count} call
+     * with the same parameters resolves against the cached find result instead
+     * of querying the database.
      * <p>
      * <strong>Start state:</strong> Saved {@link Widget Widgets} with varying
      * scores.
@@ -787,12 +798,13 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
      * <li>Create and save {@link Widget Widgets} with varying scores.</li>
      * <li>Create a {@link Selection} with criteria filtering score &gt; 50 and
      * execute it.</li>
-     * <li>Call {@link Runway#count(Class, Criteria)} with the same
-     * parameters.</li>
+     * <li>Save another matching {@link Widget} to mutate the database.</li>
+     * <li>Call the filtered {@link Runway#count} overload with the same
+     * parameters and a pass-through filter.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The count equals the size of the
-     * {@link Selection Selection's} result.
+     * <strong>Expected:</strong> The filtered count equals the size of the
+     * cached find result ({@code 2}), not the fresh database count ({@code 3}).
      */
     @Test
     public void testFindSelectionReservedForSubsequentCountMethod() {
@@ -806,8 +818,13 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
         runway.reserve();
         runway.select(sel);
         Set<Widget> fromSelect = sel.get();
-        int fromCount = runway.count(Widget.class, criteria);
-        Assert.assertEquals(fromSelect.size(), fromCount);
+        Assert.assertEquals(2, fromSelect.size());
+        new Widget("extra", 95).save();
+        int fromCount = runway.count(Widget.class, criteria, w -> true);
+        Assert.assertEquals(
+                "A filtered count must resolve against the reserved find "
+                        + "result, not a fresh database read",
+                fromSelect.size(), fromCount);
     }
 
     /**
