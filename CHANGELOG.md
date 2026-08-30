@@ -65,7 +65,7 @@ Three changes govern how a save interacts with concurrent writers. A save now wr
     * The verification applies whether or not the save prevents stale writes.
     * The declaration lasts until a save commits, so each decision declares its own. A save that does not commit leaves the declaration in place.
     * A name that does not identify a stored field of the `Record` is refused.
-    * Within a `Transaction`, a `Record` that the `Transaction` loaded needs no declaration, because the `Transaction` fails its own commit when a writer changes anything it read. A `Record` that reached its state before the `Transaction` began carries its declaration in. A save is refused when it carries a declaration on a `Record` that reached its state outside the `Transaction` after it began.
+    * Within a `Transaction`, a `Record` that the `Transaction` loaded needs no declaration, because the `Transaction` fails its own commit when a writer changes anything it read. A `Record` that the `Transaction` stores for the first time needs no declaration either, because no stored state precedes it. A `Record` that reached its state before the `Transaction` began carries its declaration in. A save is refused when it carries a declaration on a `Record` that was last loaded or saved outside the `Transaction` after it began.
 
 ##### Atomic Operations
 A record's identity is its data under its `@Unique` constraints. This release lets a constraint scope that identity across the class hierarchy, and it adds `intern`, which resolves a record by its identity, atomically.

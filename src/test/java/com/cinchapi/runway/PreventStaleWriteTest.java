@@ -20,6 +20,7 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import org.junit.Assert;
@@ -1686,6 +1687,191 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
             loaded.verifyOnSave("bio");
             loaded.name = "updated";
             transaction.save(loaded);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} honors a
+     * declaration on a {@link Record} that it created.
+     * <p>
+     * <strong>Start state:</strong> An open {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} and create a {@link TUser} through
+     * it.</li>
+     * <li>Save the {@link TUser}.</li>
+     * <li>Declare {@code bio}, modify it, save again and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both saves and the commit succeed, and the
+     * stored bio is the one the second save wrote.
+     */
+    @Test
+    public void testDeclarationIsHonoredOnARecordTheTransactionCreated() {
+        long id;
+        try (Transaction transaction = runway.startTransaction()) {
+            tick();
+            TUser created = transaction.create(TUser.class,
+                    "verify_tx_created");
+            created.bio = "original";
+            Assert.assertTrue(created.save());
+            created.verifyOnSave("bio");
+            created.bio = "updated";
+            Assert.assertTrue(created.save());
+            Assert.assertTrue(transaction.commit());
+            id = created.id();
+        }
+        Assert.assertEquals("updated", runway.load(TUser.class, id).bio);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} honors a
+     * declaration on a {@link Record} that a caller constructed and the
+     * {@link Transaction} is the first to store.
+     * <p>
+     * <strong>Start state:</strong> An open {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} and construct a {@link TUser} within
+     * it.</li>
+     * <li>Save the {@link TUser} through the {@link Transaction}.</li>
+     * <li>Declare {@code bio}, modify it, save again and commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both saves and the commit succeed, and the
+     * stored bio is the one the second save wrote.
+     */
+    @Test
+    public void testDeclarationIsHonoredOnARecordFirstSavedWithinTheTransaction() {
+        long id;
+        try (Transaction transaction = runway.startTransaction()) {
+            tick();
+            TUser created = new TUser("verify_tx_first_save");
+            created.bio = "original";
+            Assert.assertTrue(transaction.save(created));
+            created.verifyOnSave("bio");
+            created.bio = "updated";
+            Assert.assertTrue(transaction.save(created));
+            Assert.assertTrue(transaction.commit());
+            id = created.id();
+        }
+        Assert.assertEquals("updated", runway.load(TUser.class, id).bio);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declaration on a {@link Record} that
+     * the database does not yet hold is honored on the save that first stores
+     * it.
+     * <p>
+     * <strong>Start state:</strong> An open {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} and construct a {@link TUser} within
+     * it.</li>
+     * <li>Declare {@code bio}, then save through the {@link Transaction} and
+     * commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save and the commit both succeed.
+     */
+    @Test
+    public void testDeclarationIsHonoredOnTheFirstSaveOfACreatedRecord() {
+        long id;
+        try (Transaction transaction = runway.startTransaction()) {
+            tick();
+            TUser created = new TUser("verify_tx_first_declaration");
+            created.bio = "original";
+            created.verifyOnSave("bio");
+            Assert.assertTrue(transaction.save(created));
+            Assert.assertTrue(transaction.commit());
+            id = created.id();
+        }
+        Assert.assertEquals("original", runway.load(TUser.class, id).bio);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declaration on a {@link Record} that
+     * a discarded attempt already saved is honored when the work runs again.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TUser} that anchors the
+     * conflict.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an anchor {@link TUser}.</li>
+     * <li>Run managed work that loads the anchor, creates a {@link TUser},
+     * saves it, declares {@code bio}, modifies it and saves again.</li>
+     * <li>Externally modify the anchor on the first attempt only, so that
+     * attempt's commit conflicts.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The work runs twice, the second attempt
+     * commits, and the stored bio is the one the second save wrote.
+     */
+    @Test
+    public void testDeclarationIsHonoredOnACreatedRecordWhenAConflictRetriesTheWork() {
+        TUser anchor = new TUser("verify_tx_retry_anchor");
+        anchor.bio = "original";
+        Assert.assertTrue(runway.save(anchor));
+
+        AtomicInteger attempts = new AtomicInteger(0);
+        long id = runway.transactAndSupply(transaction -> {
+            Assert.assertNotNull(transaction.load(TUser.class, anchor.id()));
+            tick();
+            TUser created = transaction.create(TUser.class,
+                    "verify_tx_retry_created");
+            created.bio = "original";
+            Assert.assertTrue(created.save());
+            created.verifyOnSave("bio");
+            created.bio = "updated";
+            Assert.assertTrue(created.save());
+            if(attempts.incrementAndGet() == 1) {
+                externallyWrite(connection -> connection.set("bio", "external",
+                        anchor.id()));
+            }
+            return created.id();
+        });
+        Assert.assertEquals(2, attempts.get());
+        Assert.assertEquals("updated", runway.load(TUser.class, id).bio);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Transaction} refuses a
+     * declaration on a {@link Record} that another {@link Transaction} saved
+     * after this one began.
+     * <p>
+     * <strong>Start state:</strong> An open {@link Transaction} that has
+     * created nothing.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start the outer {@link Transaction}.</li>
+     * <li>Create, save and commit a {@link TUser} through a second
+     * {@link Transaction}.</li>
+     * <li>Declare {@code bio} on that {@link TUser}, modify its name and save
+     * it through the outer {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save is refused, because the {@link TUser}
+     * was last saved somewhere the outer {@link Transaction} cannot see.
+     */
+    @Test(expected = Record.TransactionBoundaryException.class)
+    public void testSaveIsRefusedWhenACreatedRecordSynchronizedElsewhere() {
+        try (Transaction outer = runway.startTransaction()) {
+            tick();
+            TUser created;
+            try (Transaction inner = runway.startTransaction()) {
+                created = inner.create(TUser.class, "verify_tx_created_other");
+                created.bio = "original";
+                Assert.assertTrue(created.save());
+                Assert.assertTrue(inner.commit());
+            }
+            created.verifyOnSave("bio");
+            created.name = "updated";
+            outer.save(created);
         }
     }
 
