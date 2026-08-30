@@ -3564,6 +3564,50 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the {@link CaptureDelete} cleanup a
+     * commit applies to a surviving {@link Record} does not mark an unrelated
+     * in-memory edit as saved, so the edit persists on the next save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Shelf} whose
+     * {@link CaptureDelete} field links to a saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Shelf} and the {@link Item} through a
+     * {@link Transaction}, mark the {@link Item} with {@code deleteOnSave()}
+     * and save both records in one call.</li>
+     * <li>Change the {@link Shelf Shelf's} name in memory without saving
+     * again.</li>
+     * <li>Commit.</li>
+     * <li>Save the {@link Shelf} after the commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the commit, the {@link Shelf Shelf's}
+     * reference is {@code null} and the name edit still reads as an unsaved
+     * change. The post-commit save persists the edit durably.
+     */
+    @Test
+    public void testUnsavedEditSurvivesCaptureDeleteCleanupAtCommit() {
+        Item item = new Item("widget", 1);
+        Shelf shelf = new Shelf("front", item);
+        shelf.assign(runway);
+        Assert.assertTrue(runway.save(shelf, item));
+        Shelf txShelf;
+        try (Transaction transaction = runway.startTransaction()) {
+            txShelf = transaction.load(Shelf.class, shelf.id());
+            Item doomed = transaction.load(Item.class, item.id());
+            doomed.deleteOnSave();
+            Assert.assertTrue(transaction.save(txShelf, doomed));
+            txShelf.name = "back";
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertNull(txShelf.display);
+        Assert.assertTrue(txShelf.hasUnsavedChanges());
+        Assert.assertTrue(txShelf.save());
+        Assert.assertEquals("back", runway.load(Shelf.class, shelf.id()).name);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@link Transaction#abort() abort}
      * discards cached audit metadata, so the record does not report a revision
      * that never committed.

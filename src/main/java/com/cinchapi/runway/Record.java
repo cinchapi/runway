@@ -2974,16 +2974,29 @@ public abstract class Record implements Comparable<Record> {
      * Apply the in-memory effects of a committed save that deleted the
      * {@link Record Records} with {@code ids}: remove every reference that one
      * of this {@link Record Record's} {@link CaptureDelete} fields holds to a
-     * deleted record and re-align this {@link Record Record's} unsaved-changes
-     * status with its current state.
+     * deleted record and mark those removals as saved, without disturbing the
+     * unsaved status of any other change.
      *
      * @param ids the ids of {@link Record Records} the save deleted
      */
     void applyCaptureDeleteCleanup(Set<Long> ids) {
-        if(removeCaptureDeleteReferences(ids)) {
+        Set<Field> touched = removeCaptureDeleteReferences(ids);
+        if(!touched.isEmpty()) {
             clearComputeOnceCache();
             _audit = null;
-            __baseline = captureBaseline();
+            if(__baseline != null) {
+                Map<String, Object> baseline = Maps.newHashMap(__baseline);
+                for (Field field : touched) {
+                    Object value = serializeFieldValue(field);
+                    if(value != null) {
+                        baseline.put(field.getName(), value);
+                    }
+                    else {
+                        baseline.remove(field.getName());
+                    }
+                }
+                __baseline = baseline;
+            }
         }
     }
 
@@ -3400,10 +3413,11 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param ids the ids of {@link Record Records} deleted within the active
      *            save
-     * @return {@code true} if at least one reference was removed
+     * @return the {@link Field Fields} from which at least one reference was
+     *         removed; empty if nothing was removed
      */
-    boolean removeCaptureDeleteReferences(Set<Long> ids) {
-        boolean changed = false;
+    Set<Field> removeCaptureDeleteReferences(Set<Long> ids) {
+        Set<Field> touched = Sets.newLinkedHashSet();
         Set<Field> fields = StaticAnalysis.instance().getAnnotatedFields(this,
                 CaptureDelete.class);
         for (Field field : fields) {
@@ -3427,7 +3441,7 @@ public abstract class Record implements Comparable<Record> {
                             }
                         }
                         field.set(this, replacement);
-                        changed = true;
+                        touched.add(field);
                     }
                 }
                 else if(value.getClass().isArray()) {
@@ -3449,19 +3463,19 @@ public abstract class Record implements Comparable<Record> {
                             field.set(this, java.lang.reflect.Array
                                     .newInstance(component, 0));
                         }
-                        changed = true;
+                        touched.add(field);
                     }
                 }
                 else if(isDeletedReference(value, ids)) {
                     field.set(this, null);
-                    changed = true;
+                    touched.add(field);
                 }
             }
             catch (ReflectiveOperationException e) {
                 throw CheckedExceptions.wrapAsRuntimeException(e);
             }
         }
-        return changed;
+        return touched;
     }
 
     /**
@@ -4351,8 +4365,8 @@ public abstract class Record implements Comparable<Record> {
                         Class<? extends Record> clazz = Reflection
                                 .getClassCasted(__);
                         Record record = db.load(clazz, id);
-                        if(record.removeCaptureDeleteReferences(
-                                ImmutableSet.of(this.id))) {
+                        if(!record.removeCaptureDeleteReferences(
+                                ImmutableSet.of(this.id)).isEmpty()) {
                             record.saveWithinTransaction(saver, context);
                         }
                         else {
