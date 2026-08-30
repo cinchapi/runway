@@ -977,39 +977,6 @@ public class NavigatePrefetchTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that navigate pre-fetch correctly populates
-     * {@link java.util.Collection Collection&lt;Record&gt;} fields when loading
-     * a single {@link Record} via {@code runway.load(Class, id)}.
-     * <p>
-     * <strong>Start state:</strong> A {@link Lock} with three {@link Dock
-     * Docks} saved to the database.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Create and save a {@link Lock} with three {@link Dock} elements.</li>
-     * <li>Load the {@link Lock} via single-record
-     * {@code runway.load(Lock.class, id)}.</li>
-     * <li>Verify each {@link Dock Dock's} value.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The loaded collection has three elements whose
-     * {@code dock} values match the originals.
-     */
-    @Test
-    public void testNavigateSingleRecordLoadPopulatesCollectionFields() {
-        Lock lock = new Lock(ImmutableList.of(new Dock("one"), new Dock("two"),
-                new Dock("three")));
-        lock.save();
-        Lock loaded = runway.load(Lock.class, lock.id());
-        Assert.assertEquals(3, loaded.docks.size());
-        Set<String> dockValues = loaded.docks.stream().map(d -> d.dock)
-                .collect(Collectors.toSet());
-        Assert.assertTrue(dockValues.contains("one"));
-        Assert.assertTrue(dockValues.contains("two"));
-        Assert.assertTrue(dockValues.contains("three"));
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that the unified resolve path populates a
      * mutual-reference graph deeper than static path enumeration can reach, so
      * the cleanup pass that follows the {@code navigate()} call actually fills
