@@ -64,6 +64,12 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     static final AtomicReference<Transaction> ENDING = new AtomicReference<>();
 
     /**
+     * The {@link Transaction} that a {@link Gauge Gauge's} {@code onLoad()}
+     * hook joins, or {@code null} when no test is exercising that hook.
+     */
+    static final AtomicReference<Transaction> JOINING = new AtomicReference<>();
+
+    /**
      * <strong>Goal:</strong> Verify that a read through a {@link Transaction}
      * observes the transaction's own uncommitted writes while readers outside
      * the transaction do not.
@@ -927,6 +933,45 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         }
         Assert.assertEquals("one",
                 runway.load(Meter.class, meter.id()).reading);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code refresh()} whose
+     * {@code onLoad()} hook joins the {@link Record} to an open
+     * {@link Transaction} releases its pooled connection to the pool that
+     * supplied it, so the transaction can still commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Gauge} bound to the
+     * enclosing {@link Runway}, and an open {@link Transaction} that
+     * {@link #JOINING} holds.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code refresh()} on the {@link Gauge}, so its {@code onLoad()}
+     * hook saves it into the {@link Transaction} and leaves the transaction
+     * open.</li>
+     * <li>Call {@code commit()} on the {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The commit succeeds and the {@link Gauge}
+     * remains durably stored.
+     */
+    @Test
+    public void testCommitSucceedsWhenOnLoadHookJoinsRecordDuringRefresh() {
+        Gauge gauge = new Gauge("one");
+        gauge.assign(runway);
+        Assert.assertTrue(gauge.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            JOINING.set(transaction);
+            try {
+                gauge.refresh();
+            }
+            finally {
+                JOINING.set(null);
+            }
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals("one", runway.load(Gauge.class, gauge.id()).level);
     }
 
     /**
@@ -5209,6 +5254,38 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
          */
         public Meter(String reading) {
             this.reading = reading;
+        }
+
+    }
+
+    /**
+     * A {@link Record} whose {@code onLoad()} hook saves it into the open
+     * {@link Transaction} that {@link RunwayTransactionTest#JOINING} holds.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Gauge extends Record {
+
+        /**
+         * The current level.
+         */
+        String level;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param level the initial level
+         */
+        public Gauge(String level) {
+            this.level = level;
+        }
+
+        @Override
+        protected void onLoad() {
+            Transaction transaction = JOINING.get();
+            if(transaction != null) {
+                transaction.save(this);
+            }
         }
 
     }

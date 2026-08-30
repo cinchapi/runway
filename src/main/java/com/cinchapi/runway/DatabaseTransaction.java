@@ -163,13 +163,16 @@ class DatabaseTransaction extends Binding implements Transaction {
 
         @Override
         public void release(Concourse connection) {
-            if(open) {
+            if(open && connection == concourse) {
                 // The Transaction owns the connection until the transaction
                 // ends, so the return only closes the operation window that
                 // the request opened.
                 operating--;
             }
             else {
+                // Any other connection belongs to the database's pool, so a
+                // foreign release must not close an operation window that
+                // this Transaction's own request opened.
                 database.connections.release(connection);
             }
         }

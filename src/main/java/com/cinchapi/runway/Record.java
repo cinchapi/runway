@@ -1492,6 +1492,9 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
         }
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
             Map<Long, DeferredReference<Record>> authors = new HashMap<>();
@@ -1731,6 +1734,9 @@ public abstract class Record implements Comparable<Record> {
                 key, __, replacement.getClass().getSimpleName(),
                 field.getType().getSimpleName());
         boolean transactional = isBoundToOpenTransaction();
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
             // The validation runs within the operation window so that a
@@ -2317,6 +2323,9 @@ public abstract class Record implements Comparable<Record> {
     public final void refresh() {
         Verify.that(binding != null,
                 "Cannot refresh because this Record has no binding");
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
             ConcurrentMap<Long, Record> existing = new ConcurrentHashMap<>();
@@ -4748,6 +4757,9 @@ public abstract class Record implements Comparable<Record> {
      */
     private void refreshAtomicableField(Field field, String key,
             boolean requireRecord) {
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
             Set<Object> values;
@@ -5321,7 +5333,10 @@ public abstract class Record implements Comparable<Record> {
                 boolean settled;
                 if(Objects.equals(current, next)) {
                     // Nothing to write, but confirm the read isn't stale
-                    // before treating the no-op as settled.
+                    // before treating the no-op as settled. The provider is
+                    // captured so the release pairs with the request, even
+                    // if user code rebinds this Record.
+                    ConcourseProvider connections = this.connections;
                     Concourse concourse = connections.request();
                     try {
                         settled = concourse.verify(key,
