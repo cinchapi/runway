@@ -72,6 +72,7 @@ import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record.ConstraintViolationException;
 import com.cinchapi.runway.Record.InvalidRecordException;
 import com.cinchapi.runway.Record.StaticAnalysis;
+import com.cinchapi.runway.access.Audience;
 import com.cinchapi.runway.db.BatchReader;
 import com.cinchapi.runway.db.BatchSaver;
 import com.cinchapi.runway.db.ConcourseProvider;
@@ -136,6 +137,21 @@ public final class Runway extends Binding implements
     // NOTE: Internal methods within a $ prefix are ones that return raw
     // database results and are intended to be consumed by other methods in this
     // class.
+
+    /**
+     * Return the {@link Runway} instance that a caller which names no database
+     * operates against, or {@code null} when zero or multiple {@link Runway}
+     * instances are open.
+     * <p>
+     * This is a framework-private method and should not be called directly.
+     * </p>
+     *
+     * @return the pinned {@link Runway} instance, or {@code null}
+     */
+    @Nullable
+    public static Runway $pinned() {
+        return Record.PINNED_RUNWAY_INSTANCE;
+    }
 
     /**
      * Return a builder that can be used to precisely configure a {@link Runway}
@@ -465,6 +481,12 @@ public final class Runway extends Binding implements
     }
 
     /**
+     * The {@link Audience} that represents an unauthenticated or unknown user
+     * of this database.
+     */
+    private final Audience anonymous = Audience.anonymous(this);
+
+    /**
      * The {@link ConcourseProvider} that supplies a connection to the
      * underlying Concourse database for each operation.
      */
@@ -660,6 +682,16 @@ public final class Runway extends Binding implements
     }
 
     /**
+     * Return the {@link Audience} that represents an unauthenticated or unknown
+     * user of this {@link Runway} instance.
+     *
+     * @return the anonymous {@link Audience}
+     */
+    public Audience anonymous() {
+        return anonymous;
+    }
+
+    /**
      * Attach one or more {@link AdHocDataSource AdHocDataSources} to this
      * {@link Runway} instance for the current thread.
      * <p>
@@ -720,6 +752,28 @@ public final class Runway extends Binding implements
                 saveNotificationExecutor.shutdownNow();
             }
         });
+    }
+
+    /**
+     * Create a new {@link Record} of the specified {@code clazz} that is bound
+     * to this {@link Runway} instance, so a direct {@link Record#save() save}
+     * persists within it. Every {@link Record} reachable from the {@code args}
+     * is bound to it as well.
+     * <p>
+     * The returned {@link Record} is not saved to the database until
+     * {@link Record#save()} is called.
+     * </p>
+     *
+     * @param clazz the type of {@link Record} to create
+     * @param args constructor arguments for the {@link Record}
+     * @param <T> the type of {@link Record}
+     * @return the newly created {@link Record}, not yet saved
+     */
+    @Override
+    public <T extends Record> T create(Class<T> clazz, Object... args) {
+        T record = Reflection.newInstance(clazz, args);
+        record.bindGraph(this, connections, Sets.newIdentityHashSet());
+        return record;
     }
 
     /**

@@ -15,15 +15,28 @@
  */
 package com.cinchapi.runway.access;
 
+import javax.annotation.Nullable;
+
+import com.cinchapi.common.base.Verify;
+import com.cinchapi.runway.DatabaseInterface;
+
 /**
- * A singleton {@link Audience} that represents an unauthenticated or unknown
- * user in the access control framework.
+ * An {@link Audience} that represents an unauthenticated or unknown user in the
+ * access control framework.
  * <p>
  * The {@link Anonymous} class provides a default {@link Audience} for scenarios
  * where no specific audience context is available, such as public API endpoints
  * or unauthenticated requests. It enables the access control framework to
  * handle these cases consistently without requiring special logic for null or
  * missing {@link Audience} instances.
+ * </p>
+ * <p>
+ * Every {@link Anonymous} audience is equal to every other one, regardless of
+ * the database it operates against.
+ * </p>
+ * <p>
+ * An {@link Anonymous} audience may name no database, in which case it answers
+ * access policy questions and refuses every database operation.
  * </p>
  * <p>
  * Access rules for {@link Anonymous} are typically more restrictive than those
@@ -35,9 +48,8 @@ package com.cinchapi.runway.access;
  * </p>
  * <h2>Usage</h2>
  * <p>
- * The {@link Anonymous} instance should be obtained through
- * {@link Audience#anonymous()} rather than directly calling {@link #get()}.
- * This ensures consistency with the {@link Audience} interface contract.
+ * Obtain an {@link Anonymous} audience through {@link Audience#anonymous()} or
+ * {@link Audience#anonymous(DatabaseInterface)}.
  * </p>
  *
  * @author Jeff Nelson
@@ -45,26 +57,71 @@ package com.cinchapi.runway.access;
 final class Anonymous implements Audience {
 
     /**
-     * The singleton instance of {@link Anonymous}.
+     * The {@link Anonymous} audience that names no database.
      */
-    private static final Anonymous INSTANCE = new Anonymous();
+    private static final Anonymous UNBOUND = new Anonymous(null);
 
     /**
-     * Return the singleton {@link Anonymous} instance.
-     * <p>
-     * Prefer using {@link Audience#anonymous()} over this method for
-     * consistency with the {@link Audience} interface.
-     * </p>
+     * Return an {@link Anonymous} audience that operates against {@code db}.
      *
-     * @return the {@link Anonymous} instance
+     * @param db the {@link DatabaseInterface} the audience operates against
+     * @return the {@link Anonymous} audience
+     * @throws IllegalArgumentException if {@code db} is {@code null}
      */
-    public static Anonymous get() {
-        return INSTANCE;
+    static Anonymous get(DatabaseInterface db) {
+        Verify.thatArgument(db != null,
+                "An anonymous Audience requires a database");
+        return new Anonymous(db);
     }
 
     /**
-     * Construct a new instance.
+     * Return the {@link Anonymous} audience that names no database, which
+     * answers access policy questions and refuses every database operation.
+     *
+     * @return the unbound {@link Anonymous} audience
      */
-    private Anonymous() {/* no-init */}
+    static Anonymous unbound() {
+        return UNBOUND;
+    }
+
+    /**
+     * The database this {@link Anonymous} audience operates against, or
+     * {@code null} when it names none.
+     */
+    @Nullable
+    private final DatabaseInterface db;
+
+    /**
+     * Construct a new instance.
+     *
+     * @param db the {@link DatabaseInterface} this audience operates against,
+     *            or {@code null} to name none
+     */
+    private Anonymous(@Nullable DatabaseInterface db) {
+        this.db = db;
+    }
+
+    @Override
+    public DatabaseInterface $db() {
+        if(db != null) {
+            return db;
+        }
+        else {
+            throw new IllegalStateException(
+                    "This anonymous Audience names no database because zero or"
+                            + " multiple Runway instances are open; use"
+                            + " Audience.anonymous(db) to name one");
+        }
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        return obj instanceof Anonymous;
+    }
+
+    @Override
+    public int hashCode() {
+        return Anonymous.class.hashCode();
+    }
 
 }

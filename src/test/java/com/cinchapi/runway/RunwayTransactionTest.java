@@ -4809,6 +4809,234 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code transactAndSupply} on an open
+     * {@link Transaction} joins it, so the work's writes stage within the
+     * transaction instead of committing on their own.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} on the {@link #runway}.</li>
+     * <li>Call {@code transaction.transactAndSupply(...)} with work that loads
+     * the {@link Item}, sets the score to 2 and {@code save()}s it.</li>
+     * <li>Load the {@link Item} through the enclosing {@link #runway} before
+     * and after {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The work's result is returned; the write is
+     * invisible outside the transaction before the commit and visible after it.
+     */
+    @Test
+    public void testTransactAndSupplyOnOpenTransactionJoinsIt() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            int result = transaction.transactAndSupply(view -> {
+                Item joined = view.load(Item.class, item.id());
+                joined.score = 2;
+                Assert.assertTrue(joined.save());
+                return joined.score;
+            });
+            Assert.assertEquals(2, result);
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code startTransaction} on an open
+     * {@link Transaction} is refused, because transactions do not nest.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} on the {@link #runway}.</li>
+     * <li>Call {@code startTransaction()} on it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call throws an
+     * {@link IllegalStateException}.
+     */
+    @Test
+    public void testStartTransactionWithinOpenTransactionRefused() {
+        try (Transaction transaction = runway.startTransaction()) {
+            try {
+                transaction.startTransaction();
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (IllegalStateException e) {
+                // expected
+            }
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code startTransaction} on an ended
+     * {@link Transaction} starts a new one on the enclosing {@link Runway}, per
+     * the fall-through contract.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction}, commit it and close it.</li>
+     * <li>Call {@code startTransaction()} on the ended transaction.</li>
+     * <li>Load the {@link Item} through the new transaction, set the score to 2
+     * and {@code save()} it.</li>
+     * <li>Load the {@link Item} through the enclosing {@link #runway} before
+     * and after {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The new {@link Transaction} stages the write
+     * until its commit makes it durable.
+     */
+    @Test
+    public void testStartTransactionAfterTransactionEndsStartsOnRunway() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Transaction ended = runway.startTransaction();
+        Assert.assertTrue(ended.commit());
+        ended.close();
+        try (Transaction next = ended.startTransaction()) {
+            Item loaded = next.load(Item.class, item.id());
+            loaded.score = 2;
+            Assert.assertTrue(loaded.save());
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(next.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code transactAndSupply} on an ended
+     * {@link Transaction} runs the work in its own managed transaction on the
+     * enclosing {@link Runway} and commits it.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction}, commit it and close it.</li>
+     * <li>Call {@code transactAndSupply(...)} on the ended transaction with
+     * work that loads the {@link Item}, sets the score to 2 and {@code save()}s
+     * it.</li>
+     * <li>Load the {@link Item} through the enclosing {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The change is durable when the call returns.
+     */
+    @Test
+    public void testTransactAndSupplyAfterTransactionEndsCommitsOwnWork() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Transaction ended = runway.startTransaction();
+        Assert.assertTrue(ended.commit());
+        ended.close();
+        int result = ended.transactAndSupply(view -> {
+            Item loaded = view.load(Item.class, item.id());
+            loaded.score = 2;
+            Assert.assertTrue(loaded.save());
+            return loaded.score;
+        });
+        Assert.assertEquals(2, result);
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} created through a
+     * {@link Transaction} with a constructor argument that links another
+     * {@link Record} binds that record to the transaction as well, so its
+     * direct {@code save()} stages within it.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} on the {@link #runway}.</li>
+     * <li>Load the {@link Item} through the enclosing {@link #runway} and pass
+     * it to {@code transaction.create(Basket.class, ...)}.</li>
+     * <li>Set the {@link Item Item's} score to 2 and {@code save()} it
+     * directly.</li>
+     * <li>Load the {@link Item} through the enclosing {@link #runway} before
+     * and after {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Item Item's} write is invisible
+     * outside the transaction before the commit and visible after it.
+     */
+    @Test
+    public void testCreateBindsReachableRecordsToTransaction() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Item linked = runway.load(Item.class, item.id());
+            Basket basket = transaction.create(Basket.class, "picnic", linked);
+            Assert.assertEquals("picnic", basket.name);
+            linked.score = 2;
+            Assert.assertTrue(linked.save());
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a refused {@code create} does not
+     * rebind any {@link Record} it visited before the refusal.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Node Nodes} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load one {@link Node} through a second open {@link Transaction}.</li>
+     * <li>Point the other {@link Node Node's} {@code next} at that instance, in
+     * memory only.</li>
+     * <li>Call {@code transaction.create(Node.class, "root", safe)} and catch
+     * the refusal.</li>
+     * <li>Clear the link, rename {@code safe} and {@code save()} it while the
+     * transaction is still open.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The create throws an
+     * {@link IllegalStateException} and the rename is durable outside the
+     * transaction, which proves {@code safe} was not rebound to it.
+     */
+    @Test
+    public void testRefusedCreateDoesNotPartiallyRebindTheGraph() {
+        Node target = new Node("target", null);
+        target.assign(runway);
+        Assert.assertTrue(target.save());
+        Node safe = new Node("safe", null);
+        safe.assign(runway);
+        Assert.assertTrue(safe.save());
+        try (Transaction other = runway.startTransaction()) {
+            safe.next = other.load(Node.class, target.id());
+            try (Transaction transaction = runway.startTransaction()) {
+                try {
+                    transaction.create(Node.class, "root", safe);
+                    Assert.fail("Expected an IllegalStateException");
+                }
+                catch (IllegalStateException e) {
+                    // expected
+                }
+                safe.next = null;
+                safe.name = "updated";
+                Assert.assertTrue(safe.save());
+                Assert.assertEquals("updated",
+                        runway.load(Node.class, safe.id()).name);
+            }
+        }
+    }
+
+    /**
      * A container with a lazy link to an {@link Item}.
      *
      * @author Jeff Nelson
@@ -5040,6 +5268,36 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                 }
             });
         }
+    }
+
+    /**
+     * A named {@link Record} with a link to another {@link Node}.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Node extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The next {@link Node} in the chain.
+         */
+        Node next;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param next the next {@link Node}
+         */
+        public Node(String name, Node next) {
+            this.name = name;
+            this.next = next;
+        }
+
     }
 
     /**

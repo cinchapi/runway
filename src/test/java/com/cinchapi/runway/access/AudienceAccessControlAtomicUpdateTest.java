@@ -324,37 +324,31 @@ public class AudienceAccessControlAtomicUpdateTest
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the anonymous {@link Audience}, which
-     * has no transactional scope, does not support the atomic update
-     * operations.
+     * <strong>Goal:</strong> Verify that an atomic update through an anonymous
+     * {@link Audience} is refused by the write permissions of the matched
+     * {@link Record}, so nothing changes.
      * <p>
      * <strong>Start state:</strong> One saved {@link Employer}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Call {@code findUniqueAndUpdate} on {@link Audience#anonymous()} and
-     * catch the expected exception.</li>
+     * <li>Call {@code findUniqueAndUpdate} on {@link Audience#anonymous()} for
+     * a field that the anonymous {@link Audience} cannot write.</li>
      * <li>Re-load the {@link Employer} from the database.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> An {@link UnsupportedOperationException} is
-     * thrown and the description is unchanged.
+     * <strong>Expected:</strong> The result is {@code null} and the description
+     * is unchanged.
      */
     @Test
-    public void testFindUniqueAndUpdateUnsupportedForAnonymousAudience() {
+    public void testAnonymousAtomicUpdateRefusedWithoutWritePermission() {
         Employer acme = new Employer();
         acme.name = "Acme";
         acme.description = "old";
         runway.save(acme);
-        boolean threw = false;
-        try {
-            Audience.anonymous().findUniqueAndUpdate(Employer.class,
-                    name("Acme"), "description", description -> "hijacked");
-        }
-        catch (UnsupportedOperationException e) {
-            threw = true;
-        }
-        Assert.assertTrue(threw);
+        Assert.assertNull(Audience.anonymous().findUniqueAndUpdate(
+                Employer.class, name("Acme"), "description",
+                description -> "hijacked"));
         Assert.assertEquals("old",
                 runway.load(Employer.class, acme.id()).description);
     }

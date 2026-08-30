@@ -79,6 +79,11 @@ public class AttachmentScope implements DatabaseInterface, AutoCloseable {
     }
 
     @Override
+    public <T extends Record> T create(Class<T> clazz, Object... args) {
+        return runway.create(clazz, args);
+    }
+
+    @Override
     public Selections select(Selection<?>... selections) {
         return runway.select(selections);
     }

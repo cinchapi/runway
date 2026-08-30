@@ -37,6 +37,20 @@ import com.cinchapi.concourse.thrift.Operator;
  */
 public class AdHocDataSourceTest {
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code load} returns every record the
+     * supplier provides.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * three {@link MockAdHocRecord MockAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code load(MockAdHocRecord.class)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> All three records are returned.
+     */
     @Test
     public void testLoadAllRecords() {
         Collection<MockAdHocRecord> data = Arrays.asList(
@@ -51,6 +65,20 @@ public class AdHocDataSourceTest {
         Assert.assertEquals(3, results.size());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code load} by id returns the record
+     * that holds the id.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link MockAdHocRecord MockAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code load(MockAdHocRecord.class, alice.id())}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned record is Alice.
+     */
     @Test
     public void testLoadById() {
         MockAdHocRecord alice = new MockAdHocRecord("Alice", 30);
@@ -65,6 +93,20 @@ public class AdHocDataSourceTest {
         Assert.assertEquals("Alice", result.name);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code load} by id returns
+     * {@code null} when no supplied record holds the id.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * one {@link MockAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code load(MockAdHocRecord.class, 99999L)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code null}.
+     */
     @Test
     public void testLoadByIdNotFound() {
         Collection<MockAdHocRecord> data = Arrays
@@ -77,6 +119,20 @@ public class AdHocDataSourceTest {
         Assert.assertNull(result);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code find} returns only the records
+     * that match the {@link Criteria}.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * three {@link MockAdHocRecord MockAdHocRecords} with ages 30, 25 and 35.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code find} with {@code age > 28}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Two records are returned.
+     */
     @Test
     public void testFindWithCriteria() {
         Collection<MockAdHocRecord> data = Arrays.asList(
@@ -93,6 +149,21 @@ public class AdHocDataSourceTest {
         Assert.assertEquals(2, results.size());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code find} returns matching records
+     * sorted by the supplied {@link Order}.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * three {@link MockAdHocRecord MockAdHocRecords} in non-sorted order.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code find} with {@code age > 0} ordered by {@code age}
+     * ascending.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The results iterate as Bob, Alice, Charlie.
+     */
     @Test
     public void testFindWithOrder() {
         Collection<MockAdHocRecord> data = Arrays.asList(
@@ -114,6 +185,22 @@ public class AdHocDataSourceTest {
         Assert.assertEquals("Charlie", arr[2].name);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code find} honors a {@link Page}
+     * limit.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * four {@link MockAdHocRecord MockAdHocRecords} that all match the
+     * {@link Criteria}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code find} with {@code age > 0} and a {@link Page} limit of
+     * 2.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Two records are returned.
+     */
     @Test
     public void testFindWithPagination() {
         Collection<MockAdHocRecord> data = Arrays.asList(
@@ -133,6 +220,20 @@ public class AdHocDataSourceTest {
         Assert.assertEquals(2, results.size());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code findUnique} returns the single
+     * record that matches the {@link Criteria}.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link MockAdHocRecord MockAdHocRecords} with distinct names.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findUnique} with {@code name = "Alice"}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned record is Alice.
+     */
     @Test
     public void testFindUnique() {
         Collection<MockAdHocRecord> data = Arrays.asList(
@@ -149,6 +250,20 @@ public class AdHocDataSourceTest {
         Assert.assertEquals("Alice", result.name);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code findUnique} returns
+     * {@code null} when no record matches the {@link Criteria}.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * one {@link MockAdHocRecord} named Alice.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findUnique} with {@code name = "Bob"}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code null}.
+     */
     @Test
     public void testFindUniqueNotFound() {
         Collection<MockAdHocRecord> data = Arrays
@@ -163,6 +278,20 @@ public class AdHocDataSourceTest {
         Assert.assertNull(result);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code findUnique} throws when more
+     * than one record matches the {@link Criteria}.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link MockAdHocRecord MockAdHocRecords} named Alice.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findUnique} with {@code name = "Alice"}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown.
+     */
     @Test(expected = DuplicateEntryException.class)
     public void testFindUniqueThrowsOnDuplicate() {
         Collection<MockAdHocRecord> data = Arrays.asList(
@@ -282,6 +411,20 @@ public class AdHocDataSourceTest {
         Assert.assertEquals("Alice", result.name);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code load} for a class the
+     * {@link AdHocDataSource} does not serve returns an empty result.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} registered for
+     * {@link MockAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code load(OtherAdHocRecord.class)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is empty.
+     */
     @Test
     public void testUnregisteredClassReturnsEmpty() {
         Collection<MockAdHocRecord> data = Arrays
@@ -294,6 +437,20 @@ public class AdHocDataSourceTest {
         Assert.assertTrue(results.isEmpty());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code loadAny} matches records
+     * through a superclass of the served type.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * two {@link MockAdHocRecord MockAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code loadAny(AdHocRecord.class)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both records are returned.
+     */
     @Test
     public void testLoadAnyWithSuperclass() {
         Collection<MockAdHocRecord> data = Arrays.asList(
@@ -307,6 +464,20 @@ public class AdHocDataSourceTest {
         Assert.assertEquals(2, results.size());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that the supplier is evaluated on each
+     * query, so every read observes fresh data.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} whose supplier
+     * increments a counter each time it is evaluated.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code load(MockAdHocRecord.class)} three times.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The counter reads 3.
+     */
     @Test
     public void testSupplierIsEvaluatedOnEachQuery() {
         AtomicInteger counter = new AtomicInteger(0);
@@ -323,6 +494,20 @@ public class AdHocDataSourceTest {
         Assert.assertEquals(3, counter.get());
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code count} returns the number of
+     * records the supplier provides.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * three {@link MockAdHocRecord MockAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code count(MockAdHocRecord.class)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count is 3.
+     */
     @Test
     public void testCount() {
         Collection<MockAdHocRecord> data = Arrays.asList(
@@ -337,6 +522,20 @@ public class AdHocDataSourceTest {
         Assert.assertEquals(3, count);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code count} with a {@link Criteria}
+     * counts only the matching records.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
+     * three {@link MockAdHocRecord MockAdHocRecords} with ages 30, 25 and 35.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code count} with {@code age > 28}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count is 2.
+     */
     @Test
     public void testCountWithCriteria() {
         Collection<MockAdHocRecord> data = Arrays.asList(
@@ -353,18 +552,60 @@ public class AdHocDataSourceTest {
         Assert.assertEquals(2, count);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that an {@link AdHocRecord} cannot be
+     * marked for deletion.
+     * <p>
+     * <strong>Start state:</strong> One {@link MockAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code deleteOnSave()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link UnsupportedOperationException} is
+     * thrown.
+     */
     @Test(expected = UnsupportedOperationException.class)
     public void testAdHocRecordCannotBeDeleted() {
         MockAdHocRecord record = new MockAdHocRecord("Alice", 30);
         record.deleteOnSave();
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that an {@link AdHocRecord} cannot be
+     * modified through {@code set}.
+     * <p>
+     * <strong>Start state:</strong> One {@link MockAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code set("name", "Bob")}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link UnsupportedOperationException} is
+     * thrown.
+     */
     @Test(expected = UnsupportedOperationException.class)
     public void testAdHocRecordCannotBeModified() {
         MockAdHocRecord record = new MockAdHocRecord("Alice", 30);
         record.set("name", "Bob");
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code type} returns the
+     * {@link AdHocRecord} class this source serves.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} registered for
+     * {@link MockAdHocRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code type()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code MockAdHocRecord.class}.
+     */
     @Test
     public void testGetRecordClass() {
         AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
@@ -374,13 +615,52 @@ public class AdHocDataSourceTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an {@link AdHocDataSource} refuses to
+     * create a {@link Record}, because it serves the records its supplier
+     * provides.
+     * <p>
+     * <strong>Start state:</strong> An {@link AdHocDataSource} over an empty
+     * supplier.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code create}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link UnsupportedOperationException} is
+     * thrown.
+     */
+    @Test(expected = UnsupportedOperationException.class)
+    public void testCreateIsUnsupported() {
+        AdHocDataSource<MockAdHocRecord> db = new AdHocDataSource<>(
+                MockAdHocRecord.class, () -> Arrays.asList());
+
+        db.create(MockAdHocRecord.class);
+    }
+
+    /**
      * A mock {@link AdHocRecord} for testing.
+     *
+     * @author Jeff Nelson
      */
     static class MockAdHocRecord extends AdHocRecord {
 
+        /**
+         * The display name.
+         */
         String name;
+
+        /**
+         * The age.
+         */
         int age;
 
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param age the age
+         */
         MockAdHocRecord(String name, int age) {
             this.name = name;
             this.age = age;
@@ -389,9 +669,14 @@ public class AdHocDataSourceTest {
 
     /**
      * Another mock {@link AdHocRecord} for testing unregistered class behavior.
+     *
+     * @author Jeff Nelson
      */
     static class OtherAdHocRecord extends AdHocRecord {
 
+        /**
+         * An arbitrary value.
+         */
         String value;
     }
 

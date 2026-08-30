@@ -409,6 +409,40 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Capture the binding of every loaded {@link Record} that is reachable from
+     * the {@code values} and is not bound to {@code owner}, and return a task
+     * that restores each captured binding.
+     *
+     * @param values the values whose reachable {@link Record Records} are
+     *            captured
+     * @param owner the {@link DatabaseInterface} whose {@link Record Records}
+     *            keep the bindings they hold, or {@code null} to capture every
+     *            reachable {@link Record}
+     * @return a task that restores every captured binding
+     */
+    static Runnable snapshotBindings(Object[] values,
+            @Nullable DatabaseInterface owner) {
+        Set<Record> graph = Sets.newIdentityHashSet();
+        Set<Record> seen = Sets.newIdentityHashSet();
+        for (Object value : values) {
+            forEachReachableRecord(value,
+                    record -> record.collectGraph(graph, seen));
+        }
+        List<Runnable> restores = Lists.newArrayListWithCapacity(graph.size());
+        for (Record record : graph) {
+            if(owner == null || record.binding != owner) {
+                Binding binding = record.binding;
+                ConcourseProvider connections = record.connections;
+                restores.add(() -> {
+                    record.binding = binding;
+                    record.connections = connections;
+                });
+            }
+        }
+        return () -> restores.forEach(Runnable::run);
+    }
+
+    /**
      * Stage a single-key atomic update of {@code key} on {@code record} within
      * {@code transaction} and return the {@code record}, or {@code null} when
      * there is no record to update.
@@ -1033,15 +1067,9 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * A globally pinned {@link Runway} instance that is automatically assigned
-     * to newly created {@link Record} instances when no explicit assignment is
-     * made.
-     * <p>
-     * This field allows for automatic {@link Runway} assignment in single
-     * instance scenarios, eliminating the need for explicit assignment in most
-     * applications.
-     * </p>
+     * to a newly created {@link Record} when no explicit assignment is made.
      */
-    static Runway PINNED_RUNWAY_INSTANCE = null;
+    static volatile Runway PINNED_RUNWAY_INSTANCE = null;
 
     /**
      * The key used to hold the {@link #_realms} metadata.
@@ -1892,9 +1920,11 @@ public abstract class Record implements Comparable<Record> {
      *             identity
      * @throws IllegalArgumentException if no field under a {@link Unique}
      *             constraint has a non-null value
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
@@ -2541,9 +2571,11 @@ public abstract class Record implements Comparable<Record> {
      * </p>
      *
      * @param work the work to run
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
@@ -2591,9 +2623,11 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param work the work to run
      * @return the result of {@code work}
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
@@ -2944,11 +2978,7 @@ public abstract class Record implements Comparable<Record> {
      *             {@link Transaction} other than {@code binding}
      */
     void bind(Binding binding, ConcourseProvider connections) {
-        if(this.binding != binding && isBoundToOpenTransaction()) {
-            throw new TransactionBoundaryException(
-                    "Cannot bind " + __ + " to a different scope because it"
-                            + " is bound to an open Transaction");
-        }
+        verifyCanBind(binding);
         this.binding = binding;
         this.connections = connections;
     }
@@ -2971,14 +3001,14 @@ public abstract class Record implements Comparable<Record> {
      */
     void bindGraph(Binding binding, ConcourseProvider connections,
             Set<Record> seen) {
-        if(seen.add(this)) {
-            bind(binding, connections);
-            fields().stream().filter(
-                    field -> !Modifier.isTransient(field.getModifiers()))
-                    .map(field -> Reflection.get(field.getName(), this))
-                    .forEach(value -> forEachReachableRecord(value,
-                            record -> record.bindGraph(binding, connections,
-                                    seen)));
+        Set<Record> graph = Sets.newIdentityHashSet();
+        collectGraph(graph, seen);
+        for (Record record : graph) {
+            record.verifyCanBind(binding);
+        }
+        for (Record record : graph) {
+            record.bind(binding, connections);
+            seen.add(record);
         }
     }
 
@@ -3677,6 +3707,29 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Record in the {@link #__baseline baseline} that the database now stores
+     * {@code value} (or, when {@code value} is {@code null}, nothing) for
+     * {@code key}, without affecting any other key. A no-op when this
+     * {@link Record} has never been synchronized with the database.
+     *
+     * @param key the key whose stored state changed
+     * @param value the scalar value the database now stores, in its
+     *            unserialized form; may be {@code null}
+     */
+    void updateBaseline(String key, @Nullable Object value) {
+        if(__baseline != null) {
+            Map<String, Object> baseline = Maps.newHashMap(__baseline);
+            if(value != null) {
+                baseline.put(key, serializeScalarValue(value));
+            }
+            else {
+                baseline.remove(key);
+            }
+            __baseline = baseline;
+        }
+    }
+
+    /**
      * Verify that a save of this {@link Record} through {@code scope} does not
      * cross the boundary of an open {@link Transaction}: the save must resolve
      * against the transaction this {@link Record} is bound to, or this
@@ -3803,9 +3856,11 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param work the work to run
      * @return the result of {@code work}
-     * @throws IllegalStateException if this {@link Record} has no binding, or
-     *             if it is bound to an open {@link Transaction} that another
-     *             thread owns or that a failed save poisoned
+     * @throws UnsupportedOperationException if this {@link Record} has no
+     *             binding
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} that another thread owns or that a failed
+     *             save poisoned
      * @throws RetryExhaustedException if a new transaction cannot commit within
      *             the bounds of the governing {@link AtomicRetryPolicy}
      */
@@ -3816,14 +3871,20 @@ public abstract class Record implements Comparable<Record> {
         }
         else {
             Runway runway = harness();
-            Verify.that(runway != null, "Cannot execute transactional work"
-                    + " because this Record has no binding");
-            return runway.transactAndSupply(transaction -> {
-                // The lambda receives the Transaction that supply constructs,
-                // so the cast to reach the package-private join is safe.
-                ((DatabaseTransaction) transaction).join(this);
-                return work.apply(transaction);
-            });
+            if(runway != null) {
+                return runway.transactAndSupply(transaction -> {
+                    // The lambda receives the Transaction that supply
+                    // constructs, so the cast to reach the package-private
+                    // join is safe.
+                    ((DatabaseTransaction) transaction).join(this);
+                    return work.apply(transaction);
+                });
+            }
+            else {
+                throw new UnsupportedOperationException(
+                        "Cannot execute transactional work because this"
+                                + " Record has no binding");
+            }
         }
     }
 
@@ -3951,6 +4012,25 @@ public abstract class Record implements Comparable<Record> {
             enqueueUniquenessCheck(saver, values, errorName, constraint.any(),
                     uniqueConstraintWindow(name, members));
             alreadyVerifiedUniqueConstraints.add(name);
+        }
+    }
+
+    /**
+     * Collect this {@link Record}, and every loaded {@link Record} reachable
+     * from its persistent (non-transient) fields, in {@code graph}, skipping
+     * any {@link Record} in {@code seen} and the graph behind it.
+     *
+     * @param graph the identity set that receives the graph
+     * @param seen the identity set of {@link Record Records} that are already
+     *            bound
+     */
+    private void collectGraph(Set<Record> graph, Set<Record> seen) {
+        if(!seen.contains(this) && graph.add(this)) {
+            fields().stream().filter(
+                    field -> !Modifier.isTransient(field.getModifiers()))
+                    .map(field -> Reflection.get(field.getName(), this))
+                    .forEach(value -> forEachReachableRecord(value,
+                            record -> record.collectGraph(graph, seen)));
         }
     }
 
@@ -4524,6 +4604,19 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Return {@code true} if this {@link Record Record's} realm membership
+     * differs from its {@link #__baseline baseline}.
+     *
+     * @return {@code true} if a save would write a realm change
+     */
+    private boolean hasRealmChanges() {
+        boolean[] changed = new boolean[1];
+        forEachSequenceDelta(ImmutableSet.copyOf(_realms), baseline(REALMS_KEY),
+                $ -> changed[0] = true, $ -> changed[0] = true);
+        return changed[0];
+    }
+
+    /**
      * Return the JSON string for this {@link Record}.
      *
      * <p>
@@ -4815,19 +4908,6 @@ public abstract class Record implements Comparable<Record> {
         else {
             return serializeScalarValue(value);
         }
-    }
-
-    /**
-     * Return {@code true} if this {@link Record Record's} realm membership
-     * differs from its {@link #__baseline baseline}.
-     *
-     * @return {@code true} if a save would write a realm change
-     */
-    private boolean hasRealmChanges() {
-        boolean[] changed = new boolean[1];
-        forEachSequenceDelta(ImmutableSet.copyOf(_realms), baseline(REALMS_KEY),
-                $ -> changed[0] = true, $ -> changed[0] = true);
-        return changed[0];
     }
 
     /**
@@ -5255,25 +5335,17 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Record in the {@link #__baseline baseline} that the database now stores
-     * {@code value} (or, when {@code value} is {@code null}, nothing) for
-     * {@code key}, without affecting any other key. A no-op when this
-     * {@link Record} has never been synchronized with the database.
+     * Verify that this {@link Record} can bind to {@code binding}.
      *
-     * @param key the key whose stored state changed
-     * @param value the scalar value the database now stores, in its
-     *            unserialized form; may be {@code null}
+     * @param binding the target {@link Binding}
+     * @throws IllegalStateException if this {@link Record} is bound to an open
+     *             {@link Transaction} other than {@code binding}
      */
-    void updateBaseline(String key, @Nullable Object value) {
-        if(__baseline != null) {
-            Map<String, Object> baseline = Maps.newHashMap(__baseline);
-            if(value != null) {
-                baseline.put(key, serializeScalarValue(value));
-            }
-            else {
-                baseline.remove(key);
-            }
-            __baseline = baseline;
+    private void verifyCanBind(Binding binding) {
+        if(this.binding != binding && isBoundToOpenTransaction()) {
+            throw new TransactionBoundaryException(
+                    "Cannot bind " + __ + " to a different scope because it"
+                            + " is bound to an open Transaction");
         }
     }
 
@@ -6961,7 +7033,8 @@ public abstract class Record implements Comparable<Record> {
      *
      * @author Jeff Nelson
      */
-    private static class ReactiveBinding extends Binding {
+    private static class ReactiveBinding extends Binding implements
+            Transactional {
 
         /**
          * A reference to the enclosing {@link Record} whose state is watched
@@ -6976,6 +7049,11 @@ public abstract class Record implements Comparable<Record> {
          */
         private ReactiveBinding(Record tracked) {
             this.tracked = tracked;
+        }
+
+        @Override
+        public <T extends Record> T create(Class<T> clazz, Object... args) {
+            return delegate().create(clazz, args);
         }
 
         @Nullable
@@ -7024,6 +7102,16 @@ public abstract class Record implements Comparable<Record> {
         @Override
         public Selections select(Selection<?>... selections) {
             return delegate().select(selections);
+        }
+
+        @Override
+        public Transaction startTransaction() {
+            return ((Transactional) delegate()).startTransaction();
+        }
+
+        @Override
+        public <T> T transactAndSupply(Function<TransactionInterface, T> work) {
+            return ((Transactional) delegate()).transactAndSupply(work);
         }
 
         @Override
