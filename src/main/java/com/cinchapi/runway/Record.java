@@ -368,6 +368,31 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Run {@code restore} unless {@code transaction} owns the state the restore
+     * would undo: it committed, or a failed save poisoned it while it remains
+     * open.
+     *
+     * @param restore the task that restores captured bindings, or {@code null}
+     *            when there is nothing to restore
+     * @param transaction the {@link TransactionInterface} whose outcome decides
+     *            whether the restore runs, or {@code null} when no transaction
+     *            was attempted
+     */
+    static void restoreUnlessTransactionOwns(@Nullable Runnable restore,
+            @Nullable TransactionInterface transaction) {
+        if(restore != null) {
+            boolean owns = false;
+            if(transaction instanceof DatabaseTransaction) {
+                DatabaseTransaction tx = (DatabaseTransaction) transaction;
+                owns = tx.committed() || (tx.open() && tx.poisoned());
+            }
+            if(!owns) {
+                restore.run();
+            }
+        }
+    }
+
+    /**
      * Serialize {@code value} by converting it to an object that can be stored
      * within the database. This method assumes that {@code value} is a scalar
      * (e.g. not a {@link Sequences#isSequence(Object)}).

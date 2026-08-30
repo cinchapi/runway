@@ -1043,17 +1043,18 @@ public interface Audience extends DatabaseInterface, Transactional {
         }
         catch (Throwable t) {
             // A staged save survives only in a transaction that outlives this
-            // call, and a durable one owns the record it saved.
-            TransactionInterface transaction = attempted.get();
+            // call, and a durable one owns the record it saved. On the
+            // hidden-match path the work already restored before it threw, so
+            // this re-runs an idempotent restore.
             Runnable undo = rollback.get();
-            boolean durable = transaction != null
-                    && (boolean) Reflection.call(transaction, "committed");
-            boolean surviving = transaction != null
-                    && (boolean) Reflection.call(transaction, "open")
-                    && (boolean) Reflection.call(transaction, "poisoned");
-            if(undo != null && !durable && !surviving) {
-                Reflection.set("_author", previous, record);
-                undo.run();
+            if(undo != null) {
+                Runnable restore = () -> {
+                    Reflection.set("_author", previous, record);
+                    undo.run();
+                };
+                Reflection.callStatic(Record.class,
+                        "restoreUnlessTransactionOwns", restore,
+                        attempted.get());
             }
             throw t;
         }
