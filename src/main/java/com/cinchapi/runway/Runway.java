@@ -3694,7 +3694,7 @@ public final class Runway extends Binding implements
          * instance.
          * <p>
          * The default is {@link SpuriousSaveFailureStrategy#FAIL_FAST}, which
-         * immediately propagates any {@code TransactionException} during a
+         * never retries a {@code TransactionException} during a
          * {@link Runway#save(Record...) save}.
          * </p>
          * <p>
