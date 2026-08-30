@@ -2985,14 +2985,28 @@ public abstract class Record implements Comparable<Record> {
             clearComputeOnceCache();
             _audit = null;
             if(__baseline != null) {
+                Set<Object> removed = Sets
+                        .newHashSetWithExpectedSize(ids.size());
+                for (long id : ids) {
+                    removed.add(Link.to(id));
+                }
                 Map<String, Object> baseline = Maps.newHashMap(__baseline);
                 for (Field field : touched) {
-                    Object value = serializeFieldValue(field);
-                    if(value != null) {
-                        baseline.put(field.getName(), value);
+                    String key = field.getName();
+                    Object stored = baseline.get(key);
+                    if(stored instanceof Set) {
+                        Set<Object> remaining = Sets
+                                .newLinkedHashSet((Set<?>) stored);
+                        remaining.removeAll(removed);
+                        if(remaining.isEmpty()) {
+                            baseline.remove(key);
+                        }
+                        else {
+                            baseline.put(key, remaining);
+                        }
                     }
-                    else {
-                        baseline.remove(field.getName());
+                    else if(removed.contains(stored)) {
+                        baseline.remove(key);
                     }
                 }
                 __baseline = baseline;

@@ -3657,6 +3657,56 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the {@link CaptureDelete} cleanup a
+     * commit applies to a surviving {@link Record} does not mark an element
+     * added to the cleaned field itself as saved, so the addition persists on
+     * the next save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Rack} whose
+     * {@link CaptureDelete} collection holds one saved {@link Item}, plus a
+     * second saved {@link Item} that the collection does not hold.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Rack} and the held {@link Item} through a
+     * {@link Transaction}, mark the {@link Item} with {@code deleteOnSave()}
+     * and save both records in one call.</li>
+     * <li>Add the second {@link Item} to the {@link Rack Rack's} collection in
+     * memory without saving again.</li>
+     * <li>Commit.</li>
+     * <li>Save the {@link Rack} after the commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the commit the collection holds only the
+     * added {@link Item} and still reads as an unsaved change. The post-commit
+     * save persists the addition durably.
+     */
+    @Test
+    public void testAdditionToCleanedFieldSurvivesCaptureDeleteCleanup() {
+        Item doomedItem = new Item("widget", 1);
+        Item spare = new Item("spare", 2);
+        Rack rack = new Rack("front", Lists.newArrayList(doomedItem));
+        rack.assign(runway);
+        Assert.assertTrue(runway.save(rack, doomedItem, spare));
+        Rack txRack;
+        try (Transaction transaction = runway.startTransaction()) {
+            txRack = transaction.load(Rack.class, rack.id());
+            Item doomed = transaction.load(Item.class, doomedItem.id());
+            doomed.deleteOnSave();
+            Assert.assertTrue(transaction.save(txRack, doomed));
+            txRack.display.add(transaction.load(Item.class, spare.id()));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(1, txRack.display.size());
+        Assert.assertEquals(spare.id(), txRack.display.get(0).id());
+        Assert.assertTrue(txRack.hasUnsavedChanges());
+        Assert.assertTrue(txRack.save());
+        Rack reloaded = runway.load(Rack.class, rack.id());
+        Assert.assertEquals(1, reloaded.display.size());
+        Assert.assertEquals(spare.id(), reloaded.display.get(0).id());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@link Transaction#abort() abort}
      * discards cached audit metadata, so the record does not report a revision
      * that never committed.
@@ -6151,6 +6201,38 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
          * @param display the displayed {@link Item}
          */
         public Shelf(String name, Item display) {
+            this.name = name;
+            this.display = display;
+        }
+    }
+
+    /**
+     * A {@link Record} whose collection of references to deleted {@link Item
+     * Items} is pruned.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Rack extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The displayed {@link Item Items}; a reference is removed when its
+         * item is deleted.
+         */
+        @CaptureDelete
+        List<Item> display;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param display the displayed {@link Item Items}
+         */
+        public Rack(String name, List<Item> display) {
             this.name = name;
             this.display = display;
         }
