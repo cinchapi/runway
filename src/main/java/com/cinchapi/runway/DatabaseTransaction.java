@@ -446,8 +446,26 @@ class DatabaseTransaction extends Binding implements Transaction {
     @Override
     public <T extends Record> T intern(T record) {
         if(open) {
-            return findOrCreate(() -> resolveFullIdentityMatch(record),
-                    () -> record);
+            return execute(() -> {
+                T match = resolveFullIdentityMatch(record);
+                if(match == null) {
+                    save(record);
+                    try {
+                        T found = resolveFullIdentityMatch(record);
+                        Verify.thatArgument(
+                                found != null && record.id() == found.id(),
+                                "The created Record does not match the criteria");
+                    }
+                    catch (Throwable t) {
+                        poisoned = true;
+                        throw t;
+                    }
+                    return record;
+                }
+                else {
+                    return match;
+                }
+            });
         }
         else {
             return database.intern(record);
@@ -866,44 +884,6 @@ class DatabaseTransaction extends Binding implements Transaction {
                 database.connections.release(concourse);
             }
         }
-    }
-
-    /**
-     * Return the unique {@link Record} that the {@code lookup} matches, or
-     * create and save one from {@code factory} when none exists.
-     * <p>
-     * If the {@code factory} tries to end the transaction, then the call is
-     * refused. If verification fails after the save, then the transaction is
-     * poisoned and the staged save can never commit.
-     * </p>
-     *
-     * @param lookup performs the criteria lookup within the transaction
-     * @param factory supplies the {@link Record} to create when none match
-     * @param <T> the type of {@link Record}
-     * @return the matched or created {@link Record}
-     */
-    private <T extends Record> T findOrCreate(Supplier<T> lookup,
-            Supplier<T> factory) {
-        return execute(() -> {
-            T record = lookup.get();
-            if(record == null) {
-                record = factory.get();
-                Verify.thatArgument(record != null,
-                        "The factory cannot return null");
-                save(record);
-                try {
-                    T found = lookup.get();
-                    Verify.thatArgument(
-                            found != null && record.id() == found.id(),
-                            "The created Record does not match the criteria");
-                }
-                catch (Throwable t) {
-                    poisoned = true;
-                    throw t;
-                }
-            }
-            return record;
-        });
     }
 
     /**
