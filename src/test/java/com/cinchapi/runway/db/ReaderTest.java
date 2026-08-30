@@ -303,63 +303,6 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that
-     * {@code select(String key, long record)} resolves to the values stored
-     * under that key in the given record.
-     * <p>
-     * <strong>Start state:</strong> One record is added with multiple values
-     * stored under the same key.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Record a {@code select} for {@code key = "tag"} on that record.</li>
-     * <li>Resolve the {@link Pending}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The resolved {@link Set} contains every value
-     * that was added under {@code tag}.
-     */
-    @Test
-    public void testSelectByKeyAndRecordYieldsAllValuesForKey() {
-        long id = client.add("tag", "alpha");
-        client.add("tag", "beta", id);
-        client.add("tag", "gamma", id);
-
-        Reader reader = newReader();
-        Set<Object> values = resolve(reader, reader.select("tag", id));
-
-        Assert.assertEquals(ImmutableSet.of("alpha", "beta", "gamma"), values);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@code get(String key, long record)}
-     * resolves to the most recent value stored under that key in the given
-     * record.
-     * <p>
-     * <strong>Start state:</strong> One record is added with two values stored
-     * under the same key, the second one being the most recent.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Record a {@code get} for {@code key = "status"} on that record.</li>
-     * <li>Resolve the {@link Pending}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The resolved value is the most recently added
-     * one.
-     */
-    @Test
-    public void testGetByKeyAndRecordYieldsMostRecentValue() {
-        long id = client.add("status", "pending");
-        client.add("status", "approved", id);
-
-        Reader reader = newReader();
-        Object value = resolve(reader, reader.get("status", id));
-
-        Assert.assertEquals("approved", value);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
      * {@link Reader#select(java.util.Collection)} resolves to a {@link Map}
      * keyed by every record id in the supplied collection.
      * <p>

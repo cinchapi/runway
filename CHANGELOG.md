@@ -33,6 +33,13 @@
     * The flag checks writes, not reads. If a write depends on a value read
       earlier, declare that value with `verifyOnSave`, or use a `Transaction`
       when the value belongs to another record.
+* **Breaking change: removed unused members from the `com.cinchapi.runway.db`
+  interfaces.** `Saver#find(Criteria, Consumer)`,
+  `Saver#reconcile(String, long, Collection)`, `Reader#select(String, long)`,
+  `Reader#get(String, long)` and `Reader#concourse()` are removed, along with
+  their implementations. No Runway operation called them.
+    * The varargs `Saver#reconcile(String, long, Object...)` and the
+      criteria-based reads are unchanged.
 
 ##### Transaction API
 Runway previously offered no way to guarantee atomicity or full ACID compliance across an ad hoc combination of reads and writes: each save committed atomically, but a decision made on loaded data could not be guaranteed to still hold when it was written. The Transaction API provides that guarantee and opens a window to the full power of Concourse transactions, including serializable isolation and atomic multi-operation commits, without a raw Concourse connection.

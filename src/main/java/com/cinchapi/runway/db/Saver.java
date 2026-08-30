@@ -145,24 +145,6 @@ public interface Saver {
             Consumer<Map<String, Map<Diff, Set<Object>>>> validator);
 
     /**
-     * Record a {@link Concourse#find(Criteria) find} for the {@code criteria}
-     * and arrange to apply {@code validator} to the matching record ids.
-     * <p>
-     * The {@code validator} may throw to signal a validation failure (typically
-     * a {@link com.cinchapi.runway.Unique} violation surfaces as a
-     * {@link com.cinchapi.runway.Record.ConstraintViolationException}); the
-     * exception propagates from the recording call for synchronous
-     * implementations and from {@link #commit()} or {@link #flush()} for bulk
-     * implementations.
-     * </p>
-     *
-     * @param criteria the {@link Criteria} that identifies the matching records
-     * @param validator a {@link Consumer} that receives the matching ids and
-     *            may throw to reject the save
-     */
-    void find(Criteria criteria, Consumer<Set<Long>> validator);
-
-    /**
      * Ensure that every recorded operation has reached the server and that
      * every queued validator has run.
      * <p>
@@ -178,25 +160,6 @@ public interface Saver {
      * </p>
      */
     default void flush() {}
-
-    /**
-     * Record a {@link Concourse#reconcile(String, long, Collection) reconcile}
-     * of {@code values} for {@code key} in {@code record}.
-     * <p>
-     * An empty {@code values} is equivalent to {@link #clear(String, long)
-     * clear(key, record)}; {@code reconcile} mandates a non-empty canonical and
-     * "leave nothing" is what {@code clear} is for. Implementations route an
-     * empty {@code values} through {@link #clear(String, long)} so callers see
-     * uniform behavior regardless of transport.
-     * </p>
-     *
-     * @param key the field name whose values are being reconciled
-     * @param record the record id whose mapping is being reconciled
-     * @param values the canonical set of values that should remain under
-     *            {@code key}; an empty {@link Collection} is routed through
-     *            {@link #clear(String, long)}
-     */
-    void reconcile(String key, long record, Collection<?> values);
 
     /**
      * Record a {@link Concourse#reconcile(String, long, Collection) reconcile}

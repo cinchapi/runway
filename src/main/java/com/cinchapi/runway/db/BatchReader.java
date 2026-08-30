@@ -210,22 +210,6 @@ public final class BatchReader extends AbstractReader {
     }
 
     @Override
-    public Pending<Set<Object>> select(String key, long record) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.select(key, record);
-        return Pending.deferred(this, () -> values(batch, slot));
-    }
-
-    @Override
-    public Pending<Object> get(String key, long record) {
-        Batch batch = batch();
-        int slot = batch.size();
-        batch.group.get(key, record);
-        return Pending.deferred(this, () -> batch.flush(concourse()).get(slot));
-    }
-
-    @Override
     public Pending<Map<Long, Map<String, Set<Object>>>> navigate(
             Set<String> keys, long record) {
         Batch batch = batch();
@@ -338,19 +322,6 @@ public final class BatchReader extends AbstractReader {
      */
     private void rollover() {
         current = new Batch(concourse().prepare());
-    }
-
-    /**
-     * Cast the entry at {@code slot} from {@code batch}'s flushed result to a
-     * field's value {@link Set}.
-     *
-     * @param batch the {@link Batch} whose result holds the recorded read
-     * @param slot the index of the recorded read
-     * @return the field's values
-     */
-    @SuppressWarnings("unchecked")
-    private Set<Object> values(Batch batch, int slot) {
-        return (Set<Object>) batch.flush(concourse()).get(slot);
     }
 
     /**
