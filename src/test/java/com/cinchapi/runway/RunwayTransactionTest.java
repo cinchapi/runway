@@ -4293,6 +4293,59 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code afterCommit} and
+     * {@code afterAbort} registrations are refused after the
+     * {@link Transaction} ends, whether the end was a commit or an abort, and
+     * that a refused hook is never queued.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Commit one {@link Transaction}, then register a counting
+     * {@code afterCommit} hook and a counting {@code afterAbort} hook.</li>
+     * <li>Abort another {@link Transaction}, then register the same kinds of
+     * hooks.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> All four late registrations throw an
+     * {@link IllegalStateException} and both hook counters stay at 0.
+     */
+    @Test
+    public void testHookRegistrationIsRefusedAfterTheTransactionEnds() {
+        AtomicInteger commitHookRuns = new AtomicInteger();
+        AtomicInteger abortHookRuns = new AtomicInteger();
+        try (Transaction transaction = runway.startTransaction()) {
+            Assert.assertTrue(transaction.commit());
+            try {
+                transaction.afterCommit(commitHookRuns::incrementAndGet);
+                Assert.fail("Expected the registration to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.afterAbort(abortHookRuns::incrementAndGet);
+                Assert.fail("Expected the registration to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+        }
+        try (Transaction transaction = runway.startTransaction()) {
+            transaction.abort();
+            try {
+                transaction.afterCommit(commitHookRuns::incrementAndGet);
+                Assert.fail("Expected the registration to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.afterAbort(abortHookRuns::incrementAndGet);
+                Assert.fail("Expected the registration to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+        }
+        Assert.assertEquals(0, commitHookRuns.get());
+        Assert.assertEquals(0, abortHookRuns.get());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code afterCommit} hooks run in
      * registration order and that the hooks after a throwing hook are skipped,
      * while the commit outcome stands.
