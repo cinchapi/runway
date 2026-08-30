@@ -59,6 +59,22 @@ public class AudienceAccessControlWriteTest
         Assert.assertEquals("555-5678", candidate.phone);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a {@code write} whose every key is
+     * denied throws and changes nothing on the target {@link Record}.
+     * <p>
+     * <strong>Start state:</strong> Two {@link Candidate Candidates}; neither
+     * may write to the other.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code write} on the first {@link Candidate} against the second
+     * one, and catch the expected exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * and the second {@link Candidate Candidate's} name is unchanged.
+     */
     @Test
     public void testWriteOperationDeniedFieldsThrowsException() {
         Candidate candidate1 = new Candidate();
@@ -79,8 +95,26 @@ public class AudienceAccessControlWriteTest
         catch (RestrictedAccessException e) {
             // Expected exception
         }
+        Assert.assertEquals("Bob", candidate2.name);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a {@code write} with a mix of writable
+     * and denied keys throws and changes nothing on the target {@link Record},
+     * including the writable keys.
+     * <p>
+     * <strong>Start state:</strong> A {@link Job} whose {@code title} its
+     * {@link EmployerUser} may write and whose {@code createdAt} it may not.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code write} on the {@link EmployerUser} with new values for
+     * both keys, and catch the expected exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown,
+     * the title is unchanged, and {@code createdAt} is still unset.
+     */
     @Test
     public void testWriteOperationPartialAccessThrowsException() {
         Employer company = new Employer();
@@ -110,6 +144,8 @@ public class AudienceAccessControlWriteTest
         catch (RestrictedAccessException e) {
             // Expected exception
         }
+        Assert.assertEquals("Backend Developer", job.title);
+        Assert.assertNull(job.createdAt);
     }
 
     @Test

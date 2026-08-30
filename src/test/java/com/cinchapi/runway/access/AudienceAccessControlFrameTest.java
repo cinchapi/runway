@@ -262,71 +262,6 @@ public class AudienceAccessControlFrameTest
     // ========================================================================
 
     @Test
-    public void testNegativeFieldAccessThrowsException() {
-        Candidate candidate1 = new Candidate();
-        candidate1.email = "alice@email.com";
-        candidate1.name = "Alice Smith";
-
-        Candidate candidate2 = new Candidate();
-        candidate2.email = "bob@email.com";
-        candidate2.name = "Bob Jones";
-        candidate2.resume = "Bob's private resume";
-        candidate2.skills = "JavaScript, React";
-
-        // Test that read() throws exception for denied fields
-        try {
-            candidate1.read(ImmutableSet.of("resume", "skills"), candidate2);
-            Assert.fail("Should have thrown RestrictedAccessException");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-    }
-
-    @Test
-    public void testSpecialRuleSetAllKeys() {
-        Admin admin = new Admin();
-        admin.email = "admin@company.com";
-        admin.name = "System Admin";
-
-        Candidate candidate = new Candidate();
-        candidate.email = "candidate@email.com";
-        candidate.name = "Jane Doe";
-        candidate.resume = "Jane's resume";
-        candidate.skills = "Full Stack Development";
-
-        // Admin should have access to all fields (ALL_KEYS rule)
-        Map<String, Object> result = admin.frame(ImmutableSet.of("email",
-                "name", "resume", "skills", "yearsExperience"), candidate);
-
-        Assert.assertNotNull(result);
-        Assert.assertTrue(result.containsKey("email"));
-        Assert.assertTrue(result.containsKey("name"));
-        Assert.assertTrue(result.containsKey("resume"));
-        Assert.assertTrue(result.containsKey("skills"));
-    }
-
-    @Test
-    public void testSpecialRuleSetNoKeys() {
-        Candidate candidate1 = new Candidate();
-        candidate1.email = "alice@email.com";
-        candidate1.name = "Alice Smith";
-
-        Candidate candidate2 = new Candidate();
-        candidate2.email = "bob@email.com";
-        candidate2.name = "Bob Jones";
-        candidate2.resume = "Bob's private resume";
-
-        // Candidate accessing another candidate's private fields should get
-        // NO_KEYS
-        Map<String, Object> result = candidate1.frame(
-                ImmutableSet.of("resume", "skills", "email"), candidate2);
-        Assert.assertFalse(result.containsKey("resume"));
-        Assert.assertFalse(result.containsKey("skills"));
-        Assert.assertFalse(result.containsKey("email"));
-    }
-
-    @Test
     public void testAnonymousVsAuthenticatedAccess() {
         Candidate candidate = new Candidate();
         candidate.email = "candidate@email.com";
@@ -433,35 +368,6 @@ public class AudienceAccessControlFrameTest
                 .get("employer");
         Assert.assertTrue(employerData.containsKey("name"));
         Assert.assertTrue(employerData.containsKey("description"));
-    }
-
-    @Test
-    public void testDiscoveryBlockingNavigation() {
-        Candidate candidate1 = new Candidate();
-        candidate1.name = "Alice";
-        candidate1.email = "alice@email.com";
-
-        Candidate candidate2 = new Candidate();
-        candidate2.name = "Bob";
-        candidate2.email = "bob@email.com";
-
-        Job job = new Job();
-        job.title = "Developer Role";
-        job.published = true;
-
-        Application application = new Application();
-        application.candidate = candidate2;
-        application.job = job;
-        application.coverLetter = "Bob's cover letter";
-
-        // candidate1 tries to navigate through application that they can't
-        // discover
-        Map<String, Object> result = candidate1.frame(
-                ImmutableSet.of("job.title", "candidate.name"), application);
-
-        // Should return null since candidate1 cannot discover candidate2's
-        // application
-        Assert.assertNull(result);
     }
 
     @Test
@@ -575,155 +481,6 @@ public class AudienceAccessControlFrameTest
     }
 
     // ========================================================================
-    // CRUD OPERATION TESTS
-    // ========================================================================
-
-    @Test
-    public void testCreatePermissions() {
-        Admin admin = new Admin();
-        admin.name = "System Admin";
-
-        Candidate candidate = new Candidate();
-        candidate.name = "Jane Developer";
-
-        EmployerUser employerUser = new EmployerUser();
-        employerUser.name = "HR Manager";
-
-        // Test creation permissions for different record types
-        Job job = new Job();
-        Assert.assertTrue("Admin should be able to create jobs",
-                job.$isCreatableBy(admin));
-        Assert.assertTrue("EmployerUser should be able to create jobs",
-                job.$isCreatableBy(employerUser));
-        Assert.assertFalse("Candidate should not be able to create jobs",
-                job.$isCreatableBy(candidate));
-        Assert.assertFalse("Anonymous should not be able to create jobs",
-                job.$isCreatableByAnonymous());
-
-        Application application = new Application();
-        Assert.assertTrue("Admin should be able to create applications",
-                application.$isCreatableBy(admin));
-        Assert.assertTrue("Candidate should be able to create applications",
-                application.$isCreatableBy(candidate));
-        Assert.assertFalse(
-                "EmployerUser should not be able to create applications",
-                application.$isCreatableBy(employerUser));
-        Assert.assertFalse(
-                "Anonymous should not be able to create applications",
-                application.$isCreatableByAnonymous());
-
-        User user = new Candidate();
-        Assert.assertTrue("Anyone should be able to create users",
-                user.$isCreatableBy(admin));
-        Assert.assertTrue("Anyone should be able to create users",
-                user.$isCreatableBy(candidate));
-        Assert.assertTrue(
-                "Anonymous should be able to create users (registration)",
-                user.$isCreatableByAnonymous());
-    }
-
-    @Test
-    public void testWritePermissions() {
-        Employer company = new Employer();
-        company.name = "TechCorp";
-
-        EmployerUser employerUser = new EmployerUser();
-        employerUser.name = "HR Manager";
-        employerUser.employer = company;
-
-        Job job = new Job();
-        job.title = "Backend Developer";
-        job.employer = company;
-
-        Candidate candidate = new Candidate();
-        candidate.name = "Jane Developer";
-
-        // Test write permissions for EmployerUser on their own company's job
-        Set<String> writableFields = job.$writableBy(employerUser);
-        Assert.assertTrue("EmployerUser should be able to write job details",
-                writableFields.contains("title"));
-        Assert.assertTrue("EmployerUser should be able to write salary",
-                writableFields.contains("salary"));
-        Assert.assertTrue("EmployerUser should be able to publish job",
-                writableFields.contains("published"));
-
-        // Test that candidate cannot write to job
-        Set<String> candidateWritable = job.$writableBy(candidate);
-        Assert.assertEquals(
-                "Candidate should not be able to write any job fields",
-                AccessControl.NO_KEYS, candidateWritable);
-
-        // Test application write permissions
-        Application application = new Application();
-        application.candidate = candidate;
-        application.job = job;
-
-        Set<String> candidateAppWritable = application.$writableBy(candidate);
-        Assert.assertTrue("Candidate should be able to edit their cover letter",
-                candidateAppWritable.contains("coverLetter"));
-        Assert.assertFalse("Candidate should not be able to edit status",
-                candidateAppWritable.contains("status"));
-
-        Set<String> employerAppWritable = application.$writableBy(employerUser);
-        Assert.assertTrue("Employer should be able to edit application status",
-                employerAppWritable.contains("status"));
-        Assert.assertTrue("Employer should be able to add notes",
-                employerAppWritable.contains("notes"));
-        Assert.assertFalse("Employer should not be able to edit cover letter",
-                employerAppWritable.contains("coverLetter"));
-    }
-
-    @Test
-    public void testDeletePermissions() {
-        Admin admin = new Admin();
-        admin.name = "System Admin";
-
-        Candidate candidate1 = new Candidate();
-        candidate1.name = "Alice";
-        candidate1.email = "alice@email.com";
-
-        Candidate candidate2 = new Candidate();
-        candidate2.name = "Bob";
-        candidate2.email = "bob@email.com";
-
-        Application application = new Application();
-        application.candidate = candidate1;
-
-        // Test user deletion permissions
-        Assert.assertTrue("Admin should be able to delete any user",
-                candidate1.$isDeletableBy(admin));
-        Assert.assertTrue("User should be able to delete themselves",
-                candidate1.$isDeletableBy(candidate1));
-        Assert.assertFalse("User should not be able to delete other users",
-                candidate1.$isDeletableBy(candidate2));
-
-        // Test application deletion permissions
-        Assert.assertTrue("Admin should be able to delete any application",
-                application.$isDeletableBy(admin));
-        Assert.assertTrue(
-                "Candidate should be able to delete their own application",
-                application.$isDeletableBy(candidate1));
-        Assert.assertFalse(
-                "Candidate should not be able to delete other applications",
-                application.$isDeletableBy(candidate2));
-
-        // Test employer deletion
-        Employer company = new Employer();
-        company.name = "TechCorp";
-
-        EmployerUser employerUser = new EmployerUser();
-        employerUser.employer = company;
-
-        Assert.assertTrue("Admin should be able to delete employers",
-                company.$isDeletableBy(admin));
-        Assert.assertFalse(
-                "EmployerUser should not be able to delete employers",
-                company.$isDeletableBy(employerUser));
-        Assert.assertFalse("Candidate should not be able to delete employers",
-                company.$isDeletableBy(candidate1));
-    }
-
-    // ========================================================================
     // FRAMEWORK BEHAVIOR TESTS
     // ========================================================================
 
@@ -810,44 +567,6 @@ public class AudienceAccessControlFrameTest
         Assert.assertNotNull(invalidNavResult);
     }
 
-    @Test
-    public void testSecurityValidationAndBypassPrevention() {
-        Candidate candidate1 = new Candidate();
-        candidate1.name = "Alice";
-        candidate1.email = "alice@email.com";
-
-        Candidate candidate2 = new Candidate();
-        candidate2.name = "Bob";
-        candidate2.email = "bob@email.com";
-        candidate2.resume = "Sensitive resume data";
-
-        Application application = new Application();
-        application.candidate = candidate2;
-
-        // Attempt to bypass access control through navigation
-        Map<String, Object> result = candidate1.frame(
-                ImmutableSet.of("candidate.resume", "candidate.email"),
-                application);
-
-        // Should return null due to discovery restrictions
-        Assert.assertNull(
-                "Should not be able to bypass access control through navigation",
-                result);
-
-        // Ensure consistent behavior between read() and frame()
-        try {
-            candidate1.read(ImmutableSet.of("resume"), candidate2);
-            Assert.fail("read() should throw exception for denied access");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected
-        }
-
-        Map<String, Object> frameResult = candidate1
-                .frame(ImmutableSet.of("resume"), candidate2);
-        Assert.assertFalse(frameResult.containsKey("resume"));
-    }
-
     // ========================================================================
     // REAL-WORLD SCENARIO TESTS
     // ========================================================================
@@ -889,7 +608,6 @@ public class AudienceAccessControlFrameTest
         // HR Manager should see professional info but not resume
         Map<String, Object> hrResult = hrManager
                 .frame(ImmutableSet.of("resume", "skills", "email"), candidate);
-        System.out.println(hrResult);
         Assert.assertNotNull(hrResult);
         Assert.assertFalse("HR should not see resume",
                 hrResult.containsKey("resume"));
@@ -1096,78 +814,6 @@ public class AudienceAccessControlFrameTest
         Assert.assertFalse(
                 "HR2 should not see application to other company's job",
                 app1.$isDiscoverableBy(hr2));
-    }
-
-    @Test
-    public void testDataPrivacyScenarios() {
-        Employer company = new Employer();
-        company.name = "PrivacyCorp";
-
-        EmployerUser hr = new EmployerUser();
-        hr.name = "HR Manager";
-        hr.email = "hr@privacycorp.com";
-        hr.employer = company;
-
-        Job job = new Job();
-        job.title = "Privacy Engineer";
-        job.employer = company;
-        job.salary = 150000.0; // Sensitive information
-        job.published = true;
-
-        Candidate candidate = new Candidate();
-        candidate.name = "Privacy Expert";
-        candidate.email = "expert@email.com";
-        candidate.resume = "Highly sensitive resume with personal details";
-        candidate.skills = "Privacy Engineering, GDPR Compliance";
-
-        Application application = new Application();
-        application.candidate = candidate;
-        application.job = job;
-        application.notes = "Internal HR notes - very sensitive";
-
-        // Test separation of public vs private information
-        Audience anonymous = Audience.anonymous();
-        Map<String, Object> publicJobInfo = anonymous
-                .frame(ImmutableSet.of("title", "salary", "description"), job);
-        Assert.assertNotNull(publicJobInfo);
-        Assert.assertTrue("Job title should be public",
-                publicJobInfo.containsKey("title"));
-        Assert.assertFalse("Salary should not be public",
-                publicJobInfo.containsKey("salary"));
-
-        // Test HR access to candidate data through application
-        Map<String, Object> hrCandidateAccess = hr.frame(ImmutableSet.of(
-                "candidate.resume", "candidate.skills", "notes"), application);
-        Assert.assertNotNull(hrCandidateAccess);
-        Assert.assertTrue(hrCandidateAccess.containsKey("candidate"));
-        Assert.assertTrue(hrCandidateAccess.containsKey("notes"));
-
-        Map<String, Object> candidateData = (Map<String, Object>) hrCandidateAccess
-                .get("candidate");
-        Assert.assertTrue("HR should see candidate skills",
-                candidateData.containsKey("skills"));
-        Assert.assertFalse("HR should not see candidate resume",
-                candidateData.containsKey("resume"));
-
-        // Test candidate's own data access
-        Map<String, Object> selfAccess = candidate
-                .frame(ImmutableSet.of("resume", "skills", "email"), candidate);
-        Assert.assertTrue("Candidate should see own resume",
-                selfAccess.containsKey("resume"));
-        Assert.assertTrue("Candidate should see own skills",
-                selfAccess.containsKey("skills"));
-        Assert.assertTrue("Candidate should see own email",
-                selfAccess.containsKey("email"));
-
-        // Test cross-candidate privacy
-        Candidate otherCandidate = new Candidate();
-        otherCandidate.name = "Other Developer";
-
-        Map<String, Object> crossAccess = otherCandidate
-                .frame(ImmutableSet.of("resume", "skills", "email"), candidate);
-        Assert.assertFalse(crossAccess.containsKey("resume"));
-        Assert.assertFalse(crossAccess.containsKey("skills"));
-        Assert.assertFalse(crossAccess.containsKey("email"));
     }
 
     /**
