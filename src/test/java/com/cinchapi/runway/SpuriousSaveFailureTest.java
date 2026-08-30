@@ -364,13 +364,19 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      * <li>In each round, launch two threads that each save one {@link TTenant},
      * gated on a {@link CountDownLatch} so both saves are in-flight
      * concurrently.</li>
-     * <li>Stop as soon as a round produces a failed save.</li>
+     * <li>Join both threads and verify that each one terminated and that
+     * neither save threw.</li>
+     * <li>Stop as soon as a round produces a save that returns
+     * {@code false}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> At least one round produces a save that fails,
-     * because {@link SpuriousSaveFailureStrategy#FAIL_FAST} propagates the
-     * spurious {@code TransactionException} instead of retrying. A strategy
-     * that silently retried would make both saves succeed in every round.
+     * <strong>Expected:</strong> At least one round produces a save that
+     * returns {@code false}, because
+     * {@link SpuriousSaveFailureStrategy#FAIL_FAST} reports the spurious
+     * {@code TransactionException} as a refused save instead of retrying. A
+     * strategy that silently retried would make both saves succeed in every
+     * round. A save that hangs or throws fails the test instead of counting as
+     * the expected refusal.
      */
     @Test
     public void testFailFastStrategyDoesNotRetry() throws Exception {
@@ -384,6 +390,8 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
             CountDownLatch go = new CountDownLatch(1);
             AtomicBoolean save1Result = new AtomicBoolean(false);
             AtomicBoolean save2Result = new AtomicBoolean(false);
+            AtomicReference<Throwable> thrown1 = new AtomicReference<>();
+            AtomicReference<Throwable> thrown2 = new AtomicReference<>();
 
             Thread t1 = new Thread(() -> {
                 ready.countDown();
@@ -392,7 +400,7 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
                     save1Result.set(runway.save(tenant1));
                 }
                 catch (Throwable t) {
-                    // save threw, so save1Result stays false
+                    thrown1.set(t);
                 }
             });
 
@@ -403,16 +411,31 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
                     save2Result.set(runway.save(tenant2));
                 }
                 catch (Throwable t) {
-                    // save threw, so save2Result stays false
+                    thrown2.set(t);
                 }
             });
 
             t1.start();
             t2.start();
-            ready.await(5, TimeUnit.SECONDS);
+            Assert.assertTrue("The workers did not both become ready",
+                    ready.await(5, TimeUnit.SECONDS));
             go.countDown();
             t1.join(10000);
             t2.join(10000);
+            Assert.assertFalse("The first save did not terminate",
+                    t1.isAlive());
+            Assert.assertFalse("The second save did not terminate",
+                    t2.isAlive());
+            if(thrown1.get() != null) {
+                throw new AssertionError("A FAIL_FAST save must report a"
+                        + " failure by returning false, not by throwing",
+                        thrown1.get());
+            }
+            if(thrown2.get() != null) {
+                throw new AssertionError("A FAIL_FAST save must report a"
+                        + " failure by returning false, not by throwing",
+                        thrown2.get());
+            }
 
             anyFailed = !save1Result.get() || !save2Result.get();
         }
