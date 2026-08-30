@@ -488,48 +488,49 @@ class DatabaseTransaction extends Binding implements Transaction {
                         record.verifySavableThrough(this);
                         record.bind(this, provider);
                     });
-            operating++;
-            try {
-                // NOTE: The saver is never staged or committed here because
-                // the connection is already within this transaction, whose
-                // commit is the terminal operation. The flush is what sends a
-                // bulk saver's queued writes and runs its validators, so the
-                // staged state is on the server, and validated, before any
-                // later operation through this transaction reads it.
-                Set<Record> seen = Sets.newIdentityHashSet();
-                for (Record record : records) {
-                    record.bindGraph(this, provider, seen);
-                    record.saveWithinTransaction(saver, context);
+            execute(() -> {
+                try {
+                    // NOTE: The saver is never staged or committed here
+                    // because the connection is already within this
+                    // transaction, whose commit is the terminal operation. The
+                    // flush is what sends a bulk saver's queued writes and
+                    // runs its validators, so the staged state is on the
+                    // server, and validated, before any later operation
+                    // through this transaction reads it.
+                    Set<Record> seen = Sets.newIdentityHashSet();
+                    for (Record record : records) {
+                        record.bindGraph(this, provider, seen);
+                        record.saveWithinTransaction(saver, context);
+                    }
+                    database.stageDeletions(saver, context);
+                    saver.flush();
                 }
-                database.stageDeletions(saver, context);
-                saver.flush();
-            }
-            catch (Throwable t) {
-                // The writes that were staged before the failure cannot be
-                // selectively undone, so the transaction must never commit.
-                poisoned = true;
-                context.restore();
-                if(t instanceof TransactionException
-                        || t instanceof StaleDataException
-                        || t instanceof DeletedRecordException
-                        || t instanceof Record.TransactionBoundaryException) {
-                    throw t;
+                catch (Throwable t) {
+                    // The writes that were staged before the failure cannot be
+                    // selectively undone, so the transaction must never
+                    // commit.
+                    poisoned = true;
+                    context.restore();
+                    if(t instanceof TransactionException
+                            || t instanceof StaleDataException
+                            || t instanceof DeletedRecordException
+                            || t instanceof Record.TransactionBoundaryException) {
+                        throw t;
+                    }
+                    else {
+                        // A save cannot report a refusal by returning false
+                        // here, because what it staged cannot be selectively
+                        // undone. The refusal is delivered as the exception a
+                        // Runway bound save delivers, so a caller handles a
+                        // refusal the same either way.
+                        SuppressedRunwayException refusal = new SuppressedRunwayException(
+                                t.getMessage());
+                        refusal.setStackTrace(t.getStackTrace());
+                        throw refusal;
+                    }
                 }
-                else {
-                    // A save cannot report a refusal by returning false here,
-                    // because what it staged cannot be selectively undone. The
-                    // refusal is delivered as the exception a Runway bound
-                    // save delivers, so a caller handles a refusal the same
-                    // either way.
-                    SuppressedRunwayException refusal = new SuppressedRunwayException(
-                            t.getMessage());
-                    refusal.setStackTrace(t.getStackTrace());
-                    throw refusal;
-                }
-            }
-            finally {
-                operating--;
-            }
+                return Boolean.TRUE;
+            });
             saves.add(context);
             deletions.addAll(context.deletions());
             return true;
