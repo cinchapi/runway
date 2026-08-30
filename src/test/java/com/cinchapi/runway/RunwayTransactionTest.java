@@ -223,7 +223,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        assertConflictFootprint(
+        assertConflictFootprint(item.id(),
                 transaction -> transaction.load(Item.class, item.id()));
     }
 
@@ -2957,7 +2957,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Viewer viewer = new Viewer("alice");
         viewer.assign(runway);
         Assert.assertTrue(viewer.save());
-        assertConflictFootprint(transaction -> {
+        assertConflictFootprint(item.id(), transaction -> {
             Viewer txViewer = transaction.load(Viewer.class, viewer.id());
             return txViewer.load(Item.class, item.id());
         });
@@ -3062,7 +3062,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Crate crate = new Crate("bin", item);
         crate.assign(runway);
         Assert.assertTrue(runway.save(crate, item));
-        assertConflictFootprint(transaction -> {
+        assertConflictFootprint(item.id(), transaction -> {
             Crate txCrate = transaction.load(Crate.class, crate.id());
             return txCrate.item.get();
         });
@@ -5192,22 +5192,23 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * Load an {@link Item} through a new {@link Transaction} with
-     * {@code loader}, write a score of 99 to the same record outside the
+     * Load the {@link Item} with {@code id} through a new {@link Transaction}
+     * with {@code loader}, write a score of 99 to the same record outside the
      * transaction, then save a score of 50 through the transactional copy and
      * try to {@code commit()}. Assert that the save or the commit fails with a
      * conflict and that the outside score of 99 is the durable value.
      *
+     * @param id the id of the {@link Item} under test
      * @param loader the read path that resolves the {@link Item} within the
      *            {@link Transaction}
      */
-    private void assertConflictFootprint(Function<Transaction, Item> loader) {
+    private void assertConflictFootprint(long id,
+            Function<Transaction, Item> loader) {
         Transaction transaction = runway.startTransaction();
         boolean conflicted;
-        Item txItem = null;
         try {
-            txItem = loader.apply(transaction);
-            client.set("score", 99, txItem.id());
+            Item txItem = loader.apply(transaction);
+            client.set("score", 99, id);
             txItem.score = 50;
             txItem.save();
             conflicted = !transaction.commit();
@@ -5219,7 +5220,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             transaction.close();
         }
         Assert.assertTrue(conflicted);
-        Assert.assertEquals(99, runway.load(Item.class, txItem.id()).score);
+        Assert.assertEquals(99, runway.load(Item.class, id).score);
     }
 
     /**
