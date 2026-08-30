@@ -18,6 +18,7 @@ package com.cinchapi.runway;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -34,6 +35,7 @@ import com.cinchapi.concourse.Tag;
 import com.cinchapi.concourse.TransactionException;
 import com.cinchapi.runway.MergeStrategy.Strategy;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Lists;
 
 /**
  * Tests for {@link Runway#save(boolean, Record...)} with
@@ -1074,21 +1076,22 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      * writer did.
      * <p>
      * <strong>Start state:</strong> A saved {@link TCaptureOwner} whose
-     * {@link CaptureDelete} field links a {@link TUser}, and a second saved
-     * {@link TUser}.
+     * {@link CaptureDelete} collection links one {@link TUser}, and a second
+     * saved {@link TUser}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
      * <li>Save a {@link TCaptureOwner} that links a {@link TUser}.</li>
      * <li>Save a second {@link TUser}.</li>
      * <li>Externally add a link to the second {@link TUser} under the
-     * {@link TCaptureOwner TCaptureOwner's} {@code target} key.</li>
+     * {@link TCaptureOwner TCaptureOwner's} {@code targets} key.</li>
      * <li>Stage the linked {@link TUser} for deletion and call
      * {@code runway.save(true, user, owner)}.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save returns {@code true}, the stored
-     * {@code target} key holds only the externally added link, and the deleted
+     * {@code targets} key holds only the externally added link, because a save
+     * merges its own removals into the stored collection, and the deleted
      * {@link TUser} no longer loads.
      */
     @Test
@@ -1099,14 +1102,14 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser other = new TUser("wanda");
         Assert.assertTrue(runway.save(other));
 
-        externallyWrite(connection -> connection.add("target",
+        externallyWrite(connection -> connection.add("targets",
                 Link.to(other.id()), owner.id()));
 
         user.deleteOnSave();
         Assert.assertTrue(runway.save(true, user, owner));
 
         Assert.assertEquals(ImmutableSet.of(Link.to(other.id())),
-                client.select("target", owner.id()));
+                client.select("targets", owner.id()));
         Assert.assertNull(runway.load(TUser.class, user.id()));
     }
 
@@ -2198,10 +2201,10 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     public static class TCaptureOwner extends Record {
 
         /**
-         * The linked {@link TUser}, whose deletion removes this link.
+         * The linked {@link TUser TUsers}, whose deletion removes their links.
          */
         @CaptureDelete
-        TUser target;
+        List<TUser> targets;
 
         /**
          * Construct a new instance.
@@ -2209,7 +2212,7 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
          * @param target the {@link TUser} this record links to
          */
         public TCaptureOwner(TUser target) {
-            this.target = target;
+            this.targets = Lists.newArrayList(target);
         }
     }
 
