@@ -1270,10 +1270,6 @@ public final class Runway extends Binding implements
                         dispatchSaveOutcomes(context);
                         return true;
                     }
-                    else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {
-                        context.restore();
-                        return false;
-                    }
                     else {
                         // Trigger catch block below for potential retry
                         throw new TransactionException();
