@@ -471,10 +471,6 @@ public final class Runway extends Binding implements
      */
     private static Page NO_PAGINATION = null;
 
-    /**
-     * Placeholder for a {@code null} {@link Criteria} parameter.
-     */
-
     static {
         // Perform static analysis on initialization.
         StaticAnalysis.instance();
