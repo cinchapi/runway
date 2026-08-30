@@ -223,44 +223,6 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the {@link StaleDataException} thrown
-     * by {@link Runway#save(boolean, Record...) save(true, ...)} carries the
-     * correct primary key of the stale {@link Record}.
-     * <p>
-     * <strong>Start state:</strong> A {@link TUser} that has been saved and
-     * then externally modified in the database.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link TUser} with name "charlie".</li>
-     * <li>Externally modify the name directly in the database.</li>
-     * <li>Call {@code runway.save(true, user)} and catch the
-     * {@link StaleDataException}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The caught {@link StaleDataException
-     * StaleDataException's} {@link StaleDataException#id() id()} matches the
-     * {@link TUser TUser's} primary key.
-     */
-    @Test
-    public void testPreventStaleWriteIdentifiesStaleRecord() {
-        TUser user = new TUser("charlie");
-        Assert.assertTrue(runway.save(user));
-
-        externallyWrite(
-                connection -> connection.set("name", "external", user.id()));
-
-        try {
-            user.name = "local";
-            runway.save(true, user);
-            Assert.fail("Expected StaleDataException");
-        }
-        catch (StaleDataException e) {
-            Assert.assertEquals(user.id(), e.id());
-        }
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
      * save(true, ...)} does not prevent a save when the {@link Record} was
      * freshly loaded from the database.
@@ -929,8 +891,11 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
      * <li>Load the {@link TUser} from the database.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The loaded {@link TUser TUser's} name equals
-     * "external" (the external modification), not "should_not_persist".
+     * <strong>Expected:</strong> The caught {@link StaleDataException
+     * StaleDataException's} {@link StaleDataException#id() id()} matches the
+     * {@link TUser TUser's} primary key, and the loaded {@link TUser TUser's}
+     * name equals "external" (the external modification), not
+     * "should_not_persist".
      */
     @Test
     public void testPreventStaleWriteDoesNotPersistOnFailure() {
@@ -946,7 +911,7 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
             Assert.fail("Expected StaleDataException");
         }
         catch (StaleDataException e) {
-            // expected
+            Assert.assertEquals(user.id(), e.id());
         }
 
         TUser loaded = runway.load(TUser.class, user.id());
@@ -1100,6 +1065,49 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         TUser loaded = runway.load(TUser.class, user.id());
         Assert.assertNotNull("Record should still exist after failed delete",
                 loaded);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@link Runway#save(boolean, Record...)
+     * save(true, ...)} never judges the removal of a {@link CaptureDelete} link
+     * to a deleted {@link Record}, so the cleanup applies whatever another
+     * writer did.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TCaptureOwner} whose
+     * {@link CaptureDelete} field links a {@link TUser}, and a second saved
+     * {@link TUser}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link TCaptureOwner} that links a {@link TUser}.</li>
+     * <li>Save a second {@link TUser}.</li>
+     * <li>Externally add a link to the second {@link TUser} under the
+     * {@link TCaptureOwner TCaptureOwner's} {@code target} key.</li>
+     * <li>Stage the linked {@link TUser} for deletion and call
+     * {@code runway.save(true, user, owner)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}, the stored
+     * {@code target} key holds only the externally added link, and the deleted
+     * {@link TUser} no longer loads.
+     */
+    @Test
+    public void testPreventStaleWriteNeverJudgesCaptureDeleteCleanup() {
+        TUser user = new TUser("victor");
+        TCaptureOwner owner = new TCaptureOwner(user);
+        Assert.assertTrue(runway.save(owner));
+        TUser other = new TUser("wanda");
+        Assert.assertTrue(runway.save(other));
+
+        externallyWrite(connection -> connection.add("target",
+                Link.to(other.id()), owner.id()));
+
+        user.deleteOnSave();
+        Assert.assertTrue(runway.save(true, user, owner));
+
+        Assert.assertEquals(ImmutableSet.of(Link.to(other.id())),
+                client.select("target", owner.id()));
+        Assert.assertNull(runway.load(TUser.class, user.id()));
     }
 
     /**
@@ -2178,6 +2186,30 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
         public TSeat(TUser user, TTenant tenant) {
             this.user = user;
             this.tenant = tenant;
+        }
+    }
+
+    /**
+     * A test record whose {@link CaptureDelete} field drops its link when the
+     * linked {@link TUser} is deleted.
+     *
+     * @author Jeff Nelson
+     */
+    public static class TCaptureOwner extends Record {
+
+        /**
+         * The linked {@link TUser}, whose deletion removes this link.
+         */
+        @CaptureDelete
+        TUser target;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param target the {@link TUser} this record links to
+         */
+        public TCaptureOwner(TUser target) {
+            this.target = target;
         }
     }
 
