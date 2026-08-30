@@ -325,21 +325,11 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Create a new {@link Record} of the specified {@code clazz} that is bound
-     * to this {@link Transaction}, so a direct {@link Record#save() save}
-     * stages within it.
+     * {@inheritDoc}
      * <p>
-     * The returned {@link Record} is not saved to the database until
-     * {@link Record#save()} is called. After the transaction ends, the
-     * {@link Record} operates against the enclosing {@link Runway}.
+     * After the transaction ends, the {@link Record} operates against the
+     * enclosing {@link Runway}.
      * </p>
-     *
-     * @param clazz the type of {@link Record} to create
-     * @param args constructor arguments for the {@link Record}
-     * @param <T> the type of {@link Record}
-     * @return the newly created {@link Record}, not yet saved
-     * @throws IllegalStateException if a save failed within the open
-     *             transaction
      */
     @Override
     public <T extends Record> T create(Class<T> clazz, Object... args) {
@@ -353,31 +343,12 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Atomically find the first {@link Record} in the hierarchy of
-     * {@code clazz} that matches the {@code criteria} under the supplied
-     * {@code order} and update the value of {@code key} by applying the
-     * {@code update} operator.
+     * {@inheritDoc}
      * <p>
      * While the transaction is open, the lookup and the write stage within it.
      * After the transaction ends, the operation runs atomically against the
      * enclosing {@link Runway}.
      * </p>
-     *
-     * @param clazz the {@link Record} type whose hierarchy is searched
-     * @param criteria the {@link Criteria} the record must match
-     * @param order the {@link Order} that defines "first"
-     * @param key the name of the intrinsic field to update
-     * @param update the operator that produces the replacement value from the
-     *            current one; it must not return {@code null}
-     * @param <T> the type of {@link Record}
-     * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if none matches
-     * @throws IllegalArgumentException if {@code order} is {@code null}, if
-     *             {@code key} is not eligible for atomic operations, or if
-     *             {@code update} returns {@code null} or a value that is not an
-     *             instance of the field's type
-     * @throws IllegalStateException if a save failed within the open
-     *             transaction
      */
     @Nullable
     @Override
@@ -397,30 +368,12 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Atomically find the one {@link Record} in the hierarchy of {@code clazz}
-     * that matches the {@code criteria} and update the value of {@code key} by
-     * applying the {@code update} operator.
+     * {@inheritDoc}
      * <p>
      * While the transaction is open, the lookup and the write stage within it.
      * After the transaction ends, the operation runs atomically against the
      * enclosing {@link Runway}.
      * </p>
-     *
-     * @param clazz the {@link Record} type whose hierarchy is searched
-     * @param criteria the {@link Criteria} the record must match
-     * @param key the name of the intrinsic field to update
-     * @param update the operator that produces the replacement value from the
-     *            current one; it must not return {@code null}
-     * @param <T> the type of {@link Record}
-     * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if none matches
-     * @throws DuplicateEntryException if more than one record in the hierarchy
-     *             matches
-     * @throws IllegalArgumentException if {@code key} is not eligible for
-     *             atomic operations, or if {@code update} returns {@code null}
-     *             or a value that is not an instance of the field's type
-     * @throws IllegalStateException if a save failed within the open
-     *             transaction
      */
     @Nullable
     @Override
@@ -437,30 +390,12 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Atomically find the first {@link Record} of type {@code clazz} that
-     * matches the {@code criteria} under the supplied {@code order} and update
-     * the value of {@code key} by applying the {@code update} operator.
+     * {@inheritDoc}
      * <p>
      * While the transaction is open, the lookup and the write stage within it.
      * After the transaction ends, the operation runs atomically against the
      * enclosing {@link Runway}.
      * </p>
-     *
-     * @param clazz the {@link Record} type to find
-     * @param criteria the {@link Criteria} the record must match
-     * @param order the {@link Order} that defines "first"
-     * @param key the name of the intrinsic field to update
-     * @param update the operator that produces the replacement value from the
-     *            current one; it must not return {@code null}
-     * @param <T> the type of {@link Record}
-     * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if none matches
-     * @throws IllegalArgumentException if {@code order} is {@code null}, if
-     *             {@code key} is not eligible for atomic operations, or if
-     *             {@code update} returns {@code null} or a value that is not an
-     *             instance of the field's type
-     * @throws IllegalStateException if a save failed within the open
-     *             transaction
      */
     @Nullable
     @Override
@@ -480,29 +415,12 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Atomically find the one {@link Record} of type {@code clazz} that matches
-     * the {@code criteria} and update the value of {@code key} by applying the
-     * {@code update} operator.
+     * {@inheritDoc}
      * <p>
      * While the transaction is open, the lookup and the write stage within it.
      * After the transaction ends, the operation runs atomically against the
      * enclosing {@link Runway}.
      * </p>
-     *
-     * @param clazz the {@link Record} type to find
-     * @param criteria the {@link Criteria} the record must match
-     * @param key the name of the intrinsic field to update
-     * @param update the operator that produces the replacement value from the
-     *            current one; it must not return {@code null}
-     * @param <T> the type of {@link Record}
-     * @param <V> the type of the value stored under {@code key}
-     * @return the updated {@link Record}, or {@code null} if none matches
-     * @throws DuplicateEntryException if more than one record matches
-     * @throws IllegalArgumentException if {@code key} is not eligible for
-     *             atomic operations, or if {@code update} returns {@code null}
-     *             or a value that is not an instance of the field's type
-     * @throws IllegalStateException if a save failed within the open
-     *             transaction
      */
     @Nullable
     @Override
@@ -518,34 +436,12 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Return the unique {@link Record} that agrees with every {@link Unique}
-     * constraint of {@code record}, or save {@code record} when none exists.
-     * <p>
-     * Each constraint is evaluated within its declared scope: a
-     * {@link Unique#any() hierarchy-scoped} constraint matches across the class
-     * that declares it and every descendant, and a class-scoped constraint
-     * matches among records of {@code record}'s concrete class. Only a record
-     * that agrees with every participating constraint and shares
-     * {@code record}'s concrete class is adopted; otherwise there is no match,
-     * and the save of {@code record} fails {@link Unique} enforcement, which
-     * surfaces the conflict.
-     * </p>
+     * {@inheritDoc}
      * <p>
      * While the transaction is open, the lookup and the save stage within it.
      * After the transaction ends, the operation runs atomically against the
      * enclosing {@link Runway}.
      * </p>
-     *
-     * @param record the {@link Record} whose identity is interned
-     * @param <T> the type of {@link Record}
-     * @return the {@link Record} that claims the identity: the sole existing
-     *         match, or {@code record} once saved
-     * @throws DuplicateEntryException if more than one record shares the
-     *             identity
-     * @throws IllegalArgumentException if no field under a {@link Unique}
-     *             constraint of {@code record} has a non-null value
-     * @throws IllegalStateException if a save failed within the open
-     *             transaction
      */
     @Override
     public <T extends Record> T intern(T record) {
@@ -559,13 +455,7 @@ class DatabaseTransaction extends Binding implements Transaction {
     }
 
     /**
-     * Save all changes in the provided {@code records} within this transaction.
-     * <p>
-     * The records, and every {@link Record} linked from them, are bound to this
-     * transaction, and the staged changes become durable when {@link #commit()}
-     * succeeds. Until then, no reader outside the transaction can observe them.
-     * </p>
-     *
+     * {@inheritDoc}
      * <p>
      * A {@code records} argument that fails its checks (one that is
      * {@code null}, overrides the save pipeline, throws from its
@@ -578,21 +468,6 @@ class DatabaseTransaction extends Binding implements Transaction {
      * refused except {@link #abort()} (or {@link #close()}) and
      * {@link #afterAbort(Runnable) afterAbort} registration.
      * </p>
-     *
-     * @param preventStaleWrites if {@code true}, reject the save if it would
-     *            overwrite a value that another writer changed
-     * @param records one or more {@link Record Records} to save
-     * @return {@code true} when the changes are staged
-     * @throws DeletedRecordException if a {@link Record} that the save writes
-     *             holds no data in the database
-     * @throws StaleDataException if {@code preventStaleWrites} is {@code true}
-     *             and the save would overwrite a value that another writer
-     *             changed, or if another writer changed a value that
-     *             {@link Record#verifyOnSave(String...) verifyOnSave} declared
-     * @throws IllegalStateException if any of the {@code records} overrides the
-     *             save pipeline, if any {@link Record} that the save processes
-     *             is bound to a different open {@link Transaction}, or if a
-     *             prior save failed within the transaction
      */
     @Override
     public boolean save(boolean preventStaleWrites, Record... records) {
