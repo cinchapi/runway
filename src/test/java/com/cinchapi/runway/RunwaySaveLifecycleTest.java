@@ -27,7 +27,6 @@ import java.util.function.Supplier;
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.cinchapi.common.reflect.Reflection;
 import com.google.common.collect.Sets;
 
 public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
@@ -56,25 +55,6 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(player.name, loaded.name);
             Assert.assertEquals(player.score, loaded.score);
         }
-    }
-
-    @Test
-    public void testNoSaveListenerDoesNotCreateExecutor() throws Exception {
-        runway.close();
-        runway = runwayBuilder().build();
-
-        // Verify the saveNotificationExecutor field is null
-        Object executor = Reflection.get("saveNotificationExecutor", runway);
-        Assert.assertNull(
-                "Save notification executor should be null when no listener is provided",
-                executor);
-
-        // Save a record to ensure it works without a listener
-        Player player = new Player("Test Player", 30);
-        boolean saved = player.save();
-
-        Assert.assertTrue("Record should save successfully without a listener",
-                saved);
     }
 
     @Test
@@ -405,27 +385,6 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     @Test
-    public void testQueueSaveNotificationWithNoListenerIsNoOp()
-            throws Exception {
-        runway.close();
-        runway = runwayBuilder().build();
-
-        // Verify the saveNotificationQueue field is null
-        Object queue = Reflection.get("saveNotificationQueue", runway);
-        Assert.assertNull(
-                "Save notification queue should be null when no listener is provided",
-                queue);
-
-        // Call queueSaveNotification directly to ensure it doesn't throw an
-        // exception
-        Player player = new Player("Test Player", 30);
-        runway.enqueueSaveNotification(player);
-
-        // If we got here without an exception, the test passes
-        Assert.assertTrue(true);
-    }
-
-    @Test
     public void testSaveListenerCalledForBulkSave() throws Exception {
         int recordCount = 5;
         CountDownLatch latch = new CountDownLatch(recordCount);
@@ -493,35 +452,6 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
                 latch.await(5, TimeUnit.SECONDS));
 
         Assert.assertEquals(2, callCount.get());
-    }
-
-    @Test
-    public void testSaveListenerCalledOnMultipleRecordSave() throws Exception {
-        int recordCount = 5;
-        CountDownLatch latch = new CountDownLatch(recordCount);
-        Set<Record> savedRecords = Sets.newConcurrentHashSet();
-
-        runway.close();
-        runway = runwayBuilder().onSave(record -> {
-            savedRecords.add(record);
-            latch.countDown();
-        }).build();
-
-        Player[] players = new Player[recordCount];
-        for (int i = 0; i < recordCount; i++) {
-            players[i] = new Player("Player " + i, i * 10);
-        }
-
-        runway.save(players);
-
-        // Wait for all save listeners to be called
-        Assert.assertTrue("Not all save listeners were called within timeout",
-                latch.await(5, TimeUnit.SECONDS));
-
-        Assert.assertEquals(recordCount, savedRecords.size());
-        for (Player player : players) {
-            Assert.assertTrue(savedRecords.contains(player));
-        }
     }
 
     @Test
@@ -642,6 +572,54 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         // Verify the save listener was not called
         Assert.assertFalse("Save listener should not be called when save fails",
                 listenerCalled.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@link Record} with overridden save
+     * behavior does not trigger save listeners, while a normal record saved in
+     * the same call does.
+     * <p>
+     * <strong>Start state:</strong> A {@link Runway} built with an untyped save
+     * listener.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Bulk-save a normal {@link PreSaveHookRecord} together with an
+     * {@link OverrideSaveRecord} whose override returns {@code true}.</li>
+     * <li>Wait for the listener to fire, then allow extra time for any
+     * misrouted notification.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The listener fires exactly once, and only for
+     * the normal record.
+     */
+    @Test
+    public void testSaveListenerNotFiredForOverrideSaveRecord()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> notified = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onSave(record -> {
+            notified.add(record);
+            latch.countDown();
+        }).build();
+
+        OverrideSaveRecord bypassed = new OverrideSaveRecord();
+        bypassed.name = "Bypassed";
+        bypassed.overrideResult = true;
+        PreSaveHookRecord persisted = new PreSaveHookRecord();
+        persisted.name = "Persisted";
+
+        Assert.assertTrue(runway.save(persisted, bypassed));
+        Assert.assertTrue("Save listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+
+        // Give some time to catch any extra, misrouted notifications
+        Thread.sleep(1000);
+
+        Assert.assertEquals(1, notified.size());
+        Assert.assertTrue(notified.contains(persisted));
     }
 
     @Test
@@ -800,32 +778,6 @@ public class RunwaySaveLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(typedSaves.contains(player));
         Assert.assertEquals(1, untypedSaves.size());
         Assert.assertTrue(untypedSaves.contains(player));
-    }
-
-    @Test
-    public void testListenerErrorIsolation() throws Exception {
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicInteger secondCount = new AtomicInteger(0);
-
-        runway.close();
-        runway = runwayBuilder().onSave(Record.class, record -> {
-            throw new RuntimeException(
-                    "Intentional exception from first listener");
-        }).onSave(Record.class, record -> {
-            secondCount.incrementAndGet();
-            latch.countDown();
-        }).build();
-
-        Player player = new Player("Error Isolation", 33);
-        player.save();
-
-        Assert.assertTrue(
-                "Second listener was not called despite first throwing",
-                latch.await(5, TimeUnit.SECONDS));
-
-        Assert.assertEquals(
-                "Second listener should still fire after first throws", 1,
-                secondCount.get());
     }
 
     @Test

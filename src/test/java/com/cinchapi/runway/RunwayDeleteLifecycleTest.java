@@ -178,6 +178,47 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a typed delete listener fires for a
+     * {@link Record} whose class is a subclass of the registered type.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link SpecialTrackedRecord}, a
+     * subclass of {@link TrackedRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener for {@link TrackedRecord}.</li>
+     * <li>Delete the {@link SpecialTrackedRecord} via a save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The listener fires with the deleted subclass
+     * record.
+     */
+    @Test
+    public void testTypedDeleteListenerFiresForSubclassOfRegisteredType()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Set<Record> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete(TrackedRecord.class, record -> {
+            deletedRecords.add(record);
+            latch.countDown();
+        }).build();
+
+        SpecialTrackedRecord record = new SpecialTrackedRecord();
+        record.name = "Subclass";
+        Assert.assertTrue(record.save());
+
+        record.deleteOnSave();
+        Assert.assertTrue(record.save());
+
+        Assert.assertTrue(
+                "Listener must fire for a subclass of the registered type",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(deletedRecords.contains(record));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a standard save does not fire the
      * delete listener.
      * <p>
@@ -320,31 +361,35 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that delete listeners compose and that an
-     * exception in one listener does not prevent the next from firing.
+     * <strong>Goal:</strong> Verify that delete listeners fire in registration
+     * order and that an exception in one listener does not prevent the next
+     * from firing.
      * <p>
      * <strong>Start state:</strong> A saved {@link TrackedRecord}.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Register two delete listeners; the first always throws.</li>
+     * <li>Register two delete listeners that record their firing order; the
+     * first always throws.</li>
      * <li>Delete the {@link TrackedRecord} via a save.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The second listener still fires.
+     * <strong>Expected:</strong> Both listeners fire, exactly once each, in
+     * registration order.
      */
     @Test
     public void testDeleteListenerCompositionAndErrorIsolation()
             throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
-        AtomicInteger secondCount = new AtomicInteger(0);
+        List<String> order = new CopyOnWriteArrayList<>();
 
         runway.close();
         runway = runwayBuilder().onDelete(record -> {
+            order.add("first");
             throw new RuntimeException(
                     "Intentional exception from first listener");
         }).onDelete(record -> {
-            secondCount.incrementAndGet();
+            order.add("second");
             latch.countDown();
         }).build();
 
@@ -358,7 +403,7 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(
                 "Second delete listener was not called despite first throwing",
                 latch.await(5, TimeUnit.SECONDS));
-        Assert.assertEquals(1, secondCount.get());
+        Assert.assertEquals(ImmutableList.of("first", "second"), order);
     }
 
     /**
@@ -1616,6 +1661,14 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
          */
         public String name;
     }
+
+    /**
+     * A test {@link Record} that subclasses {@link TrackedRecord} to verify
+     * that typed listeners match subclasses of the registered type.
+     *
+     * @author Jeff Nelson
+     */
+    public static class SpecialTrackedRecord extends TrackedRecord {}
 
     /**
      * A test {@link Record} of a different type, used to verify typed listener

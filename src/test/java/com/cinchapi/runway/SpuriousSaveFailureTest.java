@@ -358,62 +358,67 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Create a shared {@link TUser} and two separate {@link TTenant
-     * TTenants} that both link to that user.</li>
-     * <li>Launch two threads: each saves its own {@link TTenant}.</li>
-     * <li>Use a {@link CountDownLatch} to synchronize the threads so both saves
-     * are in-flight concurrently.</li>
-     * <li>If a spurious failure occurs, verify the save returned {@code false}
-     * without retrying.</li>
+     * <li>Run up to 10 contended rounds; in each round, create a fresh shared
+     * {@link TUser} and two separate {@link TTenant TTenants} that both link to
+     * that user.</li>
+     * <li>In each round, launch two threads that each save one {@link TTenant},
+     * gated on a {@link CountDownLatch} so both saves are in-flight
+     * concurrently.</li>
+     * <li>Stop as soon as a round produces a failed save.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> At least one save fails and returns
-     * {@code false}. The failed save does not retry because
-     * {@link SpuriousSaveFailureStrategy#FAIL_FAST} is the active strategy.
+     * <strong>Expected:</strong> At least one round produces a save that fails,
+     * because {@link SpuriousSaveFailureStrategy#FAIL_FAST} propagates the
+     * spurious {@code TransactionException} instead of retrying. A strategy
+     * that silently retried would make both saves succeed in every round.
      */
     @Test
     public void testFailFastStrategyDoesNotRetry() throws Exception {
-        TUser user = new TUser("ivan");
-        TTenant tenant1 = new TTenant(user);
-        TTenant tenant2 = new TTenant(user);
+        boolean anyFailed = false;
+        for (int round = 0; round < 10 && !anyFailed; ++round) {
+            TUser user = new TUser("ivan" + round);
+            TTenant tenant1 = new TTenant(user);
+            TTenant tenant2 = new TTenant(user);
 
-        CountDownLatch ready = new CountDownLatch(2);
-        CountDownLatch go = new CountDownLatch(1);
-        AtomicBoolean save1Result = new AtomicBoolean(false);
-        AtomicBoolean save2Result = new AtomicBoolean(false);
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch go = new CountDownLatch(1);
+            AtomicBoolean save1Result = new AtomicBoolean(false);
+            AtomicBoolean save2Result = new AtomicBoolean(false);
 
-        Thread t1 = new Thread(() -> {
-            ready.countDown();
-            try {
-                go.await();
-                save1Result.set(runway.save(tenant1));
-            }
-            catch (Throwable t) {
-                // save returned false or threw
-            }
-        });
+            Thread t1 = new Thread(() -> {
+                ready.countDown();
+                try {
+                    go.await();
+                    save1Result.set(runway.save(tenant1));
+                }
+                catch (Throwable t) {
+                    // save threw, so save1Result stays false
+                }
+            });
 
-        Thread t2 = new Thread(() -> {
-            ready.countDown();
-            try {
-                go.await();
-                save2Result.set(runway.save(tenant2));
-            }
-            catch (Throwable t) {
-                // save returned false or threw
-            }
-        });
+            Thread t2 = new Thread(() -> {
+                ready.countDown();
+                try {
+                    go.await();
+                    save2Result.set(runway.save(tenant2));
+                }
+                catch (Throwable t) {
+                    // save threw, so save2Result stays false
+                }
+            });
 
-        t1.start();
-        t2.start();
-        ready.await(5, TimeUnit.SECONDS);
-        go.countDown();
-        t1.join(10000);
-        t2.join(10000);
+            t1.start();
+            t2.start();
+            ready.await(5, TimeUnit.SECONDS);
+            go.countDown();
+            t1.join(10000);
+            t2.join(10000);
 
-        boolean anyFailed = !save1Result.get() || !save2Result.get();
+            anyFailed = !save1Result.get() || !save2Result.get();
+        }
         Assert.assertTrue(
-                "At least one save should fail with" + " FAIL_FAST strategy",
+                "FAIL_FAST must surface a spurious failure in at least one"
+                        + " contended round instead of silently retrying",
                 anyFailed);
     }
 

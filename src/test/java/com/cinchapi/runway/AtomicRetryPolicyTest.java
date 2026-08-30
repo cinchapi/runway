@@ -163,9 +163,11 @@ public class AtomicRetryPolicyTest {
      * <p>
      * <strong>Expected:</strong> The call returns without an exception (the
      * pause is bounded by the policy's backoff ceiling instead of an overflowed
-     * interval).
+     * interval). The timeout turns an unbounded pause, the failure mode of an
+     * overflowed interval, into a deterministic test failure instead of a hung
+     * build.
      */
-    @Test
+    @Test(timeout = 10000)
     public void testBackoffBoundsLargeAttemptNumbers() {
         AtomicRetryPolicy.create(100, 1).backoff(100);
     }
