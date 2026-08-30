@@ -70,4 +70,34 @@ public class BackupReadSourcesHashMapTest {
         Assert.assertTrue(data.get("b") instanceof Continuation);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code get} prefers an explicitly
+     * added entry over every backup source and, among the backup sources,
+     * prefers the last one provided.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create a {@link BackupReadSourcesHashMap} with two sources that map
+     * the same key to different values.</li>
+     * <li>Call {@code get} for the shared key.</li>
+     * <li>Explicitly {@code put} a value for the shared key and call
+     * {@code get} again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first {@code get} returns the last
+     * source's value; the second {@code get} returns the explicitly added
+     * value.
+     */
+    @Test
+    public void testGetPrefersNativeEntryThenLaterSourcesForSharedKey() {
+        Map<String, Object> data = BackupReadSourcesHashMap.create(
+                ImmutableMap.of("k", (Object) "low"),
+                ImmutableMap.of("k", (Object) "high"));
+        Assert.assertEquals("high", data.get("k"));
+        data.put("k", "native");
+        Assert.assertEquals("native", data.get("k"));
+    }
+
 }

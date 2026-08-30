@@ -871,19 +871,24 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Create an {@link Item} through the {@link Transaction} without saving
      * it.</li>
-     * <li>Call {@code exchange("badge", "gold")}.</li>
+     * <li>Call {@code exchange("badge", "gold")}, then commit.</li>
+     * <li>Describe the {@link Item Item's} id through a raw {@link Concourse}
+     * connection.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The exchange returns {@code false} and nothing
-     * is staged.
+     * <strong>Expected:</strong> The exchange returns {@code false} and, after
+     * the commit, the database stores no data at all for the id.
      */
     @Test
     public void testExchangeInTransactionReturnsFalseForUnsavedRecord() {
+        long id;
         try (Transaction transaction = runway.startTransaction()) {
             Item created = transaction.create(Item.class, "widget", 1);
             Assert.assertFalse(created.exchange("badge", "gold"));
+            id = created.id();
             Assert.assertTrue(transaction.commit());
         }
+        Assert.assertTrue(client.describe(id).isEmpty());
     }
 
     /**
@@ -2251,7 +2256,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     /**
      * <strong>Goal:</strong> Verify that an
      * {@link Transaction#afterCommit(Runnable) afterCommit} hook runs exactly
-     * once, only after the commit succeeds.
+     * once, only after the commit succeeds, while an
+     * {@link Transaction#afterAbort(Runnable) afterAbort} hook never runs.
      * <p>
      * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
      * <p>
@@ -2259,12 +2265,14 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Load the {@link Item} through a {@link Transaction}, change it and
      * {@code save()}.</li>
-     * <li>Register an {@code afterCommit} hook that increments a counter.</li>
-     * <li>Check the counter, then {@code commit()}.</li>
+     * <li>Register an {@code afterCommit} hook and an {@code afterAbort} hook
+     * that increment counters.</li>
+     * <li>Check the {@code afterCommit} counter, then {@code commit()}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The counter is 0 before the commit and 1 after
-     * it.
+     * <strong>Expected:</strong> The {@code afterCommit} counter is 0 before
+     * the commit and 1 after it, and the {@code afterAbort} counter is still 0
+     * after the transaction closes.
      */
     @Test
     public void testAfterCommitHookRunsOnceAfterCommit() {
@@ -2272,16 +2280,19 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         item.assign(runway);
         Assert.assertTrue(item.save());
         AtomicInteger effects = new AtomicInteger(0);
+        AtomicInteger aborts = new AtomicInteger(0);
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
             transaction.afterCommit(effects::incrementAndGet);
+            transaction.afterAbort(aborts::incrementAndGet);
             Assert.assertEquals(0, effects.get());
             Assert.assertTrue(transaction.commit());
             Assert.assertEquals(1, effects.get());
         }
         Assert.assertEquals(1, effects.get());
+        Assert.assertEquals(0, aborts.get());
     }
 
     /**

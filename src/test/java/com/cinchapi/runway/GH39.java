@@ -44,17 +44,12 @@ public class GH39 extends RunwayBaseClientServerTest {
     public void reproValidationCheckForEmptyValue() {
         Player player = new Player();
         player.emails.add("");
-        if(player.save()) {
-            Assert.fail();
+        Assert.assertFalse(player.save());
+        try {
+            player.throwSupressedExceptions();
+            Assert.fail("save refused the value but recorded no reason");
         }
-        else {
-            try {
-                player.throwSupressedExceptions();
-            }
-            catch (Exception e) {
-                Assert.assertTrue(true);
-            }
-        }
+        catch (SuppressedRunwayException e) {/* expected */}
     }
 
     @Test
@@ -62,7 +57,7 @@ public class GH39 extends RunwayBaseClientServerTest {
         Player player = new Player();
         player.emails.add("jeff@cinchapi.com");
         player.emails.add("jeff.nelson@cinchapi.com");
-        player.save();
+        Assert.assertTrue(player.save());
         player.throwSupressedExceptions();
     }
 

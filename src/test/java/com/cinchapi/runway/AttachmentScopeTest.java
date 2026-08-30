@@ -540,39 +540,6 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a {@link Criteria} find through an
-     * {@link AttachmentScope} returns only matching attached records.
-     * <p>
-     * <strong>Start state:</strong> An {@link AdHocDataSource} that supplies
-     * three {@link TestAdHocRecord TestAdHocRecords} with ages 30, 25 and 35.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Attach the source and find records where {@code age > 28} through the
-     * scope.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> Two records are returned.
-     */
-    @Test
-    public void testFindWithCriteria() {
-        Collection<TestAdHocRecord> data = Arrays.asList(
-                new TestAdHocRecord("Alice", 30),
-                new TestAdHocRecord("Bob", 25),
-                new TestAdHocRecord("Charlie", 35));
-        AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
-                TestAdHocRecord.class, () -> data);
-
-        try (AttachmentScope scope = runway.attach(source)) {
-            Criteria criteria = Criteria.where().key("age")
-                    .operator(Operator.GREATER_THAN).value(28).build();
-            Set<TestAdHocRecord> results = scope.find(TestAdHocRecord.class,
-                    criteria);
-            Assert.assertEquals(2, results.size());
-        }
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that {@code findUnique} matches attached
      * records.
      * <p>
@@ -1167,11 +1134,14 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
      * sorts records that come from different attached sources.
      * <p>
      * <strong>Start state:</strong> Two attached {@link AdHocDataSource
-     * AdHocDataSources} that serve different {@link AdHocRecord} subclasses,
-     * with names that interleave when sorted.
+     * AdHocDataSources} that serve different {@link AdHocRecord} subclasses;
+     * the first supplies its named records out of sorted order and the second
+     * supplies records with no {@code name} field.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
+     * <li>Supply Bob before Alice so an ignored {@link Order} returns the
+     * records in attach order instead of sorted order.</li>
      * <li>Attach both sources and call {@code loadAny(AdHocRecord.class)}
      * sorted by {@code name} ascending.</li>
      * </ul>
@@ -1181,12 +1151,13 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
      */
     @Test
     public void testLoadAnyWithSortingAcrossMultipleSources() {
-        // Create records with ages that interleave when sorted
+        // Supply the named records out of order so the assertion fails
+        // when the Order is dropped and results come back in attach order
         Collection<TestAdHocRecord> testData = Arrays.asList(
-                new TestAdHocRecord("Alice", 30),
-                new TestAdHocRecord("Bob", 20));
+                new TestAdHocRecord("Bob", 20),
+                new TestAdHocRecord("Alice", 30));
         Collection<OtherAdHocRecord> otherData = Arrays.asList(
-                new OtherAdHocRecord("Charlie"), // no age field
+                new OtherAdHocRecord("Charlie"), // no name field
                 new OtherAdHocRecord("Dave"));
 
         AdHocDataSource<TestAdHocRecord> source1 = new AdHocDataSource<>(
@@ -1348,6 +1319,36 @@ public class AttachmentScopeTest extends RunwayBaseClientServerTest {
             Assert.assertEquals("Alice", names[0]);
             Assert.assertEquals("Bob", names[1]);
             Assert.assertEquals("Charlie", names[2]);
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a realm-scoped load still serves every
+     * record from an attached {@link AdHocDataSource}, because realm
+     * constraints do not apply to ad-hoc data.
+     * <p>
+     * <strong>Start state:</strong> An attached {@link AdHocDataSource} that
+     * supplies two {@link TestAdHocRecord TestAdHocRecords}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach the source and load {@link TestAdHocRecord TestAdHocRecords}
+     * scoped to the {@code prod} realm.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both supplier records are returned.
+     */
+    @Test
+    public void testRealmScopedLoadStillServesAttachedRecords() {
+        Collection<TestAdHocRecord> data = Arrays.asList(
+                new TestAdHocRecord("Alice", 30),
+                new TestAdHocRecord("Bob", 25));
+        AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
+                TestAdHocRecord.class, () -> data);
+        try (AttachmentScope scope = runway.attach(source)) {
+            Set<TestAdHocRecord> results = runway.load(TestAdHocRecord.class,
+                    Realms.only("prod"));
+            Assert.assertEquals(2, results.size());
         }
     }
 

@@ -36,14 +36,18 @@ public class AudienceAccessControlDeleteTest
         Candidate candidate = new Candidate();
         candidate.name = "Jane Developer";
         candidate.email = "jane@email.com";
+        Assert.assertTrue(candidate.save());
 
         // Candidate should be able to delete themselves
         Assert.assertTrue("Candidate should be able to delete themselves",
                 candidate.$isDeletableBy(candidate));
 
-        // Simulate deletion (in real scenario, this would remove from database)
         candidate.deleteAs(candidate);
-        // Test passes if no exception is thrown
+        Assert.assertTrue(candidate.save());
+        Assert.assertNull(
+                "An allowed mediated delete must stage the"
+                        + " deletion, so the next save removes the record",
+                runway.load(Candidate.class, candidate.id()));
     }
 
     @Test

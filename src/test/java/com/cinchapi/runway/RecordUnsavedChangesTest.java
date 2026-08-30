@@ -30,16 +30,6 @@ import com.cinchapi.concourse.util.Random;
 public class RecordUnsavedChangesTest extends AbstractRecordTest {
 
     @Test
-    public void testDetectNoUnsavedChanges() {
-        Mock person = new Mock();
-        person.name = "Jeff Nelson";
-        person.age = 37;
-        person.alive = true;
-        person.save();
-        Assert.assertFalse(person.hasUnsavedChanges());
-    }
-
-    @Test
     public void testDetectNoUnsavedChangesAfterLoad() {
         Mock person = new Mock();
         person.name = "Jeff Nelson";

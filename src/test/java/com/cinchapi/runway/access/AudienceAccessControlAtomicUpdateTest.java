@@ -20,6 +20,7 @@ import java.util.Map;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.Timestamp;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.sort.Order;
@@ -447,6 +448,48 @@ public class AudienceAccessControlAtomicUpdateTest
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the unique variants throw
+     * {@link DuplicateEntryException} when more than one visible {@link Record}
+     * matches, and update nothing.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Application Applications}
+     * with the same status, and one saved {@link Admin}, who sees both.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findUniqueAndUpdate} on the {@link Admin} with a criteria
+     * that both {@link Application Applications} match, and catch the expected
+     * exception.</li>
+     * <li>Re-load both {@link Application Applications} from the database.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link DuplicateEntryException} is thrown
+     * and both statuses are unchanged.
+     */
+    @Test
+    public void testFindUniqueAndUpdateThrowsWhenMultipleVisibleMatches() {
+        Application alpha = application("Alpha", "Engineer", "a");
+        Application beta = application("Beta", "Designer", "b");
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@example.com";
+        runway.save(alpha, beta, admin);
+        boolean threw = false;
+        try {
+            admin.findUniqueAndUpdate(Application.class, status("submitted"),
+                    "status", status -> "reviewed");
+        }
+        catch (DuplicateEntryException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals("submitted",
+                runway.load(Application.class, alpha.id()).status);
+        Assert.assertEquals("submitted",
+                runway.load(Application.class, beta.id()).status);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code findAnyUniqueAndUpdate} through
      * an {@link Audience} matches across the class hierarchy and updates a key
      * the {@link Audience} may write.
@@ -798,6 +841,48 @@ public class AudienceAccessControlAtomicUpdateTest
                 .get("body");
         Assert.assertNotNull(revision);
         Assert.assertFalse(revision.isAttributed());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an atomic update through an
+     * {@link Audience} that changes a value attributes the staged revision to
+     * the {@link Audience}.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Memo} and one saved
+     * {@link Candidate}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code findUniqueAndUpdate} on the {@link Candidate} with an
+     * operator that replaces the body.</li>
+     * <li>Audit the {@link Memo} and inspect the latest revision for the
+     * {@code body} key.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The returned {@link Memo} carries the
+     * replacement body, and the revision is attributed to the
+     * {@link Candidate}.
+     */
+    @Test
+    public void testFindUniqueAndUpdateAttributesUpdateToAudience() {
+        Memo memo = new Memo();
+        memo.slug = "m1";
+        memo.body = "old";
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@example.com";
+        runway.save(memo, candidate);
+        Memo result = candidate.findUniqueAndUpdate(Memo.class, slug("m1"),
+                "body", body -> "new");
+        Assert.assertNotNull(result);
+        Assert.assertEquals("new", result.body);
+        Map<Timestamp, Map<String, Revision>> audit = result.audit();
+        Assert.assertFalse(audit.isEmpty());
+        Revision revision = audit.get(Iterables.getLast(audit.keySet()))
+                .get("body");
+        Assert.assertNotNull(revision);
+        Assert.assertTrue(revision.isAttributed());
+        Assert.assertEquals(candidate, revision.author());
     }
 
     /**

@@ -182,6 +182,13 @@ final class CountingConcourseConnectionPool extends ConnectionPool implements
 
         @Override
         public <T> Map<Long, Map<String, Set<T>>> select(
+                Collection<String> keys, Collection<Long> records) {
+            rpcs.incrementAndGet();
+            return super.select(keys, records);
+        }
+
+        @Override
+        public <T> Map<Long, Map<String, Set<T>>> select(
                 Collection<String> keys, Criteria criteria) {
             rpcs.incrementAndGet();
             return super.select(keys, criteria);

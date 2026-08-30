@@ -50,10 +50,13 @@ public class RunwayLoadTest extends RunwayBaseClientServerTest {
 
         runway.save(b, a1, a2);
         Set<A> as = runway.load(A.class);
+        Assert.assertEquals(2, as.size());
         B expected = null;
         for (A a : as) {
             if(expected == null) {
                 expected = a.b;
+                Assert.assertNotNull(expected);
+                Assert.assertEquals("b", expected.name);
             }
             else {
                 Assert.assertSame(expected, a.b);

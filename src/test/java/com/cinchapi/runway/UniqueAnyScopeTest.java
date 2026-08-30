@@ -196,6 +196,39 @@ public class UniqueAnyScopeTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code intern} never adopts a
+     * descendant-class record that holds the {@code any}-scoped identity, even
+     * though the descendant is an instance of the probe's class; the conflict
+     * surfaces from the save instead.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link DerivedAsset}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link DerivedAsset} with a locator.</li>
+     * <li>Call {@code intern} with a new {@link Asset} that has the same
+     * locator, and catch the expected exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} is thrown
+     * and only the original {@link DerivedAsset} exists in the hierarchy.
+     */
+    @Test
+    public void testInternFailsLoudlyWhenDescendantClassClaimsAnyIdentity() {
+        String locator = Random.getSimpleString();
+        runway.save(new DerivedAsset(locator));
+        boolean threw = false;
+        try {
+            runway.intern(new Asset(locator));
+        }
+        catch (SuppressedRunwayException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals(1, runway.countAny(Asset.class));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that, under mixed scopes, {@code intern}
      * does not adopt a same-class candidate that agrees with the {@code any}
      * constraint but not the class-scoped one; the save fails instead.

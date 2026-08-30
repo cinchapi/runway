@@ -32,6 +32,7 @@ import com.cinchapi.common.reflect.Reflection;
 import com.cinchapi.concourse.DuplicateEntryException;
 import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.AttachmentScopeTest.TestAdHocRecord;
 
 /**
  * Tests for
@@ -482,6 +483,116 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} rejects an
+     * operator result that violates the field's constraints, without updating
+     * anything.
+     * <p>
+     * <strong>Start state:</strong> One {@link Item} that matches the criteria,
+     * whose validated {@code gauge} holds an even value.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Item} with code 2.</li>
+     * <li>Call {@code findUniqueAndUpdate} with an operator on {@code gauge}
+     * that returns an odd value.</li>
+     * <li>Catch the expected exception, then re-load the {@link Item}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalStateException} is thrown and
+     * the re-loaded {@link Item} still has the initial {@code gauge}.
+     */
+    @Test
+    public void testFindUniqueAndUpdateRejectsConstraintViolatingResult() {
+        Item item = new Item(2);
+        runway.save(item);
+        boolean threw = false;
+        try {
+            runway.findUniqueAndUpdate(Item.class, code(2), "gauge",
+                    (Long gauge) -> gauge + 1);
+        }
+        catch (IllegalStateException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).gauge);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} rejects an
+     * operator result that is not an instance of the field's type, without
+     * updating anything.
+     * <p>
+     * <strong>Start state:</strong> One {@link Item} that matches the criteria.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Item} with code 2.</li>
+     * <li>Call {@code findUniqueAndUpdate} with an operator on the
+     * {@link String} field {@code owner} that returns an {@link Integer}.</li>
+     * <li>Catch the expected exception, then re-load the {@link Item}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown
+     * and the re-loaded {@link Item} still has the initial {@code owner}.
+     */
+    @Test
+    public void testFindUniqueAndUpdateRejectsWrongTypedResult() {
+        Item item = new Item(2);
+        runway.save(item);
+        boolean threw = false;
+        try {
+            runway.findUniqueAndUpdate(Item.class, code(2), "owner",
+                    (Object owner) -> 42);
+        }
+        catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals("unassigned",
+                runway.load(Item.class, item.id()).owner);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code findUniqueAndUpdate} never
+     * matches a record supplied by an attached {@link AdHocDataSource}, so the
+     * call returns {@code null} and the operator never runs when only an ad hoc
+     * record matches the criteria.
+     * <p>
+     * <strong>Start state:</strong> An attached {@link AdHocDataSource} whose
+     * sole {@link TestAdHocRecord} matches the criteria; no persisted record
+     * matches.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Attach an {@link AdHocDataSource} that supplies one
+     * {@link TestAdHocRecord} named {@code "Alice"}.</li>
+     * <li>Call {@code findUniqueAndUpdate} with {@code name == "Alice"} and an
+     * operator that flips an {@link AtomicBoolean}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is {@code null} and the operator
+     * never ran.
+     */
+    @Test
+    public void testFindUniqueAndUpdateNeverMatchesAdHocRecords() {
+        AdHocDataSource<TestAdHocRecord> source = new AdHocDataSource<>(
+                TestAdHocRecord.class,
+                () -> Arrays.asList(new TestAdHocRecord("Alice", 30)));
+        AtomicBoolean operatorRan = new AtomicBoolean(false);
+        try (AttachmentScope scope = runway.attach(source)) {
+            Criteria criteria = Criteria.where().key("name")
+                    .operator(Operator.EQUALS).value("Alice").build();
+            TestAdHocRecord match = runway.findUniqueAndUpdate(
+                    TestAdHocRecord.class, criteria, "name", name -> {
+                        operatorRan.set(true);
+                        return name;
+                    });
+            Assert.assertNull(match);
+            Assert.assertFalse(operatorRan.get());
+        }
+    }
+
+    /**
      * Return a {@link Criteria} matching every {@link Item} whose derived
      * {@code parity} equals the given {@code value}.
      *
@@ -528,6 +639,13 @@ public class FindUniqueAndUpdateTest extends RunwayBaseClientServerTest {
          * The claim holder; unset until a worker claims this item.
          */
         String assignee;
+
+        /**
+         * A validated gauge; an atomic update must reject a replacement that
+         * fails validation.
+         */
+        @ValidatedBy(RecordAtomicOperationTest.EvenValidator.class)
+        long gauge = 2;
 
         /**
          * Construct a new instance.

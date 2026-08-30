@@ -18,6 +18,7 @@ package com.cinchapi.runway.access;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import javax.annotation.Nonnull;
 
@@ -30,6 +31,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.runway.Record;
 import com.cinchapi.runway.RunwayBaseClientServerTest;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 
 /**
@@ -151,9 +153,9 @@ public class AudienceScopeLinkedRecordTest extends RunwayBaseClientServerTest {
      * <li>Frame the {@link ProjectWithMembers} as the {@link TestUser}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The {@code members} field in the framed data
-     * contains exactly two entries corresponding to the active
-     * {@link ScopedOwner ScopedOwners}.
+     * <strong>Expected:</strong> The non-null entries in the {@code members}
+     * field are exactly the two active {@link ScopedOwner ScopedOwners},
+     * identified by name.
      */
     @SuppressWarnings("unchecked")
     @Test
@@ -181,6 +183,10 @@ public class AudienceScopeLinkedRecordTest extends RunwayBaseClientServerTest {
         // collected list. Filter them out before asserting.
         long visible = memberList.stream().filter(item -> item != null).count();
         Assert.assertEquals(2, visible);
+        Set<Object> names = memberList.stream().filter(item -> item != null)
+                .map(item -> ((Map<String, Object>) item).get("name"))
+                .collect(Collectors.toSet());
+        Assert.assertEquals(ImmutableSet.of("Acme", "Beta"), names);
     }
 
     /**

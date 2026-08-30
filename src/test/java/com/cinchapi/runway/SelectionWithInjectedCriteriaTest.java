@@ -21,6 +21,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.Operator;
 
 /**
@@ -45,8 +46,9 @@ public class SelectionWithInjectedCriteriaTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The result is a {@link FindSelection} whose
-     * criteria is non-null and differs from the original (the two are
-     * combined).
+     * criteria is non-null, is not the original instance, and renders CCL that
+     * contains both the base key ({@code active}) and the injected key
+     * ({@code owner}).
      */
     @Test
     public void testFindSelectionCriteriaIsAndedWithVisibility() {
@@ -62,6 +64,9 @@ public class SelectionWithInjectedCriteriaTest {
         FindSelection<TestRecord> find = (FindSelection<TestRecord>) result;
         Assert.assertNotSame(base, find.criteria);
         Assert.assertNotNull(find.criteria);
+        String ccl = find.criteria.ccl();
+        Assert.assertTrue(ccl.contains("active"));
+        Assert.assertTrue(ccl.contains("owner"));
     }
 
     /**
@@ -110,7 +115,8 @@ public class SelectionWithInjectedCriteriaTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The result is a {@link CountSelection} with
-     * non-null criteria that is not the original.
+     * non-null criteria that is not the original and whose CCL contains both
+     * the base key ({@code active}) and the injected key ({@code owner}).
      */
     @Test
     public void testCountSelectionCriteriaIsAnded() {
@@ -126,6 +132,9 @@ public class SelectionWithInjectedCriteriaTest {
         CountSelection<TestRecord> count = (CountSelection<TestRecord>) result;
         Assert.assertNotSame(base, count.criteria);
         Assert.assertNotNull(count.criteria);
+        String ccl = count.criteria.ccl();
+        Assert.assertTrue(ccl.contains("active"));
+        Assert.assertTrue(ccl.contains("owner"));
     }
 
     /**
@@ -173,7 +182,8 @@ public class SelectionWithInjectedCriteriaTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The result is a {@link UniqueSelection} with
-     * non-null criteria that is not the original.
+     * non-null criteria that is not the original and whose CCL contains both
+     * the base key ({@code active}) and the injected key ({@code owner}).
      */
     @Test
     public void testUniqueSelectionCriteriaIsAnded() {
@@ -189,6 +199,9 @@ public class SelectionWithInjectedCriteriaTest {
         UniqueSelection<TestRecord> unique = (UniqueSelection<TestRecord>) result;
         Assert.assertNotSame(base, unique.criteria);
         Assert.assertNotNull(unique.criteria);
+        String ccl = unique.criteria.ccl();
+        Assert.assertTrue(ccl.contains("active"));
+        Assert.assertTrue(ccl.contains("owner"));
     }
 
     /**
@@ -507,6 +520,46 @@ public class SelectionWithInjectedCriteriaTest {
         Assert.assertTrue(result instanceof UniqueSelection);
         DatabaseSelection<TestRecord> db = (DatabaseSelection<TestRecord>) result;
         Assert.assertTrue(db.any);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that injecting visibility criteria into a
+     * {@link FirstSelection} produces a {@link FirstSelection} whose criteria
+     * is the AND of the original and the visibility criteria and whose
+     * {@link Order} is preserved.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build a {@link FirstSelection} with a base criteria and an
+     * {@link Order} via {@code where(...).order(...).first()}.</li>
+     * <li>Call {@link Selection#withInjectedCriteria} with a visibility
+     * criteria.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result is a {@link FirstSelection} whose
+     * {@link Order} is the same instance as the original and whose criteria
+     * renders CCL that contains both the base key ({@code active}) and the
+     * injected key ({@code owner}).
+     */
+    @Test
+    public void testFirstSelectionCriteriaIsAndedAndOrderPreserved() {
+        Criteria base = Criteria.where().key("active").operator(Operator.EQUALS)
+                .value(true).build();
+        Criteria visibility = Criteria.where().key("owner")
+                .operator(Operator.EQUALS).value(42L).build();
+        Order order = Order.by("name");
+        Selection<TestRecord> sel = Selection.of(TestRecord.class).where(base)
+                .order(order).first().build();
+        Selection<TestRecord> result = Selection.withInjectedCriteria(sel,
+                visibility);
+        Assert.assertTrue(result instanceof FirstSelection);
+        FirstSelection<TestRecord> first = (FirstSelection<TestRecord>) result;
+        Assert.assertSame(order, first.order);
+        String ccl = first.criteria.ccl();
+        Assert.assertTrue(ccl.contains("active"));
+        Assert.assertTrue(ccl.contains("owner"));
     }
 
     /**

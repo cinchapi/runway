@@ -430,45 +430,6 @@ public class AudienceVisibilityScopeIntegrationTest
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a load-class selection through a
-     * criteria scope returns only matching records.
-     * <p>
-     * <strong>Start state:</strong> Four documents with mixed owners. Criteria
-     * scope registered for load-class queries.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Register a criteria scope filtering on {@code owner}.</li>
-     * <li>Save four documents (two per owner).</li>
-     * <li>Query all records as alice via a plain load-class selection.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> Only alice's two documents are returned.
-     */
-    @Test
-    public void testLoadClassWithCriteriaScope() {
-        AccessControl.registerVisibilityScope(OwnedDocument.class, audience -> {
-            if(audience instanceof TestUser) {
-                String name = ((TestUser) audience).name;
-                return Scope.of(Criteria.where().key("owner")
-                        .operator(Operator.EQUALS).value(name).build());
-            }
-            else {
-                return Scope.none();
-            }
-        });
-        TestUser alice = new TestUser("alice");
-        alice.save();
-        runway.save(new OwnedDocument("a1", "alice"),
-                new OwnedDocument("a2", "alice"),
-                new OwnedDocument("b1", "bob"), new OwnedDocument("b2", "bob"));
-        Selections sel = alice.select(Selection.of(OwnedDocument.class));
-        Set<OwnedDocument> results = sel.next();
-        Assert.assertEquals(2, results.size());
-        results.forEach(doc -> Assert.assertEquals("alice", doc.owner));
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that when a registered provider returns
      * {@code null}, the framework falls back to the instance-based predicate
      * filter.

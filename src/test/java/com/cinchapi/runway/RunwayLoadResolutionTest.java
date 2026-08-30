@@ -210,6 +210,27 @@ public class RunwayLoadResolutionTest extends AbstractRunwayTest {
         Assert.assertEquals(human, team.entity);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a loaded subclass {@link Record}
+     * resolves both its own link field and the link field inherited from its
+     * parent class.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Create an {@link Organization}, a {@link Person} in that
+     * {@link Organization}, and an {@link Employee} in the same
+     * {@link Organization} with that {@link Person} as the boss.</li>
+     * <li>Save the {@link Employee}.</li>
+     * <li>Load the {@link Employee} by id.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The loaded {@link Employee} has the saved
+     * name, the inherited {@code organization} link resolves to the saved
+     * {@link Organization}, and the {@code boss} link resolves to the saved
+     * {@link Person}.
+     */
     @Test
     public void testLoadRecordWithLinks() {
         Organization org = new Organization("Org");
@@ -217,8 +238,9 @@ public class RunwayLoadResolutionTest extends AbstractRunwayTest {
         Employee employee = new Employee("John Doe", org, person);
         employee.save();
         employee = runway.load(Employee.class, employee.id());
-        System.out.println(employee);
-        // TODO: finish by asserting some things
+        Assert.assertEquals("John Doe", employee.name);
+        Assert.assertEquals(org, employee.organization);
+        Assert.assertEquals(person, employee.boss);
     }
 
 }
