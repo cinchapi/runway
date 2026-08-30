@@ -1324,17 +1324,20 @@ public abstract class Record implements Comparable<Record> {
     private transient Map<String, Object> __baseline = null;
 
     /**
-     * The {@link #binding} through which this {@link Record} reached the state
-     * at {@link #checkpointTs}, or {@code null} until this {@link Record} has
-     * been synchronized at all.
+     * The {@link #binding} through which this {@link Record} was last loaded
+     * from or successfully saved to the database. If neither has happened, the
+     * value is {@code null}. Construction reads nothing, so a newly built
+     * {@link Record} has none until its first load or successful save.
      */
     @Nullable
     private transient Binding checkpointBinding = null;
 
     /**
-     * The timestamp (in microseconds) when this {@link Record} was last loaded
-     * from or successfully saved to the database. {@code 0} until this
-     * {@link Record} has been synchronized at all.
+     * The timestamp (in microseconds) of the newest state that this
+     * {@link Record} accounts for, so a staleness check inspects only what
+     * followed it. Construction establishes it. A load or a successful save
+     * advances it. An instance that a load creates holds {@code 0} until that
+     * load populates it.
      */
     private transient long checkpointTs = 0;
 
@@ -1387,7 +1390,9 @@ public abstract class Record implements Comparable<Record> {
             this.connections = PINNED_RUNWAY_INSTANCE.connections;
             this.binding = PINNED_RUNWAY_INSTANCE;
         }
-        checkpoint();
+        // NOTE: Construction bounds the staleness window but reads nothing,
+        // so it establishes a checkpoint timestamp and no checkpoint binding.
+        checkpointTs = Time.now();
     }
 
     /**
@@ -2729,19 +2734,18 @@ public abstract class Record implements Comparable<Record> {
      * commits, and no later save carries it. A key that no save carried stays
      * declared, and a save that does not commit leaves its keys declared, so a
      * caller that retries keeps the verification. A {@link Record} that the
-     * database does not yet hold has no stored value to compare, so nothing is
-     * verified until it does.
+     * database does not yet hold last saw nothing for each declared key, so a
+     * value that another writer stores for one of them fails the save.
      * </p>
      * <p>
      * Within an open {@link Transaction}, a {@link Record} that the
      * {@link Transaction} loaded needs no declaration, because the
      * {@link Transaction} fails its own commit when a writer changes anything
-     * it read. A declaration on such a {@link Record} costs nothing. A
-     * {@link Record} that reached its state before the {@link Transaction}
-     * began carries its declaration into the {@link Transaction}, which
-     * verifies it against the state at its start. A save throws an
+     * it read. A declaration on such a {@link Record} costs nothing. Any other
+     * {@link Record} carries its declaration into the save, and a writer that
+     * moves a declared value fails that save or the commit. A save throws an
      * {@link IllegalStateException} when it carries a declaration on a
-     * {@link Record} that reached its current state outside the
+     * {@link Record} that was last loaded or saved outside the
      * {@link Transaction} after it began, which the {@link Transaction} cannot
      * see.
      * </p>
@@ -5037,7 +5041,7 @@ public abstract class Record implements Comparable<Record> {
      * @param preventStaleWrite whether the values that the save writes are
      *            checked in addition to the declared ones
      * @throws TransactionBoundaryException if a declared key cannot be verified
-     *             because this {@link Record} reached its current state outside
+     *             because this {@link Record} was last loaded or saved outside
      *             the {@link Transaction} that saves it, after that
      *             {@link Transaction} began
      */
@@ -5058,18 +5062,22 @@ public abstract class Record implements Comparable<Record> {
         boolean hasConflictWindow = ceiling == null
                 || ceiling.getMicros() > checkpointTs;
         if(!verified.isEmpty() && !hasConflictWindow && __baseline != null
-                && checkpointBinding != binding) {
+                && checkpointBinding != null && checkpointBinding != binding) {
             // NOTE: A Transaction verifies whatever it read, so a Record it
-            // loaded needs nothing here. A Record that reached its state
+            // loaded needs nothing here. A Record the Transaction never read
+            // carries no such coverage, so the check below answers the
+            // declaration instead. A Record that was last loaded or saved
             // elsewhere, after the Transaction began, saw what the
             // Transaction's snapshot cannot, so nothing within the
             // Transaction can answer what the declaration asks.
             throw new TransactionBoundaryException("Cannot verify "
                     + verified.keySet() + " in " + __ + " because this Record"
-                    + " reached its current state after the Transaction that"
-                    + " saves it began; load it through the Transaction");
+                    + " was last loaded or saved outside the Transaction that"
+                    + " saves it, after that Transaction began; load it through"
+                    + " the Transaction");
         }
-        if(!verified.isEmpty() && hasConflictWindow) {
+        if(!verified.isEmpty()
+                && (hasConflictWindow || checkpointBinding == null)) {
             saver.select(verified.keySet(), id, stored -> {
                 boolean stale = verified.entrySet().stream()
                         .anyMatch(entry -> !stored
