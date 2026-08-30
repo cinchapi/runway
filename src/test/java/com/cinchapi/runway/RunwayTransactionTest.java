@@ -1103,6 +1103,51 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an abort restores a linked
+     * {@link Record} that was saved both nested under its parent and directly
+     * to its pre-transaction baseline, so a later save still writes every
+     * staged edit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Basket} that links to a
+     * saved {@link Item} named "widget" with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Basket} through a {@link Transaction}, set the linked
+     * {@link Item Item's} score to 2 and save the {@link Basket}.</li>
+     * <li>Set the {@link Item Item's} name to "crate" and save the {@link Item}
+     * directly.</li>
+     * <li>Abort, then save the {@link Item} directly.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the abort the database still stores
+     * "widget" and 1. The post-abort save persists both the score of 2 and the
+     * name "crate": the edit staged by the nested save is not silently lost.
+     */
+    @Test
+    public void testAbortRestoresLinkedRecordSavedBothNestedAndDirectly() {
+        Item item = new Item("widget", 1);
+        Basket basket = new Basket("bin", item);
+        basket.assign(runway);
+        Assert.assertTrue(basket.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Basket txBasket = transaction.load(Basket.class, basket.id());
+            txBasket.item.score = 2;
+            Assert.assertTrue(txBasket.save());
+            txBasket.item.name = "crate";
+            Assert.assertTrue(txBasket.item.save());
+            transaction.abort();
+            Item afterAbort = runway.load(Item.class, item.id());
+            Assert.assertEquals("widget", afterAbort.name);
+            Assert.assertEquals(1, afterAbort.score);
+            Assert.assertTrue(txBasket.item.save());
+        }
+        Item afterSave = runway.load(Item.class, item.id());
+        Assert.assertEquals("crate", afterSave.name);
+        Assert.assertEquals(2, afterSave.score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that reads and saves fall through to the
      * enclosing {@link Runway} after a {@link Transaction} ends.
      * <p>
