@@ -801,10 +801,14 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
      * <li>Save another matching {@link Widget} to mutate the database.</li>
      * <li>Call the filtered {@link Runway#count} overload with the same
      * parameters and a pass-through filter.</li>
+     * <li>Call the unfiltered {@link Runway#count} overload with the same
+     * parameters.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The filtered count equals the size of the
      * cached find result ({@code 2}), not the fresh database count ({@code 3}).
+     * The unfiltered count ignores the find reservation and returns the fresh
+     * database count ({@code 3}).
      */
     @Test
     public void testFindSelectionReservedForSubsequentCountMethod() {
@@ -825,6 +829,10 @@ public class RunwaySelectAndReserveTest extends RunwayBaseClientServerTest {
                 "A filtered count must resolve against the reserved find "
                         + "result, not a fresh database read",
                 fromSelect.size(), fromCount);
+        Assert.assertEquals(
+                "An unfiltered count must ignore a find reservation and"
+                        + " read the database",
+                3, runway.count(Widget.class, criteria));
     }
 
     /**
