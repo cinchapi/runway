@@ -103,6 +103,8 @@ A record's identity is its data under its `@Unique` constraints. This release le
   `Saver#reconcile(String, long, Collection)`, `Reader#select(String, long)`,
   `Reader#get(String, long)` and `Reader#concourse()` are removed, along with
   their implementations. No Runway operation called them.
+    * `AbstractReader#concourse()` remains for subclasses, but it is no longer
+      public.
     * The varargs `Saver#reconcile(String, long, Object...)` and the
       criteria-based reads are unchanged.
 
