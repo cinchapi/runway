@@ -430,7 +430,7 @@ public abstract class Record implements Comparable<Record> {
         }
         List<Runnable> restores = Lists.newArrayListWithCapacity(graph.size());
         for (Record record : graph) {
-            if(record.binding != owner) {
+            if(owner == null || record.binding != owner) {
                 Binding binding = record.binding;
                 ConcourseProvider connections = record.connections;
                 restores.add(() -> {
