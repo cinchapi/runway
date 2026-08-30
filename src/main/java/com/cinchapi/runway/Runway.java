@@ -4018,11 +4018,6 @@ public final class Runway extends Binding implements
         }
 
         @Override
-        public Selections select(Selection<?>... options) {
-            return Runway.this.select(options);
-        }
-
-        @Override
         Reader syncReader() {
             return new IncrementalReader(connections);
         }
