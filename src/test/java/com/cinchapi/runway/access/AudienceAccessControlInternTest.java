@@ -159,6 +159,48 @@ public class AudienceAccessControlInternTest
 
     /**
      * <strong>Goal:</strong> Verify that {@code intern} through an
+     * {@link Audience} enforces the create permission even when a visible
+     * existing {@link Record}, distinct from the {@link Audience}, claims the
+     * identity.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Employer}, which every
+     * {@link Audience} may see, and a {@link Candidate} bound to the database.
+     * A {@link Candidate} may not create an {@link Employer}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Employer}.</li>
+     * <li>Call {@code intern} on the {@link Candidate} with a new
+     * {@link Employer} that has the same name, and catch the expected
+     * exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * and exactly the original {@link Employer} exists.
+     */
+    @Test
+    public void testInternRefusedWhenAudienceMayNotCreateDespiteVisibleMatch() {
+        Employer existing = new Employer();
+        existing.name = "Acme";
+        runway.save(existing);
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.assign(runway);
+        Employer probe = new Employer();
+        probe.name = "Acme";
+        boolean threw = false;
+        try {
+            candidate.intern(probe);
+        }
+        catch (RestrictedAccessException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals(1, runway.count(Employer.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code intern} through an
      * {@link Audience} enforces the create permission even when the interned
      * {@link Record} is the {@link Audience} itself, unlike the unmediated
      * {@code Record#intern()}.

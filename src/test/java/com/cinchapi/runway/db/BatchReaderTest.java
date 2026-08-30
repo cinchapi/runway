@@ -105,7 +105,7 @@ public class BatchReaderTest extends ReaderTest {
         reader.find(Criteria.where().key("score")
                 .operator(Operator.GREATER_THAN).value(0))
                 .onResolve(ids -> secondFired[0] = true);
-        reader.concourse().close();
+        ((AbstractReader) reader).concourse().close();
 
         RuntimeException failure = null;
         try {

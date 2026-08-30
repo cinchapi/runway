@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import java.lang.ref.WeakReference;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -25,6 +26,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.junit.Assert;
@@ -62,6 +65,12 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * {@code null} when no test is exercising that validator.
      */
     static final AtomicReference<Transaction> ENDING = new AtomicReference<>();
+
+    /**
+     * The {@link Transaction} that a {@link Gauge Gauge's} {@code onLoad()}
+     * hook joins, or {@code null} when no test is exercising that hook.
+     */
+    static final AtomicReference<Transaction> JOINING = new AtomicReference<>();
 
     /**
      * <strong>Goal:</strong> Verify that a read through a {@link Transaction}
@@ -214,23 +223,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        Transaction transaction = runway.startTransaction();
-        boolean conflicted;
-        try {
-            Item txItem = transaction.load(Item.class, item.id());
-            client.set("score", 99, item.id());
-            txItem.score = 50;
-            txItem.save();
-            conflicted = !transaction.commit();
-        }
-        catch (TransactionException e) {
-            conflicted = true;
-        }
-        finally {
-            transaction.close();
-        }
-        Assert.assertTrue(conflicted);
-        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+        assertConflictFootprint(item.id(),
+                transaction -> transaction.load(Item.class, item.id()));
     }
 
     /**
@@ -643,6 +637,44 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@code getAndUpdate} within a
+     * {@link Transaction} refuses a {@link Record} whose data another writer
+     * erased with a {@link DeletedRecordException}, even when the operated
+     * field is primitive-typed and therefore also fails the guard that refuses
+     * a primitive field with no stored value.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} whose data was erased
+     * through a second copy after the first copy loaded it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code getAndUpdate("score", s -> s + 1)} on the stale copy
+     * within {@code transactAndSupply}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The operation throws
+     * {@link DeletedRecordException} and the record remains absent from the
+     * database.
+     */
+    @Test
+    public void testGetAndUpdateRefusesAnErasedRecordWithAPrimitiveField() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Item stale = runway.load(Item.class, item.id());
+        Item doomed = runway.load(Item.class, item.id());
+        doomed.deleteOnSave();
+        Assert.assertTrue(doomed.save());
+        try {
+            stale.transactAndSupply(transaction -> stale.getAndUpdate("score",
+                    (Integer score) -> score + 1));
+            Assert.fail("Expected a DeletedRecordException");
+        }
+        catch (DeletedRecordException e) {/* expected */}
+        Assert.assertNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code exchange} on a {@link Record}
      * bound to an open {@link Transaction} stages within it, so the swap is
      * visible inside the transaction, invisible outside, and durable after the
@@ -839,19 +871,24 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Create an {@link Item} through the {@link Transaction} without saving
      * it.</li>
-     * <li>Call {@code exchange("badge", "gold")}.</li>
+     * <li>Call {@code exchange("badge", "gold")}, then commit.</li>
+     * <li>Describe the {@link Item Item's} id through a raw {@link Concourse}
+     * connection.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The exchange returns {@code false} and nothing
-     * is staged.
+     * <strong>Expected:</strong> The exchange returns {@code false} and, after
+     * the commit, the database stores no data at all for the id.
      */
     @Test
     public void testExchangeInTransactionReturnsFalseForUnsavedRecord() {
+        long id;
         try (Transaction transaction = runway.startTransaction()) {
             Item created = transaction.create(Item.class, "widget", 1);
             Assert.assertFalse(created.exchange("badge", "gold"));
+            id = created.id();
             Assert.assertTrue(transaction.commit());
         }
+        Assert.assertTrue(client.describe(id).isEmpty());
     }
 
     /**
@@ -927,6 +964,45 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         }
         Assert.assertEquals("one",
                 runway.load(Meter.class, meter.id()).reading);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code refresh()} whose
+     * {@code onLoad()} hook joins the {@link Record} to an open
+     * {@link Transaction} releases its pooled connection to the pool that
+     * supplied it, so the transaction can still commit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Gauge} bound to the
+     * enclosing {@link Runway}, and an open {@link Transaction} that
+     * {@link #JOINING} holds.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code refresh()} on the {@link Gauge}, so its {@code onLoad()}
+     * hook saves it into the {@link Transaction} and leaves the transaction
+     * open.</li>
+     * <li>Call {@code commit()} on the {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The commit succeeds and the {@link Gauge}
+     * remains durably stored.
+     */
+    @Test
+    public void testCommitSucceedsWhenOnLoadHookJoinsRecordDuringRefresh() {
+        Gauge gauge = new Gauge("one");
+        gauge.assign(runway);
+        Assert.assertTrue(gauge.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            JOINING.set(transaction);
+            try {
+                gauge.refresh();
+            }
+            finally {
+                JOINING.set(null);
+            }
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals("one", runway.load(Gauge.class, gauge.id()).level);
     }
 
     /**
@@ -1025,128 +1101,6 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a {@code getAndUpdate} within a
-     * {@link Transaction} refuses a {@link Record} whose data another writer
-     * erased, even when the operated field is primitive-typed.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Item} whose data was erased
-     * through a second copy after the first copy loaded it.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Call {@code getAndUpdate("score", s -> s + 1)} on the stale copy
-     * within {@code transactAndSupply}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The operation throws
-     * {@link DeletedRecordException} and the record remains absent from the
-     * database.
-     */
-    @Test
-    public void testGetAndUpdateRefusesAnErasedRecordWithAPrimitiveField() {
-        Item item = new Item("widget", 1);
-        item.assign(runway);
-        Assert.assertTrue(item.save());
-        Item stale = runway.load(Item.class, item.id());
-        Item doomed = runway.load(Item.class, item.id());
-        doomed.deleteOnSave();
-        Assert.assertTrue(doomed.save());
-        try {
-            stale.transactAndSupply(transaction -> stale.getAndUpdate("score",
-                    (Integer score) -> score + 1));
-            Assert.fail("Expected a DeletedRecordException");
-        }
-        catch (DeletedRecordException e) {/* expected */}
-        Assert.assertNull(runway.load(Item.class, item.id()));
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that when a staged save precedes an
-     * {@code exchange} in an aborted {@link Transaction}, the save edit remains
-     * an unsaved change while the exchange leaves no residue, so a later save
-     * writes only the caller's own edit.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Item} named "widget" with a
-     * score of 1.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Load the {@link Item} through a {@link Transaction}.</li>
-     * <li>Change the name to "crate" and save, then call
-     * {@code exchange("score", 100)}.</li>
-     * <li>Abort, then save the same instance directly.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> After the abort the database still stores
-     * "widget" and 1. The post-abort save persists "crate" but the score stays
-     * 1: the discarded exchange never becomes a durable write.
-     */
-    @Test
-    public void testSaveThenExchangeInAbortedTransactionKeepsOnlySaveEdit() {
-        Item item = new Item("widget", 1);
-        item.assign(runway);
-        Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.startTransaction()) {
-            Item txItem = transaction.load(Item.class, item.id());
-            txItem.name = "crate";
-            Assert.assertTrue(txItem.save());
-            Assert.assertTrue(txItem.exchange("score", 100));
-            transaction.abort();
-            Item afterAbort = runway.load(Item.class, item.id());
-            Assert.assertEquals("widget", afterAbort.name);
-            Assert.assertEquals(1, afterAbort.score);
-            Assert.assertEquals(100, txItem.score);
-            Assert.assertTrue(txItem.save());
-        }
-        Item afterSave = runway.load(Item.class, item.id());
-        Assert.assertEquals("crate", afterSave.name);
-        Assert.assertEquals(1, afterSave.score);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that when an {@code exchange} precedes a
-     * staged save in an aborted {@link Transaction}, the save edit remains an
-     * unsaved change while the exchange leaves no residue, so a later save
-     * writes only the caller's own edit.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Item} named "widget" with a
-     * score of 1.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Load the {@link Item} through a {@link Transaction}.</li>
-     * <li>Call {@code exchange("score", 100)}, then change the name to "crate"
-     * and save.</li>
-     * <li>Abort, then save the same instance directly.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> After the abort the database still stores
-     * "widget" and 1. The post-abort save persists "crate" but the score stays
-     * 1: the discarded exchange never becomes a durable write.
-     */
-    @Test
-    public void testExchangeThenSaveInAbortedTransactionKeepsOnlySaveEdit() {
-        Item item = new Item("widget", 1);
-        item.assign(runway);
-        Assert.assertTrue(item.save());
-        try (Transaction transaction = runway.startTransaction()) {
-            Item txItem = transaction.load(Item.class, item.id());
-            Assert.assertTrue(txItem.exchange("score", 100));
-            txItem.name = "crate";
-            Assert.assertTrue(txItem.save());
-            transaction.abort();
-            Item afterAbort = runway.load(Item.class, item.id());
-            Assert.assertEquals("widget", afterAbort.name);
-            Assert.assertEquals(1, afterAbort.score);
-            Assert.assertEquals(100, txItem.score);
-            Assert.assertTrue(txItem.save());
-        }
-        Item afterSave = runway.load(Item.class, item.id());
-        Assert.assertEquals("crate", afterSave.name);
-        Assert.assertEquals(1, afterSave.score);
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that when exchanges surround a staged save
      * in an aborted {@link Transaction}, the record settles on the latest
      * exchanged value with no residue, so a later save writes only the caller's
@@ -1192,6 +1146,51 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an abort restores a linked
+     * {@link Record} that was saved both nested under its parent and directly
+     * to its pre-transaction baseline, so a later save still writes every
+     * staged edit.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Basket} that links to a
+     * saved {@link Item} named "widget" with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Basket} through a {@link Transaction}, set the linked
+     * {@link Item Item's} score to 2 and save the {@link Basket}.</li>
+     * <li>Set the {@link Item Item's} name to "crate" and save the {@link Item}
+     * directly.</li>
+     * <li>Abort, then save the {@link Item} directly.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the abort the database still stores
+     * "widget" and 1. The post-abort save persists both the score of 2 and the
+     * name "crate": the edit staged by the nested save is not silently lost.
+     */
+    @Test
+    public void testAbortRestoresLinkedRecordSavedBothNestedAndDirectly() {
+        Item item = new Item("widget", 1);
+        Basket basket = new Basket("bin", item);
+        basket.assign(runway);
+        Assert.assertTrue(basket.save());
+        try (Transaction transaction = runway.startTransaction()) {
+            Basket txBasket = transaction.load(Basket.class, basket.id());
+            txBasket.item.score = 2;
+            Assert.assertTrue(txBasket.save());
+            txBasket.item.name = "crate";
+            Assert.assertTrue(txBasket.item.save());
+            transaction.abort();
+            Item afterAbort = runway.load(Item.class, item.id());
+            Assert.assertEquals("widget", afterAbort.name);
+            Assert.assertEquals(1, afterAbort.score);
+            Assert.assertTrue(txBasket.item.save());
+        }
+        Item afterSave = runway.load(Item.class, item.id());
+        Assert.assertEquals("crate", afterSave.name);
+        Assert.assertEquals(2, afterSave.score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that reads and saves fall through to the
      * enclosing {@link Runway} after a {@link Transaction} ends.
      * <p>
@@ -1225,6 +1224,101 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(txItem.save());
             Assert.assertEquals(5, runway.load(Item.class, item.id()).score);
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a thread that does not own a committed
+     * {@link Transaction} can operate on a bound {@link Record} and fall
+     * through to the enclosing {@link Runway}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, set the score to
+     * 2, {@code save()} and commit on the test thread.</li>
+     * <li>Submit to a different thread a save that sets the score to 5 on the
+     * transactional copy.</li>
+     * <li>Submit a load of the {@link Item} through the ended transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both submissions succeed: the cross-thread
+     * save returns {@code true}, the cross-thread load observes 5 and the
+     * enclosing {@link Runway} observes 5.
+     */
+    @Test
+    public void testBoundRecordFallsThroughFromAnotherThreadAfterCommit()
+            throws Exception {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+            Future<Boolean> saved = executor.submit(() -> {
+                txItem.score = 5;
+                return txItem.save();
+            });
+            Assert.assertTrue(saved.get());
+            Future<Integer> loaded = executor.submit(
+                    () -> transaction.load(Item.class, item.id()).score);
+            Assert.assertEquals(5, (int) loaded.get());
+        }
+        finally {
+            executor.shutdownNow();
+        }
+        Assert.assertEquals(5, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a thread that does not own an aborted
+     * {@link Transaction} can operate on a bound {@link Record} and fall
+     * through to the enclosing {@link Runway}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, set the score to
+     * 2, {@code save()} and abort on the test thread.</li>
+     * <li>Submit to a different thread a save that sets the score to 7 on the
+     * transactional copy.</li>
+     * <li>Submit a load of the {@link Item} through the ended transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The staged score is gone after the abort. Both
+     * submissions succeed: the cross-thread save returns {@code true}, the
+     * cross-thread load observes 7 and the enclosing {@link Runway} observes 7.
+     */
+    @Test
+    public void testBoundRecordFallsThroughFromAnotherThreadAfterAbort()
+            throws Exception {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            transaction.abort();
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Future<Boolean> saved = executor.submit(() -> {
+                txItem.score = 7;
+                return txItem.save();
+            });
+            Assert.assertTrue(saved.get());
+            Future<Integer> loaded = executor.submit(
+                    () -> transaction.load(Item.class, item.id()).score);
+            Assert.assertEquals(7, (int) loaded.get());
+        }
+        finally {
+            executor.shutdownNow();
+        }
+        Assert.assertEquals(7, runway.load(Item.class, item.id()).score);
     }
 
     /**
@@ -1290,12 +1384,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
-            Registration invalid = new Registration(null);
-            try {
-                transaction.save(txItem, invalid);
-                Assert.fail("Expected the save to throw");
-            }
-            catch (SuppressedRunwayException e) {/* expected */}
+            poisonWithInvalidSave(transaction, txItem);
             try {
                 transaction.commit();
                 Assert.fail("Expected the commit to be refused");
@@ -1336,12 +1425,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
-            Registration invalid = new Registration(null);
-            try {
-                transaction.save(txItem, invalid);
-                Assert.fail("Expected the save to throw");
-            }
-            catch (SuppressedRunwayException e) {/* expected */}
+            poisonWithInvalidSave(transaction, txItem);
             try {
                 transaction.load(Item.class, item.id());
                 Assert.fail("Expected the load to be refused");
@@ -1396,12 +1480,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
-            Registration invalid = new Registration(null);
-            try {
-                transaction.save(txItem, invalid);
-                Assert.fail("Expected the save to throw");
-            }
-            catch (SuppressedRunwayException e) {/* expected */}
+            poisonWithInvalidSave(transaction, txItem);
             try {
                 txItem.refresh();
                 Assert.fail("Expected the refresh to be refused");
@@ -2177,7 +2256,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     /**
      * <strong>Goal:</strong> Verify that an
      * {@link Transaction#afterCommit(Runnable) afterCommit} hook runs exactly
-     * once, only after the commit succeeds.
+     * once, only after the commit succeeds, while an
+     * {@link Transaction#afterAbort(Runnable) afterAbort} hook never runs.
      * <p>
      * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
      * <p>
@@ -2185,12 +2265,14 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <ul>
      * <li>Load the {@link Item} through a {@link Transaction}, change it and
      * {@code save()}.</li>
-     * <li>Register an {@code afterCommit} hook that increments a counter.</li>
-     * <li>Check the counter, then {@code commit()}.</li>
+     * <li>Register an {@code afterCommit} hook and an {@code afterAbort} hook
+     * that increment counters.</li>
+     * <li>Check the {@code afterCommit} counter, then {@code commit()}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The counter is 0 before the commit and 1 after
-     * it.
+     * <strong>Expected:</strong> The {@code afterCommit} counter is 0 before
+     * the commit and 1 after it, and the {@code afterAbort} counter is still 0
+     * after the transaction closes.
      */
     @Test
     public void testAfterCommitHookRunsOnceAfterCommit() {
@@ -2198,16 +2280,19 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         item.assign(runway);
         Assert.assertTrue(item.save());
         AtomicInteger effects = new AtomicInteger(0);
+        AtomicInteger aborts = new AtomicInteger(0);
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
             Assert.assertTrue(txItem.save());
             transaction.afterCommit(effects::incrementAndGet);
+            transaction.afterAbort(aborts::incrementAndGet);
             Assert.assertEquals(0, effects.get());
             Assert.assertTrue(transaction.commit());
             Assert.assertEquals(1, effects.get());
         }
         Assert.assertEquals(1, effects.get());
+        Assert.assertEquals(0, aborts.get());
     }
 
     /**
@@ -2446,10 +2531,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(0, notified.get());
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (notified.get() == 0 && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> notified.get() != 0);
         Assert.assertEquals(1, notified.get());
     }
 
@@ -2653,6 +2735,63 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         finally {
             executor.shutdownNow();
         }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code commit()} and {@code abort()}
+     * are refused from a thread that does not own the {@link Transaction}, so
+     * the owner keeps control of its staged writes.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, set the score to
+     * 2 and {@code save()}.</li>
+     * <li>Submit {@code commit()} to a different thread, then submit
+     * {@code abort()}.</li>
+     * <li>Commit from the test thread.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both cross-thread calls throw
+     * {@link IllegalStateException}, the owner's commit succeeds and the staged
+     * score of 2 is durable.
+     */
+    @Test
+    public void testCommitAndAbortAreRefusedFromNonOwnerThread()
+            throws Exception {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            Future<?> commitAttempt = executor.submit(transaction::commit);
+            try {
+                commitAttempt.get();
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (ExecutionException e) {
+                Assert.assertTrue(
+                        e.getCause() instanceof IllegalStateException);
+            }
+            Future<?> abortAttempt = executor.submit(transaction::abort);
+            try {
+                abortAttempt.get();
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (ExecutionException e) {
+                Assert.assertTrue(
+                        e.getCause() instanceof IllegalStateException);
+            }
+            Assert.assertTrue(transaction.commit());
+        }
+        finally {
+            executor.shutdownNow();
+        }
+        Assert.assertEquals(2, runway.load(Item.class, item.id()).score);
     }
 
     /**
@@ -2867,24 +3006,10 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Viewer viewer = new Viewer("alice");
         viewer.assign(runway);
         Assert.assertTrue(viewer.save());
-        Transaction transaction = runway.startTransaction();
-        boolean conflicted;
-        try {
+        assertConflictFootprint(item.id(), transaction -> {
             Viewer txViewer = transaction.load(Viewer.class, viewer.id());
-            Item txItem = txViewer.load(Item.class, item.id());
-            client.set("score", 99, item.id());
-            txItem.score = 50;
-            txItem.save();
-            conflicted = !transaction.commit();
-        }
-        catch (TransactionException e) {
-            conflicted = true;
-        }
-        finally {
-            transaction.close();
-        }
-        Assert.assertTrue(conflicted);
-        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+            return txViewer.load(Item.class, item.id());
+        });
     }
 
     /**
@@ -2986,24 +3111,10 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Crate crate = new Crate("bin", item);
         crate.assign(runway);
         Assert.assertTrue(runway.save(crate, item));
-        Transaction transaction = runway.startTransaction();
-        boolean conflicted;
-        try {
+        assertConflictFootprint(item.id(), transaction -> {
             Crate txCrate = transaction.load(Crate.class, crate.id());
-            Item txItem = txCrate.item.get();
-            client.set("score", 99, item.id());
-            txItem.score = 50;
-            txItem.save();
-            conflicted = !transaction.commit();
-        }
-        catch (TransactionException e) {
-            conflicted = true;
-        }
-        finally {
-            transaction.close();
-        }
-        Assert.assertTrue(conflicted);
-        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+            return txCrate.item.get();
+        });
     }
 
     /**
@@ -3262,10 +3373,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(0, deletes.get());
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (deletes.get() == 0 && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> deletes.get() != 0);
         Assert.assertEquals(1, deletes.get());
     }
 
@@ -3463,10 +3571,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(doomed.save());
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (deletes.get() == 0 && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> deletes.get() != 0);
         Thread.sleep(250);
         Assert.assertEquals(1, deletes.get());
         Assert.assertEquals(0, saves.get());
@@ -3516,6 +3621,100 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertNull(txShelf.display);
         Assert.assertNull(runway.load(Shelf.class, shelf.id()).display);
         Assert.assertNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@link CaptureDelete} cleanup a
+     * commit applies to a surviving {@link Record} does not mark an unrelated
+     * in-memory edit as saved, so the edit persists on the next save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Shelf} whose
+     * {@link CaptureDelete} field links to a saved {@link Item}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Shelf} and the {@link Item} through a
+     * {@link Transaction}, mark the {@link Item} with {@code deleteOnSave()}
+     * and save both records in one call.</li>
+     * <li>Change the {@link Shelf Shelf's} name in memory without saving
+     * again.</li>
+     * <li>Commit.</li>
+     * <li>Save the {@link Shelf} after the commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the commit, the {@link Shelf Shelf's}
+     * reference is {@code null} and the name edit still reads as an unsaved
+     * change. The post-commit save persists the edit durably.
+     */
+    @Test
+    public void testUnsavedEditSurvivesCaptureDeleteCleanupAtCommit() {
+        Item item = new Item("widget", 1);
+        Shelf shelf = new Shelf("front", item);
+        shelf.assign(runway);
+        Assert.assertTrue(runway.save(shelf, item));
+        Shelf txShelf;
+        try (Transaction transaction = runway.startTransaction()) {
+            txShelf = transaction.load(Shelf.class, shelf.id());
+            Item doomed = transaction.load(Item.class, item.id());
+            doomed.deleteOnSave();
+            Assert.assertTrue(transaction.save(txShelf, doomed));
+            txShelf.name = "back";
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertNull(txShelf.display);
+        Assert.assertTrue(txShelf.hasUnsavedChanges());
+        Assert.assertTrue(txShelf.save());
+        Assert.assertEquals("back", runway.load(Shelf.class, shelf.id()).name);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the {@link CaptureDelete} cleanup a
+     * commit applies to a surviving {@link Record} does not mark an element
+     * added to the cleaned field itself as saved, so the addition persists on
+     * the next save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Rack} whose
+     * {@link CaptureDelete} collection holds one saved {@link Item}, plus a
+     * second saved {@link Item} that the collection does not hold.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Rack} and the held {@link Item} through a
+     * {@link Transaction}, mark the {@link Item} with {@code deleteOnSave()}
+     * and save both records in one call.</li>
+     * <li>Add the second {@link Item} to the {@link Rack Rack's} collection in
+     * memory without saving again.</li>
+     * <li>Commit.</li>
+     * <li>Save the {@link Rack} after the commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> After the commit the collection holds only the
+     * added {@link Item} and still reads as an unsaved change. The post-commit
+     * save persists the addition durably.
+     */
+    @Test
+    public void testAdditionToCleanedFieldSurvivesCaptureDeleteCleanup() {
+        Item doomedItem = new Item("widget", 1);
+        Item spare = new Item("spare", 2);
+        Rack rack = new Rack("front", Lists.newArrayList(doomedItem));
+        rack.assign(runway);
+        Assert.assertTrue(runway.save(rack, doomedItem, spare));
+        Rack txRack;
+        try (Transaction transaction = runway.startTransaction()) {
+            txRack = transaction.load(Rack.class, rack.id());
+            Item doomed = transaction.load(Item.class, doomedItem.id());
+            doomed.deleteOnSave();
+            Assert.assertTrue(transaction.save(txRack, doomed));
+            txRack.display.add(transaction.load(Item.class, spare.id()));
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertEquals(1, txRack.display.size());
+        Assert.assertEquals(spare.id(), txRack.display.get(0).id());
+        Assert.assertTrue(txRack.hasUnsavedChanges());
+        Assert.assertTrue(txRack.save());
+        Rack reloaded = runway.load(Rack.class, rack.id());
+        Assert.assertEquals(1, reloaded.display.size());
+        Assert.assertEquals(spare.id(), reloaded.display.get(0).id());
     }
 
     /**
@@ -4193,6 +4392,59 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code afterCommit} and
+     * {@code afterAbort} registrations are refused after the
+     * {@link Transaction} ends, whether the end was a commit or an abort, and
+     * that a refused hook is never queued.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Commit one {@link Transaction}, then register a counting
+     * {@code afterCommit} hook and a counting {@code afterAbort} hook.</li>
+     * <li>Abort another {@link Transaction}, then register the same kinds of
+     * hooks.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> All four late registrations throw an
+     * {@link IllegalStateException} and both hook counters stay at 0.
+     */
+    @Test
+    public void testHookRegistrationIsRefusedAfterTheTransactionEnds() {
+        AtomicInteger commitHookRuns = new AtomicInteger();
+        AtomicInteger abortHookRuns = new AtomicInteger();
+        try (Transaction transaction = runway.startTransaction()) {
+            Assert.assertTrue(transaction.commit());
+            try {
+                transaction.afterCommit(commitHookRuns::incrementAndGet);
+                Assert.fail("Expected the registration to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.afterAbort(abortHookRuns::incrementAndGet);
+                Assert.fail("Expected the registration to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+        }
+        try (Transaction transaction = runway.startTransaction()) {
+            transaction.abort();
+            try {
+                transaction.afterCommit(commitHookRuns::incrementAndGet);
+                Assert.fail("Expected the registration to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+            try {
+                transaction.afterAbort(abortHookRuns::incrementAndGet);
+                Assert.fail("Expected the registration to be refused");
+            }
+            catch (IllegalStateException e) {/* expected */}
+        }
+        Assert.assertEquals(0, commitHookRuns.get());
+        Assert.assertEquals(0, abortHookRuns.get());
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code afterCommit} hooks run in
      * registration order and that the hooks after a throwing hook are skipped,
      * while the commit outcome stands.
@@ -4449,12 +4701,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(counter.save());
         try (Transaction transaction = runway.startTransaction()) {
             Counter txCounter = transaction.load(Counter.class, counter.id());
-            Registration invalid = new Registration(null);
-            try {
-                transaction.save(invalid);
-                Assert.fail("Expected the save to throw");
-            }
-            catch (SuppressedRunwayException e) {/* expected */}
+            poisonWithInvalidSave(transaction);
             try {
                 txCounter.bump();
                 Assert.fail("Expected the work to be refused");
@@ -4551,10 +4798,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(stale.save());
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (notified.get() == null && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> notified.get() != null);
         Assert.assertSame(changed, notified.get());
         stale.score = 3;
         try {
@@ -4605,10 +4849,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(transaction.save(changed, stale));
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (notified.get() == null && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> notified.get() != null);
         Assert.assertSame(changed, notified.get());
         stale.score = 3;
         try {
@@ -4656,10 +4897,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(second.save());
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (notified.get() == null && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> notified.get() != null);
         Assert.assertSame(second, notified.get());
         Assert.assertEquals(3, runway.load(Item.class, item.id()).score);
     }
@@ -5037,6 +5275,75 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * Wait for {@code condition} to become true, checking it repeatedly, and
+     * give up after five seconds. The caller asserts the outcome itself after
+     * the wait returns.
+     *
+     * @param condition the condition to wait for
+     * @throws InterruptedException if the wait is interrupted
+     */
+    private void awaitUntil(BooleanSupplier condition)
+            throws InterruptedException {
+        long stop = System.currentTimeMillis() + 5000;
+        while (!condition.getAsBoolean() && System.currentTimeMillis() < stop) {
+            Thread.sleep(10);
+        }
+    }
+
+    /**
+     * Load the {@link Item} with {@code id} through a new {@link Transaction}
+     * with {@code loader}, write a score of 99 to the same record outside the
+     * transaction, then save a score of 50 through the transactional copy and
+     * try to {@code commit()}. Assert that the save or the commit fails with a
+     * conflict and that the outside score of 99 is the durable value.
+     *
+     * @param id the id of the {@link Item} under test
+     * @param loader the read path that resolves the {@link Item} within the
+     *            {@link Transaction}
+     */
+    private void assertConflictFootprint(long id,
+            Function<Transaction, Item> loader) {
+        Transaction transaction = runway.startTransaction();
+        boolean conflicted;
+        try {
+            Item txItem = loader.apply(transaction);
+            client.set("score", 99, id);
+            txItem.score = 50;
+            txItem.save();
+            conflicted = !transaction.commit();
+        }
+        catch (TransactionException e) {
+            conflicted = true;
+        }
+        finally {
+            transaction.close();
+        }
+        Assert.assertTrue(conflicted);
+        Assert.assertEquals(99, runway.load(Item.class, id).score);
+    }
+
+    /**
+     * Poison {@code transaction} by saving an invalid {@link Registration}
+     * through it, and assert that the save throws a
+     * {@link SuppressedRunwayException}. The {@code alongside} records join the
+     * same save call, ahead of the invalid record.
+     *
+     * @param transaction the {@link Transaction} to poison
+     * @param alongside the records to save in the same call
+     */
+    private void poisonWithInvalidSave(Transaction transaction,
+            Record... alongside) {
+        Registration invalid = new Registration(null);
+        Record[] records = Arrays.copyOf(alongside, alongside.length + 1);
+        records[alongside.length] = invalid;
+        try {
+            transaction.save(records);
+            Assert.fail("Expected the save to throw");
+        }
+        catch (SuppressedRunwayException e) {/* expected */}
+    }
+
+    /**
      * A container with a lazy link to an {@link Item}.
      *
      * @author Jeff Nelson
@@ -5209,6 +5516,38 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
          */
         public Meter(String reading) {
             this.reading = reading;
+        }
+
+    }
+
+    /**
+     * A {@link Record} whose {@code onLoad()} hook saves it into the open
+     * {@link Transaction} that {@link RunwayTransactionTest#JOINING} holds.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Gauge extends Record {
+
+        /**
+         * The current level.
+         */
+        String level;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param level the initial level
+         */
+        public Gauge(String level) {
+            this.level = level;
+        }
+
+        @Override
+        protected void onLoad() {
+            Transaction transaction = JOINING.get();
+            if(transaction != null) {
+                transaction.save(this);
+            }
         }
 
     }
@@ -5873,6 +6212,38 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
          * @param display the displayed {@link Item}
          */
         public Shelf(String name, Item display) {
+            this.name = name;
+            this.display = display;
+        }
+    }
+
+    /**
+     * A {@link Record} whose collection of references to deleted {@link Item
+     * Items} is pruned.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Rack extends Record {
+
+        /**
+         * The display name.
+         */
+        String name;
+
+        /**
+         * The displayed {@link Item Items}; a reference is removed when its
+         * item is deleted.
+         */
+        @CaptureDelete
+        List<Item> display;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param name the display name
+         * @param display the displayed {@link Item Items}
+         */
+        public Rack(String name, List<Item> display) {
             this.name = name;
             this.display = display;
         }

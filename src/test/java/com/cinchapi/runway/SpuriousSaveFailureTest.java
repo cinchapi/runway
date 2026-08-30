@@ -27,6 +27,7 @@ import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.TransactionException;
 
 /**
  * Tests for automatic retry on spurious save failures caused by
@@ -358,62 +359,107 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Create a shared {@link TUser} and two separate {@link TTenant
-     * TTenants} that both link to that user.</li>
-     * <li>Launch two threads: each saves its own {@link TTenant}.</li>
-     * <li>Use a {@link CountDownLatch} to synchronize the threads so both saves
-     * are in-flight concurrently.</li>
-     * <li>If a spurious failure occurs, verify the save returned {@code false}
-     * without retrying.</li>
+     * <li>Run up to 10 contended rounds; in each round, create a fresh shared
+     * {@link TUser} and two separate {@link TTenant TTenants} that both link to
+     * that user.</li>
+     * <li>In each round, launch two threads that each save one {@link TTenant},
+     * gated on a {@link CountDownLatch} so both saves are in-flight
+     * concurrently.</li>
+     * <li>Join both threads and verify that each one terminated and that
+     * neither save threw.</li>
+     * <li>Stop as soon as a round produces a save that returns
+     * {@code false}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> At least one save fails and returns
-     * {@code false}. The failed save does not retry because
-     * {@link SpuriousSaveFailureStrategy#FAIL_FAST} is the active strategy.
+     * <strong>Expected:</strong> At least one round produces a save that
+     * returns {@code false}, because
+     * {@link SpuriousSaveFailureStrategy#FAIL_FAST} reports the spurious
+     * {@code TransactionException} as a refused save instead of retrying. A
+     * strategy that silently retried would make both saves succeed in every
+     * round. A save that hangs or throws fails the test instead of counting as
+     * the expected refusal, and a refused save must hold the
+     * {@code TransactionException} as its recorded reason.
      */
     @Test
     public void testFailFastStrategyDoesNotRetry() throws Exception {
-        TUser user = new TUser("ivan");
-        TTenant tenant1 = new TTenant(user);
-        TTenant tenant2 = new TTenant(user);
+        boolean anyFailed = false;
+        for (int round = 0; round < 10 && !anyFailed; ++round) {
+            TUser user = new TUser("ivan" + round);
+            TTenant tenant1 = new TTenant(user);
+            TTenant tenant2 = new TTenant(user);
 
-        CountDownLatch ready = new CountDownLatch(2);
-        CountDownLatch go = new CountDownLatch(1);
-        AtomicBoolean save1Result = new AtomicBoolean(false);
-        AtomicBoolean save2Result = new AtomicBoolean(false);
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch go = new CountDownLatch(1);
+            AtomicBoolean save1Result = new AtomicBoolean(false);
+            AtomicBoolean save2Result = new AtomicBoolean(false);
+            AtomicReference<Throwable> thrown1 = new AtomicReference<>();
+            AtomicReference<Throwable> thrown2 = new AtomicReference<>();
 
-        Thread t1 = new Thread(() -> {
-            ready.countDown();
-            try {
-                go.await();
-                save1Result.set(runway.save(tenant1));
+            Thread t1 = new Thread(() -> {
+                ready.countDown();
+                try {
+                    go.await();
+                    save1Result.set(runway.save(tenant1));
+                }
+                catch (Throwable t) {
+                    thrown1.set(t);
+                }
+            });
+
+            Thread t2 = new Thread(() -> {
+                ready.countDown();
+                try {
+                    go.await();
+                    save2Result.set(runway.save(tenant2));
+                }
+                catch (Throwable t) {
+                    thrown2.set(t);
+                }
+            });
+
+            t1.start();
+            t2.start();
+            Assert.assertTrue("The workers did not both become ready",
+                    ready.await(5, TimeUnit.SECONDS));
+            go.countDown();
+            t1.join(10000);
+            t2.join(10000);
+            Assert.assertFalse("The first save did not terminate",
+                    t1.isAlive());
+            Assert.assertFalse("The second save did not terminate",
+                    t2.isAlive());
+            if(thrown1.get() != null) {
+                throw new AssertionError("A FAIL_FAST save must report a"
+                        + " failure by returning false, not by throwing",
+                        thrown1.get());
             }
-            catch (Throwable t) {
-                // save returned false or threw
+            if(thrown2.get() != null) {
+                throw new AssertionError("A FAIL_FAST save must report a"
+                        + " failure by returning false, not by throwing",
+                        thrown2.get());
             }
-        });
 
-        Thread t2 = new Thread(() -> {
-            ready.countDown();
-            try {
-                go.await();
-                save2Result.set(runway.save(tenant2));
+            boolean failed1 = !save1Result.get();
+            boolean failed2 = !save2Result.get();
+            if(failed1) {
+                Assert.assertTrue(
+                        "A save was refused for a reason other than the"
+                                + " spurious conflict",
+                        tenant1.errors.stream().anyMatch(
+                                t -> t instanceof TransactionException));
             }
-            catch (Throwable t) {
-                // save returned false or threw
+            if(failed2) {
+                Assert.assertTrue(
+                        "A save was refused for a reason other than the"
+                                + " spurious conflict",
+                        tenant2.errors.stream().anyMatch(
+                                t -> t instanceof TransactionException));
             }
-        });
-
-        t1.start();
-        t2.start();
-        ready.await(5, TimeUnit.SECONDS);
-        go.countDown();
-        t1.join(10000);
-        t2.join(10000);
-
-        boolean anyFailed = !save1Result.get() || !save2Result.get();
+            anyFailed = failed1 || failed2;
+        }
         Assert.assertTrue(
-                "At least one save should fail with" + " FAIL_FAST strategy",
+                "FAIL_FAST must surface a spurious failure in at least one"
+                        + " contended round instead of silently retrying",
                 anyFailed);
     }
 

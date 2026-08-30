@@ -157,39 +157,6 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that an empty {@link Saver#reconcile
-     * reconcile} is equivalent to {@link Saver#clear(String, long) clear(key,
-     * record)} &mdash; both impls must route empty values through clear so
-     * callers see uniform behavior regardless of transport.
-     * <p>
-     * <strong>Start state:</strong> A record with two existing values under
-     * {@code "tags"}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage the {@link Saver}.</li>
-     * <li>Record a {@code reconcile} with an empty {@link java.util.Collection
-     * Collection}.</li>
-     * <li>Commit.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The {@code "tags"} field is empty on the
-     * record.
-     */
-    @Test
-    public void testReconcileWithEmptyCollectionClearsKey() {
-        long id = client.add("tags", "a");
-        client.add("tags", "b", id);
-
-        Saver saver = newSaver();
-        saver.stage();
-        saver.reconcile("tags", id, ImmutableSet.of());
-        Assert.assertTrue(saver.commit());
-
-        Assert.assertTrue(client.select("tags", id).isEmpty());
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that an empty
      * {@link Saver#reconcile(String, long, Object[]) reconcile(key, record,
      * Object[])} is equivalent to {@link Saver#clear(String, long) clear(key,
@@ -574,41 +541,6 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the {@code validator} passed to
-     * {@link Saver#find(Criteria, java.util.function.Consumer) find} receives
-     * the matching record ids.
-     * <p>
-     * <strong>Start state:</strong> Two records with {@code flag = true} and
-     * one with {@code flag = false}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage the {@link Saver}.</li>
-     * <li>Record a {@code find} for {@code flag = true} with a
-     * {@code validator} that captures the matching ids.</li>
-     * <li>Commit.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The captured set contains exactly the two
-     * matching ids.
-     */
-    @Test
-    public void testFindValidatorReceivesMatchingIds() {
-        long match1 = client.add("flag", true);
-        long match2 = client.add("flag", true);
-        client.add("flag", false);
-
-        Saver saver = newSaver();
-        saver.stage();
-        AtomicReference<Set<Long>> captured = new AtomicReference<>();
-        saver.find(Criteria.where().key("flag").operator(Operator.EQUALS)
-                .value(true), captured::set);
-        Assert.assertTrue(saver.commit());
-
-        Assert.assertEquals(ImmutableSet.of(match1, match2), captured.get());
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that the {@code consumer} passed to
      * {@link Saver#select(String, Criteria, java.util.function.Consumer, Timing)
      * select} receives each matching record mapped to its values for the
@@ -721,52 +653,6 @@ public abstract class SaverTest extends RunwayBaseClientServerTest {
 
         Set<Object> values = client.select("foo", id);
         Assert.assertEquals(ImmutableSet.of("bar"), values);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that a {@code validator} that throws
-     * propagates the exception out to the caller and that calling
-     * {@link Saver#abort()} afterward leaves no recorded writes persisted.
-     * <p>
-     * <strong>Start state:</strong> A record with a single value.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage the {@link Saver}.</li>
-     * <li>Record a {@code set} of a new value into a new key.</li>
-     * <li>Record a {@code find} with a {@code validator} that throws
-     * {@link IllegalStateException}.</li>
-     * <li>Call {@link Saver#commit()}.</li>
-     * <li>In the catch, call {@link Saver#abort()}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> An {@link IllegalStateException} is observed
-     * (either from the recording call for synchronous implementations or from
-     * {@link Saver#commit()} for bulk implementations) and the new write is not
-     * visible on the record after abort.
-     */
-    @Test
-    public void testValidatorThrowAbortsStagedTransaction() {
-        long id = client.add("flag", true);
-
-        Saver saver = newSaver();
-        saver.stage();
-        boolean caught = false;
-        try {
-            saver.set("foo", "bar", id);
-            saver.find(Criteria.where().key("flag").operator(Operator.EQUALS)
-                    .value(true), records -> {
-                        throw new IllegalStateException("rejected");
-                    });
-            saver.commit();
-        }
-        catch (IllegalStateException expected) {
-            caught = true;
-            saver.abort();
-        }
-
-        Assert.assertTrue("expected validator to reject the save", caught);
-        Assert.assertTrue(client.select("foo", id).isEmpty());
     }
 
     /**

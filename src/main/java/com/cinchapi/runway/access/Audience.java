@@ -560,9 +560,10 @@ public interface Audience extends DatabaseInterface, Transactional {
      * <p>
      * If this {@link Audience} is not permitted to discover the {@code record}
      * at all, this method returns {@code null}. Otherwise, it returns a map
-     * that contains data for the subset of {@code keys} that are readable. An
-     * empty map return value indicates that while the {@code record} is
-     * visible, none of the requested keys are.
+     * that contains data for the subset of {@code keys} that are readable, plus
+     * the {@code record}'s id, which is always included. A map that contains
+     * only the id indicates that while the {@code record} is visible, none of
+     * the requested keys are.
      * </p>
      * <h3>Nested Field Resolution</h3>
      * <p>
@@ -1043,17 +1044,18 @@ public interface Audience extends DatabaseInterface, Transactional {
         }
         catch (Throwable t) {
             // A staged save survives only in a transaction that outlives this
-            // call, and a durable one owns the record it saved.
-            TransactionInterface transaction = attempted.get();
+            // call, and a durable one owns the record it saved. On the
+            // hidden-match path the work already restored before it threw, so
+            // this re-runs an idempotent restore.
             Runnable undo = rollback.get();
-            boolean durable = transaction != null
-                    && (boolean) Reflection.call(transaction, "committed");
-            boolean surviving = transaction != null
-                    && (boolean) Reflection.call(transaction, "open")
-                    && (boolean) Reflection.call(transaction, "poisoned");
-            if(undo != null && !durable && !surviving) {
-                Reflection.set("_author", previous, record);
-                undo.run();
+            if(undo != null) {
+                Runnable restore = () -> {
+                    Reflection.set("_author", previous, record);
+                    undo.run();
+                };
+                Reflection.callStatic(Record.class,
+                        "restoreUnlessTransactionOwns", restore,
+                        attempted.get());
             }
             throw t;
         }
@@ -1082,14 +1084,17 @@ public interface Audience extends DatabaseInterface, Transactional {
      * @param <T> the type of the {@link Record}
      * @return a map from each key to its value
      * @throws RestrictedAccessException if this {@link Audience} is not
-     *             permitted to read one or more of the {@code keys}
+     *             permitted to read one or more of the {@code keys}, or if this
+     *             {@link Audience} is not permitted to discover the
+     *             {@code record} at all
      */
     public default <T extends Record> Map<String, Object> read(
             Collection<String> keys, T record)
             throws RestrictedAccessException {
         try {
+            RESTRICTED_ACCESS_DETECTED.remove();
             Map<String, Object> data = frame(keys, record);
-            if(RESTRICTED_ACCESS_DETECTED.get()) {
+            if(data == null || RESTRICTED_ACCESS_DETECTED.get()) {
                 throw new RestrictedAccessException();
             }
             else {
@@ -1114,12 +1119,13 @@ public interface Audience extends DatabaseInterface, Transactional {
      * @param <T> the type of the {@link Record}
      * @return the value of the {@code key}
      * @throws RestrictedAccessException if this {@link Audience} is not
-     *             permitted to read the {@code key}
+     *             permitted to read the {@code key}, or if this
+     *             {@link Audience} is not permitted to discover the
+     *             {@code record} at all
      */
     public default <T extends Record> Object read(String key, T record)
             throws RestrictedAccessException {
-        Map<String, Object> data = frame(ImmutableSet.of(key), record);
-        return data.getOrDefault(key, null);
+        return read(ImmutableSet.of(key), record).get(key);
     }
 
     /**

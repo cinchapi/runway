@@ -48,8 +48,7 @@ public class RecordLinkTest extends AbstractRecordTest {
         Stock stock = new Stock();
         tock.stocks.add(stock);
         stock.tock = tock;
-        tock.save();
-        Assert.assertTrue(true);
+        Assert.assertTrue(tock.save());
     }
 
     @Test

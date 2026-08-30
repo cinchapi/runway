@@ -63,6 +63,36 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
         });
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a {@link CascadeDelete} field declared
+     * on a superclass cascades when a subclass record is deleted.
+     * <p>
+     * <strong>Start state:</strong> An {@link InheritedRecord} whose inherited
+     * {@code child} field links to a saved {@link ChildRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save the parent and the child.</li>
+     * <li>Mark the parent for deletion and save it.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The parent is deleted, and the cascade from
+     * the inherited field deletes the child.
+     */
+    @Test
+    public void testCascadeDeleteAppliesForFieldInheritedFromSuperclass() {
+        InheritedRecord parent = new InheritedRecord();
+        ChildRecord child = new ChildRecord();
+        parent.child = child;
+        Assert.assertTrue(runway.save(parent, child));
+        parent.deleteOnSave();
+        Assert.assertTrue(parent.save());
+        Assert.assertNull("The parent must be deleted",
+                runway.load(InheritedRecord.class, parent.id()));
+        Assert.assertNull("The inherited cascade must delete the child",
+                runway.load(ChildRecord.class, child.id()));
+    }
+
     @Test
     public void testCascadeDeleteAtomicityOnTransactionFailure() {
         // Create four parent records, each with a unique child
@@ -429,18 +459,6 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * A parent record that contains two children linked with cascade delete
-     * annotations, intended for testing atomic cascade deletes.
-     */
-    class ParentWithCascadeDelete extends Record {
-        @CascadeDelete
-        public UniqueChild child1;
-
-        @CascadeDelete
-        public UniqueChild child2;
-    }
-
-    /**
      * A test class to simulate a parent record with a private field that should
      * be cascade-deleted.
      */
@@ -463,15 +481,6 @@ public class RunwayCascadeDeleteTest extends RunwayBaseClientServerTest {
 
         @Unique
         public String uniqueField;
-    }
-
-    /**
-     * A child record associated with {@link ParentWithUniqueChild} to verify
-     * cascade delete atomicity under unique constraint failure.
-     */
-    class UniqueChild extends Record {
-        @Unique
-        public String uniqueValue;
     }
 
 }

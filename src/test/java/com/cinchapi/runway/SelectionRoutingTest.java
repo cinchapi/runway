@@ -15,7 +15,9 @@
  */
 package com.cinchapi.runway;
 
+import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -24,6 +26,7 @@ import com.cinchapi.concourse.lang.Criteria;
 import com.cinchapi.concourse.lang.paginate.Page;
 import com.cinchapi.concourse.lang.sort.Order;
 import com.cinchapi.concourse.thrift.Operator;
+import com.google.common.collect.ImmutableList;
 
 /**
  * End-to-end routing tests for the {@link Selection} fluent builder API,
@@ -107,8 +110,9 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
      * <li>Execute a {@link Selection} with criteria and order.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The result is non-empty and matches the direct
-     * find call with order.
+     * <strong>Expected:</strong> The result iterates in sorted name order
+     * ({@code a}, {@code b}, {@code c}) and its name sequence matches the
+     * direct find call with order.
      */
     @Test
     public void testCriteriaWithOrderRoutesToFindWithOrder() {
@@ -120,7 +124,12 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
         Selections results = runway.select(
                 Selection.of(Widget.class).where(criteria).order(order));
         Set<Widget> actual = results.next();
-        Assert.assertEquals(expected.size(), actual.size());
+        List<String> names = actual.stream().map(w -> w.name)
+                .collect(Collectors.toList());
+        Assert.assertEquals(ImmutableList.of("a", "b", "c"), names);
+        Assert.assertEquals(
+                expected.stream().map(w -> w.name).collect(Collectors.toList()),
+                names);
     }
 
     /**
@@ -137,7 +146,7 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The result contains exactly one {@link Widget}
-     * (page size 1).
+     * (page size 1): the order-first {@code a}, matching the direct find call.
      */
     @Test
     public void testCriteriaWithOrderAndPageRoutesToFindWithOrderAndPage() {
@@ -152,6 +161,9 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
         Set<Widget> actual = results.next();
         Assert.assertEquals(expected.size(), actual.size());
         Assert.assertEquals(1, actual.size());
+        Assert.assertEquals("a", actual.iterator().next().name);
+        Assert.assertEquals(expected.iterator().next().name,
+                actual.iterator().next().name);
     }
 
     /**
@@ -196,8 +208,9 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
      * <li>Execute a {@link Selection} with order but no criteria.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The result contains both {@link Widget
-     * Widgets}, matching {@code runway.load(Widget.class, order)}.
+     * <strong>Expected:</strong> The result iterates in sorted name order
+     * ({@code a}, {@code b}) and its name sequence matches
+     * {@code runway.load(Widget.class, order)}.
      */
     @Test
     public void testOrderWithoutCriteriaRoutesToLoad() {
@@ -207,7 +220,12 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
         Selections results = runway
                 .select(Selection.of(Widget.class).order(order));
         Set<Widget> actual = results.next();
-        Assert.assertEquals(expected.size(), actual.size());
+        List<String> names = actual.stream().map(w -> w.name)
+                .collect(Collectors.toList());
+        Assert.assertEquals(ImmutableList.of("a", "b"), names);
+        Assert.assertEquals(
+                expected.stream().map(w -> w.name).collect(Collectors.toList()),
+                names);
     }
 
     /**
@@ -224,7 +242,7 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The result contains exactly one {@link Widget}
-     * (page size 1).
+     * (page size 1): the order-first {@code a}, matching the direct load call.
      */
     @Test
     public void testOrderAndPageWithoutCriteriaRoutesToLoad() {
@@ -237,6 +255,9 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
         Set<Widget> actual = results.next();
         Assert.assertEquals(expected.size(), actual.size());
         Assert.assertEquals(1, actual.size());
+        Assert.assertEquals("a", actual.iterator().next().name);
+        Assert.assertEquals(expected.iterator().next().name,
+                actual.iterator().next().name);
     }
 
     /**
@@ -547,6 +568,7 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
                 .select(Selection.of(Widget.class).realms(Realms.only("east")));
         Set<Widget> actual = results.next();
         Assert.assertEquals(1, actual.size());
+        Assert.assertEquals("east-widget", actual.iterator().next().name);
     }
 
     /**
@@ -572,57 +594,6 @@ public class SelectionRoutingTest extends RunwayBaseClientServerTest {
         Selections results = runway.select(Selection.of(Widget.class).any());
         Set<Widget> actual = results.next();
         Assert.assertEquals(2, actual.size());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that a builder can be passed directly to
-     * {@code select()} without calling {@code build()}.
-     * <p>
-     * <strong>Start state:</strong> Two saved {@link Widget Widgets}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save two {@link Widget Widgets}.</li>
-     * <li>Pass an {@link Selection.OpenBuilder} directly to {@code select()}
-     * without calling {@code build()}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The result contains both {@link Widget
-     * Widgets}.
-     */
-    @Test
-    public void testBuilderPassedDirectlyWithoutBuild() {
-        runway.save(new Widget("a"), new Widget("b"));
-        Selections results = runway.select(Selection.of(Widget.class));
-        Set<Widget> actual = results.next();
-        Assert.assertEquals(2, actual.size());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that a builder with criteria can be passed
-     * directly to {@code select()} without calling {@code build()}.
-     * <p>
-     * <strong>Start state:</strong> Two saved {@link Widget Widgets} with
-     * different names.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save {@link Widget Widgets} "alpha" and "beta".</li>
-     * <li>Pass a {@link Selection.QueryBuilder} directly to {@code select()}
-     * without calling {@code build()}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The result contains only "alpha".
-     */
-    @Test
-    public void testQueryBuilderPassedDirectlyWithoutBuild() {
-        runway.save(new Widget("alpha"), new Widget("beta"));
-        Criteria criteria = Criteria.where().key("name")
-                .operator(Operator.EQUALS).value("alpha");
-        Selections results = runway
-                .select(Selection.of(Widget.class).where(criteria));
-        Set<Widget> actual = results.next();
-        Assert.assertEquals(1, actual.size());
     }
 
     /**

@@ -303,63 +303,6 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that
-     * {@code select(String key, long record)} resolves to the values stored
-     * under that key in the given record.
-     * <p>
-     * <strong>Start state:</strong> One record is added with multiple values
-     * stored under the same key.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Record a {@code select} for {@code key = "tag"} on that record.</li>
-     * <li>Resolve the {@link Pending}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The resolved {@link Set} contains every value
-     * that was added under {@code tag}.
-     */
-    @Test
-    public void testSelectByKeyAndRecordYieldsAllValuesForKey() {
-        long id = client.add("tag", "alpha");
-        client.add("tag", "beta", id);
-        client.add("tag", "gamma", id);
-
-        Reader reader = newReader();
-        Set<Object> values = resolve(reader, reader.select("tag", id));
-
-        Assert.assertEquals(ImmutableSet.of("alpha", "beta", "gamma"), values);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that {@code get(String key, long record)}
-     * resolves to the most recent value stored under that key in the given
-     * record.
-     * <p>
-     * <strong>Start state:</strong> One record is added with two values stored
-     * under the same key, the second one being the most recent.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Record a {@code get} for {@code key = "status"} on that record.</li>
-     * <li>Resolve the {@link Pending}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The resolved value is the most recently added
-     * one.
-     */
-    @Test
-    public void testGetByKeyAndRecordYieldsMostRecentValue() {
-        long id = client.add("status", "pending");
-        client.add("status", "approved", id);
-
-        Reader reader = newReader();
-        Object value = resolve(reader, reader.get("status", id));
-
-        Assert.assertEquals("approved", value);
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
      * {@link Reader#select(java.util.Collection)} resolves to a {@link Map}
      * keyed by every record id in the supplied collection.
      * <p>
@@ -388,6 +331,74 @@ public abstract class ReaderTest extends RunwayBaseClientServerTest {
 
         Assert.assertEquals(ImmutableSet.of(alpha, bravo), data.keySet());
         Assert.assertFalse(data.containsKey(charlie));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Reader#select(java.util.Collection)} with a single-element
+     * collection resolves to a {@link Map} keyed by that record id, with the
+     * record's field data as the value.
+     * <p>
+     * <strong>Start state:</strong> One record exists with two values stored
+     * under {@code tag}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Record a {@code select} for a collection containing only that
+     * record's id.</li>
+     * <li>Resolve the {@link Pending}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The resolved {@link Map} has exactly one
+     * entry, keyed by the record id, whose inner {@link Map} holds both
+     * {@code tag} values.
+     */
+    @Test
+    public void testSelectBySingleRecordCollectionYieldsRecordKeyedMap() {
+        long alpha = client.add("tag", "alpha");
+        client.add("tag", "extra", alpha);
+
+        Reader reader = newReader();
+        Map<Long, Map<String, Set<Object>>> data = resolve(reader,
+                reader.select(ImmutableSet.of(alpha)));
+
+        Assert.assertEquals(ImmutableSet.of(alpha), data.keySet());
+        Assert.assertEquals(ImmutableSet.of("alpha", "extra"),
+                data.get(alpha).get("tag"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a recorded {@code navigate} resolves
+     * to a {@link Map} keyed by the destination record id, mapping each
+     * destination key to the values stored in that field.
+     * <p>
+     * <strong>Start state:</strong> Two records exist; the starting record
+     * links to the destination record via {@code friend}, and the destination
+     * record holds {@code name = "bob"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Record a {@code navigate} of {@code friend.name} from the starting
+     * record.</li>
+     * <li>Resolve the {@link Pending}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The resolved {@link Map} is keyed by the
+     * destination record's id and maps {@code name} to {@code "bob"}.
+     */
+    @Test
+    public void testNavigateFromRecordYieldsDestinationKeyedData() {
+        long friend = client.add("name", "bob");
+        long start = client.add("name", "alice");
+        client.link("friend", friend, start);
+
+        Reader reader = newReader();
+        Map<Long, Map<String, Set<Object>>> data = resolve(reader,
+                reader.navigate(ImmutableSet.of("friend.name"), start));
+
+        Assert.assertEquals(ImmutableSet.of(friend), data.keySet());
+        Assert.assertEquals(ImmutableSet.of("bob"),
+                data.get(friend).get("name"));
     }
 
     /**

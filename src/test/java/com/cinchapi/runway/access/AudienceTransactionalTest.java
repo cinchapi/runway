@@ -623,6 +623,51 @@ public class AudienceTransactionalTest extends AudienceAccessControlBaseTest {
 
     /**
      * <strong>Goal:</strong> Verify that an ended {@link Transaction} view
+     * refuses a {@code save} after its {@link Audience} joins another
+     * {@link Transaction}, instead of writing durably through the enclosing
+     * {@link com.cinchapi.runway.Runway Runway}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Admin} bound to the
+     * {@link #runway}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage a first {@link Transaction} from the {@link Admin} and
+     * {@code commit()} it.</li>
+     * <li>Stage a second {@link Transaction} from the {@link Admin}.</li>
+     * <li>Build a {@link Candidate} that is bound to the {@link #runway} and
+     * call {@code save(...)} on the ended first view.</li>
+     * <li>Search for the {@link Candidate} through the enclosing
+     * {@link #runway}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save on the ended view throws an
+     * {@link IllegalStateException} and the {@link Candidate} is not persisted.
+     */
+    @Test
+    public void testEndedTransactionViewRefusesSaveWhenAudienceJoinsAnotherTransaction() {
+        Admin admin = createAdmin();
+        Transaction first = admin.startTransaction();
+        Assert.assertTrue(first.commit());
+        try (Transaction second = admin.startTransaction()) {
+            Candidate candidate = new Candidate();
+            candidate.email = "jane@example.com";
+            candidate.name = "Jane Developer";
+            candidate.assign(runway);
+            try {
+                first.save(candidate);
+                Assert.fail("Expected an IllegalStateException");
+            }
+            catch (IllegalStateException e) {
+                // expected
+            }
+            Assert.assertTrue(runway.find(Candidate.class, janeEmailCriteria())
+                    .isEmpty());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an ended {@link Transaction} view
      * falls through to the enclosing {@link com.cinchapi.runway.Runway Runway}
      * while its {@link Audience} has not joined another {@link Transaction}.
      * <p>

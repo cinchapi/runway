@@ -209,12 +209,62 @@ public class RunwayRealmsTest extends RunwayBaseClientServerTest {
                 .operator(Operator.EQUALS).value("a"), Realms.all());
     }
 
-    // findAny* tests
+    /**
+     * <strong>Goal:</strong> Verify that counting all {@link Record Records} of
+     * a class respects a {@link Realms} scope.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save three {@code Player} records: two in the {@code test} realm and
+     * one in the {@code prod} realm.</li>
+     * <li>Count {@code Player} records scoped to only the {@code test}
+     * realm.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count is {@code 2}.
+     */
+    @Test
+    public void testCountFiltersByRealm() {
+        Player a = new Player("a", 1);
+        Player b = new Player("b", 2);
+        Player c = new Player("c", 3);
+        a.addRealm("test");
+        b.addRealm("prod");
+        c.addRealm("test");
+        runway.save(a, b, c);
+        Assert.assertEquals(2, runway.count(Player.class, Realms.only("test")));
+    }
 
-    // find* tests
-
-    // count tests
-
-    // TODO: need to test legacy paths...
+    /**
+     * <strong>Goal:</strong> Verify that counting {@link Record Records} that
+     * match a {@link Criteria} respects a {@link Realms} scope.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@code Player} records with the same name, one in the
+     * {@code test} realm and one in the {@code prod} realm.</li>
+     * <li>Count {@code Player} records whose {@code name} matches both records,
+     * scoped to only the {@code test} realm.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The count is {@code 1}.
+     */
+    @Test
+    public void testCountWithCriteriaFiltersByRealm() {
+        Player a = new Player("a", 10);
+        Player b = new Player("a", 20);
+        a.addRealm("test");
+        b.addRealm("prod");
+        runway.save(a, b);
+        Assert.assertEquals(1,
+                runway.count(
+                        Player.class, Criteria.where().key("name")
+                                .operator(Operator.EQUALS).value("a"),
+                        Realms.only("test")));
+    }
 
 }

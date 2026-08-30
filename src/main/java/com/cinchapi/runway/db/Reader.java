@@ -163,27 +163,6 @@ public interface Reader extends AutoCloseable {
     Pending<Map<String, Set<Object>>> select(Set<String> keys, long record);
 
     /**
-     * Record a select for the values stored under {@code key} in
-     * {@code record}.
-     *
-     * @param key the field name whose values should be returned
-     * @param record the record id
-     * @return a {@link Pending} of the values for {@code key}
-     */
-    Pending<Set<Object>> select(String key, long record);
-
-    /**
-     * Record a get for the most recent value stored under {@code key} in
-     * {@code record}.
-     *
-     * @param key the field name whose value should be returned
-     * @param record the record id
-     * @return a {@link Pending} of the most recent value, or {@code null} if no
-     *         value exists
-     */
-    Pending<Object> get(String key, long record);
-
-    /**
      * Record a navigate that traverses the {@code keys} starting from
      * {@code record}.
      *
@@ -236,15 +215,6 @@ public interface Reader extends AutoCloseable {
      * @return a {@link Pending} of the count
      */
     Pending<Long> count(String key, Criteria criteria);
-
-    /**
-     * Return the underlying {@link Concourse} connection that this
-     * {@link Reader} wraps, acquiring one from the {@link ConcourseProvider} if
-     * the connection has not yet been needed.
-     *
-     * @return the {@link Concourse} connection
-     */
-    Concourse concourse();
 
     /**
      * Issue every deferred read recorded on this {@link Reader} and resolve

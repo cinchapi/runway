@@ -143,9 +143,11 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
      * <li>Construct three {@link Person Persons}.</li>
      * <li>Save them all in one {@link Runway#save(Record...)} call.</li>
      * <li>Count {@link Person Persons} in the database.</li>
+     * <li>Load each {@link Person} by id.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> All three are persisted.
+     * <strong>Expected:</strong> All three are persisted, and each loaded
+     * {@link Person} has the name and age it was saved with.
      */
     @Test
     public void testBulkSavePersistsMultipleRecordsInOneCall() {
@@ -156,6 +158,15 @@ public class RunwayBulkSaveIntegrationTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(runway.save(a, b, c));
 
         Assert.assertEquals(3, runway.load(Person.class).size());
+        Person la = runway.load(Person.class, a.id());
+        Assert.assertEquals("A", la.name);
+        Assert.assertEquals(1, la.age);
+        Person lb = runway.load(Person.class, b.id());
+        Assert.assertEquals("B", lb.name);
+        Assert.assertEquals(2, lb.age);
+        Person lc = runway.load(Person.class, c.id());
+        Assert.assertEquals("C", lc.name);
+        Assert.assertEquals(3, lc.age);
     }
 
     /**

@@ -35,6 +35,26 @@ import com.cinchapi.concourse.lang.paginate.Page;
  */
 public class PaginationTest {
 
+    /**
+     * <strong>Goal:</strong> Verify that
+     * {@link Pagination#applyFilterAndPage(Function, Predicate, Page)} returns
+     * the same items as filtering the whole source and then paging the filtered
+     * stream.
+     * <p>
+     * <strong>Start state:</strong> A source list of the numbers 1 through 100.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Define a page function that faithfully pages the source from
+     * {@code skip()}.</li>
+     * <li>Apply an even-number filter with successive {@link Page Pages} until
+     * the result is empty.</li>
+     * <li>Compare each result to the filtered source stream paged with the same
+     * {@link Page}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Every page matches the oracle.
+     */
     @Test
     public void testApplyFilterAndPage() {
         List<Long> source = new ArrayList<>();
@@ -43,10 +63,9 @@ public class PaginationTest {
         }
         Function<Page, Set<Long>> function = $page -> {
             Set<Long> items = new LinkedHashSet<>();
-            int count = $page.skip() + 1;
-            for (long i = count; (i <= $page.skip() + $page.limit())
+            for (int i = $page.skip(); i < $page.skip() + $page.limit()
                     && i < source.size(); ++i) {
-                items.add(source.get((int) i));
+                items.add(source.get(i));
             }
             return items;
         };
@@ -58,8 +77,6 @@ public class PaginationTest {
             Set<Long> expected = source.stream().filter(filter)
                     .skip(page.skip()).limit(page.limit())
                     .collect(Collectors.toCollection(LinkedHashSet::new));
-            System.out.println("actual = " + actual);
-            System.out.println("expected = " + expected);
             Assert.assertEquals(expected, actual);
             page = page.next();
         }

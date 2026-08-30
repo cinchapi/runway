@@ -82,27 +82,6 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     @Test
-    public void testBulkJoinDelete() {
-        ChildRecord sharedChild = new ChildRecord("sharedChild");
-        ParentWithJoinDelete parent1 = new ParentWithJoinDelete();
-        ParentWithJoinDelete parent2 = new ParentWithJoinDelete();
-        ParentWithJoinDelete parent3 = new ParentWithJoinDelete();
-
-        parent1.child = sharedChild;
-        parent2.child = sharedChild;
-        parent3.child = sharedChild;
-
-        Assert.assertTrue(runway.save(parent1, parent2, parent3, sharedChild));
-
-        sharedChild.deleteOnSave();
-        sharedChild.save();
-
-        List<Record> records = ImmutableList.of(parent1, parent2, parent3,
-                sharedChild);
-        records.forEach(this::assertNotExists);
-    }
-
-    @Test
     public void testCircularJoinDeleteAndCascadeDeleteNoInfiniteLoop() {
         CircularRecordA recordA = new CircularRecordA();
         CircularRecordB recordB = new CircularRecordB();

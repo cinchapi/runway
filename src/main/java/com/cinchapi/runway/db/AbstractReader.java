@@ -116,8 +116,14 @@ public abstract class AbstractReader implements Reader {
         this.closed = false;
     }
 
-    @Override
-    public final Concourse concourse() {
+    /**
+     * Return the underlying {@link Concourse} connection that this
+     * {@link Reader} wraps, acquiring one from the {@link ConcourseProvider} if
+     * the connection has not yet been needed.
+     *
+     * @return the {@link Concourse} connection
+     */
+    protected final Concourse concourse() {
         if(concourse == null) {
             Preconditions.checkState(!closed,
                     "Reader has been closed; no new connection can be "

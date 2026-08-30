@@ -172,18 +172,27 @@ public class ObligationsTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Create an action that throws a checked {@link Exception}.</li>
-     * <li>Call {@link Obligations#runAll(Action...)}.</li>
+     * <li>Create an action that throws a known checked {@link Exception}
+     * instance.</li>
+     * <li>Call {@link Obligations#runAll(Action...)} and catch the thrown
+     * exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The exact {@link Exception} is thrown, not
-     * wrapped in a {@link RuntimeException}.
+     * <strong>Expected:</strong> The caught exception is the same instance the
+     * action threw, not a {@link RuntimeException} wrapper.
      */
-    @Test(expected = Exception.class)
-    public void testCheckedExceptionRethrownDirectly() throws Exception {
-        Obligations.runAll(() -> {
-            throw new Exception("boom");
-        });
+    @Test
+    public void testCheckedExceptionRethrownDirectly() {
+        Exception boom = new Exception("boom");
+        try {
+            Obligations.runAll(() -> {
+                throw boom;
+            });
+            Assert.fail("Expected the checked exception to propagate");
+        }
+        catch (Exception e) {
+            Assert.assertSame(boom, e);
+        }
     }
 
 }
