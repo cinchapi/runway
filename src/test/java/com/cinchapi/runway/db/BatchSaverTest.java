@@ -15,7 +15,17 @@
  */
 package com.cinchapi.runway.db;
 
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
+
+import org.junit.Assert;
+import org.junit.Test;
+
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.lang.Criteria;
+import com.cinchapi.concourse.thrift.Operator;
+import com.cinchapi.runway.db.Saver.Timing;
 
 /**
  * Unit tests for {@link BatchSaver} that combine the shared {@link Saver}
@@ -28,6 +38,154 @@ public class BatchSaverTest extends SaverTest {
     @Override
     protected Saver instantiateSaver(Concourse connection) {
         return new BatchSaver(connection);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that when a {@code consumer} throws inside
+     * {@link Saver#commit()}, the writes recorded against the
+     * {@link BatchSaver} are not persisted, because the writes submission is
+     * skipped.
+     * <p>
+     * <strong>Start state:</strong> A record exists with {@code flag = true}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link BatchSaver}.</li>
+     * <li>Record a {@code set} of a new field's value.</li>
+     * <li>Record a {@link Timing#DEFERRED deferred} {@code select} whose
+     * {@code consumer} throws.</li>
+     * <li>Call {@code commit} and catch the exception.</li>
+     * <li>Call {@code abort} to release the server-side staged
+     * transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The exception arrives from {@code commit} and
+     * the set's key is not present on the record.
+     */
+    @Test
+    public void testConsumerThrowSkipsWritesSubmission() {
+        long id = client.add("flag", true);
+
+        Saver saver = newSaver();
+        saver.stage();
+        saver.set("scratch", "value", id);
+        saver.select("flag", Criteria.where().key("flag")
+                .operator(Operator.EQUALS).value(true), result -> {
+                    throw new IllegalStateException("rejected");
+                }, Timing.DEFERRED);
+
+        boolean caught = false;
+        try {
+            saver.commit();
+        }
+        catch (IllegalStateException e) {
+            caught = true;
+            saver.abort();
+        }
+
+        Assert.assertTrue(caught);
+        Assert.assertTrue(client.select("scratch", id).isEmpty());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code consumer} passed to
+     * {@link Saver#select(String, Criteria, java.util.function.Consumer)
+     * select} can record a further read on the {@link BatchSaver} without
+     * mutating the consumer list currently being iterated &mdash; the nested
+     * recording must start a fresh batch and resolve inside the next flush.
+     * <p>
+     * <strong>Start state:</strong> A record with {@code name = "alpha"} and
+     * {@code flag = true}, plus a second record with {@code flag = true} that
+     * does not match the outer select.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link BatchSaver}.</li>
+     * <li>Record an {@link Timing#INLINE inline} {@code select} on {@code name}
+     * for the {@code "alpha"} record whose {@code consumer} in turn records a
+     * {@link Timing#DEFERRED deferred} {@code select} on {@code flag}.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The outer {@code consumer} runs without
+     * throwing {@link java.util.ConcurrentModificationException
+     * ConcurrentModificationException}, the nested {@code select} resolves
+     * inside the next flush, and its result covers both records.
+     */
+    @Test
+    public void testSelectConsumerCanRecordNestedReads() {
+        long alpha = client.add("name", "alpha");
+        client.add("flag", true, alpha);
+        long bravo = client.add("name", "bravo");
+        client.add("flag", true, bravo);
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<Long, Set<Object>>> nested = new AtomicReference<>();
+        saver.select("name",
+                Criteria.where().key("name").operator(Operator.EQUALS)
+                        .value("alpha"),
+                result -> saver.select(
+                        "flag", Criteria.where().key("flag")
+                                .operator(Operator.EQUALS).value(true),
+                        nested::set, Timing.DEFERRED));
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(nested.get());
+        Assert.assertTrue(nested.get().containsKey(alpha));
+        Assert.assertTrue(nested.get().containsKey(bravo));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a {@code consumer} passed to
+     * {@link Saver#select(String, Criteria, java.util.function.Consumer)
+     * select} can record another {@link Timing#INLINE inline} {@code select} on
+     * the same {@link BatchSaver} &mdash; the deeper case that exercises
+     * recursive read-flush re-entry against the snapshot-and-clear pattern.
+     * <p>
+     * <strong>Start state:</strong> One record matches the outer select on
+     * {@code name = "outer"}; one record matches the inner select on
+     * {@code color = "red"}; one record matches the deepest select on
+     * {@code category = "X"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link BatchSaver}.</li>
+     * <li>Record an {@link Timing#INLINE inline} {@code select} on {@code name}
+     * whose {@code consumer} records a second inline {@code select} on
+     * {@code color} whose {@code consumer} records a {@link Timing#DEFERRED
+     * deferred} {@code select} on {@code category}.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> All three reads resolve without throwing
+     * {@link java.util.ConcurrentModificationException
+     * ConcurrentModificationException}, and the deepest result covers the
+     * matching record.
+     */
+    @Test
+    public void testSelectConsumerCanRecursivelyRecordSelect() {
+        long outer = client.add("name", "outer");
+        client.add("color", "red", outer);
+        long match = client.add("category", "X");
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<Long, Set<Object>>> deepest = new AtomicReference<>();
+        saver.select("name",
+                Criteria.where().key("name").operator(Operator.EQUALS)
+                        .value("outer"),
+                outerResult -> saver.select("color",
+                        Criteria.where().key("color").operator(Operator.EQUALS)
+                                .value("red"),
+                        innerResult -> saver.select("category",
+                                Criteria.where().key("category")
+                                        .operator(Operator.EQUALS).value("X"),
+                                deepest::set, Timing.DEFERRED)));
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(deepest.get());
+        Assert.assertTrue(deepest.get().containsKey(match));
     }
 
 }
