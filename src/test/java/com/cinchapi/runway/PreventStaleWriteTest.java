@@ -1876,6 +1876,103 @@ public class PreventStaleWriteTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a declaration on a {@link Record} a
+     * {@link Transaction} stores for the first time fails the save when another
+     * writer already stored the declared value.
+     * <p>
+     * <strong>Start state:</strong> An open {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} and create a {@link TUser} through
+     * it.</li>
+     * <li>Save the {@link TUser}, then declare {@code bio}.</li>
+     * <li>Externally store a bio, modify the name and save again.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a {@link StaleDataException}.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclarationFailsSaveWhenAWriterStoresTheValueOnACreatedRecord() {
+        try (Transaction transaction = runway.startTransaction()) {
+            tick();
+            TUser created = transaction.create(TUser.class,
+                    "verify_tx_created_external");
+            Assert.assertTrue(created.save());
+            created.verifyOnSave("bio");
+            externallyWrite(connection -> connection.set("bio", "external",
+                    created.id()));
+            created.name = "updated";
+            created.save();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declaration on a {@link Record} a
+     * {@link Transaction} stores for the first time fails the commit when
+     * another writer stores the declared value after the save.
+     * <p>
+     * <strong>Start state:</strong> An open {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} and create a {@link TUser} through
+     * it.</li>
+     * <li>Save the {@link TUser}, declare {@code bio}, modify the name and save
+     * again.</li>
+     * <li>Externally store a bio, then commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The commit throws a
+     * {@link TransactionException}.
+     */
+    @Test(expected = TransactionException.class)
+    public void testDeclarationFailsCommitWhenAWriterStoresTheValueAfterTheSave() {
+        try (Transaction transaction = runway.startTransaction()) {
+            tick();
+            TUser created = transaction.create(TUser.class,
+                    "verify_tx_created_late");
+            Assert.assertTrue(created.save());
+            created.verifyOnSave("bio");
+            created.name = "updated";
+            Assert.assertTrue(created.save());
+            externallyWrite(connection -> connection.set("bio", "external",
+                    created.id()));
+            transaction.commit();
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a declaration made before the first
+     * save of a {@link Record} a {@link Transaction} creates fails that save
+     * when another writer already stored the declared value.
+     * <p>
+     * <strong>Start state:</strong> An open {@link Transaction}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} and create a {@link TUser} through
+     * it.</li>
+     * <li>Externally store a bio for that {@link TUser}.</li>
+     * <li>Declare {@code bio} and save.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save throws a {@link StaleDataException}.
+     */
+    @Test(expected = StaleDataException.class)
+    public void testDeclarationFailsTheFirstSaveWhenAWriterAlreadyStoredTheValue() {
+        try (Transaction transaction = runway.startTransaction()) {
+            tick();
+            TUser created = transaction.create(TUser.class,
+                    "verify_tx_created_first");
+            externallyWrite(connection -> connection.set("bio", "external",
+                    created.id()));
+            created.verifyOnSave("bio");
+            created.save();
+        }
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a declaration inside a
      * {@link Transaction} commits when no writer changes the declared value.
      * <p>
