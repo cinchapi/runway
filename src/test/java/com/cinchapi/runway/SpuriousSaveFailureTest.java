@@ -27,6 +27,7 @@ import org.junit.Test;
 
 import com.cinchapi.common.base.CheckedExceptions;
 import com.cinchapi.concourse.Concourse;
+import com.cinchapi.concourse.TransactionException;
 
 /**
  * Tests for automatic retry on spurious save failures caused by
@@ -376,7 +377,8 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
      * {@code TransactionException} as a refused save instead of retrying. A
      * strategy that silently retried would make both saves succeed in every
      * round. A save that hangs or throws fails the test instead of counting as
-     * the expected refusal.
+     * the expected refusal, and a refused save must hold the
+     * {@code TransactionException} as its recorded reason.
      */
     @Test
     public void testFailFastStrategyDoesNotRetry() throws Exception {
@@ -437,7 +439,23 @@ public class SpuriousSaveFailureTest extends RunwayBaseClientServerTest {
                         thrown2.get());
             }
 
-            anyFailed = !save1Result.get() || !save2Result.get();
+            boolean failed1 = !save1Result.get();
+            boolean failed2 = !save2Result.get();
+            if(failed1) {
+                Assert.assertTrue(
+                        "A save was refused for a reason other than the"
+                                + " spurious conflict",
+                        tenant1.errors.stream().anyMatch(
+                                t -> t instanceof TransactionException));
+            }
+            if(failed2) {
+                Assert.assertTrue(
+                        "A save was refused for a reason other than the"
+                                + " spurious conflict",
+                        tenant2.errors.stream().anyMatch(
+                                t -> t instanceof TransactionException));
+            }
+            anyFailed = failed1 || failed2;
         }
         Assert.assertTrue(
                 "FAIL_FAST must surface a spurious failure in at least one"
