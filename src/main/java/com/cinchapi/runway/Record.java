@@ -409,6 +409,40 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Capture the binding of every loaded {@link Record} that is reachable from
+     * the {@code values} and is not bound to {@code owner}, and return a task
+     * that restores each captured binding.
+     *
+     * @param values the values whose reachable {@link Record Records} are
+     *            captured
+     * @param owner the {@link DatabaseInterface} whose {@link Record Records}
+     *            keep the bindings they hold, or {@code null} to capture every
+     *            reachable {@link Record}
+     * @return a task that restores every captured binding
+     */
+    static Runnable snapshotBindings(Object[] values,
+            @Nullable DatabaseInterface owner) {
+        Set<Record> graph = Sets.newIdentityHashSet();
+        Set<Record> seen = Sets.newIdentityHashSet();
+        for (Object value : values) {
+            forEachReachableRecord(value,
+                    record -> record.collectGraph(graph, seen));
+        }
+        List<Runnable> restores = Lists.newArrayListWithCapacity(graph.size());
+        for (Record record : graph) {
+            if(owner == null || record.binding != owner) {
+                Binding binding = record.binding;
+                ConcourseProvider connections = record.connections;
+                restores.add(() -> {
+                    record.binding = binding;
+                    record.connections = connections;
+                });
+            }
+        }
+        return () -> restores.forEach(Runnable::run);
+    }
+
+    /**
      * Stage a single-key atomic update of {@code key} on {@code record} within
      * {@code transaction} and return the {@code record}, or {@code null} when
      * there is no record to update.

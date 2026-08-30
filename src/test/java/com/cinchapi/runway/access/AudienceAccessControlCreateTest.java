@@ -18,6 +18,7 @@ package com.cinchapi.runway.access;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.cinchapi.runway.Runway;
 import com.cinchapi.runway.Transaction;
 import com.cinchapi.runway.access.AudienceAccessControlInternTest.Gate;
 import com.cinchapi.runway.access.AudienceAccessControlInternTest.Vault;
@@ -539,6 +540,160 @@ public class AudienceAccessControlCreateTest
             }
             Assert.assertTrue(threw);
             Assert.assertTrue(transaction.commit());
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a refused {@code create} through an
+     * {@link Audience} that is bound to an open {@link Transaction} leaves the
+     * constructor-argument records bound as they were, so a later direct save
+     * of one does not stage into the transaction.
+     * <p>
+     * <strong>Start state:</strong> One saved closed {@link Gate} and one saved
+     * {@link Admin}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} in a try-with-resources block and load
+     * the {@link Admin} through it.</li>
+     * <li>Load the {@link Gate} outside the {@link Transaction}.</li>
+     * <li>Call {@code create} on the loaded {@link Admin} for a {@link Vault}
+     * whose gate argument is the outside {@link Gate}, and catch the expected
+     * exception.</li>
+     * <li>Set {@code open = true} on the outside {@link Gate} and save it
+     * directly.</li>
+     * <li>{@code abort()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * because the {@link Gate} is closed, and the direct save survives the
+     * abort: a fresh load shows the {@link Gate} open.
+     */
+    @Test
+    public void testRefusedCreateLeavesArgumentRecordsUnbound() {
+        Gate gate = new Gate();
+        gate.open = false;
+        Admin admin = new Admin();
+        admin.name = "System Admin";
+        admin.email = "admin@example.com";
+        runway.save(gate, admin);
+        try (Transaction transaction = runway.startTransaction()) {
+            Admin audience = transaction.load(Admin.class, admin.id());
+            Gate outside = runway.load(Gate.class, gate.id());
+            boolean threw = false;
+            try {
+                audience.create(Vault.class, "V-1", outside);
+            }
+            catch (RestrictedAccessException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            outside.open = true;
+            Assert.assertTrue(outside.save());
+            transaction.abort();
+        }
+        Assert.assertTrue(runway.load(Gate.class, gate.id()).open);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a refused {@code create} through an
+     * anonymous {@link Audience} that holds an open {@link Transaction} leaves
+     * the constructor-argument records bound as they were, so a later direct
+     * save of one does not stage into the transaction.
+     * <p>
+     * <strong>Start state:</strong> One saved open {@link Gate}. A
+     * {@link Vault} is never creatable by an anonymous {@link Audience}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Start a {@link Transaction} in a try-with-resources block and obtain
+     * an {@link Audience#anonymous(com.cinchapi.runway.DatabaseInterface)
+     * anonymous} {@link Audience} that holds it.</li>
+     * <li>Load the {@link Gate} outside the {@link Transaction}.</li>
+     * <li>Call {@code create} on the anonymous {@link Audience} for a
+     * {@link Vault} whose gate argument is the outside {@link Gate}, and catch
+     * the expected exception.</li>
+     * <li>Set {@code open = false} on the outside {@link Gate} and save it
+     * directly.</li>
+     * <li>{@code abort()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown
+     * and the direct save survives the abort: a fresh load shows the
+     * {@link Gate} closed.
+     */
+    @Test
+    public void testAnonymousRefusedCreateLeavesArgumentRecordsUnbound() {
+        Gate gate = new Gate();
+        gate.open = true;
+        runway.save(gate);
+        try (Transaction transaction = runway.startTransaction()) {
+            Audience anonymous = Audience.anonymous(transaction);
+            Gate outside = runway.load(Gate.class, gate.id());
+            boolean threw = false;
+            try {
+                anonymous.create(Vault.class, "V-1", outside);
+            }
+            catch (RestrictedAccessException e) {
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            outside.open = false;
+            Assert.assertTrue(outside.save());
+            transaction.abort();
+        }
+        Assert.assertFalse(runway.load(Gate.class, gate.id()).open);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a refused {@code create} leaves a
+     * constructor-argument record that holds no binding without one, so the
+     * caller can still choose the scope that record saves within.
+     * <p>
+     * <strong>Start state:</strong> A second open {@link Runway}, so a new
+     * record names no database until the caller assigns one. A {@link Vault} is
+     * never creatable by an anonymous {@link Audience}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Open a second {@link Runway} in a try-with-resources block.</li>
+     * <li>Start a {@link Transaction} in a try-with-resources block and obtain
+     * an {@link Audience#anonymous(com.cinchapi.runway.DatabaseInterface)
+     * anonymous} {@link Audience} that holds it.</li>
+     * <li>Construct a {@link Gate} that is never assigned or saved.</li>
+     * <li>Call {@code create} on the anonymous {@link Audience} for a
+     * {@link Vault} whose gate argument is the new {@link Gate}, and catch the
+     * expected exception.</li>
+     * <li>{@code assign} the {@link Gate} to the first {@link Runway} and save
+     * it directly.</li>
+     * <li>{@code abort()} the same {@link Transaction}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link RestrictedAccessException} is thrown,
+     * the {@code assign} is accepted, and the direct save survives the abort:
+     * the first {@link Runway} holds the {@link Gate}.
+     */
+    @Test
+    public void testRefusedCreateLeavesUnboundArgumentRecordUnbound()
+            throws Exception {
+        try (Runway second = runwayBuilder().build()) {
+            try (Transaction transaction = runway.startTransaction()) {
+                Audience anonymous = Audience.anonymous(transaction);
+                Gate fresh = new Gate();
+                fresh.open = true;
+                boolean threw = false;
+                try {
+                    anonymous.create(Vault.class, "V-1", fresh);
+                }
+                catch (RestrictedAccessException e) {
+                    threw = true;
+                }
+                Assert.assertTrue(threw);
+                fresh.assign(runway);
+                Assert.assertTrue(fresh.save());
+                transaction.abort();
+            }
+            Assert.assertEquals(1, runway.count(Gate.class));
         }
     }
 
