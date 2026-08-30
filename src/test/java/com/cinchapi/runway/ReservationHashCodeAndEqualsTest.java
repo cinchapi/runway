@@ -223,6 +223,61 @@ public class ReservationHashCodeAndEqualsTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a counting {@link Reservation} is not
+     * equal to a non-counting {@link Reservation} with the same criteria.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build two {@link Reservation Reservations} with identical criteria,
+     * one with {@code counting(true)} and one without.</li>
+     * <li>Compare them with {@code equals}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The two {@link Reservation Reservations} are
+     * not equal.
+     */
+    @Test
+    public void testNotEqualWhenCountingDiffers() {
+        Reservation a = Reservation
+                .builder(Record.class).criteria(Criteria.where().key("name")
+                        .operator(Operator.EQUALS).value("Alice"))
+                .counting(true).build();
+        Reservation b = Reservation.builder(Record.class).criteria(Criteria
+                .where().key("name").operator(Operator.EQUALS).value("Alice"))
+                .build();
+        Assert.assertNotEquals(a, b);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that two {@link Reservation Reservations}
+     * that differ only in their {@link Criteria} are not equal.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Build two {@link Reservation Reservations} that are identical except
+     * for the value their {@link Criteria} matches.</li>
+     * <li>Compare them with {@code equals}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The two {@link Reservation Reservations} are
+     * not equal.
+     */
+    @Test
+    public void testNotEqualWhenCriteriaDiffer() {
+        Reservation a = Reservation.builder(Record.class).criteria(Criteria
+                .where().key("name").operator(Operator.EQUALS).value("Alice"))
+                .build();
+        Reservation b = Reservation.builder(Record.class).criteria(Criteria
+                .where().key("name").operator(Operator.EQUALS).value("Bob"))
+                .build();
+        Assert.assertNotEquals(a, b);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that two unique {@link Reservation
      * Reservations} with identical components are equal.
      * <p>
