@@ -3110,17 +3110,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Return {@code true} if this record is in a "zombie" state meaning it
-     * exists in the database without any actual data.
-     *
-     * @param concourse
-     * @return {@code true} if this record is a zombie
-     */
-    final boolean inZombieState(Concourse concourse) {
-        return inZombieState(id, concourse, null);
-    }
-
-    /**
      * Return {@code true} if this {@link Record} is bound to an open
      * {@link Transaction}.
      *

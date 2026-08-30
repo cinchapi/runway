@@ -1314,15 +1314,6 @@ public final class Runway extends Binding implements
                         throw (Record.TransactionBoundaryException) t;
                     }
                     else {
-                        for (Record record : context.records()) {
-                            if(record.inZombieState(concourse)) {
-                                // TODO: this is currently disabled because
-                                // zombie detection throughout the codebase is
-                                // inconsistent and we may need to delete it all
-                                // together
-                                // concourse.clear(record.id());
-                            }
-                        }
                         context.restore();
                         // A deferred Unique check throws from commit() after
                         // the loop advances #current, so blame the Record
