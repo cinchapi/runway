@@ -1089,6 +1089,7 @@ public interface Audience extends DatabaseInterface, Transactional {
             Collection<String> keys, T record)
             throws RestrictedAccessException {
         try {
+            RESTRICTED_ACCESS_DETECTED.remove();
             Map<String, Object> data = frame(keys, record);
             if(RESTRICTED_ACCESS_DETECTED.get()) {
                 throw new RestrictedAccessException();

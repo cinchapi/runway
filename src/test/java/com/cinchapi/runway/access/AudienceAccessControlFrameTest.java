@@ -1170,4 +1170,39 @@ public class AudienceAccessControlFrameTest
         Assert.assertFalse(crossAccess.containsKey("email"));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a {@code frame} that filters a denied
+     * key has no effect on a later, fully permitted {@code read} on the same
+     * thread.
+     * <p>
+     * <strong>Start state:</strong> A {@link Candidate} whose {@code resume} an
+     * {@link EmployerUser} may not read, but whose {@code skills} it may.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code frame} for the denied {@code resume} key.</li>
+     * <li>Call {@code read} for the permitted {@code skills} key.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@code read} does not throw and returns
+     * the {@code skills} value.
+     */
+    @Test
+    public void testFrameFilteringDoesNotFailNextPermittedRead() {
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@email.com";
+        candidate.skills = "Java, Python";
+        candidate.resume = "Sensitive resume content";
+
+        EmployerUser employerUser = new EmployerUser();
+        employerUser.name = "HR Manager";
+
+        employerUser.frame(ImmutableSet.of("resume"), candidate);
+
+        Map<String, Object> data = employerUser.read(ImmutableSet.of("skills"),
+                candidate);
+        Assert.assertEquals("Java, Python", data.get("skills"));
+    }
+
 }
