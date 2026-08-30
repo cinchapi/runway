@@ -560,9 +560,10 @@ public interface Audience extends DatabaseInterface, Transactional {
      * <p>
      * If this {@link Audience} is not permitted to discover the {@code record}
      * at all, this method returns {@code null}. Otherwise, it returns a map
-     * that contains data for the subset of {@code keys} that are readable. An
-     * empty map return value indicates that while the {@code record} is
-     * visible, none of the requested keys are.
+     * that contains data for the subset of {@code keys} that are readable, plus
+     * the {@code record}'s id, which is always included. A map that contains
+     * only the id indicates that while the {@code record} is visible, none of
+     * the requested keys are.
      * </p>
      * <h3>Nested Field Resolution</h3>
      * <p>

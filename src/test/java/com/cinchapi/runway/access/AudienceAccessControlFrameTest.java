@@ -1205,4 +1205,35 @@ public class AudienceAccessControlFrameTest
         Assert.assertEquals("Java, Python", data.get("skills"));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a {@code frame} whose requested keys
+     * are all denied returns a map that contains only the record's id, the
+     * signal that the record is visible but none of the requested keys are.
+     * <p>
+     * <strong>Start state:</strong> A {@link Candidate} whose {@code resume} an
+     * {@link EmployerUser} may not read.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code frame} for only the denied {@code resume} key.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The result's key set is exactly
+     * {@code {"id"}}.
+     */
+    @Test
+    public void testFrameReturnsOnlyIdWhenNoRequestedKeyIsReadable() {
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.email = "jane@email.com";
+        candidate.resume = "Sensitive resume content";
+
+        EmployerUser employerUser = new EmployerUser();
+        employerUser.name = "HR Manager";
+
+        Map<String, Object> result = employerUser
+                .frame(ImmutableSet.of("resume"), candidate);
+        Assert.assertEquals(ImmutableSet.of("id"), result.keySet());
+    }
+
 }
