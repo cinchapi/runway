@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import java.lang.ref.WeakReference;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -25,6 +26,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.junit.Assert;
@@ -220,23 +223,8 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Item item = new Item("widget", 1);
         item.assign(runway);
         Assert.assertTrue(item.save());
-        Transaction transaction = runway.startTransaction();
-        boolean conflicted;
-        try {
-            Item txItem = transaction.load(Item.class, item.id());
-            client.set("score", 99, item.id());
-            txItem.score = 50;
-            txItem.save();
-            conflicted = !transaction.commit();
-        }
-        catch (TransactionException e) {
-            conflicted = true;
-        }
-        finally {
-            transaction.close();
-        }
-        Assert.assertTrue(conflicted);
-        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+        assertConflictFootprint(
+                transaction -> transaction.load(Item.class, item.id()));
     }
 
     /**
@@ -1213,12 +1201,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
-            Registration invalid = new Registration(null);
-            try {
-                transaction.save(txItem, invalid);
-                Assert.fail("Expected the save to throw");
-            }
-            catch (SuppressedRunwayException e) {/* expected */}
+            poisonWithInvalidSave(transaction, txItem);
             try {
                 transaction.commit();
                 Assert.fail("Expected the commit to be refused");
@@ -1259,12 +1242,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
-            Registration invalid = new Registration(null);
-            try {
-                transaction.save(txItem, invalid);
-                Assert.fail("Expected the save to throw");
-            }
-            catch (SuppressedRunwayException e) {/* expected */}
+            poisonWithInvalidSave(transaction, txItem);
             try {
                 transaction.load(Item.class, item.id());
                 Assert.fail("Expected the load to be refused");
@@ -1319,12 +1297,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.score = 2;
-            Registration invalid = new Registration(null);
-            try {
-                transaction.save(txItem, invalid);
-                Assert.fail("Expected the save to throw");
-            }
-            catch (SuppressedRunwayException e) {/* expected */}
+            poisonWithInvalidSave(transaction, txItem);
             try {
                 txItem.refresh();
                 Assert.fail("Expected the refresh to be refused");
@@ -2369,10 +2342,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(0, notified.get());
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (notified.get() == 0 && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> notified.get() != 0);
         Assert.assertEquals(1, notified.get());
     }
 
@@ -2790,24 +2760,10 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Viewer viewer = new Viewer("alice");
         viewer.assign(runway);
         Assert.assertTrue(viewer.save());
-        Transaction transaction = runway.startTransaction();
-        boolean conflicted;
-        try {
+        assertConflictFootprint(transaction -> {
             Viewer txViewer = transaction.load(Viewer.class, viewer.id());
-            Item txItem = txViewer.load(Item.class, item.id());
-            client.set("score", 99, item.id());
-            txItem.score = 50;
-            txItem.save();
-            conflicted = !transaction.commit();
-        }
-        catch (TransactionException e) {
-            conflicted = true;
-        }
-        finally {
-            transaction.close();
-        }
-        Assert.assertTrue(conflicted);
-        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+            return txViewer.load(Item.class, item.id());
+        });
     }
 
     /**
@@ -2909,24 +2865,10 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Crate crate = new Crate("bin", item);
         crate.assign(runway);
         Assert.assertTrue(runway.save(crate, item));
-        Transaction transaction = runway.startTransaction();
-        boolean conflicted;
-        try {
+        assertConflictFootprint(transaction -> {
             Crate txCrate = transaction.load(Crate.class, crate.id());
-            Item txItem = txCrate.item.get();
-            client.set("score", 99, item.id());
-            txItem.score = 50;
-            txItem.save();
-            conflicted = !transaction.commit();
-        }
-        catch (TransactionException e) {
-            conflicted = true;
-        }
-        finally {
-            transaction.close();
-        }
-        Assert.assertTrue(conflicted);
-        Assert.assertEquals(99, runway.load(Item.class, item.id()).score);
+            return txCrate.item.get();
+        });
     }
 
     /**
@@ -3185,10 +3127,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertEquals(0, deletes.get());
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (deletes.get() == 0 && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> deletes.get() != 0);
         Assert.assertEquals(1, deletes.get());
     }
 
@@ -3386,10 +3325,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(doomed.save());
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (deletes.get() == 0 && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> deletes.get() != 0);
         Thread.sleep(250);
         Assert.assertEquals(1, deletes.get());
         Assert.assertEquals(0, saves.get());
@@ -4416,12 +4352,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(counter.save());
         try (Transaction transaction = runway.startTransaction()) {
             Counter txCounter = transaction.load(Counter.class, counter.id());
-            Registration invalid = new Registration(null);
-            try {
-                transaction.save(invalid);
-                Assert.fail("Expected the save to throw");
-            }
-            catch (SuppressedRunwayException e) {/* expected */}
+            poisonWithInvalidSave(transaction);
             try {
                 txCounter.bump();
                 Assert.fail("Expected the work to be refused");
@@ -4518,10 +4449,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(stale.save());
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (notified.get() == null && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> notified.get() != null);
         Assert.assertSame(changed, notified.get());
         stale.score = 3;
         try {
@@ -4572,10 +4500,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(transaction.save(changed, stale));
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (notified.get() == null && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> notified.get() != null);
         Assert.assertSame(changed, notified.get());
         stale.score = 3;
         try {
@@ -4623,10 +4548,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
             Assert.assertTrue(second.save());
             Assert.assertTrue(transaction.commit());
         }
-        long stop = System.currentTimeMillis() + 5000;
-        while (notified.get() == null && System.currentTimeMillis() < stop) {
-            Thread.sleep(10);
-        }
+        awaitUntil(() -> notified.get() != null);
         Assert.assertSame(second, notified.get());
         Assert.assertEquals(3, runway.load(Item.class, item.id()).score);
     }
@@ -5001,6 +4923,74 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
                         runway.load(Node.class, safe.id()).name);
             }
         }
+    }
+
+    /**
+     * Wait for {@code condition} to become true, checking it repeatedly, and
+     * give up after five seconds. The caller asserts the outcome itself after
+     * the wait returns.
+     *
+     * @param condition the condition to wait for
+     * @throws InterruptedException if the wait is interrupted
+     */
+    private void awaitUntil(BooleanSupplier condition)
+            throws InterruptedException {
+        long stop = System.currentTimeMillis() + 5000;
+        while (!condition.getAsBoolean() && System.currentTimeMillis() < stop) {
+            Thread.sleep(10);
+        }
+    }
+
+    /**
+     * Load an {@link Item} through a new {@link Transaction} with
+     * {@code loader}, write a score of 99 to the same record outside the
+     * transaction, then save a score of 50 through the transactional copy and
+     * try to {@code commit()}. Assert that the save or the commit fails with a
+     * conflict and that the outside score of 99 is the durable value.
+     *
+     * @param loader the read path that resolves the {@link Item} within the
+     *            {@link Transaction}
+     */
+    private void assertConflictFootprint(Function<Transaction, Item> loader) {
+        Transaction transaction = runway.startTransaction();
+        boolean conflicted;
+        Item txItem = null;
+        try {
+            txItem = loader.apply(transaction);
+            client.set("score", 99, txItem.id());
+            txItem.score = 50;
+            txItem.save();
+            conflicted = !transaction.commit();
+        }
+        catch (TransactionException e) {
+            conflicted = true;
+        }
+        finally {
+            transaction.close();
+        }
+        Assert.assertTrue(conflicted);
+        Assert.assertEquals(99, runway.load(Item.class, txItem.id()).score);
+    }
+
+    /**
+     * Poison {@code transaction} by saving an invalid {@link Registration}
+     * through it, and assert that the save throws a
+     * {@link SuppressedRunwayException}. The {@code alongside} records join the
+     * same save call, ahead of the invalid record.
+     *
+     * @param transaction the {@link Transaction} to poison
+     * @param alongside the records to save in the same call
+     */
+    private void poisonWithInvalidSave(Transaction transaction,
+            Record... alongside) {
+        Registration invalid = new Registration(null);
+        Record[] records = Arrays.copyOf(alongside, alongside.length + 1);
+        records[alongside.length] = invalid;
+        try {
+            transaction.save(records);
+            Assert.fail("Expected the save to throw");
+        }
+        catch (SuppressedRunwayException e) {/* expected */}
     }
 
     /**
