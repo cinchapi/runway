@@ -1184,6 +1184,101 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a thread that does not own a committed
+     * {@link Transaction} can operate on a bound {@link Record} and fall
+     * through to the enclosing {@link Runway}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, set the score to
+     * 2, {@code save()} and commit on the test thread.</li>
+     * <li>Submit to a different thread a save that sets the score to 5 on the
+     * transactional copy.</li>
+     * <li>Submit a load of the {@link Item} through the ended transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Both submissions succeed: the cross-thread
+     * save returns {@code true}, the cross-thread load observes 5 and the
+     * enclosing {@link Runway} observes 5.
+     */
+    @Test
+    public void testBoundRecordFallsThroughFromAnotherThreadAfterCommit()
+            throws Exception {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+            Future<Boolean> saved = executor.submit(() -> {
+                txItem.score = 5;
+                return txItem.save();
+            });
+            Assert.assertTrue(saved.get());
+            Future<Integer> loaded = executor.submit(
+                    () -> transaction.load(Item.class, item.id()).score);
+            Assert.assertEquals(5, (int) loaded.get());
+        }
+        finally {
+            executor.shutdownNow();
+        }
+        Assert.assertEquals(5, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a thread that does not own an aborted
+     * {@link Transaction} can operate on a bound {@link Record} and fall
+     * through to the enclosing {@link Runway}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} with a score of 1.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, set the score to
+     * 2, {@code save()} and abort on the test thread.</li>
+     * <li>Submit to a different thread a save that sets the score to 7 on the
+     * transactional copy.</li>
+     * <li>Submit a load of the {@link Item} through the ended transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The staged score is gone after the abort. Both
+     * submissions succeed: the cross-thread save returns {@code true}, the
+     * cross-thread load observes 7 and the enclosing {@link Runway} observes 7.
+     */
+    @Test
+    public void testBoundRecordFallsThroughFromAnotherThreadAfterAbort()
+            throws Exception {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.score = 2;
+            Assert.assertTrue(txItem.save());
+            transaction.abort();
+            Assert.assertEquals(1, runway.load(Item.class, item.id()).score);
+            Future<Boolean> saved = executor.submit(() -> {
+                txItem.score = 7;
+                return txItem.save();
+            });
+            Assert.assertTrue(saved.get());
+            Future<Integer> loaded = executor.submit(
+                    () -> transaction.load(Item.class, item.id()).score);
+            Assert.assertEquals(7, (int) loaded.get());
+        }
+        finally {
+            executor.shutdownNow();
+        }
+        Assert.assertEquals(7, runway.load(Item.class, item.id()).score);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that single-key atomic operations resume
      * against the enclosing {@link Runway} after the {@link Transaction} that a
      * {@link Record} is bound to ends.
