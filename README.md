@@ -276,7 +276,7 @@ A save that reads the changed value throws `StaleDataException`. When the change
 
 A declaration lasts until a save commits, so each decision declares its own. `verifyOnSave` covers fields of that record. When the decision rests on another record, use a transaction.
 
-Inside a transaction, a record the transaction loaded needs no declaration, because the transaction fails its own commit when a writer changes anything it read. A declaration on such a record costs nothing. A record that reached its state before the transaction began carries its declaration in, and the transaction verifies it against the state at its start. A save is refused when it carries a declaration on a record that reached its state outside the transaction after the transaction began, because the transaction cannot see what that record saw.
+Inside a transaction, a record the transaction loaded needs no declaration, because the transaction fails its own commit when a writer changes anything it read. A declaration on such a record costs nothing. Any other record carries its declaration into the save, and a writer that moves a declared value fails that save or the commit. A save is refused when it carries a declaration on a record that was last loaded or saved outside the transaction after the transaction began; load that record through the transaction instead.
 
 ### Change one field immediately
 
