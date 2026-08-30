@@ -16,8 +16,6 @@
 package com.cinchapi.runway;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
@@ -318,20 +316,6 @@ final class SaveContext {
     @Nullable
     Record pollPendingDeletion() {
         return pendingDeletions.poll();
-    }
-
-    /**
-     * Return the instance that speaks for each record processed within the
-     * active attempt.
-     *
-     * @return the speaking instances
-     */
-    Collection<Record> records() {
-        Collection<Record> records = new ArrayList<>(entries.size());
-        for (Entry entry : entries.values()) {
-            records.add(entry.instance);
-        }
-        return records;
     }
 
     /**

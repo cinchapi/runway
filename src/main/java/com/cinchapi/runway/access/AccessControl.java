@@ -367,7 +367,8 @@ public interface AccessControl {
      * @param keys the fields to read from
      * @return a map from each key to its value
      * @throws RestrictedAccessException if the {@link Audience} is not
-     *             permitted to read one or more of the {@code keys}
+     *             permitted to read one or more of the {@code keys}, or is not
+     *             permitted to discover this {@link Record} at all
      */
     public default Map<String, Object> readAs(@Nullable Audience audience,
             Collection<String> keys) {
@@ -388,7 +389,8 @@ public interface AccessControl {
      * @param key the field to read from
      * @return the value of the {@code key}
      * @throws RestrictedAccessException if the {@link Audience} is not
-     *             permitted to read the {@code key}
+     *             permitted to read the {@code key}, or is not permitted to
+     *             discover this {@link Record} at all
      */
     public default Object readAs(@Nullable Audience audience, String key) {
         audience = AccessControlSupport.orAnonymous(audience, $this());

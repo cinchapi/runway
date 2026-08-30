@@ -22,8 +22,6 @@ import org.junit.Test;
 
 import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.Timestamp;
-import com.cinchapi.concourse.lang.Criteria;
-import com.cinchapi.concourse.thrift.Operator;
 import com.cinchapi.concourse.time.Time;
 
 /**
@@ -75,43 +73,6 @@ public class IncrementalSaverTest extends SaverTest {
         saver.abort();
 
         Assert.assertTrue(threwOnDiff.get());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that an {@link IncrementalSaver}
-     * {@code find} validator runs inline.
-     * <p>
-     * <strong>Start state:</strong> A record matching {@code flag = true}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Stage.</li>
-     * <li>Record a {@code find} whose validator throws.</li>
-     * <li>Catch the exception.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The exception arrives from the {@code find}
-     * call.
-     */
-    @Test
-    public void testFindValidatorRunsInline() {
-        client.add("flag", true);
-
-        Saver saver = newSaver();
-        saver.stage();
-        AtomicBoolean threwOnFind = new AtomicBoolean(false);
-        try {
-            saver.find(Criteria.where().key("flag").operator(Operator.EQUALS)
-                    .value(true), ids -> {
-                        throw new IllegalStateException("nope");
-                    });
-        }
-        catch (IllegalStateException e) {
-            threwOnFind.set(true);
-        }
-        saver.abort();
-
-        Assert.assertTrue(threwOnFind.get());
     }
 
 }

@@ -471,10 +471,6 @@ public final class Runway extends Binding implements
      */
     private static Page NO_PAGINATION = null;
 
-    /**
-     * Placeholder for a {@code null} {@link Criteria} parameter.
-     */
-
     static {
         // Perform static analysis on initialization.
         StaticAnalysis.instance();
@@ -1270,10 +1266,6 @@ public final class Runway extends Binding implements
                         dispatchSaveOutcomes(context);
                         return true;
                     }
-                    else if(attempts > MAX_SPURIOUS_SAVE_RETRIES) {
-                        context.restore();
-                        return false;
-                    }
                     else {
                         // Trigger catch block below for potential retry
                         throw new TransactionException();
@@ -1314,15 +1306,6 @@ public final class Runway extends Binding implements
                         throw (Record.TransactionBoundaryException) t;
                     }
                     else {
-                        for (Record record : context.records()) {
-                            if(record.inZombieState(concourse)) {
-                                // TODO: this is currently disabled because
-                                // zombie detection throughout the codebase is
-                                // inconsistent and we may need to delete it all
-                                // together
-                                // concourse.clear(record.id());
-                            }
-                        }
                         context.restore();
                         // A deferred Unique check throws from commit() after
                         // the loop advances #current, so blame the Record
@@ -1625,67 +1608,16 @@ public final class Runway extends Binding implements
 
     @Override
     public <T> T transactAndSupply(Function<TransactionInterface, T> work) {
-        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
-        Concourse concourse = connections.request();
-        try {
-            // NOTE: The connection is held across the policy's backoff sleeps
-            // so the retry loop does not churn the pool.
-            int attempts = 0;
-            TransactionException conflict = null;
-            for (;;) {
-                DatabaseTransaction transaction = new DatabaseTransaction(this,
-                        concourse, false);
-                try {
-                    T result = work.apply(transaction);
-                    if(transaction.commit()) {
-                        return result;
-                    }
-                    else {
-                        // The commit did not succeed, so fall through to the
-                        // governing retry policy.
-                    }
-                }
-                catch (TransactionException e) {
-                    if(transaction.committed() || transaction.hookFailed()) {
-                        // The exception is not a commit conflict: either the
-                        // commit succeeded and a post-commit consequence
-                        // threw, or a lifecycle hook failed. Re-running the
-                        // work would repeat side effects or mask the hook's
-                        // failure.
-                        throw e;
-                    }
-                    else {
-                        conflict = e;
-                        transaction.abort();
-                    }
-                }
-                catch (Throwable t) {
-                    // The work's failure is the signal: if the close (and the
-                    // afterAbort hooks it runs) also throws, then attach that
-                    // failure instead of letting it replace the work's
-                    // exception.
-                    try {
-                        transaction.close();
-                    }
-                    catch (Throwable suppressed) {
-                        t.addSuppressed(suppressed);
-                    }
-                    throw t;
-                }
-                finally {
-                    transaction.close();
-                }
-                if(++attempts > policy.limit()) {
-                    throw new RetryExhaustedException(attempts, conflict);
-                }
-                else {
-                    policy.backoff(attempts);
-                }
+        return retryAtomically(transaction -> {
+            T result = work.apply(transaction);
+            if(transaction.commit()) {
+                return result;
             }
-        }
-        finally {
-            connections.release(concourse);
-        }
+            else {
+                // Trigger the retry path below.
+                throw new TransactionException();
+            }
+        });
     }
 
     /**
@@ -3194,6 +3126,61 @@ public final class Runway extends Binding implements
     private <T extends Record, V> T readAndUpdateAtomically(boolean any,
             Class<T> clazz, Criteria criteria, @Nullable Order order,
             String key, UnaryOperator<V> update) {
+        return retryAtomically(transaction -> {
+            T record;
+            if(order != null) {
+                record = any ? transaction.findAnyFirst(clazz, criteria, order)
+                        : transaction.findFirst(clazz, criteria, order);
+            }
+            else {
+                record = any ? transaction.findAnyUnique(clazz, criteria)
+                        : transaction.findUnique(clazz, criteria);
+            }
+            if(record == null) {
+                transaction.abort();
+                return null;
+            }
+            else {
+                V next = Record.resolveAtomicUpdate(key, record, update);
+                if(next != null) {
+                    transaction.verifyOrSet(key,
+                            Record.serializeScalarValue(next), record.id());
+                }
+                if(transaction.commit()) {
+                    // NOTE: The record can move to this Runway only after its
+                    // internal transaction ends, so the assignment follows
+                    // the commit.
+                    record.assign(this);
+                    if(next != null) {
+                        record.applyValueChange(key, next);
+                    }
+                    return record;
+                }
+                else {
+                    // Trigger the retry path below.
+                    throw new TransactionException();
+                }
+            }
+        });
+    }
+
+    /**
+     * Run {@code attempt} against a new {@link DatabaseTransaction} until it
+     * returns, retrying commit conflicts under the governing
+     * {@link AtomicRetryPolicy}.
+     * <p>
+     * The attempt owns the transaction's outcome: it must
+     * {@link DatabaseTransaction#commit() commit} or
+     * {@link DatabaseTransaction#abort() abort} before it returns, and it
+     * signals a retryable failure by throwing a {@link TransactionException}.
+     * Any other failure propagates without retrying.
+     *
+     * @param attempt the work to run once per attempt
+     * @return the value the attempt returns
+     * @throws RetryExhaustedException if the attempt cannot commit within the
+     *             bounds of the governing {@link AtomicRetryPolicy}
+     */
+    private <T> T retryAtomically(Function<DatabaseTransaction, T> attempt) {
         AtomicRetryPolicy policy = properties().atomicRetryPolicy();
         Concourse concourse = connections.request();
         try {
@@ -3204,60 +3191,39 @@ public final class Runway extends Binding implements
                 DatabaseTransaction transaction = new DatabaseTransaction(this,
                         concourse, false);
                 try {
-                    T record;
-                    if(order != null) {
-                        record = any
-                                ? transaction.findAnyFirst(clazz, criteria,
-                                        order)
-                                : transaction.findFirst(clazz, criteria, order);
-                    }
-                    else {
-                        record = any
-                                ? transaction.findAnyUnique(clazz, criteria)
-                                : transaction.findUnique(clazz, criteria);
-                    }
-                    if(record == null) {
-                        transaction.abort();
-                        return null;
-                    }
-                    else {
-                        V next = Record.resolveAtomicUpdate(key, record,
-                                update);
-                        if(next != null) {
-                            transaction.verifyOrSet(key,
-                                    Record.serializeScalarValue(next),
-                                    record.id());
-                        }
-                        if(transaction.commit()) {
-                            // NOTE: The record can move to this Runway only
-                            // after its internal transaction ends, so the
-                            // assignment follows the commit.
-                            record.assign(this);
-                            if(next != null) {
-                                record.applyValueChange(key, next);
-                            }
-                            return record;
-                        }
-                        else {
-                            // Trigger the retry path below.
-                            throw new TransactionException();
-                        }
-                    }
+                    return attempt.apply(transaction);
                 }
                 catch (TransactionException e) {
-                    transaction.abort();
-                    if(++attempts > policy.limit()) {
-                        throw new RetryExhaustedException(attempts, e);
+                    if(transaction.committed() || transaction.hookFailed()) {
+                        // The exception is not a commit conflict: either the
+                        // commit succeeded and a post-commit consequence
+                        // threw, or a lifecycle hook failed. Re-running the
+                        // work would repeat side effects or mask the hook's
+                        // failure.
+                        throw e;
                     }
                     else {
-                        policy.backoff(attempts);
+                        transaction.abort();
+                        if(++attempts > policy.limit()) {
+                            throw new RetryExhaustedException(attempts, e);
+                        }
+                        else {
+                            policy.backoff(attempts);
+                        }
                     }
                 }
                 catch (Throwable t) {
-                    // A non-transaction failure (e.g. a duplicate-entry or
-                    // constraint violation) is terminal: abort and propagate
-                    // without retrying so nothing is committed or mutated.
-                    transaction.abort();
+                    // A non-conflict failure is terminal: propagate it without
+                    // retrying so nothing is committed. The work's failure is
+                    // the signal: if the close (and the afterAbort hooks it
+                    // runs) also throws, then attach that failure instead of
+                    // letting it replace the work's exception.
+                    try {
+                        transaction.close();
+                    }
+                    catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
                     throw t;
                 }
                 finally {
@@ -3728,7 +3694,7 @@ public final class Runway extends Binding implements
          * instance.
          * <p>
          * The default is {@link SpuriousSaveFailureStrategy#FAIL_FAST}, which
-         * immediately propagates any {@code TransactionException} during a
+         * never retries a {@code TransactionException} during a
          * {@link Runway#save(Record...) save}.
          * </p>
          * <p>
@@ -4045,11 +4011,6 @@ public final class Runway extends Binding implements
          */
         NullTransaction() {
             super(Runway.this);
-        }
-
-        @Override
-        public Selections select(Selection<?>... options) {
-            return Runway.this.select(options);
         }
 
         @Override

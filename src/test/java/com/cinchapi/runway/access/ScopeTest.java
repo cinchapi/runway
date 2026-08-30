@@ -169,6 +169,30 @@ public class ScopeTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that the per-record {@code test} of
+     * {@link Scope#unrestricted()} accepts every {@link Record}, and that the
+     * {@code test} of {@link Scope#none()} accepts none.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code test} on {@link Scope#unrestricted()} with a
+     * {@link TestRecord}.</li>
+     * <li>Call {@code test} on {@link Scope#none()} with a
+     * {@link TestRecord}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first call returns {@code true}; the
+     * second returns {@code false}.
+     */
+    @Test
+    public void testUnrestrictedTestAcceptsEveryRecord() {
+        Assert.assertTrue(Scope.unrestricted().test(new TestRecord()));
+        Assert.assertFalse(Scope.none().test(new TestRecord()));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@link Scope#unrestricted()} returns
      * the same singleton instance on every call.
      * <p>

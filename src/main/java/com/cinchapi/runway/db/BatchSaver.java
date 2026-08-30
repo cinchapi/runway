@@ -170,21 +170,6 @@ public final class BatchSaver implements Saver {
         });
     }
 
-    @SuppressWarnings("unchecked")
-    @Override
-    public void find(Criteria criteria, Consumer<Set<Long>> validator) {
-        Preconditions.checkNotNull(validator);
-        int[] slot = new int[1];
-        postWriteReadOps.add(group -> {
-            slot[0] = group.commands().size();
-            group.find(criteria);
-        });
-        pendingValidators.add(results -> {
-            Set<Long> result = (Set<Long>) results.get(slot[0]);
-            validator.accept(result);
-        });
-    }
-
     @Override
     public void flush() {
         while (!preWriteReadOps.isEmpty() || !postWriteReadOps.isEmpty()
@@ -199,18 +184,6 @@ public final class BatchSaver implements Saver {
                 // until a pass leaves nothing pending.
                 flushReads();
             }
-        }
-    }
-
-    @SuppressWarnings({ "rawtypes", "unchecked" })
-    @Override
-    public void reconcile(String key, long record, Collection<?> values) {
-        if(values.isEmpty()) {
-            deferredWriteOps.add(group -> group.clear(key, record));
-        }
-        else {
-            Collection<Object> casted = (Collection) values;
-            deferredWriteOps.add(group -> group.reconcile(key, record, casted));
         }
     }
 

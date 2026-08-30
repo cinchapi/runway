@@ -368,6 +368,31 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Run {@code restore} unless {@code transaction} owns the state the restore
+     * would undo: it committed, or a failed save poisoned it while it remains
+     * open.
+     *
+     * @param restore the task that restores captured bindings, or {@code null}
+     *            when there is nothing to restore
+     * @param transaction the {@link TransactionInterface} whose outcome decides
+     *            whether the restore runs, or {@code null} when no transaction
+     *            was attempted
+     */
+    static void restoreUnlessTransactionOwns(@Nullable Runnable restore,
+            @Nullable TransactionInterface transaction) {
+        if(restore != null) {
+            boolean owns = false;
+            if(transaction instanceof DatabaseTransaction) {
+                DatabaseTransaction tx = (DatabaseTransaction) transaction;
+                owns = tx.committed() || (tx.open() && tx.poisoned());
+            }
+            if(!owns) {
+                restore.run();
+            }
+        }
+    }
+
+    /**
      * Serialize {@code value} by converting it to an object that can be stored
      * within the database. This method assumes that {@code value} is a scalar
      * (e.g. not a {@link Sequences#isSequence(Object)}).
@@ -1467,6 +1492,9 @@ public abstract class Record implements Comparable<Record> {
                 }
             }
         }
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
             Map<Long, DeferredReference<Record>> authors = new HashMap<>();
@@ -1706,6 +1734,9 @@ public abstract class Record implements Comparable<Record> {
                 key, __, replacement.getClass().getSimpleName(),
                 field.getType().getSimpleName());
         boolean transactional = isBoundToOpenTransaction();
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
             // The validation runs within the operation window so that a
@@ -2292,6 +2323,9 @@ public abstract class Record implements Comparable<Record> {
     public final void refresh() {
         Verify.that(binding != null,
                 "Cannot refresh because this Record has no binding");
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
             ConcurrentMap<Long, Record> existing = new ConcurrentHashMap<>();
@@ -2940,16 +2974,43 @@ public abstract class Record implements Comparable<Record> {
      * Apply the in-memory effects of a committed save that deleted the
      * {@link Record Records} with {@code ids}: remove every reference that one
      * of this {@link Record Record's} {@link CaptureDelete} fields holds to a
-     * deleted record and re-align this {@link Record Record's} unsaved-changes
-     * status with its current state.
+     * deleted record and mark those removals as saved, without disturbing the
+     * unsaved status of any other change.
      *
      * @param ids the ids of {@link Record Records} the save deleted
      */
     void applyCaptureDeleteCleanup(Set<Long> ids) {
-        if(removeCaptureDeleteReferences(ids)) {
+        Set<Field> touched = removeCaptureDeleteReferences(ids);
+        if(!touched.isEmpty()) {
             clearComputeOnceCache();
             _audit = null;
-            __baseline = captureBaseline();
+            if(__baseline != null) {
+                Set<Object> removed = Sets
+                        .newHashSetWithExpectedSize(ids.size());
+                for (long id : ids) {
+                    removed.add(Link.to(id));
+                }
+                Map<String, Object> baseline = Maps.newHashMap(__baseline);
+                for (Field field : touched) {
+                    String key = field.getName();
+                    Object stored = baseline.get(key);
+                    if(stored instanceof Set) {
+                        Set<Object> remaining = Sets
+                                .newLinkedHashSet((Set<?>) stored);
+                        remaining.removeAll(removed);
+                        if(remaining.isEmpty()) {
+                            baseline.remove(key);
+                        }
+                        else {
+                            baseline.put(key, remaining);
+                        }
+                    }
+                    else if(removed.contains(stored)) {
+                        baseline.remove(key);
+                    }
+                }
+                __baseline = baseline;
+            }
         }
     }
 
@@ -3107,17 +3168,6 @@ public abstract class Record implements Comparable<Record> {
             }
             return false;
         }
-    }
-
-    /**
-     * Return {@code true} if this record is in a "zombie" state meaning it
-     * exists in the database without any actual data.
-     *
-     * @param concourse
-     * @return {@code true} if this record is a zombie
-     */
-    final boolean inZombieState(Concourse concourse) {
-        return inZombieState(id, concourse, null);
     }
 
     /**
@@ -3377,10 +3427,11 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param ids the ids of {@link Record Records} deleted within the active
      *            save
-     * @return {@code true} if at least one reference was removed
+     * @return the {@link Field Fields} from which at least one reference was
+     *         removed; empty if nothing was removed
      */
-    boolean removeCaptureDeleteReferences(Set<Long> ids) {
-        boolean changed = false;
+    Set<Field> removeCaptureDeleteReferences(Set<Long> ids) {
+        Set<Field> touched = Sets.newLinkedHashSet();
         Set<Field> fields = StaticAnalysis.instance().getAnnotatedFields(this,
                 CaptureDelete.class);
         for (Field field : fields) {
@@ -3404,7 +3455,7 @@ public abstract class Record implements Comparable<Record> {
                             }
                         }
                         field.set(this, replacement);
-                        changed = true;
+                        touched.add(field);
                     }
                 }
                 else if(value.getClass().isArray()) {
@@ -3426,19 +3477,19 @@ public abstract class Record implements Comparable<Record> {
                             field.set(this, java.lang.reflect.Array
                                     .newInstance(component, 0));
                         }
-                        changed = true;
+                        touched.add(field);
                     }
                 }
                 else if(isDeletedReference(value, ids)) {
                     field.set(this, null);
-                    changed = true;
+                    touched.add(field);
                 }
             }
             catch (ReflectiveOperationException e) {
                 throw CheckedExceptions.wrapAsRuntimeException(e);
             }
         }
-        return changed;
+        return touched;
     }
 
     /**
@@ -4328,8 +4379,8 @@ public abstract class Record implements Comparable<Record> {
                         Class<? extends Record> clazz = Reflection
                                 .getClassCasted(__);
                         Record record = db.load(clazz, id);
-                        if(record.removeCaptureDeleteReferences(
-                                ImmutableSet.of(this.id))) {
+                        if(!record.removeCaptureDeleteReferences(
+                                ImmutableSet.of(this.id)).isEmpty()) {
                             record.saveWithinTransaction(saver, context);
                         }
                         else {
@@ -4734,6 +4785,9 @@ public abstract class Record implements Comparable<Record> {
      */
     private void refreshAtomicableField(Field field, String key,
             boolean requireRecord) {
+        // Capture the provider so the release pairs with the request, even
+        // if user code that runs within the operation rebinds this Record.
+        ConcourseProvider connections = this.connections;
         Concourse concourse = connections.request();
         try {
             Set<Object> values;
@@ -5307,7 +5361,10 @@ public abstract class Record implements Comparable<Record> {
                 boolean settled;
                 if(Objects.equals(current, next)) {
                     // Nothing to write, but confirm the read isn't stale
-                    // before treating the no-op as settled.
+                    // before treating the no-op as settled. The provider is
+                    // captured so the release pairs with the request, even
+                    // if user code rebinds this Record.
+                    ConcourseProvider connections = this.connections;
                     Concourse concourse = connections.request();
                     try {
                         settled = concourse.verify(key,

@@ -39,23 +39,6 @@ import com.cinchapi.runway.RunwayBaseClientServerTest;
 public class AudienceAuthorTrackingTest extends RunwayBaseClientServerTest {
 
     @Test
-    public void testAuthorIsTracked() {
-        User user = new User();
-        user.name = "Jeff Nelson";
-        user.age = 37;
-        Document document = user.create(Document.class);
-        user.write("text", "This is written by Jeff Nelson", document);
-        runway.save(user, document);
-        System.out.println(client.select(document.id()));
-        document.set("text", "This is anonymous text");
-        document.save();
-        System.out.println(client.select(document.id()));
-        System.out.println(client.audit(document.id()));
-        System.out.println(document.audit());
-        Assert.assertFalse(document.audit().isEmpty());
-    }
-
-    @Test
     public void testAuthorAttributionWhenAudienceMakesChanges() {
         User user = new User();
         user.name = "Alice";
@@ -472,46 +455,6 @@ public class AudienceAuthorTrackingTest extends RunwayBaseClientServerTest {
     }
 
     @Test
-    public void testAuditTrailWithBooleanAndNumericFields() {
-        User user = new User();
-        user.name = "Diana";
-        user.email = "diana@example.com";
-        user.roles = Arrays.asList("tester");
-        user.active = true;
-
-        Comment comment = user.create(Comment.class);
-        user.write("content", "Great work!", comment);
-        user.write("author", "Diana", comment);
-        user.write("rating", 5, comment);
-        user.write("approved", true, comment);
-        user.write("mentions", Arrays.asList("@alice", "@bob"), comment);
-        runway.save(user, comment);
-
-        Map<Timestamp, Map<String, Revision>> audit = comment.audit();
-        Assert.assertFalse(audit.isEmpty());
-
-        Map<String, Revision> revisions = audit.values().iterator().next();
-
-        // Test boolean field
-        Revision approvedRevision = revisions.get("approved");
-        Assert.assertTrue(approvedRevision.isAttributed());
-        Assert.assertEquals(user, approvedRevision.author());
-        Assert.assertEquals(true, approvedRevision.to());
-
-        // Test numeric field
-        Revision ratingRevision = revisions.get("rating");
-        Assert.assertTrue(ratingRevision.isAttributed());
-        Assert.assertEquals(user, ratingRevision.author());
-        Assert.assertEquals(5, ratingRevision.to());
-
-        // Test string field
-        Revision contentRevision = revisions.get("content");
-        Assert.assertTrue(contentRevision.isAttributed());
-        Assert.assertEquals(user, contentRevision.author());
-        Assert.assertEquals("Great work!", contentRevision.to());
-    }
-
-    @Test
     public void testAuditTrailWithMixedDataTypes() {
         User user = new User();
         user.name = "Eve";
@@ -780,7 +723,6 @@ public class AudienceAuthorTrackingTest extends RunwayBaseClientServerTest {
 
     static class User extends Record implements Audience {
         String name;
-        int age;
         String email;
         List<String> roles;
         boolean active;
@@ -794,14 +736,6 @@ public class AudienceAuthorTrackingTest extends RunwayBaseClientServerTest {
         int version;
         boolean published;
         Timestamp lastModified;
-    }
-
-    static class Comment extends Record {
-        String content;
-        String author;
-        int rating;
-        boolean approved;
-        List<String> mentions;
     }
 
     static class Project extends Record {

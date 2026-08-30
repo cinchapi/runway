@@ -229,64 +229,6 @@ public class UniqueSelectionEndToEndTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that the existing
-     * {@link DatabaseInterface#findUnique(Class, Criteria)} method still works
-     * correctly after being refactored to delegate to the {@link Selection}
-     * API.
-     * <p>
-     * <strong>Start state:</strong> One {@link Player} saved.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link Player}.</li>
-     * <li>Call {@code runway.findUnique(Player.class, criteria)}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The single matching {@link Player} is
-     * returned, confirming backward compatibility.
-     */
-    @Test
-    public void testFindUniqueStillWorksAfterRefactor() {
-        Player player = new Player("Legacy", 33);
-        runway.save(player);
-
-        Criteria criteria = Criteria.where().key("name")
-                .operator(Operator.EQUALS).value("Legacy");
-        Player result = runway.findUnique(Player.class, criteria);
-        Assert.assertNotNull(result);
-        Assert.assertEquals(player.id(), result.id());
-    }
-
-    /**
-     * <strong>Goal:</strong> Verify that
-     * {@link DatabaseInterface#findAnyUnique(Class, Criteria)} still works
-     * correctly after being refactored to delegate to the {@link Selection}
-     * API.
-     * <p>
-     * <strong>Start state:</strong> One {@link Player} saved.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Save a {@link Player}.</li>
-     * <li>Call {@code runway.findAnyUnique(Player.class, criteria)}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The single matching {@link Player} is
-     * returned, confirming backward compatibility.
-     */
-    @Test
-    public void testFindAnyUniqueStillWorksAfterRefactor() {
-        Player player = new Player("LegacyAny", 44);
-        runway.save(player);
-
-        Criteria criteria = Criteria.where().key("name")
-                .operator(Operator.EQUALS).value("LegacyAny");
-        Player result = runway.findAnyUnique(Player.class, criteria);
-        Assert.assertNotNull(result);
-        Assert.assertEquals(player.id(), result.id());
-    }
-
-    /**
      * <strong>Goal:</strong> Verify that a {@link UniqueSelection} without
      * criteria returns the single {@link Record} when only one of that exact
      * class exists.

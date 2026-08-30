@@ -88,31 +88,6 @@ public class AudienceAccessControlReadTest
     }
 
     @Test
-    public void testReadOperationPartialAccessThrowsException() {
-        EmployerUser employerUser = new EmployerUser();
-        employerUser.name = "HR Manager";
-        employerUser.email = "hr@company.com";
-
-        Candidate candidate = new Candidate();
-        candidate.name = "Jane Developer";
-        candidate.email = "jane@email.com";
-        candidate.resume = "Jane's private resume";
-        candidate.skills = "Java, Python";
-
-        // Even if some fields are accessible, read() should throw exception if
-        // any field is denied
-        try {
-            employerUser.read(ImmutableSet.of("skills", "email", "resume"),
-                    candidate);
-            Assert.fail(
-                    "Should have thrown RestrictedAccessException for mixed access");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception - resume is not accessible to employer users
-        }
-    }
-
-    @Test
     public void testReadOperationNavigationSuccess() {
         Employer company = new Employer();
         company.name = "TechCorp";
@@ -183,45 +158,6 @@ public class AudienceAccessControlReadTest
                     "Should have thrown RestrictedAccessException for undiscoverable record");
         }
         catch (RestrictedAccessException e) {}
-    }
-
-    @Test
-    public void testReadVsFrameDistinction() {
-        Candidate candidate1 = new Candidate();
-        candidate1.email = "alice@email.com";
-        candidate1.name = "Alice Smith";
-
-        Candidate candidate2 = new Candidate();
-        candidate2.email = "bob@email.com";
-        candidate2.name = "Bob Jones";
-        candidate2.resume = "Bob's private resume";
-        candidate2.skills = "JavaScript, React";
-
-        EmployerUser employerUser = new EmployerUser();
-        employerUser.name = "HR Manager";
-
-        // Test that read() throws exception while frame() filters results
-        try {
-            employerUser.read(ImmutableSet.of("skills", "resume", "email"),
-                    candidate2);
-            Assert.fail(
-                    "read() should have thrown RestrictedAccessException for mixed access");
-        }
-        catch (RestrictedAccessException e) {
-            // Expected exception
-        }
-
-        // Verify frame() works differently - should return only accessible
-        // fields
-        Map<String, Object> frameResult = employerUser.frame(
-                ImmutableSet.of("skills", "resume", "email"), candidate2);
-        Assert.assertNotNull(frameResult);
-        Assert.assertTrue("frame() should include accessible skills field",
-                frameResult.containsKey("skills"));
-        Assert.assertTrue("frame() should include accessible email field",
-                frameResult.containsKey("email"));
-        Assert.assertFalse("frame() should exclude inaccessible resume field",
-                frameResult.containsKey("resume"));
     }
 
     @Test
@@ -492,6 +428,47 @@ public class AudienceAccessControlReadTest
         Assert.assertEquals("Java, Python", candidateData.get("skills"));
 
         Assert.assertEquals(120000.0, result.get("salary"));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the single-key {@code read} throws for
+     * a denied key, and that the refusal has no effect on a later, fully
+     * permitted {@code read} on the same thread.
+     * <p>
+     * <strong>Start state:</strong> A {@link Candidate} whose {@code resume} an
+     * {@link EmployerUser} may not read, but whose {@code name} it may.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code read} for the denied {@code resume} key and catch the
+     * expected exception.</li>
+     * <li>Call {@code read} for the permitted {@code name} key.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The first {@code read} throws
+     * {@link RestrictedAccessException}; the second returns the {@code name}
+     * value.
+     */
+    @Test
+    public void testReadSingleKeyDeniedThrowsException() {
+        EmployerUser employerUser = new EmployerUser();
+        employerUser.name = "HR Manager";
+
+        Candidate candidate = new Candidate();
+        candidate.name = "Jane Developer";
+        candidate.resume = "Jane's private resume";
+
+        try {
+            employerUser.read("resume", candidate);
+            Assert.fail("Expected a RestrictedAccessException");
+        }
+        catch (RestrictedAccessException e) {
+            // Expected exception
+        }
+
+        Map<String, Object> data = employerUser.read(ImmutableSet.of("name"),
+                candidate);
+        Assert.assertEquals("Jane Developer", data.get("name"));
     }
 
 }

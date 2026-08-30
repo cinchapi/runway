@@ -108,6 +108,7 @@ public class RunwayCrossVersionTest extends CrossVersionTest {
     @Test
     public void testLoadSort() {
         Set<ACD> acds = runway.load(ACD.class, Order.by("ts").descending());
+        Assert.assertEquals(1000, acds.size());
         long ts = Long.MAX_VALUE;
         for (ACD acd : acds) {
             Assert.assertTrue(acd.ts < ts);
@@ -138,6 +139,7 @@ public class RunwayCrossVersionTest extends CrossVersionTest {
                 AB.class, Criteria.where().key("active")
                         .operator(Operator.EQUALS).value(true),
                 Sort.by("ts").decreasing());
+        Assert.assertFalse(abs.isEmpty());
         long ts = Long.MAX_VALUE;
         for (AB ab : abs) {
             Assert.assertTrue(ab.ts < ts);

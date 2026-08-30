@@ -95,21 +95,6 @@ public final class IncrementalSaver implements Saver {
     }
 
     @Override
-    public void find(Criteria criteria, Consumer<Set<Long>> validator) {
-        validator.accept(concourse.find(criteria));
-    }
-
-    @Override
-    public void reconcile(String key, long record, Collection<?> values) {
-        if(values.isEmpty()) {
-            concourse.clear(key, record);
-        }
-        else {
-            concourse.reconcile(key, record, values.toArray());
-        }
-    }
-
-    @Override
     public void reconcile(String key, long record, Object[] values) {
         if(values.length == 0) {
             concourse.clear(key, record);

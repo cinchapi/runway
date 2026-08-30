@@ -37,7 +37,10 @@ import com.cinchapi.runway.TransactionInterface;
  * Every database operation delegates to the {@link Audience}, so reads observe
  * the {@link Audience Audience's} visibility and writes require its
  * permissions, and each operation resolves within the {@link Transaction}. The
- * lifecycle methods drive the {@link Transaction} directly.
+ * exception is {@link #save(boolean, Record...)}, which forwards to the
+ * {@link Transaction} without {@link Audience} mediation because access checks
+ * ran when the values were written. The lifecycle methods drive the
+ * {@link Transaction} directly.
  * </p>
  * <p>
  * The delegation is only valid while the {@link Audience} operates in the
@@ -165,6 +168,7 @@ final class AudienceTransaction implements Transaction {
 
     @Override
     public boolean save(boolean preventStaleWrites, Record... records) {
+        verifyAudienceScope();
         return transaction.save(preventStaleWrites, records);
     }
 
