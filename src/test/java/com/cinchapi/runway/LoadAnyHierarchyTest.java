@@ -69,6 +69,23 @@ public class LoadAnyHierarchyTest extends RunwayBaseClientServerTest {
         Assert.assertEquals("Zach", names[2]);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a paged {@code loadAny} draws from the
+     * entire class hierarchy, so a page larger than the exact-class record
+     * count still fills with subclass records.
+     * <p>
+     * <strong>Start state:</strong> No prior state needed.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save 2 {@code Player} and 2 {@code PointGuard} records.</li>
+     * <li>Load {@code Player} records with {@code loadAny} and a page limit of
+     * 3.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The page contains 3 records; an exact-class
+     * load could supply only the 2 {@code Player} records.
+     */
     @Test
     public void testLoadAnyWithPageReturnsSubclasses() {
         Player player1 = new Player("Player1", 15);
@@ -78,10 +95,10 @@ public class LoadAnyHierarchyTest extends RunwayBaseClientServerTest {
 
         runway.save(player1, player2, pg1, pg2);
 
-        Page page = Page.limit(2);
+        Page page = Page.limit(3);
         Set<Player> pagedPlayers = runway.loadAny(Player.class, page);
 
-        Assert.assertEquals(2, pagedPlayers.size());
+        Assert.assertEquals(3, pagedPlayers.size());
     }
 
     @Test

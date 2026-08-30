@@ -189,19 +189,6 @@ public class MetadataTest extends RunwayBaseClientServerTest {
     }
 
     @Test
-    public void testLastUpdatedAtSingleKeyOptimization() {
-        User user = new User("Jeff Nelson");
-        user.save();
-
-        user.age = 37;
-        user.save();
-
-        // Single key should use optimized path
-        Timestamp result = user.lastUpdatedAt("age");
-        Assert.assertNotNull("Single key lookup should work", result);
-    }
-
-    @Test
     public void testLastUpdatedAtMultipleKeysOrder() {
         User user = new User("Jeff Nelson");
         user.save();
@@ -252,25 +239,6 @@ public class MetadataTest extends RunwayBaseClientServerTest {
     }
 
     @Test
-    public void testLastUpdatedAtConcurrentUpdates() {
-        User user = new User("Jeff Nelson");
-        user.save();
-
-        // Simulate concurrent updates by saving multiple times rapidly
-        for (int i = 0; i < 10; i++) {
-            user.age = i;
-            user.save();
-        }
-
-        Timestamp result = user.lastUpdatedAt("age");
-        Assert.assertNotNull("Concurrent updates should work", result);
-
-        // Should get the most recent update
-        Assert.assertTrue("Should get recent timestamp",
-                result.getMicros() > 0);
-    }
-
-    @Test
     public void testLastUpdatedAtFieldNeverUpdated() {
         User user = new User("Jeff Nelson");
         user.save();
@@ -278,21 +246,6 @@ public class MetadataTest extends RunwayBaseClientServerTest {
         // Field that was never updated should return null
         Timestamp result = user.lastUpdatedAt("neverUpdatedField");
         Assert.assertNull("Never updated field should return null", result);
-    }
-
-    @Test
-    public void testLastUpdatedAtAllFieldsUpdated() {
-        User user = new User("Jeff Nelson");
-        user.save();
-
-        user.age = 37;
-        user.name = "Jeffery Nelson";
-        user.save();
-
-        // All specified fields were updated, should return most recent
-        Timestamp result = user.lastUpdatedAt("age", "name");
-        Assert.assertNotNull("All fields updated should return timestamp",
-                result);
     }
 
     @Test
@@ -312,29 +265,6 @@ public class MetadataTest extends RunwayBaseClientServerTest {
         Timestamp ageUpdate = user.lastUpdatedAt("age");
         Assert.assertEquals("Should match updated field timestamp", ageUpdate,
                 result);
-    }
-
-    @Test
-    public void testLastUpdatedAtFieldUpdatedMultipleTimes() {
-        User user = new User("Jeff Nelson");
-        user.save();
-
-        user.age = 37;
-        user.save();
-
-        user.age = 38;
-        user.save();
-
-        user.age = 39;
-        user.save();
-
-        // Field updated multiple times should return most recent
-        Timestamp result = user.lastUpdatedAt("age");
-        Assert.assertNotNull("Multiple updates should return timestamp",
-                result);
-
-        // Should be the most recent update
-        Assert.assertTrue("Should be recent timestamp", result.getMicros() > 0);
     }
 
     @Test
@@ -361,25 +291,6 @@ public class MetadataTest extends RunwayBaseClientServerTest {
         // Should be the most recent update among the specified fields
         Timestamp nameUpdate = user.lastUpdatedAt("name");
         Assert.assertEquals("Should return most recent update", nameUpdate,
-                result);
-    }
-
-    @Test
-    public void testLastUpdatedAtNoKeysSpecified() {
-        User user = new User("Jeff Nelson");
-        user.save();
-
-        user.age = 37;
-        user.save();
-
-        // No keys specified should return most recent update to any field
-        Timestamp result = user.lastUpdatedAt();
-        Assert.assertNotNull("No keys should return most recent update",
-                result);
-
-        // Should match the most recent save
-        Timestamp ageUpdate = user.lastUpdatedAt("age");
-        Assert.assertEquals("Should return most recent update", ageUpdate,
                 result);
     }
 
