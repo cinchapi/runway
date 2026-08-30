@@ -637,6 +637,44 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a {@code getAndUpdate} within a
+     * {@link Transaction} refuses a {@link Record} whose data another writer
+     * erased with a {@link DeletedRecordException}, even when the operated
+     * field is primitive-typed and therefore also fails the guard that refuses
+     * a primitive field with no stored value.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} whose data was erased
+     * through a second copy after the first copy loaded it.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code getAndUpdate("score", s -> s + 1)} on the stale copy
+     * within {@code transactAndSupply}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The operation throws
+     * {@link DeletedRecordException} and the record remains absent from the
+     * database.
+     */
+    @Test
+    public void testGetAndUpdateRefusesAnErasedRecordWithAPrimitiveField() {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        Item stale = runway.load(Item.class, item.id());
+        Item doomed = runway.load(Item.class, item.id());
+        doomed.deleteOnSave();
+        Assert.assertTrue(doomed.save());
+        try {
+            stale.transactAndSupply(transaction -> stale.getAndUpdate("score",
+                    (Integer score) -> score + 1));
+            Assert.fail("Expected a DeletedRecordException");
+        }
+        catch (DeletedRecordException e) {/* expected */}
+        Assert.assertNull(runway.load(Item.class, item.id()));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code exchange} on a {@link Record}
      * bound to an open {@link Transaction} stages within it, so the swap is
      * visible inside the transaction, invisible outside, and durable after the
