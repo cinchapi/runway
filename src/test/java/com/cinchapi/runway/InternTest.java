@@ -248,6 +248,42 @@ public class InternTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code intern} does not adopt either
+     * record when two independent {@link Unique} constraints resolve to two
+     * different existing records; the create fails loudly instead.
+     * <p>
+     * <strong>Start state:</strong> Two saved {@link Account Accounts} with
+     * distinct emails and handles.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save two {@link Account Accounts} with distinct emails and
+     * handles.</li>
+     * <li>Call {@code intern} with a new {@link Account} that has the first
+     * {@link Account Account's} email and the second {@link Account Account's}
+     * handle.</li>
+     * <li>Catch the expected exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} is thrown
+     * and only the two original {@link Account Accounts} exist.
+     */
+    @Test
+    public void testInternFailsLoudlyWhenConstraintsMatchDifferentRecords() {
+        runway.save(new Account("e1@example.com", "handle1", "bio"));
+        runway.save(new Account("e2@example.com", "handle2", "bio"));
+        boolean threw = false;
+        try {
+            runway.intern(new Account("e1@example.com", "handle2", "x"));
+        }
+        catch (SuppressedRunwayException e) {
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals(2, runway.count(Account.class));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code intern} throws
      * {@link DuplicateEntryException} when more than one record shares the
      * identity, without creating another record.

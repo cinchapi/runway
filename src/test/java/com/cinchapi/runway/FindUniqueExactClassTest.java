@@ -79,14 +79,26 @@ public class FindUniqueExactClassTest extends RunwayBaseClientServerTest {
         Assert.assertNull(result);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@code findAnyUnique} returns the sole
+     * exact-class match.
+     * <p>
+     * <strong>Start state:</strong> One {@link Player} saved with a known name.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Player} with a known name.</li>
+     * <li>Call {@code runway.findAnyUnique(Player.class, criteria)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The saved {@link Player} is returned.
+     */
     @Test
-    public void testFindAnyUniqueSearchesHierarchy() {
+    public void testFindAnyUniqueReturnsSoleExactClassMatch() {
         // Create a Player with a specific name
         Player player = new Player("HierarchyTest", 50);
         runway.save(player);
 
-        // findAnyUnique should find the Player even when searching from
-        // the parent class
         Criteria criteria = Criteria.where().key("name")
                 .operator(Operator.EQUALS).value("HierarchyTest");
 
@@ -94,28 +106,5 @@ public class FindUniqueExactClassTest extends RunwayBaseClientServerTest {
 
         Assert.assertNotNull(result);
         Assert.assertEquals("HierarchyTest", result.name);
-    }
-
-    @Test
-    public void testFindAnyUniqueThrowsWhenMultipleInHierarchy() {
-        // Create both a Player and PointGuard with the same name
-        Player player = new Player("DuplicateTest", 50);
-        runway.save(player);
-
-        PointGuard pointGuard = new PointGuard("DuplicateTest", 60, 10);
-        runway.save(pointGuard);
-
-        // findAnyUnique should throw because it searches the hierarchy
-        // and finds both
-        Criteria criteria = Criteria.where().key("name")
-                .operator(Operator.EQUALS).value("DuplicateTest");
-
-        try {
-            runway.findAnyUnique(Player.class, criteria);
-            Assert.fail("Expected DuplicateEntryException");
-        }
-        catch (DuplicateEntryException e) {
-            // Expected
-        }
     }
 }

@@ -438,6 +438,27 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code exchange} rejects a transient
+     * field because a transient field is never stored.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Meter}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Meter}.</li>
+     * <li>Call {@code exchange("scratch", "abc")}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> An {@link IllegalArgumentException} is thrown.
+     */
+    @Test(expected = IllegalArgumentException.class)
+    public void testExchangeRejectsTransientField() {
+        Meter meter = new Meter();
+        runway.save(meter);
+        meter.exchange("scratch", "abc");
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that {@code exchange} rejects a collection
      * field because it does not store a single value.
      * <p>
@@ -1570,6 +1591,12 @@ public class RecordAtomicOperationTest extends RunwayBaseClientServerTest {
          * expected operand.
          */
         public String note = null;
+
+        /**
+         * A transient field that is never stored; atomic operations must reject
+         * it.
+         */
+        public transient String scratch = null;
 
         /**
          * A private field; a restrictive {@link DynamicWritePolicy} must refuse
