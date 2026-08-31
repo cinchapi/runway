@@ -521,6 +521,12 @@ public final class Runway extends Binding implements
     private final Properties properties = new Properties();
 
     /**
+     * The {@link ReferenceNotFoundPolicy} for every field of an assigned
+     * {@link Record} that declares no policy of its own.
+     */
+    private ReferenceNotFoundPolicy referenceNotFoundPolicy = ReferenceNotFoundPolicy.SKIP;
+
+    /**
      * The strategy for handling spurious {@link TransactionException
      * TransactionExceptions} during {@link #save(Record...) save} operations.
      */
@@ -2844,11 +2850,17 @@ public final class Runway extends Binding implements
                 connections.release(connection);
             }
         }
-        String section = (String) Iterables
-                .getLast(data.get(Record.SECTION_KEY));
-        Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, loaded, transaction, data,
-                targets);
+        String section = (String) Iterables.getLast(
+                data.getOrDefault(Record.SECTION_KEY, ImmutableSet.of()), null);
+        if(section == null) {
+            // The record holds no data, so no Record stands behind the id.
+            return null;
+        }
+        else {
+            Class<T> clazz = Reflection.getClassCasted(section);
+            return loadWithErrorHandling(clazz, id, loaded, transaction, data,
+                    targets);
+        }
     }
 
     /**
@@ -3461,6 +3473,11 @@ public final class Runway extends Binding implements
          */
         private DynamicWritePolicy dynamicWritePolicy = DynamicWritePolicy
                 .permissive();
+        /**
+         * The {@link ReferenceNotFoundPolicy} for the built {@link Runway}
+         * instance.
+         */
+        private ReferenceNotFoundPolicy referenceNotFoundPolicy = ReferenceNotFoundPolicy.SKIP;
         private String environment = "";
         private String host = "localhost";
         private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = null;
@@ -3500,6 +3517,7 @@ public final class Runway extends Binding implements
             Runway db = new Runway(connections);
             db.atomicRetryPolicy = atomicRetryPolicy;
             db.dynamicWritePolicy = dynamicWritePolicy;
+            db.referenceNotFoundPolicy = referenceNotFoundPolicy;
             db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
@@ -3531,6 +3549,25 @@ public final class Runway extends Binding implements
          */
         public Builder dynamicWritePolicy(DynamicWritePolicy policy) {
             this.dynamicWritePolicy = policy;
+            return this;
+        }
+
+        /**
+         * Set the {@link ReferenceNotFoundPolicy} for every field that declares
+         * no policy of its own.
+         * <p>
+         * The default is {@link ReferenceNotFoundPolicy#SKIP}, which skips a
+         * stale reference and leaves it in the database. Provide
+         * {@link ReferenceNotFoundPolicy#REPAIR} to also delete the stale
+         * reference, or {@link ReferenceNotFoundPolicy#ERROR} to fail the load
+         * of the housing record.
+         * </p>
+         *
+         * @param policy the {@link ReferenceNotFoundPolicy} to use
+         * @return this builder
+         */
+        public Builder referenceNotFoundPolicy(ReferenceNotFoundPolicy policy) {
+            this.referenceNotFoundPolicy = policy;
             return this;
         }
 
@@ -3798,6 +3835,16 @@ public final class Runway extends Binding implements
          */
         public DynamicWritePolicy dynamicWritePolicy() {
             return dynamicWritePolicy;
+        }
+
+        /**
+         * Return the {@link ReferenceNotFoundPolicy} for every field of an
+         * assigned {@link Record} that declares no policy of its own.
+         *
+         * @return the governing {@link ReferenceNotFoundPolicy}
+         */
+        public ReferenceNotFoundPolicy referenceNotFoundPolicy() {
+            return referenceNotFoundPolicy;
         }
 
         /**

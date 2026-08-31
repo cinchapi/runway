@@ -51,8 +51,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * <li>Call {@link Record#deleteOnSave()} and save the record again.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The delete listener fires with the deleted
-     * {@link Record} and the record no longer loads from the database.
+     * <strong>Expected:</strong> The delete listener fires with the id of the
+     * deleted {@link Record}, and the record no longer loads from the database.
      */
     @Test
     public void testDeleteListenerCalledWhenSaveDeletesRecord()
@@ -191,8 +191,8 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * <li>Delete the {@link SpecialTrackedRecord} via a save.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The listener fires with the deleted subclass
-     * record.
+     * <strong>Expected:</strong> The listener fires with the id of the deleted
+     * subclass record.
      */
     @Test
     public void testTypedDeleteListenerFiresForSubclassOfRegisteredType()
@@ -272,7 +272,7 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The post-build delete listener fires with the
-     * deleted {@link Record}.
+     * id of the deleted {@link Record}.
      */
     @Test
     public void testOnDeleteAfterBuild() throws Exception {

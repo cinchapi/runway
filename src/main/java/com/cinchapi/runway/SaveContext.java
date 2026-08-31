@@ -71,7 +71,7 @@ final class SaveContext {
     private final Consumer<Record> admission;
 
     /**
-     * The stored state that each deleted record held when the active attempt
+     * The state that each record stored at the moment the active attempt
      * deleted it, keyed by record id.
      */
     private final Map<Long, Map<String, Set<Object>>> deletionData = new HashMap<>();
@@ -327,12 +327,9 @@ final class SaveContext {
 
     /**
      * Merge every {@link Record}, {@link Outcome} and captured deletion state
-     * from {@code context} into this one.
-     * <p>
-     * The state that {@code context} captured for a record is kept only if no
-     * earlier merge captured state for that record, because a save that
-     * observes a record another save already deleted captures nothing.
-     * </p>
+     * from {@code context} into this one. When more than one context captured
+     * deletion state for the same record, the state from the earliest merge is
+     * the one that survives.
      *
      * @param context the {@link SaveContext} to merge
      */
@@ -353,8 +350,8 @@ final class SaveContext {
     }
 
     /**
-     * Associate the state that the record with {@code id} stored when the
-     * active attempt deleted it, so a successful save can report it.
+     * Capture the state that the record with {@code id} stored at the moment
+     * the active attempt deleted it.
      *
      * @param id the record id
      * @param data the record's stored state

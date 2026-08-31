@@ -182,10 +182,9 @@ public class GH95 extends RunwayBaseClientServerTest {
      * {@code runway.load(Stone.class, id)}.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The reload completes without throwing,
+     * <strong>Expected:</strong> The reload completes without throwing and
      * {@code stone.pebbles} contains exactly the two surviving {@link Pebble
-     * Pebbles}, and the dangling {@link com.cinchapi.concourse.Link Link} has
-     * been removed from {@link Stone Stone's} stored {@code pebbles} data.
+     * Pebbles}.
      */
     @Test
     public void testLoadDoesNotNpeOnDanglingCollectionLink() {
@@ -213,7 +212,6 @@ public class GH95 extends RunwayBaseClientServerTest {
         }
         Assert.assertTrue(labels.contains("alpha"));
         Assert.assertTrue(labels.contains("gamma"));
-        Assert.assertEquals(2, client.select("pebbles", stone.id()).size());
     }
 
     /**

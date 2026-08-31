@@ -60,6 +60,24 @@ public final class DeferredReference<T extends Record> {
     private final Binding db;
 
     /**
+     * The housing {@link Record}, through which an access applies the
+     * {@link ReferenceNotFoundPolicy} for the housing field.
+     * <p>
+     * This is {@code null} when no field houses the reference, and it is
+     * cleared once the reference resolves.
+     * </p>
+     */
+    @Nullable
+    private Record holder;
+
+    /**
+     * The name of the housing field. This is {@code null} whenever the
+     * {@link #holder} is {@code null}.
+     */
+    @Nullable
+    private String key;
+
+    /**
      * The loaded reference.
      */
     private T reference = null;
@@ -73,6 +91,19 @@ public final class DeferredReference<T extends Record> {
         this.reference = reference;
         this.id = reference.id();
         this.db = reference.binding();
+        this.holder = null;
+        this.key = null;
+    }
+
+    /**
+     * Construct a new instance for a reference that no field houses, so an
+     * access applies no {@link ReferenceNotFoundPolicy}.
+     *
+     * @param id the id of the referenced {@link Record}
+     * @param db the {@link Binding} through which the reference loads
+     */
+    DeferredReference(long id, Binding db) {
+        this(id, db, null, null);
     }
 
     /**
@@ -80,20 +111,48 @@ public final class DeferredReference<T extends Record> {
      *
      * @param id the id of the referenced {@link Record}
      * @param db the {@link Binding} through which the reference loads
+     * @param holder the housing {@link Record}
+     * @param key the name of the housing field
      */
-    DeferredReference(long id, Binding db) {
+    DeferredReference(long id, Binding db, @Nullable Record holder,
+            @Nullable String key) {
         this.id = id;
         this.db = db;
+        this.holder = holder;
+        this.key = key;
     }
 
     /**
-     * Return the reference.
+     * Return the referenced {@link Record}, loading it if this is the first
+     * access.
+     * <p>
+     * The load happens here, so this is also where the
+     * {@link ReferenceNotFoundPolicy} for the housing field applies to a stale
+     * reference: {@link ReferenceNotFoundPolicy#SKIP SKIP} and
+     * {@link ReferenceNotFoundPolicy#REPAIR REPAIR} both answer {@code null},
+     * while {@link ReferenceNotFoundPolicy#ERROR ERROR} throws.
+     * </p>
      *
-     * @return the {@link Record reference}
+     * @return the referenced {@link Record}, or {@code null} if the reference
+     *         is stale and the governing policy allows that
+     * @throws ReferenceNotFoundException if the reference is stale and the
+     *             governing policy is {@link ReferenceNotFoundPolicy#ERROR
+     *             ERROR}
      */
+    @Nullable
     public T get() {
         if(reference == null) {
-            reference = db.load(id);
+            Record holder = this.holder;
+            reference = holder != null
+                    ? holder.resolveDeferredReference(key, id)
+                    : db.load(id);
+            if(reference != null) {
+                // NOTE: The holder is only needed to resolve the
+                // reference, so releasing it keeps a resolved reference from
+                // holding on to the holder and everything the holder reaches.
+                this.holder = null;
+                this.key = null;
+            }
         }
         return reference;
     }
