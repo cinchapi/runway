@@ -3281,11 +3281,6 @@ public abstract class Record implements Comparable<Record> {
                             if(converted != null) {
                                 collector.add(converted);
                             }
-                            else {
-                                // TODO: should we remove the object from
-                                // Concourse since it results in a #null
-                                // value?
-                            }
                         });
                         if(type.isArray()) {
                             // NOTE: ArrayBuilder cannot build an empty
@@ -3316,21 +3311,10 @@ public abstract class Record implements Comparable<Record> {
                                     data.getOrDefault(prepend + IDENTIFIER_KEY,
                                             ImmutableSet.of()),
                                     null);
-                            if(id != null) {
-                                String $type = (String) Iterables.getFirst(
-                                        data.getOrDefault(prepend + SECTION_KEY,
-                                                ImmutableSet.of()),
-                                        null);
-                                if($type != null) {
-                                    type = Reflection.getClassCasted($type);
-                                }
-                                value = existing.get(id);
-                                value = value == null
-                                        ? load(type, id, existing, connections,
-                                                concourse, binding, data,
-                                                prepend, targets)
-                                        : value;
-                            }
+                            value = id != null
+                                    ? dereferenceLink(key, id, data, prepend,
+                                            existing, concourse, targets)
+                                    : value;
                         }
                         else if(first != null) {
                             value = convert(key, type, first, concourse,
@@ -4196,20 +4180,8 @@ public abstract class Record implements Comparable<Record> {
                     if(data == null) {
                         data = concourse.select(target);
                     }
-                    Set<Object> sections = data.getOrDefault(SECTION_KEY,
-                            ImmutableSet.of());
-                    String section = (String) Iterables.getLast(sections, null);
-                    if(Empty.ness().describes(section)) {
-                        concourse.remove(key, stored, id); // do some ad-hoc
-                                                           // cleanup
-                    }
-                    else {
-                        Class<? extends Record> targetClass = Reflection
-                                .getClassCasted(section);
-                        converted = load(targetClass, target, alreadyLoaded,
-                                connections, concourse, binding, data, null,
-                                targets);
-                    }
+                    converted = dereferenceLink(key, target, data, "",
+                            alreadyLoaded, concourse, targets);
                 }
             }
         }
@@ -4431,6 +4403,62 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return value;
+    }
+
+    /**
+     * Resolve the {@link Record} that a stored link to {@code id} references,
+     * from the {@code data} already selected for it under {@code prefix}.
+     * <p>
+     * A link whose target holds no data references no {@link Record}, so it
+     * resolves to nothing rather than to a {@link Record} that cannot be built.
+     * A caller assigning to a field leaves the field unset; a caller collecting
+     * elements omits the element.
+     * </p>
+     *
+     * @param key the name of the field that holds the link
+     * @param id the id of the linked record
+     * @param data the selected data that contains the linked record's state
+     * @param prefix the key prefix under which {@code data} holds that state,
+     *            or the empty string when {@code data} is the record's own
+     * @param existing the {@link Record Records} that this load already built
+     * @param concourse the connection that resolves any further read
+     * @param targets pre-fetched destination data, or {@code null}
+     * @return the referenced {@link Record}, or {@code null} if no
+     *         {@link Record} stands behind the link
+     */
+    @Nullable
+    private Record dereferenceLink(String key, long id,
+            Map<String, Set<Object>> data, String prefix,
+            ConcurrentMap<Long, Record> existing, Concourse concourse,
+            @Nullable Map<Long, Map<String, Set<Object>>> targets) {
+        Record loaded = existing.get(id);
+        if(loaded != null) {
+            return loaded;
+        }
+        else {
+            String section = (String) Iterables.getLast(
+                    data.getOrDefault(prefix + SECTION_KEY, ImmutableSet.of()),
+                    null);
+            if(Empty.ness().describes(section)) {
+                ReferenceNotFoundPolicy policy = referenceNotFoundPolicy(key);
+                if(policy == ReferenceNotFoundPolicy.ERROR) {
+                    throw new ReferenceNotFoundException(this, key, id);
+                }
+                else {
+                    if(policy == ReferenceNotFoundPolicy.REPAIR) {
+                        concourse.remove(key, Link.to(id), this.id);
+                    }
+                    return null;
+                }
+            }
+            else {
+                Class<? extends Record> clazz = Reflection
+                        .getClassCasted(section);
+                return load(clazz, id, existing, connections, concourse,
+                        binding, data, prefix.isEmpty() ? null : prefix,
+                        targets);
+            }
+        }
     }
 
     /**
@@ -4785,6 +4813,30 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return data;
+    }
+
+    /**
+     * Return the {@link ReferenceNotFoundPolicy} that governs the field named
+     * {@code key}: the one the field declares, or the one that this
+     * {@link Record Record's} {@link Runway} applies. If this {@link Record} is
+     * not {@link #assign(Runway) assigned} to a {@link Runway} instance, the
+     * {@link ReferenceNotFoundPolicy#SKIP SKIP} default applies.
+     *
+     * @param key the name of the field that holds the reference
+     * @return the governing {@link ReferenceNotFoundPolicy}
+     */
+    private ReferenceNotFoundPolicy referenceNotFoundPolicy(String key) {
+        ReferenceNotFoundPolicy declared = StaticAnalysis.instance()
+                .getReferenceNotFoundPolicy(getClass(), key);
+        if(declared != null) {
+            return declared;
+        }
+        else {
+            Runway runway = harness();
+            return runway != null
+                    ? runway.properties().referenceNotFoundPolicy()
+                    : ReferenceNotFoundPolicy.SKIP;
+        }
     }
 
     /**
@@ -6224,6 +6276,13 @@ public abstract class Record implements Comparable<Record> {
         private final Map<Class<? extends Record>, Map<String, Collection<Class<?>>>> fieldTypeArgumentsByClass;
 
         /**
+         * A mapping from each {@link Record} class to each of its non-internal
+         * keys that declares a {@link ReferenceNotFound} policy, each of which
+         * is mapped to the declared {@link ReferenceNotFoundPolicy}.
+         */
+        private final Map<Class<? extends Record>, Map<String, ReferenceNotFoundPolicy>> referenceNotFoundPoliciesByClass;
+
+        /**
          * A collection containing each {@link Record} class that has at least
          * one field whose type is a subclass of {@link Record}.
          */
@@ -6285,6 +6344,7 @@ public abstract class Record implements Comparable<Record> {
             this.deferredReferencePathsByClass = new HashMap<>();
             this.fieldsByClass = new HashMap<>();
             this.fieldTypeArgumentsByClass = new HashMap<>();
+            this.referenceNotFoundPoliciesByClass = new HashMap<>();
             this.hasRecordFieldTypeByClass = new HashSet<>();
             this.hasRecordFieldTypeByClassHierarchy = new HashSet<>();
             this.hasCollectionRecordFieldTypeByClass = new HashSet<>();
@@ -6313,6 +6373,13 @@ public abstract class Record implements Comparable<Record> {
                     fields.put(key, field);
                     fieldTypeArguments.put(key,
                             Reflection.getTypeArguments(field));
+                    ReferenceNotFound declared = field
+                            .getAnnotation(ReferenceNotFound.class);
+                    if(declared != null) {
+                        referenceNotFoundPoliciesByClass
+                                .computeIfAbsent(type, $ -> new HashMap<>())
+                                .put(key, declared.value());
+                    }
                     if(Record.class.isAssignableFrom(field.getType())) {
                         hasRecordFieldTypeByClass.add(type);
                     }
@@ -6610,6 +6677,22 @@ public abstract class Record implements Comparable<Record> {
          */
         public Set<String> getPathsHierarchy(Class<? extends Record> clazz) {
             return pathsByClassHierarchy.get(clazz);
+        }
+
+        /**
+         * Return the {@link ReferenceNotFoundPolicy} that the field named
+         * {@code key} in {@code clazz} declares.
+         *
+         * @param clazz the {@link Record} type that declares the field
+         * @param key the name of the field
+         * @return the declared {@link ReferenceNotFoundPolicy}, or {@code null}
+         *         if the field declares none
+         */
+        @Nullable
+        public ReferenceNotFoundPolicy getReferenceNotFoundPolicy(
+                Class<? extends Record> clazz, String key) {
+            return referenceNotFoundPoliciesByClass
+                    .getOrDefault(clazz, ImmutableMap.of()).get(key);
         }
 
         /**

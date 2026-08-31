@@ -521,6 +521,13 @@ public final class Runway extends Binding implements
     private final Properties properties = new Properties();
 
     /**
+     * The {@link ReferenceNotFoundPolicy} that governs a field of a
+     * {@link Record} that is assigned to this {@link Runway} instance and that
+     * declares no policy of its own.
+     */
+    private ReferenceNotFoundPolicy referenceNotFoundPolicy = ReferenceNotFoundPolicy.SKIP;
+
+    /**
      * The strategy for handling spurious {@link TransactionException
      * TransactionExceptions} during {@link #save(Record...) save} operations.
      */
@@ -3461,6 +3468,7 @@ public final class Runway extends Binding implements
          */
         private DynamicWritePolicy dynamicWritePolicy = DynamicWritePolicy
                 .permissive();
+        private ReferenceNotFoundPolicy referenceNotFoundPolicy = ReferenceNotFoundPolicy.SKIP;
         private String environment = "";
         private String host = "localhost";
         private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = null;
@@ -3500,6 +3508,7 @@ public final class Runway extends Binding implements
             Runway db = new Runway(connections);
             db.atomicRetryPolicy = atomicRetryPolicy;
             db.dynamicWritePolicy = dynamicWritePolicy;
+            db.referenceNotFoundPolicy = referenceNotFoundPolicy;
             db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
@@ -3531,6 +3540,26 @@ public final class Runway extends Binding implements
          */
         public Builder dynamicWritePolicy(DynamicWritePolicy policy) {
             this.dynamicWritePolicy = policy;
+            return this;
+        }
+
+        /**
+         * Set the {@link ReferenceNotFoundPolicy} that governs a field of a
+         * {@link Record} that declares no policy of its own.
+         * <p>
+         * The default is {@link ReferenceNotFoundPolicy#SKIP}, which resolves a
+         * reference whose target holds no data to nothing and leaves the stored
+         * reference in place. Provide {@link ReferenceNotFoundPolicy#REPAIR} to
+         * additionally remove the stored reference, or
+         * {@link ReferenceNotFoundPolicy#ERROR} to fail the load of the
+         * {@link Record} that holds it.
+         * </p>
+         *
+         * @param policy the {@link ReferenceNotFoundPolicy} to use
+         * @return this builder
+         */
+        public Builder referenceNotFoundPolicy(ReferenceNotFoundPolicy policy) {
+            this.referenceNotFoundPolicy = policy;
             return this;
         }
 
@@ -3798,6 +3827,17 @@ public final class Runway extends Binding implements
          */
         public DynamicWritePolicy dynamicWritePolicy() {
             return dynamicWritePolicy;
+        }
+
+        /**
+         * Return the {@link ReferenceNotFoundPolicy} that governs a field of a
+         * {@link Record} that is assigned to this {@link Runway} instance and
+         * that declares no policy of its own.
+         *
+         * @return the governing {@link ReferenceNotFoundPolicy}
+         */
+        public ReferenceNotFoundPolicy referenceNotFoundPolicy() {
+            return referenceNotFoundPolicy;
         }
 
         /**
