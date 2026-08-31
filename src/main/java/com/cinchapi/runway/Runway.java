@@ -3171,78 +3171,6 @@ public final class Runway extends Binding implements
     }
 
     /**
-     * Run {@code attempt} against a new {@link DatabaseTransaction} until it
-     * returns, retrying commit conflicts under the governing
-     * {@link AtomicRetryPolicy}.
-     * <p>
-     * The attempt owns the transaction's outcome: it must
-     * {@link DatabaseTransaction#commit() commit} or
-     * {@link DatabaseTransaction#abort() abort} before it returns, and it
-     * signals a retryable failure by throwing a {@link TransactionException}.
-     * Any other failure propagates without retrying.
-     *
-     * @param attempt the work to run once per attempt
-     * @return the value the attempt returns
-     * @throws RetryExhaustedException if the attempt cannot commit within the
-     *             bounds of the governing {@link AtomicRetryPolicy}
-     */
-    private <T> T retryAtomically(Function<DatabaseTransaction, T> attempt) {
-        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
-        Concourse concourse = connections.request();
-        try {
-            // NOTE: The connection is held across the policy's backoff sleeps
-            // so the retry loop does not churn the pool.
-            int attempts = 0;
-            for (;;) {
-                DatabaseTransaction transaction = new DatabaseTransaction(this,
-                        concourse, false);
-                try {
-                    return attempt.apply(transaction);
-                }
-                catch (TransactionException e) {
-                    if(transaction.committed() || transaction.hookFailed()) {
-                        // The exception is not a commit conflict: either the
-                        // commit succeeded and a post-commit consequence
-                        // threw, or a lifecycle hook failed. Re-running the
-                        // work would repeat side effects or mask the hook's
-                        // failure.
-                        throw e;
-                    }
-                    else {
-                        transaction.abort();
-                        if(++attempts > policy.limit()) {
-                            throw new RetryExhaustedException(attempts, e);
-                        }
-                        else {
-                            policy.backoff(attempts);
-                        }
-                    }
-                }
-                catch (Throwable t) {
-                    // A non-conflict failure is terminal: propagate it without
-                    // retrying so nothing is committed. The work's failure is
-                    // the signal: if the close (and the afterAbort hooks it
-                    // runs) also throws, then attach that failure instead of
-                    // letting it replace the work's exception.
-                    try {
-                        transaction.close();
-                    }
-                    catch (Throwable suppressed) {
-                        t.addSuppressed(suppressed);
-                    }
-                    throw t;
-                }
-                finally {
-                    transaction.close();
-                }
-            }
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
      * Look up a previously reserved result by query signature.
      *
      * @param reservation the query signature
@@ -3370,6 +3298,78 @@ public final class Runway extends Binding implements
     }
 
     /**
+     * Run {@code attempt} against a new {@link DatabaseTransaction} until it
+     * returns, retrying commit conflicts under the governing
+     * {@link AtomicRetryPolicy}.
+     * <p>
+     * The attempt owns the transaction's outcome: it must
+     * {@link DatabaseTransaction#commit() commit} or
+     * {@link DatabaseTransaction#abort() abort} before it returns, and it
+     * signals a retryable failure by throwing a {@link TransactionException}.
+     * Any other failure propagates without retrying.
+     *
+     * @param attempt the work to run once per attempt
+     * @return the value the attempt returns
+     * @throws RetryExhaustedException if the attempt cannot commit within the
+     *             bounds of the governing {@link AtomicRetryPolicy}
+     */
+    private <T> T retryAtomically(Function<DatabaseTransaction, T> attempt) {
+        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
+        Concourse concourse = connections.request();
+        try {
+            // NOTE: The connection is held across the policy's backoff sleeps
+            // so the retry loop does not churn the pool.
+            int attempts = 0;
+            for (;;) {
+                DatabaseTransaction transaction = new DatabaseTransaction(this,
+                        concourse, false);
+                try {
+                    return attempt.apply(transaction);
+                }
+                catch (TransactionException e) {
+                    if(transaction.committed() || transaction.hookFailed()) {
+                        // The exception is not a commit conflict: either the
+                        // commit succeeded and a post-commit consequence
+                        // threw, or a lifecycle hook failed. Re-running the
+                        // work would repeat side effects or mask the hook's
+                        // failure.
+                        throw e;
+                    }
+                    else {
+                        transaction.abort();
+                        if(++attempts > policy.limit()) {
+                            throw new RetryExhaustedException(attempts, e);
+                        }
+                        else {
+                            policy.backoff(attempts);
+                        }
+                    }
+                }
+                catch (Throwable t) {
+                    // A non-conflict failure is terminal: propagate it without
+                    // retrying so nothing is committed. The work's failure is
+                    // the signal: if the close (and the afterAbort hooks it
+                    // runs) also throws, then attach that failure instead of
+                    // letting it replace the work's exception.
+                    try {
+                        transaction.close();
+                    }
+                    catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
+                    throw t;
+                }
+                finally {
+                    transaction.close();
+                }
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Builder for {@link Runway} connections. This is returned from
      * {@link #builder()}.
      *
@@ -3425,7 +3425,7 @@ public final class Runway extends Binding implements
          */
         @SuppressWarnings("unchecked")
         @Nullable
-        private static Consumer<Record> compose(
+        private static Consumer<Record> composeSaveListeners(
                 List<Entry<Class<? extends Record>, Consumer<? extends Record>>> listeners) {
             if(listeners.isEmpty()) {
                 return null;
@@ -3505,7 +3505,7 @@ public final class Runway extends Binding implements
                 db.onLoadFailureHandler = onLoadFailureHandler;
             }
 
-            db.saveListener = compose(saveListeners);
+            db.saveListener = composeSaveListeners(saveListeners);
             db.deleteListener = composeDeleteListeners(deleteListeners);
             if(db.saveListener != null || db.deleteListener != null) {
                 db.ensureSaveNotificationInfrastructure();

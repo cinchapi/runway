@@ -209,6 +209,18 @@ final class SaveContext {
     }
 
     /**
+     * Return the state that the record with {@code id} stored when the active
+     * attempt deleted it.
+     *
+     * @param id the record id
+     * @return the stored state, or an empty {@link Map} if the attempt did not
+     *         delete the record
+     */
+    Map<String, Set<Object>> deletionData(long id) {
+        return deletionData.getOrDefault(id, Collections.emptyMap());
+    }
+
+    /**
      * Return the ids of every record that the active attempt deleted.
      *
      * @return the deleted ids
@@ -325,28 +337,6 @@ final class SaveContext {
     }
 
     /**
-     * Reset the per-attempt state for a new save attempt. The
-     * {@link Record.Snapshot snapshots} are kept.
-     */
-    void reset() {
-        entries.clear();
-        pendingDeletions.clear();
-        deletionData.clear();
-    }
-
-    /**
-     * Return the state that the record with {@code id} stored when the active
-     * attempt deleted it.
-     *
-     * @param id the record id
-     * @return the stored state, or an empty {@link Map} if the attempt did not
-     *         delete the record
-     */
-    Map<String, Set<Object>> deletionData(long id) {
-        return deletionData.getOrDefault(id, Collections.emptyMap());
-    }
-
-    /**
      * Associate the state that the record with {@code id} stored when the
      * active attempt deleted it, so a successful save can report it.
      *
@@ -355,6 +345,16 @@ final class SaveContext {
      */
     void recordDeletionData(long id, Map<String, Set<Object>> data) {
         deletionData.put(id, data);
+    }
+
+    /**
+     * Reset the per-attempt state for a new save attempt. The
+     * {@link Record.Snapshot snapshots} are kept.
+     */
+    void reset() {
+        entries.clear();
+        pendingDeletions.clear();
+        deletionData.clear();
     }
 
     /**
