@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -476,16 +477,19 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The delete listener fires for both the target
-     * and the joined parent, and neither record loads afterwards.
+     * and the joined parent, each notification reports the state the record
+     * stored, and neither record loads afterwards.
      */
     @Test
     public void testDeleteListenerFiredForJoinDeletedRecord() throws Exception {
         CountDownLatch latch = new CountDownLatch(2);
         Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
+        Map<Long, Map<String, Set<Object>>> reported = new ConcurrentHashMap<>();
 
         runway.close();
         runway = runwayBuilder().onDelete((id, clazz, data) -> {
             deletedRecords.add(id);
+            reported.put(id, data);
             latch.countDown();
         }).build();
 
@@ -505,6 +509,10 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(2, deletedRecords.size());
         Assert.assertTrue(deletedRecords.contains(target.id()));
         Assert.assertTrue(deletedRecords.contains(parent.id()));
+        Assert.assertTrue(
+                reported.get(target.id()).get("name").contains("Join Target"));
+        Assert.assertTrue(
+                reported.get(parent.id()).get("name").contains("Join Parent"));
         Assert.assertNull(runway.load(JoinTarget.class, target.id()));
         Assert.assertNull(runway.load(JoinParent.class, parent.id()));
     }

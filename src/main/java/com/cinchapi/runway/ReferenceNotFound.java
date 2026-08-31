@@ -33,9 +33,7 @@ import java.lang.annotation.Target;
  * <p>
  * This annotation decides only what a load does with a stale reference. It does
  * not decide which {@link Record Records} a deletion reaches, which
- * {@link CascadeDelete}, {@link JoinDelete} and {@link CaptureDelete} govern. A
- * field annotated with {@link CaptureDelete} never carries a stale reference,
- * so no policy applies to it.
+ * {@link CascadeDelete}, {@link JoinDelete} and {@link CaptureDelete} govern.
  * </p>
  *
  * @author Jeff Nelson
