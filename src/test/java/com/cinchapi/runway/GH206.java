@@ -26,21 +26,23 @@ import org.junit.Test;
 import com.cinchapi.runway.access.AccessControl;
 import com.cinchapi.runway.access.Audience;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
 
 /**
  * Regression tests for
  * <a href="https://github.com/cinchapi/runway/issues/206">GH-206</a>: a frame
  * that terminates with an exception must leave no residue on the thread, so a
- * later frame on the same thread renders the same result as a frame on a
- * fresh thread.
+ * later frame on the same thread renders the same result as a frame on a fresh
+ * thread.
  *
  * @author Jeff Nelson
  */
 public class GH206 extends RunwayBaseClientServerTest {
 
     /**
-     * <strong>Goal:</strong> Verify that a frame which throws mid-walk does
-     * not poison later frames on the same thread.
+     * <strong>Goal:</strong> Verify that a frame which throws mid-walk does not
+     * poison later frames on the same thread.
      * <p>
      * <strong>Start state:</strong> A {@link Parent} whose intrinsic
      * {@code child} field links a {@link Child} with a {@link Computed}
@@ -49,9 +51,8 @@ public class GH206 extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Frame the {@link Parent} with the key {@code child.bomb} and
-     * confirm the {@code child} entry is a nested {@link Map} (sanity
-     * check).</li>
+     * <li>Frame the {@link Parent} with the key {@code child.bomb} and confirm
+     * the {@code child} entry is a nested {@link Map} (sanity check).</li>
      * <li>Arm {@link Child#EXPLODE} and frame again, expecting the computed
      * failure to propagate out of the frame.</li>
      * <li>Disarm {@link Child#EXPLODE} and frame a third time on the same
@@ -59,8 +60,9 @@ public class GH206 extends RunwayBaseClientServerTest {
      * </ul>
      * <p>
      * <strong>Expected:</strong> The third frame nests the {@code child} as a
-     * {@link Map} again. A {@code "(recursive link)"} placeholder {@link String}
-     * instead means the failed frame leaked its recursion bookkeeping.
+     * {@link Map} again. A {@code "(recursive link)"} placeholder
+     * {@link String} instead means the failed frame leaked its recursion
+     * bookkeeping.
      */
     @Test
     public void testFrameExpandsLinkedRecordAfterPriorFrameThrows() {
@@ -97,6 +99,70 @@ public class GH206 extends RunwayBaseClientServerTest {
                         + "nest the child again; a \"(recursive link)\" "
                         + "placeholder means the failed frame leaked its "
                         + "recursion bookkeeping, was: " + framed,
+                framed instanceof Map);
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a frame which throws while walking a
+     * collection-valued link does not poison later frames on the same thread.
+     * <p>
+     * <strong>Start state:</strong> A {@link Parent} whose intrinsic
+     * {@code children} field links a single {@link Child} with a
+     * {@link Computed} {@code bomb} property that throws only while
+     * {@link Child#EXPLODE} is {@code true}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Frame the {@link Parent} with the key {@code children.bomb} and
+     * confirm the sole element is a nested {@link Map} (sanity check).</li>
+     * <li>Arm {@link Child#EXPLODE} and frame again, expecting the computed
+     * failure to propagate out of the frame.</li>
+     * <li>Disarm {@link Child#EXPLODE} and frame a third time on the same
+     * thread.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The third frame nests the sole element as a
+     * {@link Map} again. A {@code "(recursive link)"} placeholder
+     * {@link String} instead means the failed frame leaked the bookkeeping it
+     * records for an element of a collection, which is a distinct code path
+     * from the one a singular link takes.
+     */
+    @Test
+    public void testFrameExpandsLinkedRecordInCollectionAfterPriorFrameThrows() {
+        Child child = new Child();
+        child.name = "child";
+        Parent parent = new Parent();
+        parent.name = "parent";
+        parent.children.add(child);
+        Set<String> keys = ImmutableSet.of("children.bomb");
+        Audience audience = Audience.anonymous();
+
+        Object framed = Iterables.getOnlyElement(
+                (Iterable<?>) audience.frame(keys, parent).get("children"));
+        Assert.assertTrue(
+                "sanity: a healthy frame must nest the element, was: " + framed,
+                framed instanceof Map);
+
+        Child.EXPLODE = true;
+        try {
+            audience.frame(keys, parent);
+            Assert.fail("The mid-frame failure should propagate");
+        }
+        catch (Exception expected) {
+            // The crash under test; the computed bomb detonated mid-frame.
+        }
+        finally {
+            Child.EXPLODE = false;
+        }
+
+        framed = Iterables.getOnlyElement(
+                (Iterable<?>) audience.frame(keys, parent).get("children"));
+        Assert.assertTrue(
+                "a frame on the same thread after a mid-frame exception must "
+                        + "nest the collection element again; a "
+                        + "\"(recursive link)\" placeholder means the failed "
+                        + "frame leaked its recursion bookkeeping, was: "
+                        + framed,
                 framed instanceof Map);
     }
 
@@ -200,5 +266,10 @@ public class GH206 extends RunwayBaseClientServerTest {
          * An intrinsic, readable link to the {@link Child}.
          */
         public Child child;
+
+        /**
+         * An intrinsic, readable link to many {@link Child Children}.
+         */
+        public Set<Child> children = Sets.newLinkedHashSet();
     }
 }
