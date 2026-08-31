@@ -2851,11 +2851,17 @@ public final class Runway extends Binding implements
                 connections.release(connection);
             }
         }
-        String section = (String) Iterables
-                .getLast(data.get(Record.SECTION_KEY));
-        Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, loaded, transaction, data,
-                targets);
+        String section = (String) Iterables.getLast(
+                data.getOrDefault(Record.SECTION_KEY, ImmutableSet.of()), null);
+        if(section == null) {
+            // The record holds no data, so no Record stands behind the id.
+            return null;
+        }
+        else {
+            Class<T> clazz = Reflection.getClassCasted(section);
+            return loadWithErrorHandling(clazz, id, loaded, transaction, data,
+                    targets);
+        }
     }
 
     /**
@@ -3468,6 +3474,10 @@ public final class Runway extends Binding implements
          */
         private DynamicWritePolicy dynamicWritePolicy = DynamicWritePolicy
                 .permissive();
+        /**
+         * The {@link ReferenceNotFoundPolicy} for the built {@link Runway}
+         * instance.
+         */
         private ReferenceNotFoundPolicy referenceNotFoundPolicy = ReferenceNotFoundPolicy.SKIP;
         private String environment = "";
         private String host = "localhost";

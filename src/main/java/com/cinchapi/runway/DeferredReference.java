@@ -60,6 +60,22 @@ public final class DeferredReference<T extends Record> {
     private final Binding db;
 
     /**
+     * The {@link Record} whose field holds this reference, or {@code null} when
+     * a caller constructed this reference directly. The
+     * {@link ReferenceNotFoundPolicy} that governs the field belongs to this
+     * {@link Record}, so an access resolves through it.
+     */
+    @Nullable
+    private final Record holder;
+
+    /**
+     * The name of the {@link #holder Holder's} field that holds this reference,
+     * or {@code null} when a caller constructed this reference directly.
+     */
+    @Nullable
+    private final String key;
+
+    /**
      * The loaded reference.
      */
     private T reference = null;
@@ -73,6 +89,21 @@ public final class DeferredReference<T extends Record> {
         this.reference = reference;
         this.id = reference.id();
         this.db = reference.binding();
+        this.holder = null;
+        this.key = null;
+    }
+
+    /**
+     * Construct a new instance that no declared field governs, so an access
+     * resolves without a {@link ReferenceNotFoundPolicy}. Use this for a
+     * reference that {@link Record} metadata holds rather than one that a
+     * {@link Record Record's} own field holds.
+     *
+     * @param id the id of the referenced {@link Record}
+     * @param db the {@link Binding} through which the reference loads
+     */
+    DeferredReference(long id, Binding db) {
+        this(id, db, null, null);
     }
 
     /**
@@ -80,20 +111,41 @@ public final class DeferredReference<T extends Record> {
      *
      * @param id the id of the referenced {@link Record}
      * @param db the {@link Binding} through which the reference loads
+     * @param holder the {@link Record} whose field holds this reference
+     * @param key the name of the {@code holder's} field that holds this
+     *            reference
      */
-    DeferredReference(long id, Binding db) {
+    DeferredReference(long id, Binding db, @Nullable Record holder,
+            @Nullable String key) {
         this.id = id;
         this.db = db;
+        this.holder = holder;
+        this.key = key;
     }
 
     /**
-     * Return the reference.
+     * Return the referenced {@link Record}.
+     * <p>
+     * This is where the reference loads, so this is where the
+     * {@link ReferenceNotFoundPolicy} that governs the field applies. If the
+     * referenced {@link Record} holds no data, then
+     * {@link ReferenceNotFoundPolicy#SKIP SKIP} and
+     * {@link ReferenceNotFoundPolicy#REPAIR REPAIR} both answer {@code null}
+     * and {@link ReferenceNotFoundPolicy#ERROR ERROR} throws.
+     * </p>
      *
-     * @return the {@link Record reference}
+     * @return the {@link Record reference}, or {@code null} if it references no
+     *         {@link Record} and the governing policy permits the absence
+     * @throws ReferenceNotFoundException if the referenced {@link Record} holds
+     *             no data and the governing policy is
+     *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
      */
+    @Nullable
     public T get() {
         if(reference == null) {
-            reference = db.load(id);
+            reference = holder != null
+                    ? holder.resolveDeferredReference(key, id)
+                    : db.load(id);
         }
         return reference;
     }

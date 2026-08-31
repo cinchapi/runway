@@ -51,14 +51,13 @@ public enum ReferenceNotFoundPolicy {
     ERROR,
 
     /**
-     * Resolve the reference to nothing, and stage the removal of the stored
-     * reference when the holder next saves.
+     * Resolve the reference to nothing, and delete the stored reference as part
+     * of the load.
      * <p>
-     * A load reports the same absence that {@link #SKIP} reports.
-     * {@link #REPAIR} additionally treats the dead reference as the holder's
-     * own state to correct, so the holder stops carrying it once a save
-     * commits. A holder that is only ever read keeps the stored reference,
-     * because a load reports what it finds and never writes.
+     * The load reports the same absence that {@link #SKIP} reports and also
+     * corrects the storage, so the holder stops carrying the stale reference
+     * and no later load encounters it again. Within a {@link Transaction} the
+     * deletion commits or aborts with that transaction.
      * </p>
      */
     REPAIR,
