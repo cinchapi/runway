@@ -181,6 +181,31 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
     }
 
     @Test
+    public void testNestedJoinDeleteChainWithinTransaction() {
+        Grandparent grandparent = new Grandparent();
+        Parent parent = new Parent();
+        Child child = new Child("child");
+        Grandchild grandchild = new Grandchild("grandchild");
+
+        grandparent.parent = parent;
+        parent.child = child;
+        child.grandchild = grandchild;
+
+        Assert.assertTrue(runway.save(grandparent, parent, child, grandchild));
+
+        runway.transact(transaction -> {
+            Grandchild target = transaction.load(Grandchild.class,
+                    grandchild.id());
+            target.deleteOnSave();
+            transaction.save(target);
+        });
+
+        List<Record> records = ImmutableList.of(grandparent, parent, child,
+                grandchild);
+        records.forEach(this::assertNotExists);
+    }
+
+    @Test
     public void testNestedJoinDeleteChainWithSelfReferencingClass() {
         // Create a chain of Person instances linked by the "friend" field
         Person person1 = new Person("Person1");
