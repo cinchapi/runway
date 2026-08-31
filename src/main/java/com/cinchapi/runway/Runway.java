@@ -600,10 +600,11 @@ public final class Runway extends Binding implements
     private Consumer<Record> saveListener;
 
     /**
-     * The consumer that processes delete notifications for records.
+     * The consumer that processes delete notifications for records. It receives
+     * the deleted record's id, its type and the state it stored.
      */
     @Nullable
-    private Consumer<Record> deleteListener;
+    private TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> deleteListener;
 
     /**
      * The cached {@link Gateway} instance that provides intelligent routing to
@@ -1692,7 +1693,8 @@ public final class Runway extends Binding implements
         Set<Long> deletions = context.deletions();
         context.forEach((record, outcome) -> {
             if(outcome == SaveContext.Outcome.DELETED) {
-                enqueueDeleteNotification(record);
+                enqueueDeleteNotification(record.id(), record.getClass(),
+                        context.deletionData(record.id()));
                 record.checkpoint();
             }
             else if(outcome == SaveContext.Outcome.CHANGED) {
@@ -1712,13 +1714,17 @@ public final class Runway extends Binding implements
     }
 
     /**
-     * Queue up a record for delete notification processing.
+     * Queue up a deleted record for delete notification processing.
      *
-     * @param record the record that was deleted
+     * @param id the id of the record that was deleted
+     * @param clazz the type of the record that was deleted
+     * @param data the state that the record stored when it was deleted
      */
-    final void enqueueDeleteNotification(Record record) {
+    final void enqueueDeleteNotification(long id, Class<? extends Record> clazz,
+            Map<String, Set<Object>> data) {
         if(deleteListener != null) {
-            saveNotificationQueue.offer(() -> deleteListener.accept(record));
+            saveNotificationQueue
+                    .offer(() -> deleteListener.accept(id, clazz, data));
         }
     }
 
@@ -3372,6 +3378,42 @@ public final class Runway extends Binding implements
     public static class Builder {
 
         /**
+         * Return a single {@link TriConsumer} that dispatches a deleted
+         * record's id, type and stored state to every one of the
+         * {@code listeners} whose registered type the record is an instance of.
+         * An exception thrown by a listener is suppressed, and dispatch
+         * continues with the remaining listeners.
+         *
+         * @param listeners the type-filtered listeners, in registration order
+         * @return the composed {@link TriConsumer}, or {@code null} if
+         *         {@code listeners} is empty
+         */
+        @Nullable
+        private static TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> composeDeleteListeners(
+                List<Entry<Class<? extends Record>, TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>>> listeners) {
+            if(listeners.isEmpty()) {
+                return null;
+            }
+            else {
+                List<Entry<Class<? extends Record>, TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>>> snapshot = new ArrayList<>(
+                        listeners);
+                return (id, clazz, data) -> {
+                    for (Entry<Class<? extends Record>, TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>> entry : snapshot) {
+                        if(entry.getKey().isAssignableFrom(clazz)) {
+                            try {
+                                entry.getValue().accept(id, clazz, data);
+                            }
+                            catch (Throwable t) {
+                                // A listener failure must not block the
+                                // remaining listeners.
+                            }
+                        }
+                    }
+                };
+            }
+        }
+
+        /**
          * Return a single {@link Consumer} that dispatches a {@link Record} to
          * every one of the {@code listeners} whose registered type the record
          * is an instance of. An exception thrown by a listener is suppressed,
@@ -3426,7 +3468,7 @@ public final class Runway extends Binding implements
         private int port = 1717;
         private String username = "admin";
         private List<Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
-        private List<Entry<Class<? extends Record>, Consumer<? extends Record>>> deleteListeners = new ArrayList<>();
+        private List<Entry<Class<? extends Record>, TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>>> deleteListeners = new ArrayList<>();
 
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
@@ -3464,7 +3506,7 @@ public final class Runway extends Binding implements
             }
 
             db.saveListener = compose(saveListeners);
-            db.deleteListener = compose(deleteListeners);
+            db.deleteListener = composeDeleteListeners(deleteListeners);
             if(db.saveListener != null || db.deleteListener != null) {
                 db.ensureSaveNotificationInfrastructure();
             }
@@ -3541,12 +3583,12 @@ public final class Runway extends Binding implements
          * </p>
          *
          * @param type the {@link Record} type (or superclass) to listen for
-         * @param listener a consumer that processes deleted records of the
-         *            specified type
+         * @param listener a consumer that receives the id, type and stored
+         *            state of each deleted record of the specified type
          * @return this builder
          */
-        public <T extends Record> Builder onDelete(Class<T> type,
-                Consumer<T> listener) {
+        public Builder onDelete(Class<? extends Record> type,
+                TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> listener) {
             deleteListeners.add(new SimpleImmutableEntry<>(type, listener));
             return this;
         }
@@ -3555,7 +3597,7 @@ public final class Runway extends Binding implements
          * Provide a listener that will be called <strong>after</strong> any
          * record is deleted by a successful save.
          * <p>
-         * This is equivalent to calling {@link #onDelete(Class, Consumer)
+         * This is equivalent to calling {@link #onDelete(Class, TriConsumer)
          * onDelete(Record.class, listener)}.
          * </p>
          * <p>
@@ -3564,10 +3606,12 @@ public final class Runway extends Binding implements
          * All matching listeners fire in registration order.
          * </p>
          *
-         * @param listener a consumer that processes deleted records
+         * @param listener a consumer that receives the id, type and stored
+         *            state of each deleted record
          * @return this builder
          */
-        public Builder onDelete(Consumer<Record> listener) {
+        public Builder onDelete(
+                TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> listener) {
             return onDelete(Record.class, listener);
         }
 
@@ -3766,20 +3810,18 @@ public final class Runway extends Binding implements
          * </p>
          *
          * @param type the {@link Record} type (or superclass) to listen for
-         * @param listener a consumer that processes deleted {@link Record
-         *            Records} of the specified type
+         * @param listener a consumer that receives the id, type and stored
+         *            state of each deleted {@link Record} of the specified type
          * @return this {@link Properties} for chaining
          */
-        @SuppressWarnings("unchecked")
-        public <T extends Record> Properties onDelete(Class<T> type,
-                Consumer<T> listener) {
+        public Properties onDelete(Class<? extends Record> type,
+                TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> listener) {
             ensureSaveNotificationInfrastructure();
-            Consumer<Record> previous = deleteListener;
-            deleteListener = record -> {
-                if(type.isAssignableFrom(record.getClass())) {
+            TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> previous = deleteListener;
+            deleteListener = (id, clazz, data) -> {
+                if(type.isAssignableFrom(clazz)) {
                     try {
-                        ((Consumer<Record>) (Consumer<?>) listener)
-                                .accept(record);
+                        listener.accept(id, clazz, data);
                     }
                     catch (Throwable t) {
                         // A listener failure must not block the remaining
@@ -3787,7 +3829,7 @@ public final class Runway extends Binding implements
                     }
                 }
                 if(previous != null) {
-                    previous.accept(record);
+                    previous.accept(id, clazz, data);
                 }
             };
             return this;
@@ -3797,15 +3839,16 @@ public final class Runway extends Binding implements
          * Register a listener that will be called <strong>after</strong> any
          * {@link Record} is deleted by a successful save.
          * <p>
-         * This is equivalent to calling {@link #onDelete(Class, Consumer)
+         * This is equivalent to calling {@link #onDelete(Class, TriConsumer)
          * onDelete(Record.class, listener)}.
          * </p>
          *
-         * @param listener a consumer that processes deleted {@link Record
-         *            Records}
+         * @param listener a consumer that receives the id, type and stored
+         *            state of each deleted {@link Record}
          * @return this {@link Properties} for chaining
          */
-        public Properties onDelete(Consumer<Record> listener) {
+        public Properties onDelete(
+                TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> listener) {
             return onDelete(Record.class, listener);
         }
 

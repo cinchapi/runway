@@ -4299,6 +4299,10 @@ public abstract class Record implements Comparable<Record> {
      * @param context the active {@link SaveContext}
      */
     private void deleteWithinTransaction(Saver saver, SaveContext context) {
+        // NOTE: A delete notification reports the state that the record
+        // stored, so the read must precede every write this deletion stages.
+        saver.select(StaticAnalysis.instance().getKeys(getClass()), id,
+                data -> context.recordDeletionData(id, data));
         context.admit(this);
         // Mark the deletion up front so this instance speaks for its id,
         // even when it enters the delete path directly as a companion
@@ -4354,7 +4358,7 @@ public abstract class Record implements Comparable<Record> {
                                 .getLast(entry.getValue());
                         Class<? extends Record> clazz = Reflection
                                 .getClassCasted(__);
-                        Record record = load(saver, clazz, id);
+                        Record record = loadUsingSaverContext(saver, clazz, id);
                         ensureDeletion(record, context);
                     }
                 }
@@ -4382,7 +4386,7 @@ public abstract class Record implements Comparable<Record> {
                                 .getLast(entry.getValue());
                         Class<? extends Record> clazz = Reflection
                                 .getClassCasted(__);
-                        Record record = load(saver, clazz, id);
+                        Record record = loadUsingSaverContext(saver, clazz, id);
                         if(!record.removeCaptureDeleteReferences(
                                 ImmutableSet.of(this.id)).isEmpty()) {
                             record.saveWithinTransaction(saver, context);
@@ -4746,7 +4750,8 @@ public abstract class Record implements Comparable<Record> {
      * @param id the id of the {@link Record} to load
      * @return the loaded {@link Record}, or {@code null} if none exists
      */
-    private <T extends Record> T load(Saver saver, Class<T> clazz, long id) {
+    private <T extends Record> T loadUsingSaverContext(Saver saver,
+            Class<T> clazz, long id) {
         return load(clazz, id, new ConcurrentHashMap<>(), connections,
                 Reflection.get("concourse", saver), binding, null, null, null);
     }

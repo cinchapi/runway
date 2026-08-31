@@ -71,6 +71,12 @@ final class SaveContext {
     private final Consumer<Record> admission;
 
     /**
+     * The stored state that each deleted record held when the active attempt
+     * deleted it, keyed by record id.
+     */
+    private final Map<Long, Map<String, Set<Object>>> deletionData = new HashMap<>();
+
+    /**
      * One {@link Entry} per record id processed within the active attempt.
      */
     private final Map<Long, Entry> entries = new HashMap<>();
@@ -325,6 +331,30 @@ final class SaveContext {
     void reset() {
         entries.clear();
         pendingDeletions.clear();
+        deletionData.clear();
+    }
+
+    /**
+     * Return the state that the record with {@code id} stored when the active
+     * attempt deleted it.
+     *
+     * @param id the record id
+     * @return the stored state, or an empty {@link Map} if the attempt did not
+     *         delete the record
+     */
+    Map<String, Set<Object>> deletionData(long id) {
+        return deletionData.getOrDefault(id, Collections.emptyMap());
+    }
+
+    /**
+     * Associate the state that the record with {@code id} stored when the
+     * active attempt deleted it, so a successful save can report it.
+     *
+     * @param id the record id
+     * @param data the record's stored state
+     */
+    void recordDeletionData(long id, Map<String, Set<Object>> data) {
+        deletionData.put(id, data);
     }
 
     /**

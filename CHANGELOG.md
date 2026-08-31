@@ -97,7 +97,31 @@ A record's identity is its data under its `@Unique` constraints. This release le
 * **`Audience#create` binds the created `Record` to the audience's database context.** The `Record`, and every `Record` reachable from its constructor arguments, saves within that context. Previously, `Audience#create` checked permission and attributed authorship, but bound the record to nothing.
     * A mediated `create` or `intern` leaves the caller's records bound as they were unless it saves the record. A `create` that throws restores the binding of every record reachable from the constructor arguments. An `intern` that does not save the record restores the record and every record reachable from it. If a save failure poisons a `Transaction` that stays open, then the transaction's failed-save contract governs instead.
 
-##### API Removals
+##### API Breaks and Deprecations
+* **Breaking change: a delete listener receives a deleted record's identity
+  and stored state instead of a `Record`.** `Runway.Builder#onDelete` and
+  `Runway.Properties#onDelete` now take a
+  `TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>`,
+  which receives the deleted record's id, its type, and the values it held
+  when the save deleted it. A deleted record no longer exists, so a live
+  object invited callers to act on something that could not be read, saved
+  or linked.
+    * Replace a listener that reads fields off the record with one that reads
+      them out of the data map, keyed by field name.
+      ```java
+      runway = Runway.builder()
+              .onDelete(Order.class, (id, clazz, data) -> {
+                  Set<Object> status = data.get("status");
+                  audit.record(id, status);
+              })
+              .build();
+      ```
+    * The data is the state the database stored, so a record that the save
+      itself changed reports its stored values, not the unsaved edits the
+      caller's instance held.
+    * A listener registered for a type still receives only records of that
+      type or a subclass, and a listener that throws still does not block the
+      remaining listeners.
 * **Removed unused members from the `com.cinchapi.runway.db` interfaces.**
   `Saver#find(Criteria, Consumer)`,
   `Saver#reconcile(String, long, Collection)`, `Reader#select(String, long)`,

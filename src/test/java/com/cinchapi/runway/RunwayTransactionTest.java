@@ -3328,7 +3328,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(item.save());
         AtomicInteger deletes = new AtomicInteger(0);
         runway.properties().onDelete(Item.class,
-                record -> deletes.incrementAndGet());
+                (id, clazz, data) -> deletes.incrementAndGet());
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.deleteOnSave();
@@ -3365,7 +3365,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(item.save());
         AtomicInteger deletes = new AtomicInteger(0);
         runway.properties().onDelete(Item.class,
-                record -> deletes.incrementAndGet());
+                (id, clazz, data) -> deletes.incrementAndGet());
         try (Transaction transaction = runway.startTransaction()) {
             Item txItem = transaction.load(Item.class, item.id());
             txItem.deleteOnSave();
@@ -3561,7 +3561,7 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         runway.properties().onSave(Item.class,
                 record -> saves.incrementAndGet());
         runway.properties().onDelete(Item.class,
-                record -> deletes.incrementAndGet());
+                (id, clazz, data) -> deletes.incrementAndGet());
         try (Transaction transaction = runway.startTransaction()) {
             Item changed = transaction.load(Item.class, item.id());
             Item doomed = transaction.load(Item.class, item.id());
