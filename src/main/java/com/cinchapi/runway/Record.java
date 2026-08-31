@@ -3481,17 +3481,18 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Load the {@link Record} that the {@link DeferredReference} held by the
-     * field named {@code key} references, applying the
-     * {@link ReferenceNotFoundPolicy} that governs the field when the
-     * referenced record holds no data.
+     * Load the {@link Record} that the {@link DeferredReference} on the field
+     * named {@code key} points at. If the reference is stale, that field's
+     * {@link ReferenceNotFoundPolicy} decides whether the access answers
+     * {@code null} or fails.
      *
-     * @param key the name of the field that holds the reference
+     * @param key the name of the housing field
      * @param target the id of the referenced {@link Record}
-     * @return the referenced {@link Record}, or {@code null} if none exists and
-     *         the governing policy permits the absence
-     * @throws ReferenceNotFoundException if the governing policy is
-     *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
+     * @return the referenced {@link Record}, or {@code null} if the reference
+     *         is stale and the governing policy allows that
+     * @throws ReferenceNotFoundException if the reference is stale and the
+     *             governing policy is {@link ReferenceNotFoundPolicy#ERROR
+     *             ERROR}
      */
     <T extends Record> T resolveDeferredReference(String key, long target) {
         T record = binding.load(target);
@@ -3955,11 +3956,11 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Apply the {@link ReferenceNotFoundPolicy} that governs the field named
-     * {@code key} to a stale reference to {@code target}.
+     * Apply the {@link ReferenceNotFoundPolicy} for the field named {@code key}
+     * to a stale reference to {@code target}.
      *
-     * @param key the name of the field that holds the reference
-     * @param target the id of the record that holds no data
+     * @param key the name of the housing field
+     * @param target the id of the record with no stored data
      * @param concourse the connection through which a repair writes
      * @throws ReferenceNotFoundException if the governing policy is
      *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
@@ -3974,7 +3975,7 @@ public abstract class Record implements Comparable<Record> {
             concourse.remove(key, Link.to(target), id);
         }
         else {
-            // SKIP leaves the stored reference in place.
+            // SKIP leaves the stale reference in the database.
         }
     }
 
@@ -4458,16 +4459,15 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Resolve the {@link Record} that a stored link to {@code id} references,
-     * from the {@code data} already selected for it under {@code prefix}.
+     * Resolve the {@link Record} that a stored link to {@code id} points at,
+     * using the {@code data} already selected for it under {@code prefix}.
      * <p>
-     * A link whose target holds no data references no {@link Record}, so it
-     * resolves to nothing rather than to a {@link Record} that cannot be built.
-     * A caller assigning to a field leaves the field unset; a caller collecting
-     * elements omits the element.
+     * If the link is stale, the {@link ReferenceNotFoundPolicy} for the field
+     * named {@code key} decides whether the link resolves to {@code null} or
+     * the load fails.
      * </p>
      *
-     * @param key the name of the field that holds the link
+     * @param key the name of the housing field
      * @param id the id of the linked record
      * @param data the selected data that contains the linked record's state
      * @param prefix the key prefix under which {@code data} holds that state,
@@ -4475,8 +4475,10 @@ public abstract class Record implements Comparable<Record> {
      * @param existing the {@link Record Records} that this load already built
      * @param concourse the connection that resolves any further read
      * @param targets pre-fetched destination data, or {@code null}
-     * @return the referenced {@link Record}, or {@code null} if no
-     *         {@link Record} stands behind the link
+     * @return the referenced {@link Record}, or {@code null} if the link is
+     *         stale and the governing policy allows that
+     * @throws ReferenceNotFoundException if the link is stale and the governing
+     *             policy is {@link ReferenceNotFoundPolicy#ERROR ERROR}
      */
     @Nullable
     private Record dereferenceLink(String key, long id,
@@ -4807,8 +4809,8 @@ public abstract class Record implements Comparable<Record> {
 
     /**
      * Load the {@link Record} of type {@code clazz} identified by {@code id}
-     * through the connection on which {@code saver} records its operations, so
-     * the read observes the state that the active save staged.
+     * within the {@code saver's} transaction, so the read sees whatever the
+     * active save already staged.
      *
      * @param saver the {@link Saver} for the attempt's transaction
      * @param clazz the type of the {@link Record} to load
@@ -4866,7 +4868,7 @@ public abstract class Record implements Comparable<Record> {
      * not {@link #assign(Runway) assigned} to a {@link Runway} instance, the
      * {@link ReferenceNotFoundPolicy#SKIP SKIP} default applies.
      *
-     * @param key the name of the field that holds the reference
+     * @param key the name of the housing field
      * @return the governing {@link ReferenceNotFoundPolicy}
      */
     private ReferenceNotFoundPolicy referenceNotFoundPolicy(String key) {
@@ -6321,8 +6323,8 @@ public abstract class Record implements Comparable<Record> {
 
         /**
          * A mapping from each {@link Record} class to each of its non-internal
-         * keys that declares a {@link ReferenceNotFound} policy, each of which
-         * is mapped to the declared {@link ReferenceNotFoundPolicy}.
+         * keys whose field declares a {@link ReferenceNotFound} policy, each of
+         * which is mapped to the declared {@link ReferenceNotFoundPolicy}.
          */
         private final Map<Class<? extends Record>, Map<String, ReferenceNotFoundPolicy>> referenceNotFoundPoliciesByClass;
 

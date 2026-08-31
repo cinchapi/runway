@@ -22,22 +22,20 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Declare the {@link ReferenceNotFoundPolicy} that a load applies to the
- * annotated field when a stored reference it holds has no data behind it.
+ * Declare the {@link ReferenceNotFoundPolicy} for the annotated field, which
+ * overrides the policy that the {@link Runway} applies.
  * <p>
- * A field without this annotation follows the policy that the loading
- * {@link Runway} applies, so annotate a field only where its reference calls
- * for something other than the default. The declaration travels with the field,
- * so every load of the field behaves the same way regardless of how it was
- * reached.
+ * Annotate a field only where a stale reference on it needs different handling
+ * than the database default. The declaration travels with the field, so every
+ * load of the field behaves the same way, no matter which record the load
+ * started from.
  * </p>
  * <p>
- * {@link ReferenceNotFound} governs what a load reports for a reference that
- * resolves to nothing. It does not decide which {@link Record Records} a
- * deletion reaches, which {@link CascadeDelete}, {@link JoinDelete} and
- * {@link CaptureDelete} govern. A field that captures its deletions never
- * carries a dead reference to begin with, so the policy has nothing to apply
- * to.
+ * This annotation decides only what a load does with a stale reference. It does
+ * not decide which {@link Record Records} a deletion reaches, which
+ * {@link CascadeDelete}, {@link JoinDelete} and {@link CaptureDelete} govern. A
+ * field annotated with {@link CaptureDelete} never carries a stale reference,
+ * so no policy applies to it.
  * </p>
  *
  * @author Jeff Nelson

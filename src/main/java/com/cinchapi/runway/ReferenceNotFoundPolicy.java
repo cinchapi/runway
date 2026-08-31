@@ -18,19 +18,19 @@ package com.cinchapi.runway;
 import java.util.Collection;
 
 /**
- * The ways a load resolves a stored reference whose target holds no data.
+ * A {@link ReferenceNotFoundPolicy} decides what a load does with a stale
+ * reference, which is one that points at a record with no stored data.
  * <p>
- * A reference outlives its target. Deleting a {@link Record} removes that
- * {@link Record Record's} own data and leaves every stored reference to it in
- * place, so a reference that resolves to nothing is an ordinary consequence of
- * a deletion that no annotation asked anyone to notice. A
- * {@link ReferenceNotFoundPolicy} decides what the load reports for such a
- * reference and whether the load's holder repairs its own storage.
+ * A reference goes stale when its target is deleted, or when something outside
+ * of Runway destructively modifies the target. Deleting a {@link Record} clears
+ * that {@link Record Record's} own data, but it leaves every stored reference
+ * to it in place unless a {@link CaptureDelete} field asks for that cleanup.
  * </p>
  * <p>
- * Every policy applies the same way to a field that holds a single
- * {@link Record} and to one that holds a {@link Collection} of them; the two
- * shapes differ only in how the absence of a value is expressed.
+ * A policy governs a field that holds a single {@link Record} and a field that
+ * holds a {@link Collection} of them the same way. Only the expression of the
+ * missing value differs: a scalar field is left {@code null} and a collection
+ * omits the element.
  * </p>
  *
  * @author Jeff Nelson
@@ -38,38 +38,34 @@ import java.util.Collection;
 public enum ReferenceNotFoundPolicy {
 
     /**
-     * Fail the load of the {@link Record} that holds the reference.
+     * Fail the load of the housing record and throw a
+     * {@link ReferenceNotFoundException}.
      * <p>
-     * Choose {@link #ERROR} where a reference is an invariant of the holder
-     * rather than an observation about the world, so a broken one is a fault to
-     * surface instead of an absence to report. The holder cannot be loaded
-     * until something repairs the reference, so the choice trades availability
-     * for the guarantee that no caller ever sees a holder whose reference
-     * silently went missing.
+     * Use {@link #ERROR} for a reference the record cannot be correct without.
+     * The housing record stays unloadable until something repairs the stale
+     * reference. In exchange, no caller ever receives a record whose reference
+     * went missing.
      * </p>
      */
     ERROR,
 
     /**
-     * Resolve the reference to nothing, and delete the stored reference as part
-     * of the load.
+     * Skip the stale reference, and also delete it from the database.
      * <p>
-     * The load reports the same absence that {@link #SKIP} reports and also
-     * corrects the storage, so the holder stops carrying the stale reference
-     * and no later load encounters it again. Within a {@link Transaction} the
-     * deletion commits or aborts with that transaction.
+     * The load reports the same absence that {@link #SKIP} reports, and the
+     * housing record stops carrying the stale reference, so no later load
+     * encounters it. Within a {@link Transaction}, the delete commits or aborts
+     * with that transaction.
      * </p>
      */
     REPAIR,
 
     /**
-     * Resolve the reference to nothing, and leave the stored reference in
-     * place.
+     * Skip the stale reference, and leave it in the database.
      * <p>
-     * A field that holds a single {@link Record} is left unset, and a
-     * {@link Collection} omits the element. The stored reference is the
-     * database's record of an association that once existed, and this policy
-     * preserves it: a later load reports the same absence, and a caller that
+     * A housing scalar field receives a {@code null} value and a housing
+     * collection does not consider the reference at all. The database keeps the
+     * reference, so a later load reports the same absence and a caller that
      * reads the underlying data can still see what was referenced.
      * </p>
      */

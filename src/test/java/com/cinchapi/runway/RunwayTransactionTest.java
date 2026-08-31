@@ -3308,23 +3308,6 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that {@link Transaction#abort() abort}
-     * discards a staged deletion and that no delete notification fires.
-     * <p>
-     * <strong>Start state:</strong> A saved {@link Item} and a delete listener
-     * that counts notifications for {@link Item Items}.
-     * <p>
-     * <strong>Workflow:</strong>
-     * <ul>
-     * <li>Load the {@link Item} through a {@link Transaction}, call
-     * {@code deleteOnSave()} and {@code save()}.</li>
-     * <li>Call {@code abort()}.</li>
-     * </ul>
-     * <p>
-     * <strong>Expected:</strong> The {@link Item} still exists outside of the
-     * transaction and the delete listener never fires.
-     */
-    /**
      * <strong>Goal:</strong> Verify that the delete notification for a record
      * that a transaction deleted reports the state that the record stored.
      * <p>
@@ -3364,6 +3347,23 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
         Assert.assertTrue(reported.get().get("name").contains("widget"));
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that {@link Transaction#abort() abort}
+     * discards a staged deletion and that no delete notification fires.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a delete listener
+     * that counts notifications for {@link Item Items}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, call
+     * {@code deleteOnSave()} and {@code save()}.</li>
+     * <li>Call {@code abort()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@link Item} still exists outside of the
+     * transaction and the delete listener never fires.
+     */
     @Test
     public void testAbortDiscardsStagedDeletion() throws InterruptedException {
         Item item = new Item("widget", 1);

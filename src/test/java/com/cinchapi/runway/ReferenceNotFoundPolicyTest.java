@@ -32,12 +32,11 @@ import com.google.common.collect.ImmutableList;
 public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
 
     /**
-     * <strong>Goal:</strong> Verify that a reference whose target holds no data
-     * resolves to nothing and leaves the stored reference in place under the
-     * default policy.
+     * <strong>Goal:</strong> Verify that the default policy skips a stale
+     * reference and leaves it in the database.
      * <p>
      * <strong>Start state:</strong> A saved {@link Holder} that references a
-     * saved {@link Target} through an undeclared field.
+     * saved {@link Target} through a field that declares no policy.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
@@ -66,7 +65,7 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link ReferenceNotFoundPolicy#REPAIR}
-     * resolves the reference to nothing and removes the stored reference.
+     * skips a stale reference and deletes it from the database.
      * <p>
      * <strong>Start state:</strong> A saved {@link RepairingHolder} that
      * references a saved {@link Target}.
@@ -99,7 +98,7 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link ReferenceNotFoundPolicy#ERROR}
-     * fails the load of the record that holds the reference.
+     * fails the load of the housing record.
      * <p>
      * <strong>Start state:</strong> A saved {@link StrictHolder} that
      * references a saved {@link Target}.
@@ -140,7 +139,7 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
      * <p>
      * <strong>Start state:</strong> A {@link Runway} whose policy is
      * {@link ReferenceNotFoundPolicy#ERROR}, holding a saved {@link Holder}
-     * that declares nothing and a saved {@link RepairingHolder} that declares
+     * that declares no policy and a saved {@link RepairingHolder} that declares
      * {@link ReferenceNotFoundPolicy#REPAIR}, both referencing one
      * {@link Target}.
      * <p>
@@ -150,9 +149,10 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
      * <li>Load each holder.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> The undeclared holder fails its load under the
-     * database's policy, and the declared one resolves to nothing and repairs
-     * its storage.
+     * <strong>Expected:</strong> The holder that declares no policy fails its
+     * load under the database's policy, and the one that declares
+     * {@link ReferenceNotFoundPolicy#REPAIR} skips the stale reference and
+     * deletes it.
      */
     @Test
     public void testDeclaredPolicyOverridesTheDatabasePolicy()
@@ -186,9 +186,8 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a reference whose target holds no data
-     * is omitted from a collection rather than resolved to a {@code null}
-     * element.
+     * <strong>Goal:</strong> Verify that a collection omits a stale reference
+     * rather than holding a {@code null} element in its place.
      * <p>
      * <strong>Start state:</strong> A saved {@link CollectionHolder} that
      * references two saved {@link Target Targets}.
@@ -222,9 +221,9 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link ReferenceNotFoundPolicy#REPAIR}
-     * deletes a stale reference from a collection on a record that the load
-     * reached through another record, where the field resolves under a
-     * navigation prefix rather than under its own name.
+     * deletes a stale reference from the record that actually houses it, even
+     * when the load reached that record through another one and resolves its
+     * fields under a navigation prefix.
      * <p>
      * <strong>Start state:</strong> A saved {@link Outer} that references a
      * saved {@link Inner}, which in turn references two saved {@link Target
@@ -264,9 +263,9 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a {@link DeferredReference} whose
-     * target holds no data answers {@code null} under the default policy,
-     * without failing the load of the record that holds it.
+     * <strong>Goal:</strong> Verify that a stale {@link DeferredReference}
+     * answers {@code null} under the default policy, without failing the load
+     * of the housing record.
      * <p>
      * <strong>Start state:</strong> A saved {@link DeferredHolder} that
      * references a saved {@link Target}.
@@ -299,8 +298,8 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link ReferenceNotFoundPolicy#REPAIR}
-     * deletes the stored reference when a {@link DeferredReference} is
-     * accessed, not when its holder loads.
+     * deletes a stale {@link DeferredReference} when the reference is accessed,
+     * not when the housing record loads.
      * <p>
      * <strong>Start state:</strong> A saved {@link RepairingDeferredHolder}
      * that references a saved {@link Target}.
@@ -336,8 +335,8 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that {@link ReferenceNotFoundPolicy#ERROR}
-     * on a {@link DeferredReference} field reports the stale reference when it
-     * is accessed rather than when its holder loads.
+     * on a {@link DeferredReference} field reports a stale reference when the
+     * reference is accessed rather than when the housing record loads.
      * <p>
      * <strong>Start state:</strong> A saved {@link StrictDeferredHolder} that
      * references a saved {@link Target}.
@@ -380,8 +379,8 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
     /**
      * <strong>Goal:</strong> Verify that a field holding a
      * {@link java.util.Collection} of {@link DeferredReference
-     * DeferredReferences} applies its policy per element, so a surviving
-     * element resolves normally alongside a stale one.
+     * DeferredReferences} applies its policy to each element on its own, so a
+     * live element still resolves alongside a stale one.
      * <p>
      * <strong>Start state:</strong> A saved
      * {@link StrictDeferredCollectionHolder} that references two saved
@@ -433,9 +432,8 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
     }
 
     /**
-     * <strong>Goal:</strong> Verify that a reference whose target holds no data
-     * resolves the same way whether or not the load pre-selects the referenced
-     * record's data.
+     * <strong>Goal:</strong> Verify that a stale reference resolves the same
+     * way whether or not the load pre-selects the referenced record's data.
      * <p>
      * <strong>Start state:</strong> A saved {@link Holder} that references a
      * saved {@link Target}.
@@ -485,7 +483,7 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
     /**
      * A {@link Record} that references {@link Target Targets} through a
      * collection that declares {@link ReferenceNotFoundPolicy#REPAIR}, and that
-     * a load reaches through an {@link Outer}.
+     * a load reaches through an {@link Outer} rather than directly.
      */
     class Inner extends Record {
 
@@ -603,7 +601,7 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
     class Target extends Record {
 
         /**
-         * A stored value, so the class registers as a {@link Record} type.
+         * A stored value, so that the class registers as a {@link Record} type.
          */
         String name = "target";
     }

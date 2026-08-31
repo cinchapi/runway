@@ -60,22 +60,19 @@ public final class DeferredReference<T extends Record> {
     private final Binding db;
 
     /**
-     * The {@link Record} whose field holds this reference, or {@code null} when
-     * a caller constructed this reference directly. The
-     * {@link ReferenceNotFoundPolicy} that governs the field belongs to this
-     * {@link Record}, so an access resolves through it.
+     * The housing {@link Record}, through which an access applies the
+     * {@link ReferenceNotFoundPolicy} for the housing field.
      * <p>
-     * This is released once the reference resolves, so a resolved reference
-     * does not keep its holder reachable.
+     * This is {@code null} when no field houses the reference, and it is
+     * cleared once the reference resolves.
      * </p>
      */
     @Nullable
     private Record holder;
 
     /**
-     * The name of the {@link #holder Holder's} field that holds this reference,
-     * or {@code null} when a caller constructed this reference directly. This
-     * is released alongside the {@link #holder}.
+     * The name of the housing field. This is {@code null} whenever the
+     * {@link #holder} is {@code null}.
      */
     @Nullable
     private String key;
@@ -99,10 +96,8 @@ public final class DeferredReference<T extends Record> {
     }
 
     /**
-     * Construct a new instance that no declared field governs, so an access
-     * resolves without a {@link ReferenceNotFoundPolicy}. Use this for a
-     * reference that {@link Record} metadata holds rather than one that a
-     * {@link Record Record's} own field holds.
+     * Construct a new instance for a reference that no field houses, so an
+     * access applies no {@link ReferenceNotFoundPolicy}.
      *
      * @param id the id of the referenced {@link Record}
      * @param db the {@link Binding} through which the reference loads
@@ -116,9 +111,8 @@ public final class DeferredReference<T extends Record> {
      *
      * @param id the id of the referenced {@link Record}
      * @param db the {@link Binding} through which the reference loads
-     * @param holder the {@link Record} whose field holds this reference
-     * @param key the name of the {@code holder's} field that holds this
-     *            reference
+     * @param holder the housing {@link Record}
+     * @param key the name of the housing field
      */
     DeferredReference(long id, Binding db, @Nullable Record holder,
             @Nullable String key) {
@@ -129,21 +123,21 @@ public final class DeferredReference<T extends Record> {
     }
 
     /**
-     * Return the referenced {@link Record}.
+     * Return the referenced {@link Record}, loading it if this is the first
+     * access.
      * <p>
-     * This is where the reference loads, so this is where the
-     * {@link ReferenceNotFoundPolicy} that governs the field applies. If the
-     * referenced {@link Record} holds no data, then
-     * {@link ReferenceNotFoundPolicy#SKIP SKIP} and
-     * {@link ReferenceNotFoundPolicy#REPAIR REPAIR} both answer {@code null}
-     * and {@link ReferenceNotFoundPolicy#ERROR ERROR} throws.
+     * The load happens here, so this is also where the
+     * {@link ReferenceNotFoundPolicy} for the housing field applies to a stale
+     * reference: {@link ReferenceNotFoundPolicy#SKIP SKIP} and
+     * {@link ReferenceNotFoundPolicy#REPAIR REPAIR} both answer {@code null},
+     * while {@link ReferenceNotFoundPolicy#ERROR ERROR} throws.
      * </p>
      *
-     * @return the {@link Record reference}, or {@code null} if it references no
-     *         {@link Record} and the governing policy permits the absence
-     * @throws ReferenceNotFoundException if the referenced {@link Record} holds
-     *             no data and the governing policy is
-     *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
+     * @return the referenced {@link Record}, or {@code null} if the reference
+     *         is stale and the governing policy allows that
+     * @throws ReferenceNotFoundException if the reference is stale and the
+     *             governing policy is {@link ReferenceNotFoundPolicy#ERROR
+     *             ERROR}
      */
     @Nullable
     public T get() {
@@ -153,10 +147,9 @@ public final class DeferredReference<T extends Record> {
                     ? holder.resolveDeferredReference(key, id)
                     : db.load(id);
             if(reference != null) {
-                // NOTE: The holder answers what a reference with nothing
-                // behind it resolves to, so a reference that resolved has no
-                // further use for it and releases it instead of keeping the
-                // holder, and everything the holder reaches, alive.
+                // NOTE: The holder is only needed to resolve the
+                // reference, so releasing it keeps a resolved reference from
+                // holding on to the holder and everything the holder reaches.
                 this.holder = null;
                 this.key = null;
             }

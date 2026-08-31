@@ -18,14 +18,14 @@ package com.cinchapi.runway;
 import com.cinchapi.common.base.AnyStrings;
 
 /**
- * A {@link ReferenceNotFoundException} is thrown when a load resolves a stored
- * reference whose target holds no data and the governing
- * {@link ReferenceNotFoundPolicy} is {@link ReferenceNotFoundPolicy#ERROR
- * ERROR}.
+ * A {@link ReferenceNotFoundException} is thrown when a load encounters a stale
+ * reference on a field whose {@link ReferenceNotFoundPolicy} is
+ * {@link ReferenceNotFoundPolicy#ERROR ERROR}.
  * <p>
- * The exception names the {@link Record} that holds the reference, not the one
- * the reference names, because the holder is the {@link Record} that cannot be
- * loaded. The {@link #target()} names the record that holds no data.
+ * The message names the housing record, since that is the {@link Record} that
+ * failed to load. {@link #key()} returns the field that holds the stale
+ * reference, and {@link #target()} returns the id of the record with no stored
+ * data.
  * </p>
  *
  * @author Jeff Nelson
@@ -34,7 +34,7 @@ import com.cinchapi.common.base.AnyStrings;
 public class ReferenceNotFoundException extends RunwayException {
 
     /**
-     * The name of the field that holds the reference.
+     * The name of the field that holds the stale reference.
      */
     private final String key;
 
@@ -46,21 +46,21 @@ public class ReferenceNotFoundException extends RunwayException {
     /**
      * Construct a new instance.
      *
-     * @param holder the {@link Record} that holds the reference
-     * @param key the name of the field that holds the reference
+     * @param holder the housing {@link Record}
+     * @param key the name of the field that holds the stale reference
      * @param target the primary key of the referenced record
      */
     public ReferenceNotFoundException(Record holder, String key, long target) {
         super(AnyStrings.format(
                 "{} {} references record {} through '{}', but that record "
-                        + "holds no data",
+                        + "has no stored data",
                 holder.getClass().getSimpleName(), holder.id(), target, key));
         this.key = key;
         this.target = target;
     }
 
     /**
-     * Return the name of the field that holds the reference.
+     * Return the name of the field that holds the stale reference.
      *
      * @return the field name
      */

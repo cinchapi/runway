@@ -521,9 +521,8 @@ public final class Runway extends Binding implements
     private final Properties properties = new Properties();
 
     /**
-     * The {@link ReferenceNotFoundPolicy} that governs a field of a
-     * {@link Record} that is assigned to this {@link Runway} instance and that
-     * declares no policy of its own.
+     * The {@link ReferenceNotFoundPolicy} for every field of an assigned
+     * {@link Record} that declares no policy of its own.
      */
     private ReferenceNotFoundPolicy referenceNotFoundPolicy = ReferenceNotFoundPolicy.SKIP;
 
@@ -3554,15 +3553,14 @@ public final class Runway extends Binding implements
         }
 
         /**
-         * Set the {@link ReferenceNotFoundPolicy} that governs a field of a
-         * {@link Record} that declares no policy of its own.
+         * Set the {@link ReferenceNotFoundPolicy} for every field that declares
+         * no policy of its own.
          * <p>
-         * The default is {@link ReferenceNotFoundPolicy#SKIP}, which resolves a
-         * reference whose target holds no data to nothing and leaves the stored
-         * reference in place. Provide {@link ReferenceNotFoundPolicy#REPAIR} to
-         * additionally remove the stored reference, or
-         * {@link ReferenceNotFoundPolicy#ERROR} to fail the load of the
-         * {@link Record} that holds it.
+         * The default is {@link ReferenceNotFoundPolicy#SKIP}, which skips a
+         * stale reference and leaves it in the database. Provide
+         * {@link ReferenceNotFoundPolicy#REPAIR} to also delete the stale
+         * reference, or {@link ReferenceNotFoundPolicy#ERROR} to fail the load
+         * of the housing record.
          * </p>
          *
          * @param policy the {@link ReferenceNotFoundPolicy} to use
@@ -3840,9 +3838,8 @@ public final class Runway extends Binding implements
         }
 
         /**
-         * Return the {@link ReferenceNotFoundPolicy} that governs a field of a
-         * {@link Record} that is assigned to this {@link Runway} instance and
-         * that declares no policy of its own.
+         * Return the {@link ReferenceNotFoundPolicy} for every field of an
+         * assigned {@link Record} that declares no policy of its own.
          *
          * @return the governing {@link ReferenceNotFoundPolicy}
          */
