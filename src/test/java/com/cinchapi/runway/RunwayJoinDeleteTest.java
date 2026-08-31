@@ -180,6 +180,47 @@ public class RunwayJoinDeleteTest extends RunwayBaseClientServerTest {
         records.forEach(this::assertNotExists);
     }
 
+    /**
+     * <strong>Goal:</strong> Verify that a nested {@link JoinDelete} chain is
+     * deleted in full when the deletion runs within a transaction.
+     * <p>
+     * <strong>Start state:</strong> Four saved records, each joined to the next
+     * through a {@link JoinDelete} field.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the record at the end of the chain through a transaction.</li>
+     * <li>Call {@code deleteOnSave()} and save it within the transaction.</li>
+     * <li>Let the transaction commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> Every record in the chain no longer exists.
+     */
+    @Test
+    public void testNestedJoinDeleteChainWithinTransaction() {
+        Grandparent grandparent = new Grandparent();
+        Parent parent = new Parent();
+        Child child = new Child("child");
+        Grandchild grandchild = new Grandchild("grandchild");
+
+        grandparent.parent = parent;
+        parent.child = child;
+        child.grandchild = grandchild;
+
+        Assert.assertTrue(runway.save(grandparent, parent, child, grandchild));
+
+        runway.transact(transaction -> {
+            Grandchild target = transaction.load(Grandchild.class,
+                    grandchild.id());
+            target.deleteOnSave();
+            transaction.save(target);
+        });
+
+        List<Record> records = ImmutableList.of(grandparent, parent, child,
+                grandchild);
+        records.forEach(this::assertNotExists);
+    }
+
     @Test
     public void testNestedJoinDeleteChainWithSelfReferencingClass() {
         // Create a chain of Person instances linked by the "friend" field

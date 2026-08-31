@@ -71,6 +71,12 @@ final class SaveContext {
     private final Consumer<Record> admission;
 
     /**
+     * The state that each record stored at the moment the active attempt
+     * deleted it, keyed by record id.
+     */
+    private final Map<Long, Map<String, Set<Object>>> deletionData = new HashMap<>();
+
+    /**
      * One {@link Entry} per record id processed within the active attempt.
      */
     private final Map<Long, Entry> entries = new HashMap<>();
@@ -203,6 +209,18 @@ final class SaveContext {
     }
 
     /**
+     * Return the state that the record with {@code id} stored when the active
+     * attempt deleted it.
+     *
+     * @param id the record id
+     * @return the stored state, or an empty {@link Map} if the attempt did not
+     *         delete the record
+     */
+    Map<String, Set<Object>> deletionData(long id) {
+        return deletionData.getOrDefault(id, Collections.emptyMap());
+    }
+
+    /**
      * Return the ids of every record that the active attempt deleted.
      *
      * @return the deleted ids
@@ -308,6 +326,19 @@ final class SaveContext {
     }
 
     /**
+     * Merge every {@link Record}, {@link Outcome} and captured deletion state
+     * from {@code context} into this one. When more than one context captured
+     * deletion state for the same record, the state from the earliest merge is
+     * the one that survives.
+     *
+     * @param context the {@link SaveContext} to merge
+     */
+    void merge(SaveContext context) {
+        context.forEach(this::merge);
+        context.deletionData.forEach(deletionData::putIfAbsent);
+    }
+
+    /**
      * Remove and return the next {@link Record} that a companion deletion
      * scheduled, or {@code null} if none remain.
      *
@@ -319,12 +350,24 @@ final class SaveContext {
     }
 
     /**
+     * Capture the state that the record with {@code id} stored at the moment
+     * the active attempt deleted it.
+     *
+     * @param id the record id
+     * @param data the record's stored state
+     */
+    void recordDeletionData(long id, Map<String, Set<Object>> data) {
+        deletionData.put(id, data);
+    }
+
+    /**
      * Reset the per-attempt state for a new save attempt. The
      * {@link Record.Snapshot snapshots} are kept.
      */
     void reset() {
         entries.clear();
         pendingDeletions.clear();
+        deletionData.clear();
     }
 
     /**
