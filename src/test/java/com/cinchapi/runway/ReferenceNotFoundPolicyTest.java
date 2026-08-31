@@ -377,6 +377,49 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@link ReferenceNotFoundPolicy#ERROR}
+     * reports a stale reference through {@link Record#get(String)} rather than
+     * resolving the key to {@code null}.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link StrictDeferredHolder} that
+     * references a saved {@link Target}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Delete the {@link Target}.</li>
+     * <li>Load the {@link StrictDeferredHolder}.</li>
+     * <li>Read the field with {@code get("target")}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The read throws a
+     * {@link ReferenceNotFoundException} that names the field and the
+     * referenced record.
+     */
+    @Test
+    public void testErrorFailsAKeyedReadOfAStaleDeferredReference() {
+        Target target = new Target();
+        StrictDeferredHolder holder = new StrictDeferredHolder();
+        holder.target = new DeferredReference<>(target);
+        Assert.assertTrue(runway.save(target, holder));
+
+        target.deleteOnSave();
+        Assert.assertTrue(target.save());
+
+        StrictDeferredHolder loaded = runway.load(StrictDeferredHolder.class,
+                holder.id());
+        Assert.assertNotNull(loaded);
+
+        try {
+            loaded.get("target");
+            Assert.fail("The read must not succeed");
+        }
+        catch (ReferenceNotFoundException e) {
+            Assert.assertEquals("target", e.key());
+            Assert.assertEquals(target.id(), e.target());
+        }
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a field holding a
      * {@link java.util.Collection} of {@link DeferredReference
      * DeferredReferences} applies its policy to each element on its own, so a
@@ -469,6 +512,45 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a projection omits a stale
+     * {@link DeferredReference} from a collection instead of exposing a
+     * {@code null} element in its place.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link DeferredCollectionHolder}
+     * that references two saved {@link Target Targets} through a field that
+     * declares no policy.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Delete one {@link Target}.</li>
+     * <li>Load the holder.</li>
+     * <li>Read the collection with {@link Record#get(String)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The projected collection contains only the
+     * surviving {@link Target} and no {@code null} element.
+     */
+    @Test
+    public void testProjectionOmitsAStaleElementFromADeferredCollection() {
+        Target kept = new Target();
+        Target removed = new Target();
+        DeferredCollectionHolder holder = new DeferredCollectionHolder();
+        holder.targets = ImmutableList.of(new DeferredReference<>(kept),
+                new DeferredReference<>(removed));
+        Assert.assertTrue(runway.save(kept, removed, holder));
+
+        removed.deleteOnSave();
+        Assert.assertTrue(removed.save());
+
+        DeferredCollectionHolder loaded = runway
+                .load(DeferredCollectionHolder.class, holder.id());
+        Assert.assertNotNull(loaded);
+        List<Record> projected = loaded.get("targets");
+        Assert.assertEquals(1, projected.size());
+        Assert.assertEquals(kept.id(), projected.get(0).id());
+    }
+
+    /**
      * A {@link Record} that references {@link Target Targets} through a
      * collection that declares no {@link ReferenceNotFound} policy.
      */
@@ -504,6 +586,18 @@ public class ReferenceNotFoundPolicyTest extends RunwayBaseClientServerTest {
          * The referenced {@link Inner}.
          */
         public Inner inner;
+    }
+
+    /**
+     * A {@link Record} that defers references to {@link Target Targets} through
+     * a collection that declares no {@link ReferenceNotFound} policy.
+     */
+    class DeferredCollectionHolder extends Record {
+
+        /**
+         * The deferred {@link Target Targets}.
+         */
+        public List<DeferredReference<Target>> targets;
     }
 
     /**

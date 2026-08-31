@@ -1801,6 +1801,9 @@ public abstract class Record implements Comparable<Record> {
      *
      * @param key the key name or navigation key
      * @return the resolved value, or {@code null} if no readable value is found
+     * @throws ReferenceNotFoundException if the value holds a stale reference
+     *             and the governing policy is
+     *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
      */
     public <T> T get(String key) {
         return get(key, Record::isReadableField);
@@ -4194,15 +4197,16 @@ public abstract class Record implements Comparable<Record> {
      * Convert the {@code stored} value for {@code key} into the appropriate
      * Java object based on the field {@code type}.
      * <p>
-     * As ad-hoc cleanup, a dangling {@link Link} (one whose target
-     * {@link Record} no longer exists) is removed from {@code key} on
-     * {@code this} {@link Record} and {@code null} is returned.
+     * A dangling {@link Link} (one whose target {@link Record} no longer
+     * exists) resolves under the {@link ReferenceNotFoundPolicy} for
+     * {@code key}, so it may convert to {@code null}.
      *
      * @param key the Concourse field name on {@code this} {@link Record} where
      *            {@code stored} is held; must be the canonical field name
      *            (e.g., {@code "pebbles"}), not a navigation path (e.g.,
-     *            {@code "stone.pebbles"}), so that dangling-link cleanup writes
-     *            against a valid Concourse key
+     *            {@code "stone.pebbles"}), so that a
+     *            {@link ReferenceNotFoundPolicy#REPAIR repair} writes against a
+     *            valid Concourse key
      * @param type
      * @param stored
      * @param concourse
@@ -4450,6 +4454,7 @@ public abstract class Record implements Comparable<Record> {
                     || typeArgs.contains(Object.class)) {
                 value = Sequences.stream(value)
                         .map(item -> dereference(key, item))
+                        .filter(Objects::nonNull)
                         .collect(Collectors.toCollection(
                                 value instanceof Set ? LinkedHashSet::new
                                         : ArrayList::new));
@@ -4642,6 +4647,9 @@ public abstract class Record implements Comparable<Record> {
                             value = field.get(this);
                             value = dereference(key, value);
                         }
+                    }
+                    catch (ReferenceNotFoundException e) {
+                        throw e;
                     }
                     catch (Exception e) {/* ignore */}
                 }
