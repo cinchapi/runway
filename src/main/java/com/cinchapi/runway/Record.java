@@ -4354,7 +4354,7 @@ public abstract class Record implements Comparable<Record> {
                                 .getLast(entry.getValue());
                         Class<? extends Record> clazz = Reflection
                                 .getClassCasted(__);
-                        Record record = db.load(clazz, id);
+                        Record record = load(saver, clazz, id);
                         ensureDeletion(record, context);
                     }
                 }
@@ -4382,7 +4382,7 @@ public abstract class Record implements Comparable<Record> {
                                 .getLast(entry.getValue());
                         Class<? extends Record> clazz = Reflection
                                 .getClassCasted(__);
-                        Record record = db.load(clazz, id);
+                        Record record = load(saver, clazz, id);
                         if(!record.removeCaptureDeleteReferences(
                                 ImmutableSet.of(this.id)).isEmpty()) {
                             record.saveWithinTransaction(saver, context);
@@ -4734,6 +4734,21 @@ public abstract class Record implements Comparable<Record> {
         });
         Gson gson = builder.create();
         return gson.toJson(data);
+    }
+
+    /**
+     * Load the {@link Record} of type {@code clazz} identified by {@code id}
+     * through the connection on which {@code saver} records its operations, so
+     * the read observes the state that the active save staged.
+     *
+     * @param saver the {@link Saver} for the attempt's transaction
+     * @param clazz the type of the {@link Record} to load
+     * @param id the id of the {@link Record} to load
+     * @return the loaded {@link Record}, or {@code null} if none exists
+     */
+    private <T extends Record> T load(Saver saver, Class<T> clazz, long id) {
+        return load(clazz, id, new ConcurrentHashMap<>(), connections,
+                Reflection.get("concourse", saver), binding, null, null, null);
     }
 
     /**
