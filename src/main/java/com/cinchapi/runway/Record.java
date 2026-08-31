@@ -4397,10 +4397,12 @@ public abstract class Record implements Comparable<Record> {
             });
         }
 
-        // Perform the deletion; companions scheduled above are processed
-        // when the #saveWithinTransaction that initiated the deletion
-        // drains the context's queue.
-        saver.clear(id);
+        // NOTE: The clear is deferred to Runway#stageDeletions, which
+        // re-asserts every deletion as the last write for its record. A
+        // clear here reaches the server while the companion walk is still
+        // running, and that walk loads records over the same connection, so
+        // an early clear leaves behind a link that this save can see but
+        // cannot resolve.
     }
 
     /**
