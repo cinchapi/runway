@@ -850,25 +850,15 @@ public interface Audience extends DatabaseInterface, Transactional {
                         }
                         else if(value instanceof AccessControl) {
                             Record record = (Record) value;
-                            seen.add(record);
-                            try {
-                                value = frame(options,
-                                        ImmutableSet.copyOf(remaining),
-                                        (T) record);
-                            }
-                            finally {
-                                seen.remove(record);
-                            }
+                            value = renderInFlight(seen, record,
+                                    () -> frame(options,
+                                            ImmutableSet.copyOf(remaining),
+                                            (T) record));
                         }
                         else if(value instanceof Record) {
                             Record record = (Record) value;
-                            seen.add(record);
-                            try {
-                                value = record.map(options, remaining);
-                            }
-                            finally {
-                                seen.remove(record);
-                            }
+                            value = renderInFlight(seen, record,
+                                    () -> record.map(options, remaining));
                         }
                         else if(Sequences.isSequence(value)) {
                             value = Sequences.stream(value).map(item -> {
@@ -879,27 +869,17 @@ public interface Audience extends DatabaseInterface, Transactional {
                                 else {
                                     if(item instanceof AccessControl) {
                                         Record record = (Record) item;
-                                        seen.add(record);
-                                        try {
-                                            item = frame(options,
-                                                    ImmutableSet
-                                                            .copyOf(remaining),
-                                                    (T) record);
-                                        }
-                                        finally {
-                                            seen.remove(record);
-                                        }
+                                        item = renderInFlight(seen, record,
+                                                () -> frame(options,
+                                                        ImmutableSet.copyOf(
+                                                                remaining),
+                                                        (T) record));
                                     }
                                     else if(item instanceof Record) {
                                         Record record = (Record) item;
-                                        seen.add(record);
-                                        try {
-                                            item = record.map(options,
-                                                    remaining);
-                                        }
-                                        finally {
-                                            seen.remove(record);
-                                        }
+                                        item = renderInFlight(seen, record,
+                                                () -> record.map(options,
+                                                        remaining));
                                     }
                                 }
                                 return item;

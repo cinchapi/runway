@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 import javax.annotation.Nullable;
@@ -283,14 +284,33 @@ class AccessControlSupport {
     }
 
     /**
+     * Track {@code record} as in flight on {@code seen} while {@code render}
+     * produces its framed value, and always release the tracking, even when the
+     * render throws.
+     *
+     * @param seen the in-flight {@link Record Records} on the current thread
+     * @param record the {@link Record} being rendered
+     * @param render the computation that renders the record
+     * @return the rendered value
+     */
+    public static Object renderInFlight(Multiset<Record> seen, Record record,
+            Supplier<Object> render) {
+        seen.add(record);
+        try {
+            return render.get();
+        }
+        finally {
+            seen.remove(record);
+        }
+    }
+
+    /**
      * Registry mapping each {@link AccessControl} class to a provider
      * {@link Function} that, given an {@link Audience}, returns the
      * {@link Scope} describing that audience's database-level visibility.
      * <p>
-     * Populated via
-     * {@link AccessControl#registerVisibilityScope(Class, Function)} and
-     * consulted at query time by
-     * {@link Audience#select(com.cinchapi.runway.Selection[])}.
+     * Entries are registered via
+     * {@link AccessControl#registerVisibilityScope(Class, Function)}.
      * </p>
      */
     static final Map<Class<?>, Function<Audience, Scope>> VISIBILITY_SCOPES = new ConcurrentHashMap<>();
