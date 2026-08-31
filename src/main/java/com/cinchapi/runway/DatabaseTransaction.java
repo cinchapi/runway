@@ -822,7 +822,7 @@ class DatabaseTransaction extends Binding implements Transaction {
                 // with the highest outcome receives the consequences.
                 SaveContext merged = new SaveContext(false);
                 for (SaveContext context : saves) {
-                    context.forEach(merged::merge);
+                    merged.merge(context);
                 }
                 try {
                     database.dispatchSaveOutcomes(merged);

@@ -3660,7 +3660,7 @@ public final class Runway extends Binding implements
          * including linked records saved alongside the record that
          * {@link Record#save()} was called on and records updated through
          * {@link CaptureDelete} cleanup. A record whose save results in
-         * deletion fires {@link #onDelete(Class, Consumer) delete listeners}
+         * deletion fires {@link #onDelete(Class, TriConsumer) delete listeners}
          * instead.
          * </p>
          * <p>
@@ -3856,7 +3856,7 @@ public final class Runway extends Binding implements
          * Register a listener that will be called <strong>after</strong> any
          * {@link Record} of the specified {@code type} (or a subclass) is
          * successfully saved. A {@link Record} whose save results in deletion
-         * fires {@link #onDelete(Class, Consumer) delete listeners} instead.
+         * fires {@link #onDelete(Class, TriConsumer) delete listeners} instead.
          * <p>
          * The new listener is chained with any previously registered listeners
          * &mdash; it does not replace them.

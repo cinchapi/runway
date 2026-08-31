@@ -18,12 +18,15 @@ package com.cinchapi.runway;
 import java.lang.ref.WeakReference;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -3321,6 +3324,46 @@ public class RunwayTransactionTest extends RunwayBaseClientServerTest {
      * <strong>Expected:</strong> The {@link Item} still exists outside of the
      * transaction and the delete listener never fires.
      */
+    /**
+     * <strong>Goal:</strong> Verify that the delete notification for a record
+     * that a transaction deleted reports the state that the record stored.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Item} and a delete listener
+     * that captures the reported state.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Load the {@link Item} through a {@link Transaction}, call
+     * {@code deleteOnSave()} and {@code save()}.</li>
+     * <li>Commit the transaction.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The listener receives the name that the
+     * {@link Item} stored before the transaction deleted it.
+     */
+    @Test
+    public void testCommittedDeletionReportsStoredState()
+            throws InterruptedException {
+        Item item = new Item("widget", 1);
+        item.assign(runway);
+        Assert.assertTrue(item.save());
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Map<String, Set<Object>>> reported = new AtomicReference<>();
+        runway.properties().onDelete(Item.class, (id, clazz, data) -> {
+            reported.set(data);
+            latch.countDown();
+        });
+        try (Transaction transaction = runway.startTransaction()) {
+            Item txItem = transaction.load(Item.class, item.id());
+            txItem.deleteOnSave();
+            Assert.assertTrue(txItem.save());
+            Assert.assertTrue(transaction.commit());
+        }
+        Assert.assertTrue("The delete listener did not fire within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(reported.get().get("name").contains("widget"));
+    }
+
     @Test
     public void testAbortDiscardsStagedDeletion() throws InterruptedException {
         Item item = new Item("widget", 1);

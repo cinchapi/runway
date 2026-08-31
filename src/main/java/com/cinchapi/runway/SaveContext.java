@@ -326,6 +326,22 @@ final class SaveContext {
     }
 
     /**
+     * Merge every {@link Record}, {@link Outcome} and captured deletion state
+     * from {@code context} into this one.
+     * <p>
+     * The state that {@code context} captured for a record is kept only if no
+     * earlier merge captured state for that record, because a save that
+     * observes a record another save already deleted captures nothing.
+     * </p>
+     *
+     * @param context the {@link SaveContext} to merge
+     */
+    void merge(SaveContext context) {
+        context.forEach(this::merge);
+        context.deletionData.forEach(deletionData::putIfAbsent);
+    }
+
+    /**
      * Remove and return the next {@link Record} that a companion deletion
      * scheduled, or {@code null} if none remain.
      *
