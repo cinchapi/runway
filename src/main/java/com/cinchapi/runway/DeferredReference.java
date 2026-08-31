@@ -64,16 +64,21 @@ public final class DeferredReference<T extends Record> {
      * a caller constructed this reference directly. The
      * {@link ReferenceNotFoundPolicy} that governs the field belongs to this
      * {@link Record}, so an access resolves through it.
+     * <p>
+     * This is released once the reference resolves, so a resolved reference
+     * does not keep its holder reachable.
+     * </p>
      */
     @Nullable
-    private final Record holder;
+    private Record holder;
 
     /**
      * The name of the {@link #holder Holder's} field that holds this reference,
-     * or {@code null} when a caller constructed this reference directly.
+     * or {@code null} when a caller constructed this reference directly. This
+     * is released alongside the {@link #holder}.
      */
     @Nullable
-    private final String key;
+    private String key;
 
     /**
      * The loaded reference.
@@ -143,9 +148,18 @@ public final class DeferredReference<T extends Record> {
     @Nullable
     public T get() {
         if(reference == null) {
+            Record holder = this.holder;
             reference = holder != null
                     ? holder.resolveDeferredReference(key, id)
                     : db.load(id);
+            if(reference != null) {
+                // NOTE: The holder answers what a reference with nothing
+                // behind it resolves to, so a reference that resolved has no
+                // further use for it and releases it instead of keeping the
+                // holder, and everything the holder reaches, alive.
+                this.holder = null;
+                this.key = null;
+            }
         }
         return reference;
     }

@@ -3481,6 +3481,33 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
+     * Load the {@link Record} that the {@link DeferredReference} held by the
+     * field named {@code key} references, applying the
+     * {@link ReferenceNotFoundPolicy} that governs the field when the
+     * referenced record holds no data.
+     *
+     * @param key the name of the field that holds the reference
+     * @param target the id of the referenced {@link Record}
+     * @return the referenced {@link Record}, or {@code null} if none exists and
+     *         the governing policy permits the absence
+     * @throws ReferenceNotFoundException if the governing policy is
+     *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
+     */
+    <T extends Record> T resolveDeferredReference(String key, long target) {
+        T record = binding.load(target);
+        if(record == null) {
+            Concourse concourse = connections.request();
+            try {
+                applyReferenceNotFoundPolicy(key, target, concourse);
+            }
+            finally {
+                connections.release(concourse);
+            }
+        }
+        return record;
+    }
+
+    /**
      * Restore this {@link Record Record's} state from a previously captured
      * {@link Snapshot}.
      *
@@ -3924,6 +3951,30 @@ public abstract class Record implements Comparable<Record> {
                         "Cannot execute transactional work because this"
                                 + " Record has no binding");
             }
+        }
+    }
+
+    /**
+     * Apply the {@link ReferenceNotFoundPolicy} that governs the field named
+     * {@code key} to a stale reference to {@code target}.
+     *
+     * @param key the name of the field that holds the reference
+     * @param target the id of the record that holds no data
+     * @param concourse the connection through which a repair writes
+     * @throws ReferenceNotFoundException if the governing policy is
+     *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
+     */
+    private void applyReferenceNotFoundPolicy(String key, long target,
+            Concourse concourse) {
+        ReferenceNotFoundPolicy policy = referenceNotFoundPolicy(key);
+        if(policy == ReferenceNotFoundPolicy.ERROR) {
+            throw new ReferenceNotFoundException(this, key, target);
+        }
+        else if(policy == ReferenceNotFoundPolicy.REPAIR) {
+            concourse.remove(key, Link.to(target), id);
+        }
+        else {
+            // SKIP leaves the stored reference in place.
         }
     }
 
@@ -4555,30 +4606,6 @@ public abstract class Record implements Comparable<Record> {
     }
 
     /**
-     * Apply the {@link ReferenceNotFoundPolicy} that governs the field named
-     * {@code key} to a stale reference to {@code target}.
-     *
-     * @param key the name of the field that holds the reference
-     * @param target the id of the record that holds no data
-     * @param concourse the connection through which a repair writes
-     * @throws ReferenceNotFoundException if the governing policy is
-     *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
-     */
-    private void applyReferenceNotFoundPolicy(String key, long target,
-            Concourse concourse) {
-        ReferenceNotFoundPolicy policy = referenceNotFoundPolicy(key);
-        if(policy == ReferenceNotFoundPolicy.ERROR) {
-            throw new ReferenceNotFoundException(this, key, target);
-        }
-        else if(policy == ReferenceNotFoundPolicy.REPAIR) {
-            concourse.remove(key, Link.to(target), id);
-        }
-        else {
-            // SKIP leaves the stored reference in place.
-        }
-    }
-
-    /**
      * Return all the non-internal {@link Field fields} in this class.
      *
      * @return the non-internal {@link Field fields}
@@ -4830,33 +4857,6 @@ public abstract class Record implements Comparable<Record> {
             }
         }
         return data;
-    }
-
-    /**
-     * Load the {@link Record} that the {@link DeferredReference} held by the
-     * field named {@code key} references, applying the
-     * {@link ReferenceNotFoundPolicy} that governs the field when the
-     * referenced record holds no data.
-     *
-     * @param key the name of the field that holds the reference
-     * @param target the id of the referenced {@link Record}
-     * @return the referenced {@link Record}, or {@code null} if none exists and
-     *         the governing policy permits the absence
-     * @throws ReferenceNotFoundException if the governing policy is
-     *             {@link ReferenceNotFoundPolicy#ERROR ERROR}
-     */
-    <T extends Record> T resolveDeferredReference(String key, long target) {
-        T record = binding.load(target);
-        if(record == null) {
-            Concourse concourse = connections.request();
-            try {
-                applyReferenceNotFoundPolicy(key, target, concourse);
-            }
-            finally {
-                connections.release(concourse);
-            }
-        }
-        return record;
     }
 
     /**
