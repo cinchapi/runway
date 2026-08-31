@@ -99,6 +99,11 @@ final class SaveContext {
     private final Set<Long> priorDeletions;
 
     /**
+     * Whether the save captures the state that each record it deletes stored.
+     */
+    private final boolean shouldCaptureDeletionData;
+
+    /**
      * Whether the save fails if it would overwrite a value that another writer
      * changed.
      */
@@ -111,7 +116,7 @@ final class SaveContext {
      *            overwrite a value that another writer changed
      */
     SaveContext(boolean shouldPreventStaleWrite) {
-        this(shouldPreventStaleWrite, NO_ADMISSION);
+        this(shouldPreventStaleWrite, false, NO_ADMISSION);
     }
 
     /**
@@ -120,11 +125,15 @@ final class SaveContext {
      *
      * @param shouldPreventStaleWrite whether the save fails if it would
      *            overwrite a value that another writer changed
+     * @param shouldCaptureDeletionData whether the save captures the state that
+     *            each record it deletes stored
      * @param admission the check that every {@link Record} must pass when it
      *            enters the save
      */
-    SaveContext(boolean shouldPreventStaleWrite, Consumer<Record> admission) {
-        this(shouldPreventStaleWrite, Collections.emptySet(), admission);
+    SaveContext(boolean shouldPreventStaleWrite,
+            boolean shouldCaptureDeletionData, Consumer<Record> admission) {
+        this(shouldPreventStaleWrite, shouldCaptureDeletionData,
+                Collections.emptySet(), admission);
     }
 
     /**
@@ -133,14 +142,18 @@ final class SaveContext {
      *
      * @param shouldPreventStaleWrite whether the save fails if it would
      *            overwrite a value that another writer changed
+     * @param shouldCaptureDeletionData whether the save captures the state that
+     *            each record it deletes stored
      * @param priorDeletions the ids of records that earlier saves in the same
      *            transaction deleted
      * @param admission the check that every {@link Record} must pass when it
      *            enters the save
      */
-    SaveContext(boolean shouldPreventStaleWrite, Set<Long> priorDeletions,
+    SaveContext(boolean shouldPreventStaleWrite,
+            boolean shouldCaptureDeletionData, Set<Long> priorDeletions,
             Consumer<Record> admission) {
         this.shouldPreventStaleWrite = shouldPreventStaleWrite;
+        this.shouldCaptureDeletionData = shouldCaptureDeletionData;
         this.priorDeletions = priorDeletions;
         this.admission = admission;
     }
@@ -214,7 +227,7 @@ final class SaveContext {
      *
      * @param id the record id
      * @return the stored state, or an empty {@link Map} if the attempt did not
-     *         delete the record
+     *         delete the record or did not capture deletion state
      */
     Map<String, Set<Object>> deletionData(long id) {
         return deletionData.getOrDefault(id, Collections.emptyMap());
@@ -386,6 +399,16 @@ final class SaveContext {
      */
     void scheduleDeletion(Record record) {
         pendingDeletions.add(record);
+    }
+
+    /**
+     * Return whether the save captures the state that each record it deletes
+     * stored.
+     *
+     * @return {@code true} if deletion state is captured
+     */
+    boolean shouldCaptureDeletionData() {
+        return shouldCaptureDeletionData;
     }
 
     /**

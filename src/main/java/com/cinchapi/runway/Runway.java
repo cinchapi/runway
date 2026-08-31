@@ -1241,6 +1241,7 @@ public final class Runway extends Binding implements
         try {
             boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
             SaveContext context = new SaveContext(preventStaleWrites,
+                    hasDeleteListener(),
                     record -> record.verifySavableThrough(this));
             int attempts = 0;
             while (true) {
@@ -1743,6 +1744,15 @@ public final class Runway extends Binding implements
         if(saveListener != null) {
             saveNotificationQueue.offer(() -> saveListener.accept(record));
         }
+    }
+
+    /**
+     * Return {@code true} if a delete listener is registered.
+     *
+     * @return {@code true} if a delete listener is registered
+     */
+    final boolean hasDeleteListener() {
+        return deleteListener != null;
     }
 
     /**

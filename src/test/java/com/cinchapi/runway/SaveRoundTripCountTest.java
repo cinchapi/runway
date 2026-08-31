@@ -36,9 +36,10 @@ import com.cinchapi.runway.CountingConcourseConnectionPool.CountingConcourse;
  * tests lock in the {@code 2.0.0} contract, in which a save with no validation
  * reads costs {@code 1} round trip. A save costs {@code 2} when it needs at
  * least one {@link Unique @Unique}-uniqueness check, a
- * {@code preventStaleWrites} audit, or an existence verification for a
- * previously persisted record. Both costs hold regardless of how many records
- * the save covers.
+ * {@code preventStaleWrites} audit, an existence verification for a previously
+ * persisted record, or the deletion-state read that a registered delete
+ * listener requires. Both costs hold regardless of how many records the save
+ * covers.
  * </p>
  *
  * @author Jeff Nelson
@@ -415,6 +416,76 @@ public class SaveRoundTripCountTest extends RunwayBaseClientServerTest {
         }
         AtomicInteger rpcs = installCountingPool();
         Assert.assertTrue(runway.save(records));
+        Assert.assertEquals(2, rpcs.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save which deletes a persisted
+     * {@link Record} costs exactly one server round trip when no delete
+     * listener is registered, because the deletion-state read serves only
+     * delete notifications.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Plain} and a {@link Runway}
+     * with bulk-commands forced on and no delete listener.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link Plain} before instrumentation.</li>
+     * <li>Mark the record with {@link Record#deleteOnSave()}.</li>
+     * <li>Install a {@link CountingConcourseConnectionPool} on
+     * {@link #runway}.</li>
+     * <li>Reset the RPC counter and call {@code runway.save(record)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and exactly one
+     * {@code submit(CommandGroup)} round trip is observed &mdash; the single
+     * writes-plus-commit submission, with no deletion-state read.
+     */
+    @Test
+    public void testDeleteWithoutDeleteListenerCostsOneRoundTrip() {
+        Plain record = new Plain("alpha", 7);
+        Assert.assertTrue(runway.save(record));
+        record.deleteOnSave();
+        AtomicInteger rpcs = installCountingPool();
+        Assert.assertTrue(runway.save(record));
+        Assert.assertEquals(1, rpcs.get());
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that a save which deletes a persisted
+     * {@link Record} costs exactly two server round trips when a delete
+     * listener is registered, because the delete notification requires a read
+     * of the state the record stored.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link Plain} and a {@link Runway}
+     * with bulk-commands forced on and a delete listener.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Rebuild {@link #runway} with a delete listener and bulk-commands
+     * forced on.</li>
+     * <li>Save a {@link Plain} before instrumentation.</li>
+     * <li>Mark the record with {@link Record#deleteOnSave()}.</li>
+     * <li>Install a {@link CountingConcourseConnectionPool} on
+     * {@link #runway}.</li>
+     * <li>Reset the RPC counter and call {@code runway.save(record)}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true} and exactly two
+     * {@code submit(CommandGroup)} round trips are observed &mdash; one for the
+     * deletion-state-read-plus-writes batch and one for the commit.
+     */
+    @Test
+    public void testDeleteWithDeleteListenerCostsTwoRoundTrips()
+            throws Exception {
+        runway.close();
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {}).build();
+        Reflection.set("supportsBulkCommands", true, runway); // (authorized)
+        Plain record = new Plain("alpha", 7);
+        Assert.assertTrue(runway.save(record));
+        record.deleteOnSave();
+        AtomicInteger rpcs = installCountingPool();
+        Assert.assertTrue(runway.save(record));
         Assert.assertEquals(2, rpcs.get());
     }
 
