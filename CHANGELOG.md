@@ -89,6 +89,16 @@ A record's identity is its data under its `@Unique` constraints. This release le
     * The field eligibility and replacement rules are the same as on `Runway`.
     * The lookup, the access checks and the update run in the `Audience`'s transactional scope. Within an open transaction, they stage and commit with it. Otherwise, they commit together in their own transaction, and conflicts retry within the bounds of the governing `AtomicRetryPolicy`.
 
+##### Stale Reference Handling
+In cases where Runway encountered a stale reference (e.g., a record with no stored data because it was previously deleted or because there were destructive modifications outside of Runway), it previously behaved inconsistently. For example, a stale reference in a collection was dropped and quietly deleted from the database, while a scalar field with a stale reference either did the same thing or caused an entire load operation to fail, depending on the server.
+
+This release makes stale reference handling consistent and lets users configure the desired behavior globally or per field.
+
+* **By default, a stale reference is skipped** (`ReferenceNotFoundPolicy.SKIP`) so that a housing scalar field receives a `null` value and a housing collection does not consider the reference at all. The stale reference still exists in the database, but Runway will not encounter load errors because of it. The consequences of this default are that users must account for `NullPointerException`s in cases where a `null` value is hydrated unexpectedly, and that a load no longer cleans up stale references on its own.
+* **Declare `@ReferenceNotFound` on a field to choose a different policy.** `ReferenceNotFoundPolicy.REPAIR` skips the stale reference and also deletes it from the database, so the housing record stops carrying it. `ReferenceNotFoundPolicy.ERROR` fails the load of the housing record and throws a `ReferenceNotFoundException` naming that record, the field, and the stale reference. Use `ERROR` for a reference the record cannot be correct without.
+* **A policy applies when a reference loads.** For a `DeferredReference` that is `get()` rather than the load of the record that holds it, so `get()` returns `null` under `SKIP`, deletes the stale reference and returns `null` under `REPAIR`, and throws `ReferenceNotFoundException` under `ERROR`. Previously, `get()` on a stale reference threw a `NullPointerException` from inside Runway.
+* **`Runway.builder().referenceNotFoundPolicy` sets the policy for every field that declares none.** Set it to `REPAIR` to keep the cleanup that a load previously performed on its own.
+
 ##### Audiences
 * **Every `Audience` performs database operations.** Previously, only an `Audience` that is a `Record` could; every database operation on the anonymous `Audience` failed. Now an anonymous audience holds the database it operates against and mediates the same operations, with the same visibility and permission rules as a `Record`-based audience, including the transactional operations.
     * `Audience.anonymous()` resolves against the single open `Runway`, and is also available as `Runway#anonymous()`. The new `Audience.anonymous(DatabaseInterface)` names the database explicitly, including a `Transaction`.
@@ -97,7 +107,31 @@ A record's identity is its data under its `@Unique` constraints. This release le
 * **`Audience#create` binds the created `Record` to the audience's database context.** The `Record`, and every `Record` reachable from its constructor arguments, saves within that context. Previously, `Audience#create` checked permission and attributed authorship, but bound the record to nothing.
     * A mediated `create` or `intern` leaves the caller's records bound as they were unless it saves the record. A `create` that throws restores the binding of every record reachable from the constructor arguments. An `intern` that does not save the record restores the record and every record reachable from it. If a save failure poisons a `Transaction` that stays open, then the transaction's failed-save contract governs instead.
 
-##### API Removals
+##### API Breaks and Deprecations
+* **Breaking change: a delete listener receives a deleted record's identity
+  and stored state instead of a `Record`.** `Runway.Builder#onDelete` and
+  `Runway.Properties#onDelete` now take a
+  `TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>`,
+  which receives the deleted record's id, its type, and the values it held
+  when the save deleted it. A deleted record no longer exists, so a live
+  object invited callers to act on something that could not be read, saved
+  or linked.
+    * Replace a listener that reads fields off the record with one that reads
+      them out of the data map, keyed by field name.
+      ```java
+      runway = Runway.builder()
+              .onDelete(Order.class, (id, clazz, data) -> {
+                  Set<Object> status = data.get("status");
+                  audit.record(id, status);
+              })
+              .build();
+      ```
+    * The data is the state the database stored, so a record that the save
+      itself changed reports its stored values, not the unsaved edits the
+      caller's instance held.
+    * A listener registered for a type still receives only records of that
+      type or a subclass, and a listener that throws still does not block the
+      remaining listeners.
 * **Removed unused members from the `com.cinchapi.runway.db` interfaces.**
   `Saver#find(Criteria, Consumer)`,
   `Saver#reconcile(String, long, Collection)`, `Reader#select(String, long)`,

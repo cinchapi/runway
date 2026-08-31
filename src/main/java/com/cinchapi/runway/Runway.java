@@ -521,6 +521,12 @@ public final class Runway extends Binding implements
     private final Properties properties = new Properties();
 
     /**
+     * The {@link ReferenceNotFoundPolicy} for every field of an assigned
+     * {@link Record} that declares no policy of its own.
+     */
+    private ReferenceNotFoundPolicy referenceNotFoundPolicy = ReferenceNotFoundPolicy.SKIP;
+
+    /**
      * The strategy for handling spurious {@link TransactionException
      * TransactionExceptions} during {@link #save(Record...) save} operations.
      */
@@ -600,10 +606,11 @@ public final class Runway extends Binding implements
     private Consumer<Record> saveListener;
 
     /**
-     * The consumer that processes delete notifications for records.
+     * The consumer that processes delete notifications for records. It receives
+     * the deleted record's id, its type and the state it stored.
      */
     @Nullable
-    private Consumer<Record> deleteListener;
+    private TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> deleteListener;
 
     /**
      * The cached {@link Gateway} instance that provides intelligent routing to
@@ -1692,7 +1699,8 @@ public final class Runway extends Binding implements
         Set<Long> deletions = context.deletions();
         context.forEach((record, outcome) -> {
             if(outcome == SaveContext.Outcome.DELETED) {
-                enqueueDeleteNotification(record);
+                enqueueDeleteNotification(record.id(), record.getClass(),
+                        context.deletionData(record.id()));
                 record.checkpoint();
             }
             else if(outcome == SaveContext.Outcome.CHANGED) {
@@ -1712,13 +1720,17 @@ public final class Runway extends Binding implements
     }
 
     /**
-     * Queue up a record for delete notification processing.
+     * Queue up a deleted record for delete notification processing.
      *
-     * @param record the record that was deleted
+     * @param id the id of the record that was deleted
+     * @param clazz the type of the record that was deleted
+     * @param data the state that the record stored when it was deleted
      */
-    final void enqueueDeleteNotification(Record record) {
+    final void enqueueDeleteNotification(long id, Class<? extends Record> clazz,
+            Map<String, Set<Object>> data) {
         if(deleteListener != null) {
-            saveNotificationQueue.offer(() -> deleteListener.accept(record));
+            saveNotificationQueue
+                    .offer(() -> deleteListener.accept(id, clazz, data));
         }
     }
 
@@ -2838,11 +2850,17 @@ public final class Runway extends Binding implements
                 connections.release(connection);
             }
         }
-        String section = (String) Iterables
-                .getLast(data.get(Record.SECTION_KEY));
-        Class<T> clazz = Reflection.getClassCasted(section);
-        return loadWithErrorHandling(clazz, id, loaded, transaction, data,
-                targets);
+        String section = (String) Iterables.getLast(
+                data.getOrDefault(Record.SECTION_KEY, ImmutableSet.of()), null);
+        if(section == null) {
+            // The record holds no data, so no Record stands behind the id.
+            return null;
+        }
+        else {
+            Class<T> clazz = Reflection.getClassCasted(section);
+            return loadWithErrorHandling(clazz, id, loaded, transaction, data,
+                    targets);
+        }
     }
 
     /**
@@ -3165,78 +3183,6 @@ public final class Runway extends Binding implements
     }
 
     /**
-     * Run {@code attempt} against a new {@link DatabaseTransaction} until it
-     * returns, retrying commit conflicts under the governing
-     * {@link AtomicRetryPolicy}.
-     * <p>
-     * The attempt owns the transaction's outcome: it must
-     * {@link DatabaseTransaction#commit() commit} or
-     * {@link DatabaseTransaction#abort() abort} before it returns, and it
-     * signals a retryable failure by throwing a {@link TransactionException}.
-     * Any other failure propagates without retrying.
-     *
-     * @param attempt the work to run once per attempt
-     * @return the value the attempt returns
-     * @throws RetryExhaustedException if the attempt cannot commit within the
-     *             bounds of the governing {@link AtomicRetryPolicy}
-     */
-    private <T> T retryAtomically(Function<DatabaseTransaction, T> attempt) {
-        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
-        Concourse concourse = connections.request();
-        try {
-            // NOTE: The connection is held across the policy's backoff sleeps
-            // so the retry loop does not churn the pool.
-            int attempts = 0;
-            for (;;) {
-                DatabaseTransaction transaction = new DatabaseTransaction(this,
-                        concourse, false);
-                try {
-                    return attempt.apply(transaction);
-                }
-                catch (TransactionException e) {
-                    if(transaction.committed() || transaction.hookFailed()) {
-                        // The exception is not a commit conflict: either the
-                        // commit succeeded and a post-commit consequence
-                        // threw, or a lifecycle hook failed. Re-running the
-                        // work would repeat side effects or mask the hook's
-                        // failure.
-                        throw e;
-                    }
-                    else {
-                        transaction.abort();
-                        if(++attempts > policy.limit()) {
-                            throw new RetryExhaustedException(attempts, e);
-                        }
-                        else {
-                            policy.backoff(attempts);
-                        }
-                    }
-                }
-                catch (Throwable t) {
-                    // A non-conflict failure is terminal: propagate it without
-                    // retrying so nothing is committed. The work's failure is
-                    // the signal: if the close (and the afterAbort hooks it
-                    // runs) also throws, then attach that failure instead of
-                    // letting it replace the work's exception.
-                    try {
-                        transaction.close();
-                    }
-                    catch (Throwable suppressed) {
-                        t.addSuppressed(suppressed);
-                    }
-                    throw t;
-                }
-                finally {
-                    transaction.close();
-                }
-            }
-        }
-        finally {
-            connections.release(concourse);
-        }
-    }
-
-    /**
      * Look up a previously reserved result by query signature.
      *
      * @param reservation the query signature
@@ -3364,12 +3310,120 @@ public final class Runway extends Binding implements
     }
 
     /**
+     * Run {@code attempt} against a new {@link DatabaseTransaction} until it
+     * returns, retrying commit conflicts under the governing
+     * {@link AtomicRetryPolicy}.
+     * <p>
+     * The attempt owns the transaction's outcome: it must
+     * {@link DatabaseTransaction#commit() commit} or
+     * {@link DatabaseTransaction#abort() abort} before it returns, and it
+     * signals a retryable failure by throwing a {@link TransactionException}.
+     * Any other failure propagates without retrying.
+     *
+     * @param attempt the work to run once per attempt
+     * @return the value the attempt returns
+     * @throws RetryExhaustedException if the attempt cannot commit within the
+     *             bounds of the governing {@link AtomicRetryPolicy}
+     */
+    private <T> T retryAtomically(Function<DatabaseTransaction, T> attempt) {
+        AtomicRetryPolicy policy = properties().atomicRetryPolicy();
+        Concourse concourse = connections.request();
+        try {
+            // NOTE: The connection is held across the policy's backoff sleeps
+            // so the retry loop does not churn the pool.
+            int attempts = 0;
+            for (;;) {
+                DatabaseTransaction transaction = new DatabaseTransaction(this,
+                        concourse, false);
+                try {
+                    return attempt.apply(transaction);
+                }
+                catch (TransactionException e) {
+                    if(transaction.committed() || transaction.hookFailed()) {
+                        // The exception is not a commit conflict: either the
+                        // commit succeeded and a post-commit consequence
+                        // threw, or a lifecycle hook failed. Re-running the
+                        // work would repeat side effects or mask the hook's
+                        // failure.
+                        throw e;
+                    }
+                    else {
+                        transaction.abort();
+                        if(++attempts > policy.limit()) {
+                            throw new RetryExhaustedException(attempts, e);
+                        }
+                        else {
+                            policy.backoff(attempts);
+                        }
+                    }
+                }
+                catch (Throwable t) {
+                    // A non-conflict failure is terminal: propagate it without
+                    // retrying so nothing is committed. The work's failure is
+                    // the signal: if the close (and the afterAbort hooks it
+                    // runs) also throws, then attach that failure instead of
+                    // letting it replace the work's exception.
+                    try {
+                        transaction.close();
+                    }
+                    catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
+                    throw t;
+                }
+                finally {
+                    transaction.close();
+                }
+            }
+        }
+        finally {
+            connections.release(concourse);
+        }
+    }
+
+    /**
      * Builder for {@link Runway} connections. This is returned from
      * {@link #builder()}.
      *
      * @author Jeff Nelson
      */
     public static class Builder {
+
+        /**
+         * Return a single {@link TriConsumer} that dispatches a deleted
+         * record's id, type and stored state to every one of the
+         * {@code listeners} whose registered type the record is an instance of.
+         * An exception thrown by a listener is suppressed, and dispatch
+         * continues with the remaining listeners.
+         *
+         * @param listeners the type-filtered listeners, in registration order
+         * @return the composed {@link TriConsumer}, or {@code null} if
+         *         {@code listeners} is empty
+         */
+        @Nullable
+        private static TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> composeDeleteListeners(
+                List<Entry<Class<? extends Record>, TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>>> listeners) {
+            if(listeners.isEmpty()) {
+                return null;
+            }
+            else {
+                List<Entry<Class<? extends Record>, TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>>> snapshot = new ArrayList<>(
+                        listeners);
+                return (id, clazz, data) -> {
+                    for (Entry<Class<? extends Record>, TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>> entry : snapshot) {
+                        if(entry.getKey().isAssignableFrom(clazz)) {
+                            try {
+                                entry.getValue().accept(id, clazz, data);
+                            }
+                            catch (Throwable t) {
+                                // A listener failure must not block the
+                                // remaining listeners.
+                            }
+                        }
+                    }
+                };
+            }
+        }
 
         /**
          * Return a single {@link Consumer} that dispatches a {@link Record} to
@@ -3383,7 +3437,7 @@ public final class Runway extends Binding implements
          */
         @SuppressWarnings("unchecked")
         @Nullable
-        private static Consumer<Record> compose(
+        private static Consumer<Record> composeSaveListeners(
                 List<Entry<Class<? extends Record>, Consumer<? extends Record>>> listeners) {
             if(listeners.isEmpty()) {
                 return null;
@@ -3419,6 +3473,11 @@ public final class Runway extends Binding implements
          */
         private DynamicWritePolicy dynamicWritePolicy = DynamicWritePolicy
                 .permissive();
+        /**
+         * The {@link ReferenceNotFoundPolicy} for the built {@link Runway}
+         * instance.
+         */
+        private ReferenceNotFoundPolicy referenceNotFoundPolicy = ReferenceNotFoundPolicy.SKIP;
         private String environment = "";
         private String host = "localhost";
         private TriConsumer<Class<? extends Record>, Long, Throwable> onLoadFailureHandler = null;
@@ -3426,7 +3485,7 @@ public final class Runway extends Binding implements
         private int port = 1717;
         private String username = "admin";
         private List<Entry<Class<? extends Record>, Consumer<? extends Record>>> saveListeners = new ArrayList<>();
-        private List<Entry<Class<? extends Record>, Consumer<? extends Record>>> deleteListeners = new ArrayList<>();
+        private List<Entry<Class<? extends Record>, TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>>>> deleteListeners = new ArrayList<>();
 
         private SpuriousSaveFailureStrategy spuriousSaveFailureStrategy = SpuriousSaveFailureStrategy.FAIL_FAST;
 
@@ -3458,13 +3517,14 @@ public final class Runway extends Binding implements
             Runway db = new Runway(connections);
             db.atomicRetryPolicy = atomicRetryPolicy;
             db.dynamicWritePolicy = dynamicWritePolicy;
+            db.referenceNotFoundPolicy = referenceNotFoundPolicy;
             db.spuriousSaveFailureStrategy = spuriousSaveFailureStrategy;
             if(onLoadFailureHandler != null) {
                 db.onLoadFailureHandler = onLoadFailureHandler;
             }
 
-            db.saveListener = compose(saveListeners);
-            db.deleteListener = compose(deleteListeners);
+            db.saveListener = composeSaveListeners(saveListeners);
+            db.deleteListener = composeDeleteListeners(deleteListeners);
             if(db.saveListener != null || db.deleteListener != null) {
                 db.ensureSaveNotificationInfrastructure();
             }
@@ -3489,6 +3549,25 @@ public final class Runway extends Binding implements
          */
         public Builder dynamicWritePolicy(DynamicWritePolicy policy) {
             this.dynamicWritePolicy = policy;
+            return this;
+        }
+
+        /**
+         * Set the {@link ReferenceNotFoundPolicy} for every field that declares
+         * no policy of its own.
+         * <p>
+         * The default is {@link ReferenceNotFoundPolicy#SKIP}, which skips a
+         * stale reference and leaves it in the database. Provide
+         * {@link ReferenceNotFoundPolicy#REPAIR} to also delete the stale
+         * reference, or {@link ReferenceNotFoundPolicy#ERROR} to fail the load
+         * of the housing record.
+         * </p>
+         *
+         * @param policy the {@link ReferenceNotFoundPolicy} to use
+         * @return this builder
+         */
+        public Builder referenceNotFoundPolicy(ReferenceNotFoundPolicy policy) {
+            this.referenceNotFoundPolicy = policy;
             return this;
         }
 
@@ -3541,12 +3620,12 @@ public final class Runway extends Binding implements
          * </p>
          *
          * @param type the {@link Record} type (or superclass) to listen for
-         * @param listener a consumer that processes deleted records of the
-         *            specified type
+         * @param listener a consumer that receives the id, type and stored
+         *            state of each deleted record of the specified type
          * @return this builder
          */
-        public <T extends Record> Builder onDelete(Class<T> type,
-                Consumer<T> listener) {
+        public Builder onDelete(Class<? extends Record> type,
+                TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> listener) {
             deleteListeners.add(new SimpleImmutableEntry<>(type, listener));
             return this;
         }
@@ -3555,7 +3634,7 @@ public final class Runway extends Binding implements
          * Provide a listener that will be called <strong>after</strong> any
          * record is deleted by a successful save.
          * <p>
-         * This is equivalent to calling {@link #onDelete(Class, Consumer)
+         * This is equivalent to calling {@link #onDelete(Class, TriConsumer)
          * onDelete(Record.class, listener)}.
          * </p>
          * <p>
@@ -3564,10 +3643,12 @@ public final class Runway extends Binding implements
          * All matching listeners fire in registration order.
          * </p>
          *
-         * @param listener a consumer that processes deleted records
+         * @param listener a consumer that receives the id, type and stored
+         *            state of each deleted record
          * @return this builder
          */
-        public Builder onDelete(Consumer<Record> listener) {
+        public Builder onDelete(
+                TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> listener) {
             return onDelete(Record.class, listener);
         }
 
@@ -3616,7 +3697,7 @@ public final class Runway extends Binding implements
          * including linked records saved alongside the record that
          * {@link Record#save()} was called on and records updated through
          * {@link CaptureDelete} cleanup. A record whose save results in
-         * deletion fires {@link #onDelete(Class, Consumer) delete listeners}
+         * deletion fires {@link #onDelete(Class, TriConsumer) delete listeners}
          * instead.
          * </p>
          * <p>
@@ -3757,6 +3838,16 @@ public final class Runway extends Binding implements
         }
 
         /**
+         * Return the {@link ReferenceNotFoundPolicy} for every field of an
+         * assigned {@link Record} that declares no policy of its own.
+         *
+         * @return the governing {@link ReferenceNotFoundPolicy}
+         */
+        public ReferenceNotFoundPolicy referenceNotFoundPolicy() {
+            return referenceNotFoundPolicy;
+        }
+
+        /**
          * Register a listener that will be called <strong>after</strong> any
          * {@link Record} of the specified {@code type} (or a subclass) is
          * deleted by a successful save.
@@ -3766,20 +3857,18 @@ public final class Runway extends Binding implements
          * </p>
          *
          * @param type the {@link Record} type (or superclass) to listen for
-         * @param listener a consumer that processes deleted {@link Record
-         *            Records} of the specified type
+         * @param listener a consumer that receives the id, type and stored
+         *            state of each deleted {@link Record} of the specified type
          * @return this {@link Properties} for chaining
          */
-        @SuppressWarnings("unchecked")
-        public <T extends Record> Properties onDelete(Class<T> type,
-                Consumer<T> listener) {
+        public Properties onDelete(Class<? extends Record> type,
+                TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> listener) {
             ensureSaveNotificationInfrastructure();
-            Consumer<Record> previous = deleteListener;
-            deleteListener = record -> {
-                if(type.isAssignableFrom(record.getClass())) {
+            TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> previous = deleteListener;
+            deleteListener = (id, clazz, data) -> {
+                if(type.isAssignableFrom(clazz)) {
                     try {
-                        ((Consumer<Record>) (Consumer<?>) listener)
-                                .accept(record);
+                        listener.accept(id, clazz, data);
                     }
                     catch (Throwable t) {
                         // A listener failure must not block the remaining
@@ -3787,7 +3876,7 @@ public final class Runway extends Binding implements
                     }
                 }
                 if(previous != null) {
-                    previous.accept(record);
+                    previous.accept(id, clazz, data);
                 }
             };
             return this;
@@ -3797,15 +3886,16 @@ public final class Runway extends Binding implements
          * Register a listener that will be called <strong>after</strong> any
          * {@link Record} is deleted by a successful save.
          * <p>
-         * This is equivalent to calling {@link #onDelete(Class, Consumer)
+         * This is equivalent to calling {@link #onDelete(Class, TriConsumer)
          * onDelete(Record.class, listener)}.
          * </p>
          *
-         * @param listener a consumer that processes deleted {@link Record
-         *            Records}
+         * @param listener a consumer that receives the id, type and stored
+         *            state of each deleted {@link Record}
          * @return this {@link Properties} for chaining
          */
-        public Properties onDelete(Consumer<Record> listener) {
+        public Properties onDelete(
+                TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> listener) {
             return onDelete(Record.class, listener);
         }
 
@@ -3813,7 +3903,7 @@ public final class Runway extends Binding implements
          * Register a listener that will be called <strong>after</strong> any
          * {@link Record} of the specified {@code type} (or a subclass) is
          * successfully saved. A {@link Record} whose save results in deletion
-         * fires {@link #onDelete(Class, Consumer) delete listeners} instead.
+         * fires {@link #onDelete(Class, TriConsumer) delete listeners} instead.
          * <p>
          * The new listener is chained with any previously registered listeners
          * &mdash; it does not replace them.
