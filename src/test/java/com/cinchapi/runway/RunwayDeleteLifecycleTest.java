@@ -83,6 +83,46 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a failure while a committed save
+     * dispatches its outcomes does not report the save as failed.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link HostileCleanupRecord}, whose
+     * post-commit cleanup always throws, and a saved {@link TrackedRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save a {@link HostileCleanupRecord} and a {@link TrackedRecord}.</li>
+     * <li>Modify the {@link HostileCleanupRecord} and mark the
+     * {@link TrackedRecord} with {@link Record#deleteOnSave()}, so the save
+     * both deletes a record and changes one.</li>
+     * <li>Save both records in one call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}, the deleted
+     * record no longer loads, and the modified record's change persists.
+     */
+    @Test
+    public void testSaveSucceedsWhenOutcomeDispatchThrows() throws Exception {
+        HostileCleanupRecord changed = new HostileCleanupRecord();
+        changed.name = "Changed";
+        TrackedRecord removed = new TrackedRecord();
+        removed.name = "Removed";
+        Assert.assertTrue(runway.save(changed, removed));
+
+        changed.name = "Changed (Updated)";
+        removed.deleteOnSave();
+        Assert.assertTrue(
+                "A committed save must not be reported as failed because its"
+                        + " outcome dispatch threw",
+                runway.save(changed, removed));
+
+        Assert.assertNull(runway.load(TrackedRecord.class, removed.id()));
+        HostileCleanupRecord loaded = runway.load(HostileCleanupRecord.class,
+                changed.id());
+        Assert.assertEquals("Changed (Updated)", loaded.name);
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that the delete notification reports the
      * state the record stored when the deleting save also audits stale writes,
      * so the deletion-state read coexists with a read that can reject the save.
@@ -1702,6 +1742,27 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
          * A name that identifies the record in tests.
          */
         public String name;
+    }
+
+    /**
+     * A test {@link Record} whose post-commit cleanup always throws, so a test
+     * can verify that a failure while a save dispatches its outcomes does not
+     * change the outcome of the committed save.
+     *
+     * @author Jeff Nelson
+     */
+    public static class HostileCleanupRecord extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        @Override
+        void applyCaptureDeleteCleanup(Set<Long> ids) {
+            throw new IllegalStateException(
+                    "Intentional exception from post-commit cleanup");
+        }
     }
 
     /**

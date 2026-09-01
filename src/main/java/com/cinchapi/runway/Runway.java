@@ -1279,7 +1279,18 @@ public final class Runway extends Binding implements
                     }
                     stageDeletions(saver, context);
                     if(saver.commit()) {
-                        dispatchSaveOutcomes(context);
+                        try {
+                            dispatchSaveOutcomes(context);
+                        }
+                        catch (Throwable t) {
+                            // NOTE: The commit is durable and this method
+                            // reports the outcome as a boolean, so a failure
+                            // here has no honest way to reach the caller. The
+                            // catch below would answer it by aborting a
+                            // committed transaction, restoring every Record's
+                            // pre-save state and returning false, which denies
+                            // data that the database holds.
+                        }
                         return true;
                     }
                     else {

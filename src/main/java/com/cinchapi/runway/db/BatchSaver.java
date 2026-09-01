@@ -289,7 +289,9 @@ public final class BatchSaver implements Saver {
     }
 
     /**
-     * Run every pending observer against {@code results} and clear the queue.
+     * Run every pending observer against {@code results} and clear the queue. A
+     * failure in one observer is suppressed, so it neither rejects the save nor
+     * stops the observers that follow it.
      *
      * @param results the result list of the submission that carried the
      *            observation reads
@@ -298,7 +300,15 @@ public final class BatchSaver implements Saver {
         List<Consumer<List<Object>>> active = new ArrayList<>(pendingObservers);
         pendingObservers.clear();
         for (Consumer<List<Object>> observer : active) {
-            observer.accept(results);
+            try {
+                observer.accept(results);
+            }
+            catch (Throwable t) {
+                // NOTE: The server decides whether the save succeeds, and an
+                // observer may run after that decision reaches this client.
+                // A throw here would reject a commit the server already
+                // accepted, so the outcome must not depend on an observer.
+            }
         }
     }
 
