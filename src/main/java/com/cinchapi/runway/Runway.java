@@ -1711,32 +1711,46 @@ public final class Runway extends Binding implements
     /**
      * Dispatch the lifecycle consequences of a committed save that was staged
      * under {@code context}: a notification and a checkpoint for every
-     * {@link Record} that the commit changed or deleted.
+     * {@link Record} that the commit changed or deleted. A failure in one
+     * {@link Record Record's} dispatch does not block the records that follow
+     * it; the first failure propagates after every record is dispatched.
      *
      * @param context the {@link SaveContext} whose staged save committed
      */
     void dispatchSaveOutcomes(SaveContext context) {
         Set<Long> deletions = context.deletions();
+        Throwable[] failure = { null };
         context.forEach((record, outcome) -> {
-            if(outcome == SaveContext.Outcome.DELETED) {
-                enqueueDeleteNotification(record.id(), record.getClass(),
-                        context.deletionData(record.id()));
-                record.checkpoint();
-            }
-            else if(outcome == SaveContext.Outcome.CHANGED) {
-                if(!deletions.isEmpty()) {
-                    // The commit removed every stored reference to a deleted
-                    // record, so the record's in-memory state must match.
-                    record.applyCaptureDeleteCleanup(deletions);
+            try {
+                if(outcome == SaveContext.Outcome.DELETED) {
+                    enqueueDeleteNotification(record.id(), record.getClass(),
+                            context.deletionData(record.id()));
+                    record.checkpoint();
                 }
-                enqueueSaveNotification(record);
-                record.checkpoint();
+                else if(outcome == SaveContext.Outcome.CHANGED) {
+                    if(!deletions.isEmpty()) {
+                        // The commit removed every stored reference to a
+                        // deleted record, so the record's in-memory state must
+                        // match.
+                        record.applyCaptureDeleteCleanup(deletions);
+                    }
+                    enqueueSaveNotification(record);
+                    record.checkpoint();
+                }
+                else {
+                    // The record was neither written nor deleted by this save,
+                    // so there is no lifecycle event to report.
+                }
             }
-            else {
-                // The record was neither written nor deleted by this save, so
-                // there is no lifecycle event to report.
+            catch (Throwable t) {
+                if(failure[0] == null) {
+                    failure[0] = t;
+                }
             }
         });
+        if(failure[0] != null) {
+            throw CheckedExceptions.throwAsRuntimeException(failure[0]);
+        }
     }
 
     /**

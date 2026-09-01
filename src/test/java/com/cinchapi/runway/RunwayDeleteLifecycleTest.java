@@ -84,42 +84,79 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
 
     /**
      * <strong>Goal:</strong> Verify that a failure while a committed save
-     * dispatches its outcomes does not report the save as failed.
+     * dispatches its outcomes does not report the save as failed and does not
+     * block the lifecycle of the records that follow the failing one.
      * <p>
-     * <strong>Start state:</strong> A saved {@link HostileCleanupRecord}, whose
-     * post-commit cleanup always throws, and a saved {@link TrackedRecord}.
+     * <strong>Start state:</strong> Five saved {@link HostileCleanupRecord
+     * HostileCleanupRecords}, whose post-commit cleanup always throws, and five
+     * saved {@link TrackedRecord TrackedRecords}. Several records of each kind
+     * participate because the dispatch order across records is unspecified;
+     * with five of each, at least one deletion dispatches after a failure in
+     * every practical order.
      * <p>
      * <strong>Workflow:</strong>
      * <ul>
-     * <li>Save a {@link HostileCleanupRecord} and a {@link TrackedRecord}.</li>
-     * <li>Modify the {@link HostileCleanupRecord} and mark the
+     * <li>Register a delete listener that records the deleted ids.</li>
+     * <li>Save the {@link HostileCleanupRecord HostileCleanupRecords} and the
+     * {@link TrackedRecord TrackedRecords}.</li>
+     * <li>Modify every {@link HostileCleanupRecord} and mark every
      * {@link TrackedRecord} with {@link Record#deleteOnSave()}, so the save
-     * both deletes a record and changes one.</li>
-     * <li>Save both records in one call.</li>
+     * both deletes records and changes records.</li>
+     * <li>Save all of the records in one call.</li>
      * </ul>
      * <p>
      * <strong>Expected:</strong> The save returns {@code true}, the deleted
-     * record no longer loads, and the modified record's change persists.
+     * records no longer load, the modified records' changes persist, and the
+     * delete listener receives every deletion even though the modified records'
+     * dispatches threw.
      */
     @Test
     public void testSaveSucceedsWhenOutcomeDispatchThrows() throws Exception {
-        HostileCleanupRecord changed = new HostileCleanupRecord();
-        changed.name = "Changed";
-        TrackedRecord removed = new TrackedRecord();
-        removed.name = "Removed";
-        Assert.assertTrue(runway.save(changed, removed));
+        int count = 5;
+        CountDownLatch latch = new CountDownLatch(count);
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
 
-        changed.name = "Changed (Updated)";
-        removed.deleteOnSave();
+        runway.close();
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
+            latch.countDown();
+        }).build();
+
+        Record[] records = new Record[2 * count];
+        for (int i = 0; i < count; ++i) {
+            HostileCleanupRecord changed = new HostileCleanupRecord();
+            changed.name = "Changed " + i;
+            records[i] = changed;
+            TrackedRecord removed = new TrackedRecord();
+            removed.name = "Removed " + i;
+            records[count + i] = removed;
+        }
+        Assert.assertTrue(runway.save(records));
+
+        for (int i = 0; i < count; ++i) {
+            ((HostileCleanupRecord) records[i]).name = "Changed " + i
+                    + " (Updated)";
+            records[count + i].deleteOnSave();
+        }
         Assert.assertTrue(
                 "A committed save must not be reported as failed because its"
                         + " outcome dispatch threw",
-                runway.save(changed, removed));
+                runway.save(records));
 
-        Assert.assertNull(runway.load(TrackedRecord.class, removed.id()));
-        HostileCleanupRecord loaded = runway.load(HostileCleanupRecord.class,
-                changed.id());
-        Assert.assertEquals("Changed (Updated)", loaded.name);
+        for (int i = 0; i < count; ++i) {
+            Assert.assertNull(
+                    runway.load(TrackedRecord.class, records[count + i].id()));
+            HostileCleanupRecord loaded = runway
+                    .load(HostileCleanupRecord.class, records[i].id());
+            Assert.assertEquals("Changed " + i + " (Updated)", loaded.name);
+        }
+        Assert.assertTrue(
+                "Delete listeners were not called even though the save"
+                        + " committed the deletions",
+                latch.await(5, TimeUnit.SECONDS));
+        for (int i = 0; i < count; ++i) {
+            Assert.assertTrue(deletedRecords.contains(records[count + i].id()));
+        }
     }
 
     /**
