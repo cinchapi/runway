@@ -613,6 +613,14 @@ public final class Runway extends Binding implements
     private TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> deleteListener;
 
     /**
+     * The {@link Record} types for which a {@link #deleteListener delete
+     * listener} is registered. A listener receives the deletions of its
+     * registered type and every subclass.
+     */
+    private final Set<Class<? extends Record>> deleteListenerTypes = Sets
+            .newConcurrentHashSet();
+
+    /**
      * The cached {@link Gateway} instance that provides intelligent routing to
      * database operations. Lazily initialized when first accessed.
      */
@@ -1241,6 +1249,7 @@ public final class Runway extends Binding implements
         try {
             boolean retrySpuriousSaveFailure = spuriousSaveFailureStrategy == SpuriousSaveFailureStrategy.RETRY;
             SaveContext context = new SaveContext(preventStaleWrites,
+                    this::hasDeleteListener,
                     record -> record.verifySavableThrough(this));
             int attempts = 0;
             while (true) {
@@ -1270,7 +1279,18 @@ public final class Runway extends Binding implements
                     }
                     stageDeletions(saver, context);
                     if(saver.commit()) {
-                        dispatchSaveOutcomes(context);
+                        try {
+                            dispatchSaveOutcomes(context);
+                        }
+                        catch (Throwable t) {
+                            // NOTE: The commit is durable and this method
+                            // reports the outcome as a boolean, so a failure
+                            // here has no honest way to reach the caller. The
+                            // catch below would answer it by aborting a
+                            // committed transaction, restoring every Record's
+                            // pre-save state and returning false, which denies
+                            // data that the database holds.
+                        }
                         return true;
                     }
                     else {
@@ -1691,32 +1711,46 @@ public final class Runway extends Binding implements
     /**
      * Dispatch the lifecycle consequences of a committed save that was staged
      * under {@code context}: a notification and a checkpoint for every
-     * {@link Record} that the commit changed or deleted.
+     * {@link Record} that the commit changed or deleted. A failure in one
+     * {@link Record Record's} dispatch does not block the records that follow
+     * it; the first failure propagates after every record is dispatched.
      *
      * @param context the {@link SaveContext} whose staged save committed
      */
     void dispatchSaveOutcomes(SaveContext context) {
         Set<Long> deletions = context.deletions();
+        Throwable[] failure = { null };
         context.forEach((record, outcome) -> {
-            if(outcome == SaveContext.Outcome.DELETED) {
-                enqueueDeleteNotification(record.id(), record.getClass(),
-                        context.deletionData(record.id()));
-                record.checkpoint();
-            }
-            else if(outcome == SaveContext.Outcome.CHANGED) {
-                if(!deletions.isEmpty()) {
-                    // The commit removed every stored reference to a deleted
-                    // record, so the record's in-memory state must match.
-                    record.applyCaptureDeleteCleanup(deletions);
+            try {
+                if(outcome == SaveContext.Outcome.DELETED) {
+                    enqueueDeleteNotification(record.id(), record.getClass(),
+                            context.deletionData(record.id()));
+                    record.checkpoint();
                 }
-                enqueueSaveNotification(record);
-                record.checkpoint();
+                else if(outcome == SaveContext.Outcome.CHANGED) {
+                    if(!deletions.isEmpty()) {
+                        // The commit removed every stored reference to a
+                        // deleted record, so the record's in-memory state must
+                        // match.
+                        record.applyCaptureDeleteCleanup(deletions);
+                    }
+                    enqueueSaveNotification(record);
+                    record.checkpoint();
+                }
+                else {
+                    // The record was neither written nor deleted by this save,
+                    // so there is no lifecycle event to report.
+                }
             }
-            else {
-                // The record was neither written nor deleted by this save, so
-                // there is no lifecycle event to report.
+            catch (Throwable t) {
+                if(failure[0] == null) {
+                    failure[0] = t;
+                }
             }
         });
+        if(failure[0] != null) {
+            throw CheckedExceptions.throwAsRuntimeException(failure[0]);
+        }
     }
 
     /**
@@ -1743,6 +1777,19 @@ public final class Runway extends Binding implements
         if(saveListener != null) {
             saveNotificationQueue.offer(() -> saveListener.accept(record));
         }
+    }
+
+    /**
+     * Return {@code true} if a delete listener is registered for {@code clazz}
+     * or one of its superclasses.
+     *
+     * @param clazz the {@link Record} class to test
+     * @return {@code true} if a delete listener receives the deletions of
+     *         {@code clazz}
+     */
+    final boolean hasDeleteListener(Class<? extends Record> clazz) {
+        return deleteListenerTypes.stream()
+                .anyMatch(type -> type.isAssignableFrom(clazz));
     }
 
     /**
@@ -3525,6 +3572,8 @@ public final class Runway extends Binding implements
 
             db.saveListener = composeSaveListeners(saveListeners);
             db.deleteListener = composeDeleteListeners(deleteListeners);
+            deleteListeners.forEach(
+                    listener -> db.deleteListenerTypes.add(listener.getKey()));
             if(db.saveListener != null || db.deleteListener != null) {
                 db.ensureSaveNotificationInfrastructure();
             }
@@ -3864,6 +3913,7 @@ public final class Runway extends Binding implements
         public Properties onDelete(Class<? extends Record> type,
                 TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> listener) {
             ensureSaveNotificationInfrastructure();
+            deleteListenerTypes.add(type);
             TriConsumer<Long, Class<? extends Record>, Map<String, Set<Object>>> previous = deleteListener;
             deleteListener = (id, clazz, data) -> {
                 if(type.isAssignableFrom(clazz)) {

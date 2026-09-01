@@ -83,6 +83,126 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that a failure while a committed save
+     * dispatches its outcomes does not report the save as failed and does not
+     * block the lifecycle of the records that follow the failing one.
+     * <p>
+     * <strong>Start state:</strong> Five saved {@link HostileCleanupRecord
+     * HostileCleanupRecords}, whose post-commit cleanup always throws, and five
+     * saved {@link TrackedRecord TrackedRecords}. Several records of each kind
+     * participate because the dispatch order across records is unspecified;
+     * with five of each, at least one deletion dispatches after a failure in
+     * every practical order.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener that records the deleted ids.</li>
+     * <li>Save the {@link HostileCleanupRecord HostileCleanupRecords} and the
+     * {@link TrackedRecord TrackedRecords}.</li>
+     * <li>Modify every {@link HostileCleanupRecord} and mark every
+     * {@link TrackedRecord} with {@link Record#deleteOnSave()}, so the save
+     * both deletes records and changes records.</li>
+     * <li>Save all of the records in one call.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The save returns {@code true}, the deleted
+     * records no longer load, the modified records' changes persist, and the
+     * delete listener receives every deletion even though the modified records'
+     * dispatches threw.
+     */
+    @Test
+    public void testSaveSucceedsWhenOutcomeDispatchThrows() throws Exception {
+        int count = 5;
+        CountDownLatch latch = new CountDownLatch(count);
+        Set<Long> deletedRecords = ConcurrentHashMap.newKeySet();
+
+        runway.close();
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            deletedRecords.add(id);
+            latch.countDown();
+        }).build();
+
+        Record[] records = new Record[2 * count];
+        for (int i = 0; i < count; ++i) {
+            HostileCleanupRecord changed = new HostileCleanupRecord();
+            changed.name = "Changed " + i;
+            records[i] = changed;
+            TrackedRecord removed = new TrackedRecord();
+            removed.name = "Removed " + i;
+            records[count + i] = removed;
+        }
+        Assert.assertTrue(runway.save(records));
+
+        for (int i = 0; i < count; ++i) {
+            ((HostileCleanupRecord) records[i]).name = "Changed " + i
+                    + " (Updated)";
+            records[count + i].deleteOnSave();
+        }
+        Assert.assertTrue(
+                "A committed save must not be reported as failed because its"
+                        + " outcome dispatch threw",
+                runway.save(records));
+
+        for (int i = 0; i < count; ++i) {
+            Assert.assertNull(
+                    runway.load(TrackedRecord.class, records[count + i].id()));
+            HostileCleanupRecord loaded = runway
+                    .load(HostileCleanupRecord.class, records[i].id());
+            Assert.assertEquals("Changed " + i + " (Updated)", loaded.name);
+        }
+        Assert.assertTrue(
+                "Delete listeners were not called even though the save"
+                        + " committed the deletions",
+                latch.await(5, TimeUnit.SECONDS));
+        for (int i = 0; i < count; ++i) {
+            Assert.assertTrue(deletedRecords.contains(records[count + i].id()));
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that the delete notification reports the
+     * state the record stored when the deleting save also audits stale writes,
+     * so the deletion-state read coexists with a read that can reject the save.
+     * <p>
+     * <strong>Start state:</strong> A saved {@link TrackedRecord}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Register a delete listener that records the reported state.</li>
+     * <li>Save a {@link TrackedRecord}.</li>
+     * <li>Call {@link Record#deleteOnSave()} and save the record again with
+     * {@code preventStaleWrites} enabled.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The delete listener fires and its data reports
+     * the name the record stored.
+     */
+    @Test
+    public void testDeleteListenerReportsStoredStateWhenSaveAuditsStaleWrites()
+            throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        Map<Long, Map<String, Set<Object>>> reported = new ConcurrentHashMap<>();
+
+        runway.close();
+        runway = runwayBuilder().onDelete((id, clazz, data) -> {
+            reported.put(id, data);
+            latch.countDown();
+        }).build();
+
+        TrackedRecord record = new TrackedRecord();
+        record.name = "Audited Delete";
+        Assert.assertTrue(record.save());
+
+        record.deleteOnSave();
+        Assert.assertTrue(runway.save(true, record));
+
+        Assert.assertTrue("Delete listener was not called within timeout",
+                latch.await(5, TimeUnit.SECONDS));
+        Assert.assertTrue(reported.get(record.id()).get("name")
+                .contains("Audited Delete"));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a save which deletes a {@link Record}
      * does not fire the save listener.
      * <p>
@@ -1659,6 +1779,27 @@ public class RunwayDeleteLifecycleTest extends RunwayBaseClientServerTest {
          * A name that identifies the record in tests.
          */
         public String name;
+    }
+
+    /**
+     * A test {@link Record} whose post-commit cleanup always throws, so a test
+     * can verify that a failure while a save dispatches its outcomes does not
+     * change the outcome of the committed save.
+     *
+     * @author Jeff Nelson
+     */
+    public static class HostileCleanupRecord extends Record {
+
+        /**
+         * A name that identifies the record in tests.
+         */
+        public String name;
+
+        @Override
+        void applyCaptureDeleteCleanup(Set<Long> ids) {
+            throw new IllegalStateException(
+                    "Intentional exception from post-commit cleanup");
+        }
     }
 
     /**

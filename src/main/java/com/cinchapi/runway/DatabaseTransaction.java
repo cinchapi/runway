@@ -520,8 +520,8 @@ class DatabaseTransaction extends Binding implements Transaction {
             Saver saver = database.supportsBulkCommands
                     ? new BatchSaver(concourse)
                     : new IncrementalSaver(concourse);
-            SaveContext context = new SaveContext(preventStaleWrites, deletions,
-                    record -> {
+            SaveContext context = new SaveContext(preventStaleWrites,
+                    database::hasDeleteListener, deletions, record -> {
                         record.verifySavableThrough(this);
                         record.bind(this, provider);
                     });
