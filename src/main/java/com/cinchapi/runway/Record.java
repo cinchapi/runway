@@ -3768,7 +3768,7 @@ public abstract class Record implements Comparable<Record> {
             BuildableState criteria = conjoinEqualityClauses(null, data);
             if(criteria != null) {
                 identities.add(new UniqueIdentity(constraint.any(), window,
-                        criteria.build(), data));
+                        criteria.build()));
             }
         }
         Verify.thatArgument(!identities.isEmpty(),

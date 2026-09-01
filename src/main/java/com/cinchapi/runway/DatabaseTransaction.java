@@ -993,7 +993,7 @@ class DatabaseTransaction extends Binding implements Transaction {
             // rival that claims the whole identity is invisible to a read that
             // its commit outruns, so the claimant answers for itself.
             for (UniqueIdentity identity : unresolved) {
-                complete = complete && identity.matches(match);
+                complete = complete && match.matches(identity.criteria());
             }
         }
         if(adoptable && complete) {
