@@ -372,10 +372,14 @@ public final class BatchSaver implements Saver {
                     pendingValidators);
             postWriteReadOps.clear();
             pendingValidators.clear();
+            // NOTE: An observer's slot is assigned when its read drains, so an
+            // observer must dispatch against the submission that carried its
+            // read. A validator may record another observation, and that one
+            // belongs to a later submission.
+            dispatchObservers(results);
             for (Consumer<List<Object>> validator : active) {
                 validator.accept(results);
             }
-            dispatchObservers(results);
         }
     }
 

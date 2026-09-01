@@ -135,6 +135,8 @@ This release makes stale reference handling consistent and lets users configure 
       notification would carry.
     * When the read happens, it shares a server round trip that the save
       already makes, so it never adds one of its own.
+    * A listener registered after a save already staged its deletions
+      receives an empty data map for that save's deletions, never `null`.
     * A listener registered for a type still receives only records of that
       type or a subclass, and a listener that throws still does not block the
       remaining listeners.

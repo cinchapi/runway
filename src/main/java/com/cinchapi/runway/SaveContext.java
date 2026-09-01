@@ -112,7 +112,10 @@ final class SaveContext {
     private final boolean shouldPreventStaleWrite;
 
     /**
-     * Construct a new instance.
+     * Construct a new instance that captures no deletion state, so it serves as
+     * a {@link #merge(SaveContext) merge} target rather than as the context of
+     * a staged save. A save staged through it reports an empty
+     * {@link #deletionData(long) deletion state} to every delete listener.
      *
      * @param shouldPreventStaleWrite whether the save fails if it would
      *            overwrite a value that another writer changed
