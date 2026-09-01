@@ -16,6 +16,7 @@
 package com.cinchapi.runway;
 
 import com.cinchapi.concourse.TransactionException;
+import com.cinchapi.runway.Record.ConstraintViolationException;
 
 /**
  * Signal that an {@link TransactionInterface#intern(Record) intern} lookup
@@ -25,7 +26,7 @@ import com.cinchapi.concourse.TransactionException;
  * A managed operation retries so it can adopt a full same-class winner or
  * report a claim that cannot be adopted as a terminal uniqueness refusal.
  * Within a caller-owned {@link Transaction}, this exception propagates and the
- * failed save poisons the transaction.
+ * failed save poisons the transaction. The uniqueness refusal is the cause.
  * </p>
  *
  * @author Jeff Nelson
@@ -42,10 +43,11 @@ public final class IdentityConflictException extends TransactionException {
     /**
      * Construct a new instance.
      *
-     * @param message the detail from the uniqueness refusal
+     * @param refusal the uniqueness refusal that the save observed
      */
-    IdentityConflictException(String message) {
-        this.message = message;
+    IdentityConflictException(ConstraintViolationException refusal) {
+        this.message = refusal.getMessage();
+        initCause(refusal);
     }
 
     @Override

@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.Assert;
@@ -33,6 +34,7 @@ import com.cinchapi.concourse.Concourse;
 import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.ForwardingConcourse;
 import com.cinchapi.concourse.lang.CommandGroup;
+import com.cinchapi.runway.InternTest.Account;
 import com.cinchapi.runway.InternTest.RacingUser;
 import com.cinchapi.runway.db.ConcourseProvider;
 
@@ -80,9 +82,50 @@ public class InternHiddenRivalTest extends RunwayBaseClientServerTest {
         pool.hideOnce(winner.id());
         RacingUser result = runway
                 .intern(new RacingUser("race@example.com", "Loser"));
+        Assert.assertTrue(pool.fired());
         Assert.assertEquals(winner.id(), result.id());
         Assert.assertEquals("Winner", result.name);
         Assert.assertEquals(1, runway.count(RacingUser.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code intern} adopts a rival that
+     * claims every part of a multi-constraint identity when one constraint's
+     * lookup misses the rival and another observes it.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Account} (the rival), and
+     * a {@link HidingConcourseConnectionPool} installed on the {@link Runway},
+     * armed to hide the rival from exactly one read.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save the rival {@link Account}.</li>
+     * <li>Arm the pool to hide the rival's id from the next read result that
+     * contains it, so one constraint's lookup reports its part of the identity
+     * as unclaimed while another observes the rival.</li>
+     * <li>Call {@code intern} with a new {@link Account} that has the same
+     * email and handle.</li>
+     * <li>Count every {@link Account}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns the rival (same id and state)
+     * and exactly one {@link Account} exists.
+     */
+    @Test
+    public void testInternAdoptsRivalWhenOneConstraintLookupMissedIt() {
+        HidingConcourseConnectionPool pool = new HidingConcourseConnectionPool(
+                Concourse.connect("localhost", server.getClientPort(), "admin",
+                        "admin", environment));
+        Reflection.set("connections", pool, runway); // (authorized)
+        Account winner = new Account("race@example.com", "racer", "Winner");
+        Assert.assertTrue(runway.save(winner));
+        pool.hideOnce(winner.id());
+        Account result = runway
+                .intern(new Account("race@example.com", "racer", "Loser"));
+        Assert.assertTrue(pool.fired());
+        Assert.assertEquals(winner.id(), result.id());
+        Assert.assertEquals("Winner", result.bio);
+        Assert.assertEquals(1, runway.count(Account.class));
     }
 
     /**
@@ -103,13 +146,18 @@ public class InternHiddenRivalTest extends RunwayBaseClientServerTest {
         private final AtomicLong hidden;
 
         /**
+         * Whether a pooled connection hid the armed id from a read.
+         */
+        private final AtomicBoolean fired;
+
+        /**
          * Construct a new instance whose pooled {@link HidingConcourse}
          * connections each forward to a copy of {@code concourse}.
          *
          * @param concourse the {@link Concourse} whose connection is copied
          */
         HidingConcourseConnectionPool(Concourse concourse) {
-            this(concourse, new AtomicLong());
+            this(concourse, new AtomicLong(), new AtomicBoolean());
         }
 
         /**
@@ -117,12 +165,15 @@ public class InternHiddenRivalTest extends RunwayBaseClientServerTest {
          *
          * @param concourse the {@link Concourse} whose connection is copied
          * @param hidden the hidden-id state shared by all pooled connections
+         * @param fired the hid-a-read state shared by all pooled connections
          */
         private HidingConcourseConnectionPool(Concourse concourse,
-                AtomicLong hidden) {
+                AtomicLong hidden, AtomicBoolean fired) {
             super(() -> new HidingConcourse(
-                    Concourse.copyExistingConnection(concourse), hidden), 1);
+                    Concourse.copyExistingConnection(concourse), hidden, fired),
+                    1);
             this.hidden = hidden;
+            this.fired = fired;
         }
 
         /**
@@ -133,6 +184,18 @@ public class InternHiddenRivalTest extends RunwayBaseClientServerTest {
          */
         void hideOnce(long id) {
             hidden.set(id);
+            fired.set(false);
+        }
+
+        /**
+         * Return whether the armed id was hidden from a read, so a test can
+         * assert that it exercised the race instead of passing on reads that
+         * observed the record all along.
+         *
+         * @return {@code true} if a read result was stripped
+         */
+        boolean fired() {
+            return fired.get();
         }
 
         @Override
@@ -163,14 +226,23 @@ public class InternHiddenRivalTest extends RunwayBaseClientServerTest {
         private final AtomicLong hidden;
 
         /**
+         * Whether this connection, or another in the pool, hid the armed id
+         * from a read.
+         */
+        private final AtomicBoolean fired;
+
+        /**
          * Construct a new instance.
          *
          * @param concourse the delegate {@link Concourse}
          * @param hidden the hidden-id state shared across the pool
+         * @param fired the hid-a-read state shared across the pool
          */
-        HidingConcourse(Concourse concourse, AtomicLong hidden) {
+        HidingConcourse(Concourse concourse, AtomicLong hidden,
+                AtomicBoolean fired) {
             super(concourse);
             this.hidden = hidden;
+            this.fired = fired;
         }
 
         @Override
@@ -202,6 +274,7 @@ public class InternHiddenRivalTest extends RunwayBaseClientServerTest {
                 }
                 if(stripped) {
                     hidden.set(0);
+                    fired.set(true);
                     return sanitized;
                 }
                 else {
@@ -215,7 +288,7 @@ public class InternHiddenRivalTest extends RunwayBaseClientServerTest {
 
         @Override
         protected ForwardingConcourse $this(Concourse concourse) {
-            return new HidingConcourse(concourse, hidden);
+            return new HidingConcourse(concourse, hidden, fired);
         }
     }
 

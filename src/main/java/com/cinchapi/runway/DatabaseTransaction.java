@@ -567,7 +567,8 @@ class DatabaseTransaction extends Binding implements Transaction {
                         // unclaimed, so a uniqueness refusal on the record
                         // being interned means a rival claimed it. Abort and
                         // retry so the next attempt adopts the winner.
-                        throw new IdentityConflictException(t.getMessage());
+                        throw new IdentityConflictException(
+                                (Record.ConstraintViolationException) t);
                     }
                     else {
                         // A save cannot report a refusal by returning false
@@ -946,8 +947,10 @@ class DatabaseTransaction extends Binding implements Transaction {
      * <p>
      * Each {@link Unique} constraint is evaluated within its declared scope. A
      * match is a record that agrees with every participating constraint and
-     * shares {@code record}'s concrete class. The identity is wholly unclaimed
-     * only when no participating constraint finds a record. A partial claim,
+     * shares {@code record}'s concrete class; a claimant answers for the
+     * constraints that resolve to no record, so a constraint that resolves to
+     * nothing does not disqualify it. The identity is wholly unclaimed only
+     * when no participating constraint resolves to a record. A partial claim,
      * two different claimants, or a claimant of another class yields no match
      * but records that the identity is claimed.
      * </p>
@@ -965,12 +968,13 @@ class DatabaseTransaction extends Binding implements Transaction {
         Record match = null;
         boolean claimed = false;
         boolean complete = true;
+        List<UniqueIdentity> unresolved = new ArrayList<>();
         for (UniqueIdentity identity : record.uniqueIdentities()) {
             Record candidate = identity.any()
                     ? findAnyUnique(identity.window(), identity.criteria())
                     : findUnique(identity.window(), identity.criteria());
             if(candidate == null) {
-                complete = false;
+                unresolved.add(identity);
             }
             else {
                 claimed = true;
@@ -982,7 +986,17 @@ class DatabaseTransaction extends Binding implements Transaction {
                 }
             }
         }
-        if(complete && match != null && match.getClass() == clazz) {
+        boolean adoptable = match != null && match.getClass() == clazz;
+        if(adoptable) {
+            // A constraint that resolves to no record while another resolves
+            // to a claimant does not make the claim partial on its own: a
+            // rival that claims the whole identity is invisible to a read that
+            // its commit outruns, so the claimant answers for itself.
+            for (UniqueIdentity identity : unresolved) {
+                complete = complete && identity.matches(match);
+            }
+        }
+        if(adoptable && complete) {
             @SuppressWarnings("unchecked") T adopted = (T) match;
             return new IdentityLookup<>(adopted, false);
         }
