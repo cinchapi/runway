@@ -35,6 +35,7 @@ import com.cinchapi.concourse.ConnectionPool;
 import com.cinchapi.concourse.ForwardingConcourse;
 import com.cinchapi.concourse.lang.CommandGroup;
 import com.cinchapi.runway.InternTest.Account;
+import com.cinchapi.runway.InternTest.Plain;
 import com.cinchapi.runway.InternTest.RacingUser;
 import com.cinchapi.runway.db.ConcourseProvider;
 
@@ -126,6 +127,112 @@ public class InternHiddenRivalTest extends RunwayBaseClientServerTest {
         Assert.assertEquals(winner.id(), result.id());
         Assert.assertEquals("Winner", result.bio);
         Assert.assertEquals(1, runway.count(Account.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code intern} adopts a rival that one
+     * constraint's lookup missed when the identity includes a
+     * {@link DeferredReference}-valued constraint, so no field shape is exempt
+     * from the convergence that {@code intern} promises.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link InternTest.Plain} link
+     * target and one saved {@link DeferredClaim} (the rival) that claims both
+     * constraints, with a {@link HidingConcourseConnectionPool} installed on
+     * the {@link Runway} and armed to hide the rival from exactly one read.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save the link target and the rival {@link DeferredClaim}.</li>
+     * <li>Arm the pool to hide the rival's id from the next read result that
+     * contains it, so the {@link DeferredReference}-valued constraint reports
+     * its part of the identity as unclaimed while the other observes the
+     * rival.</li>
+     * <li>Call {@code intern} with a new {@link DeferredClaim} that claims the
+     * same identity.</li>
+     * <li>Count every {@link DeferredClaim}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns the rival (same id and state)
+     * and exactly one {@link DeferredClaim} exists.
+     */
+    @Test
+    public void testInternAdoptsRivalWhenDeferredReferenceLookupMissedIt() {
+        Plain owner = new Plain("owner");
+        Assert.assertTrue(runway.save(owner));
+        HidingConcourseConnectionPool pool = new HidingConcourseConnectionPool(
+                Concourse.connect("localhost", server.getClientPort(), "admin",
+                        "admin", environment));
+        Reflection.set("connections", pool, runway); // (authorized)
+        DeferredClaim winner = new DeferredClaim(new DeferredReference<>(owner),
+                "race@example.com", "Winner");
+        Assert.assertTrue(runway.save(winner));
+        pool.hideOnce(winner.id());
+        DeferredClaim result = runway.intern(new DeferredClaim(
+                new DeferredReference<>(owner), "race@example.com", "Loser"));
+        Assert.assertTrue(pool.fired());
+        Assert.assertEquals(winner.id(), result.id());
+        Assert.assertEquals("Winner", result.label);
+        Assert.assertEquals(1, runway.count(DeferredClaim.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code intern} that loses the race
+     * within a caller-owned {@link Transaction} throws
+     * {@link IdentityConflictException} and poisons the transaction, so the
+     * caller retries the work in a new transaction.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link RacingUser} (the rival),
+     * and a {@link HidingConcourseConnectionPool} installed on the
+     * {@link Runway}, armed to hide the rival from exactly one read.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save the rival {@link RacingUser}.</li>
+     * <li>Arm the pool to hide the rival's id from the next read result that
+     * contains it, so intern's lookup reports the identity as unclaimed.</li>
+     * <li>Start a {@link Transaction} with {@link Runway#startTransaction()} in
+     * a try-with-resources block.</li>
+     * <li>Call {@code intern} with a new {@link RacingUser} that has the same
+     * email, and catch the expected exception.</li>
+     * <li>Attempt to {@code commit()}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The intern throws an
+     * {@link IdentityConflictException} that reports the {@link Unique}
+     * refusal, the commit attempt is refused with an
+     * {@link IllegalStateException}, and only the rival exists after the abort.
+     */
+    @Test
+    public void testInternWithinCallerOwnedTransactionThrowsIdentityConflict() {
+        HidingConcourseConnectionPool pool = new HidingConcourseConnectionPool(
+                Concourse.connect("localhost", server.getClientPort(), "admin",
+                        "admin", environment));
+        Reflection.set("connections", pool, runway); // (authorized)
+        RacingUser winner = new RacingUser("race@example.com", "Winner");
+        Assert.assertTrue(runway.save(winner));
+        pool.hideOnce(winner.id());
+        try (Transaction transaction = runway.startTransaction()) {
+            boolean threw = false;
+            try {
+                transaction.intern(new RacingUser("race@example.com", "Loser"));
+            }
+            catch (IdentityConflictException e) {
+                Assert.assertTrue(
+                        e.getMessage().contains("email must be unique"));
+                threw = true;
+            }
+            Assert.assertTrue(threw);
+            Assert.assertTrue(pool.fired());
+            boolean refused = false;
+            try {
+                transaction.commit();
+            }
+            catch (IllegalStateException e) {
+                refused = true;
+            }
+            Assert.assertTrue(refused);
+        }
+        Assert.assertEquals(1, runway.count(RacingUser.class));
     }
 
     /**
@@ -289,6 +396,46 @@ public class InternHiddenRivalTest extends RunwayBaseClientServerTest {
         @Override
         protected ForwardingConcourse $this(Concourse concourse) {
             return new HidingConcourse(concourse, hidden, fired);
+        }
+    }
+
+    /**
+     * A {@link Record} whose identity spans a {@link DeferredReference}-valued
+     * constraint and an independent scalar constraint.
+     *
+     * @author Jeff Nelson
+     */
+    public static class DeferredClaim extends Record {
+
+        /**
+         * The deferred identity link.
+         */
+        @Unique
+        DeferredReference<Plain> owner;
+
+        /**
+         * The independent scalar identity.
+         */
+        @Unique
+        String email;
+
+        /**
+         * A non-identity label.
+         */
+        String label;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param owner the deferred identity link
+         * @param email the scalar identity
+         * @param label the label
+         */
+        public DeferredClaim(DeferredReference<Plain> owner, String email,
+                String label) {
+            this.owner = owner;
+            this.email = email;
+            this.label = label;
         }
     }
 
