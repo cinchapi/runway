@@ -326,6 +326,10 @@ public interface TransactionInterface extends DatabaseInterface, Transactional {
      *             identity
      * @throws IllegalArgumentException if no field under a {@link Unique}
      *             constraint of {@code record} has a non-null value
+     * @throws IdentityConflictException if the identity appeared wholly
+     *             unclaimed during lookup but the save observed a claim within
+     *             a caller-owned transaction; the failed save poisons the
+     *             transaction
      * @throws IllegalStateException if a save failed within the open
      *             transaction
      */

@@ -20,6 +20,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.Assert;
@@ -228,8 +230,9 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <li>Catch the expected exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link SuppressedRunwayException} is thrown
-     * and only the original {@link Account} exists.
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} that
+     * reports the {@link Unique} refusal is thrown, and only the original
+     * {@link Account} exists.
      */
     @Test
     public void testInternFailsLoudlyOnPartialIdentityCollision() {
@@ -241,6 +244,7 @@ public class InternTest extends RunwayBaseClientServerTest {
             runway.intern(probe);
         }
         catch (SuppressedRunwayException e) {
+            Assert.assertTrue(e.getMessage().contains("email must be unique"));
             threw = true;
         }
         Assert.assertTrue(threw);
@@ -265,8 +269,9 @@ public class InternTest extends RunwayBaseClientServerTest {
      * <li>Catch the expected exception.</li>
      * </ul>
      * <p>
-     * <strong>Expected:</strong> A {@link SuppressedRunwayException} is thrown
-     * and only the two original {@link Account Accounts} exist.
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} that
+     * reports the {@link Unique} refusal is thrown, and only the two original
+     * {@link Account Accounts} exist.
      */
     @Test
     public void testInternFailsLoudlyWhenConstraintsMatchDifferentRecords() {
@@ -685,6 +690,160 @@ public class InternTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that {@code intern} adopts a competitor
+     * that commits the identity between the lookup and the save, instead of
+     * surfacing the {@link Unique} refusal that the save raises.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link RacingUser RacingUsers},
+     * and a {@link RacingUser#onFirstSave} action that saves a competing
+     * {@link RacingUser} with the same email through the enclosing
+     * {@link Runway}, so the competitor commits after the lookup reports the
+     * identity as unclaimed but before the save's {@link Unique} enforcement
+     * reads.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code intern} with a new {@link RacingUser}; the save hook
+     * commits the competitor inside the race window.</li>
+     * <li>Count every {@link RacingUser}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The call returns the committed competitor
+     * (same id and state) and exactly one {@link RacingUser} exists.
+     */
+    @Test
+    public void testInternAdoptsWinnerThatCommitsDuringSave() {
+        AtomicLong winner = new AtomicLong();
+        RacingUser.onFirstSave = () -> {
+            RacingUser usurper = new RacingUser("race@example.com", "Winner");
+            Assert.assertTrue(runway.save(usurper));
+            winner.set(usurper.id());
+        };
+        try {
+            RacingUser result = runway
+                    .intern(new RacingUser("race@example.com", "Loser"));
+            Assert.assertEquals(winner.get(), result.id());
+            Assert.assertEquals("Winner", result.name);
+            Assert.assertEquals(1, runway.count(RacingUser.class));
+        }
+        finally {
+            RacingUser.onFirstSave = null;
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that an {@code intern} that loses the race
+     * within a transactional supplier surfaces a retryable conflict, so the
+     * supplier re-runs and adopts the competitor.
+     * <p>
+     * <strong>Start state:</strong> No saved {@link RacingUser RacingUsers},
+     * and a {@link RacingUser#onFirstSave} action that saves a competing
+     * {@link RacingUser} with the same email through the enclosing
+     * {@link Runway} inside the first attempt's race window.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@link Runway#transactAndSupply(java.util.function.Function)
+     * transactAndSupply} with work that counts its attempts and returns
+     * {@code intern} of a new {@link RacingUser}.</li>
+     * <li>Count every {@link RacingUser}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The work runs exactly twice, the result is the
+     * committed competitor, and exactly one {@link RacingUser} exists.
+     */
+    @Test
+    public void testInternWithinTransactionRetriesAndAdoptsWinner() {
+        AtomicLong winner = new AtomicLong();
+        AtomicInteger attempts = new AtomicInteger();
+        RacingUser.onFirstSave = () -> {
+            RacingUser usurper = new RacingUser("race@example.com", "Winner");
+            Assert.assertTrue(runway.save(usurper));
+            winner.set(usurper.id());
+        };
+        try {
+            RacingUser result = runway.transactAndSupply(tx -> {
+                attempts.incrementAndGet();
+                return tx.intern(new RacingUser("race@example.com", "Loser"));
+            });
+            Assert.assertEquals(winner.get(), result.id());
+            Assert.assertEquals(2, attempts.get());
+            Assert.assertEquals(1, runway.count(RacingUser.class));
+        }
+        finally {
+            RacingUser.onFirstSave = null;
+        }
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code intern} still fails loudly on a
+     * partial identity collision when the claimed constraint is declared after
+     * one that is unclaimed, so a clean miss on an earlier constraint does not
+     * soften the refusal.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Account} whose handle
+     * matches the probe but whose email does not.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Save an {@link Account} with a distinct email and handle.</li>
+     * <li>Call {@code intern} with a new {@link Account} that has an unclaimed
+     * email but the same handle.</li>
+     * <li>Catch the expected exception.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> A {@link SuppressedRunwayException} that
+     * reports the {@link Unique} refusal is thrown, and only the original
+     * {@link Account} exists.
+     */
+    @Test
+    public void testInternFailsLoudlyWhenOnlyLaterConstraintIsClaimed() {
+        runway.save(new Account("e1@example.com", "handle1", "bio"));
+        boolean threw = false;
+        try {
+            runway.intern(new Account("e2@example.com", "handle1", "x"));
+        }
+        catch (SuppressedRunwayException e) {
+            Assert.assertTrue(e.getMessage().contains("handle must be unique"));
+            threw = true;
+        }
+        Assert.assertTrue(threw);
+        Assert.assertEquals(1, runway.count(Account.class));
+    }
+
+    /**
+     * <strong>Goal:</strong> Verify that {@code intern} matches an existing
+     * record whose identity is a link-valued {@link Unique} constraint, so a
+     * repeat claim of the same link adopts the first record instead of failing
+     * the {@link Unique} enforcement.
+     * <p>
+     * <strong>Start state:</strong> One saved {@link Plain} record to serve as
+     * the link target.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Call {@code intern} with a new {@link Claim} that links to the
+     * {@link Plain} record.</li>
+     * <li>Call {@code intern} again with another new {@link Claim} that links
+     * to the same {@link Plain} record.</li>
+     * <li>Count every {@link Claim}.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The second call returns the first
+     * {@link Claim} (same id and state) and exactly one {@link Claim} exists.
+     */
+    @Test
+    public void testInternMatchesLinkValuedIdentity() {
+        Plain owner = new Plain("owner");
+        runway.save(owner);
+        Claim first = runway.intern(new Claim(owner, "first"));
+        Claim second = runway.intern(new Claim(owner, "second"));
+        Assert.assertEquals(first.id(), second.id());
+        Assert.assertEquals("first", second.label);
+        Assert.assertEquals(1, runway.count(Claim.class));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a repeat {@code intern} of the same
      * identity within the same {@link Transaction} observes the staged create
      * instead of a second create, and that an abort discards the staged record.
@@ -939,6 +1098,38 @@ public class InternTest extends RunwayBaseClientServerTest {
     }
 
     /**
+     * A {@link Record} whose identity is a single link-valued {@link Unique}
+     * constraint, mirroring identities that claim ownership of a linked
+     * resource.
+     *
+     * @author Jeff Nelson
+     */
+    public static class Claim extends Record {
+
+        /**
+         * The identity link.
+         */
+        @Unique
+        Plain owner;
+
+        /**
+         * A non-identity label.
+         */
+        String label;
+
+        /**
+         * Construct a new instance.
+         *
+         * @param owner the identity link
+         * @param label the label
+         */
+        public Claim(Plain owner, String label) {
+            this.owner = owner;
+            this.label = label;
+        }
+    }
+
+    /**
      * A {@link Record} whose identity is a sequence-valued {@link Unique}
      * constraint.
      *
@@ -979,6 +1170,14 @@ public class InternTest extends RunwayBaseClientServerTest {
         static volatile CountDownLatch bothStagedCreate = null;
 
         /**
+         * When non-null, the first save that reaches the {@link #beforeSave()}
+         * hook runs this action exactly once before the save proceeds. The
+         * owning test must set the action before it runs and clear it
+         * afterwards.
+         */
+        static volatile Runnable onFirstSave = null;
+
+        /**
          * The identity email.
          */
         @Unique
@@ -1002,6 +1201,17 @@ public class InternTest extends RunwayBaseClientServerTest {
 
         @Override
         protected void beforeSave() {
+            Runnable action = onFirstSave;
+            if(action != null) {
+                // Clear before running so a save that the action itself
+                // performs does not re-enter the hook.
+                onFirstSave = null;
+                action.run();
+            }
+            else {
+                // No one-shot action is pending, so the save proceeds to the
+                // rendezvous check.
+            }
             CountDownLatch latch = bothStagedCreate;
             if(latch != null) {
                 latch.countDown();
