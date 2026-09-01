@@ -1,6 +1,6 @@
 # Changelog
 
-#### Version 2.3.0 (TBD)
+#### Version 2.3.0 (September 1, 2026)
 Runway 2.3.0 makes concurrent work safe. A new Transaction API scopes any combination of reads and writes to one ACID transaction. Saves now write only what changed, and a save can verify the values a decision rests on. Atomic operations resolve records by their unique identity, and every `Audience`, including the anonymous one, is now a full database participant.
 
 ##### Transaction API
