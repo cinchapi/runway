@@ -163,6 +163,47 @@ public class BatchSaverTest extends SaverTest {
     }
 
     /**
+     * <strong>Goal:</strong> Verify that an
+     * {@link Saver#observe(java.util.Collection, long, java.util.function.Consumer)
+     * observe} that a {@code consumer} records receives the values its own read
+     * returned, because the read it belongs to rides a later submission than
+     * the one the {@code consumer} was dispatched against.
+     * <p>
+     * <strong>Start state:</strong> A record exists with
+     * {@code name = "alpha"}.
+     * <p>
+     * <strong>Workflow:</strong>
+     * <ul>
+     * <li>Stage the {@link BatchSaver}.</li>
+     * <li>Record an {@link Timing#INLINE inline} {@code select} on {@code name}
+     * whose {@code consumer} records an {@code observe} of {@code name} in the
+     * matching record.</li>
+     * <li>Commit.</li>
+     * </ul>
+     * <p>
+     * <strong>Expected:</strong> The {@code observe} consumer receives the
+     * stored {@code name}.
+     */
+    @Test
+    public void testObserveRecordedByConsumerReceivesItsOwnReadResult() {
+        long id = client.add("name", "alpha");
+
+        Saver saver = newSaver();
+        saver.stage();
+        AtomicReference<Map<String, Set<Object>>> observed = new AtomicReference<>();
+        saver.select("name",
+                Criteria.where().key("name").operator(Operator.EQUALS)
+                        .value("alpha"),
+                result -> saver.observe(ImmutableSet.of("name"), id,
+                        observed::set));
+        Assert.assertTrue(saver.commit());
+
+        Assert.assertNotNull(observed.get());
+        Assert.assertEquals(ImmutableSet.of("alpha"),
+                observed.get().get("name"));
+    }
+
+    /**
      * <strong>Goal:</strong> Verify that a {@code consumer} passed to
      * {@link Saver#select(String, Criteria, java.util.function.Consumer)
      * select} can record a further read on the {@link BatchSaver} without
