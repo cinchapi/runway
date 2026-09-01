@@ -89,11 +89,26 @@ public final class BatchSaver implements Saver {
     private final List<Consumer<CommandGroup>> postWriteReadOps;
 
     /**
+     * Deferred read recordings whose {@link Consumer Consumers} cannot reject
+     * the save. Applied to the active {@link CommandGroup} before the deferred
+     * writes, like {@link #preWriteReadOps}, but eligible to ride the commit
+     * submission when no validator-backed read forces an earlier one.
+     */
+    private final List<Consumer<CommandGroup>> observationOps;
+
+    /**
      * Validator {@link Consumer Consumers} paired with the deferred reads in
      * the active batch. Run in recording order against the submitted result
      * list.
      */
     private final List<Consumer<List<Object>>> pendingValidators;
+
+    /**
+     * Observer {@link Consumer Consumers} paired with the
+     * {@link #observationOps}. Run against the result list of whichever
+     * submission carried their reads.
+     */
+    private final List<Consumer<List<Object>>> pendingObservers;
 
     /**
      * Deferred write recordings accumulated for the writes submission.
@@ -113,7 +128,9 @@ public final class BatchSaver implements Saver {
         this.stageBundled = false;
         this.preWriteReadOps = new ArrayList<>();
         this.postWriteReadOps = new ArrayList<>();
+        this.observationOps = new ArrayList<>();
         this.pendingValidators = new ArrayList<>();
+        this.pendingObservers = new ArrayList<>();
         this.deferredWriteOps = new ArrayList<>();
     }
 
@@ -140,12 +157,15 @@ public final class BatchSaver implements Saver {
     @Override
     public boolean commit() {
         flushReads();
-        CommandGroup writes = prepareGroup();
-        drainWrites(writes);
-        int commitSlot = writes.commands().size();
-        writes.commit();
-        List<Object> results = concourse.submit(writes);
-        return (Boolean) results.get(commitSlot);
+        CommandGroup group = prepareGroup();
+        drainObservations(group);
+        drainWrites(group);
+        int commitSlot = group.commands().size();
+        group.commit();
+        List<Object> results = concourse.submit(group);
+        boolean committed = (Boolean) results.get(commitSlot);
+        dispatchObservers(results);
+        return committed;
     }
 
     @SuppressWarnings("unchecked")
@@ -173,11 +193,13 @@ public final class BatchSaver implements Saver {
     @Override
     public void flush() {
         while (!preWriteReadOps.isEmpty() || !postWriteReadOps.isEmpty()
-                || !deferredWriteOps.isEmpty()) {
+                || !observationOps.isEmpty() || !deferredWriteOps.isEmpty()) {
             if(preWriteReadOps.isEmpty() && postWriteReadOps.isEmpty()) {
-                CommandGroup writes = prepareGroup();
-                drainWrites(writes);
-                concourse.submit(writes);
+                CommandGroup group = prepareGroup();
+                drainObservations(group);
+                drainWrites(group);
+                List<Object> results = concourse.submit(group);
+                dispatchObservers(results);
             }
             else {
                 // A queued validator may record further operations, so loop
@@ -185,6 +207,20 @@ public final class BatchSaver implements Saver {
                 flushReads();
             }
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public void observe(Collection<String> keys, long record,
+            Consumer<Map<String, Set<Object>>> observer) {
+        Preconditions.checkNotNull(observer);
+        int[] slot = new int[1];
+        observationOps.add(group -> {
+            slot[0] = group.commands().size();
+            group.select(keys, record);
+        });
+        pendingObservers.add(results -> observer
+                .accept((Map<String, Set<Object>>) results.get(slot[0])));
     }
 
     @Override
@@ -253,6 +289,43 @@ public final class BatchSaver implements Saver {
     }
 
     /**
+     * Run every pending observer against {@code results} and clear the queue. A
+     * failure in one observer is suppressed, so it neither rejects the save nor
+     * stops the observers that follow it.
+     *
+     * @param results the result list of the submission that carried the
+     *            observation reads
+     */
+    private void dispatchObservers(List<Object> results) {
+        List<Consumer<List<Object>>> active = new ArrayList<>(pendingObservers);
+        pendingObservers.clear();
+        for (Consumer<List<Object>> observer : active) {
+            try {
+                observer.accept(results);
+            }
+            catch (Throwable t) {
+                // NOTE: The server decides whether the save succeeds, and an
+                // observer may run after that decision reaches this client.
+                // A throw here would reject a commit the server already
+                // accepted, so the outcome must not depend on an observer.
+            }
+        }
+    }
+
+    /**
+     * Append every deferred observation read to {@code group} and clear the
+     * queue.
+     *
+     * @param group the {@link CommandGroup} that receives the reads
+     */
+    private void drainObservations(CommandGroup group) {
+        for (Consumer<CommandGroup> op : observationOps) {
+            op.accept(group);
+        }
+        observationOps.clear();
+    }
+
+    /**
      * Append every deferred write to {@code group} and clear the queue.
      *
      * @param group the {@link CommandGroup} that receives the deferred writes
@@ -284,6 +357,9 @@ public final class BatchSaver implements Saver {
                 op.accept(group);
             }
             preWriteReadOps.clear();
+            // A pending observation read is also a pre-write read, so it must
+            // join any submission that drains the writes.
+            drainObservations(group);
             drainWrites(group);
             for (Consumer<CommandGroup> op : postWriteReadOps) {
                 op.accept(group);
@@ -296,6 +372,11 @@ public final class BatchSaver implements Saver {
                     pendingValidators);
             postWriteReadOps.clear();
             pendingValidators.clear();
+            // NOTE: An observer's slot is assigned when its read drains, so an
+            // observer must dispatch against the submission that carried its
+            // read. A validator may record another observation, and that one
+            // belongs to a later submission.
+            dispatchObservers(results);
             for (Consumer<List<Object>> validator : active) {
                 validator.accept(results);
             }

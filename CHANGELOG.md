@@ -129,6 +129,14 @@ This release makes stale reference handling consistent and lets users configure 
     * The data is the state the database stored, so a record that the save
       itself changed reports its stored values, not the unsaved edits the
       caller's instance held.
+    * A save reads a deleted record's stored state only when a delete
+      listener is registered for the record's class or a superclass, so a
+      deletion that no listener receives pays nothing for the data a
+      notification would carry.
+    * When the read happens, it shares a server round trip that the save
+      already makes, so it never adds one of its own.
+    * A listener registered after a save already staged its deletions
+      receives an empty data map for that save's deletions, never `null`.
     * A listener registered for a type still receives only records of that
       type or a subclass, and a listener that throws still does not block the
       remaining listeners.
@@ -160,6 +168,9 @@ This release makes stale reference handling consistent and lets users configure 
 * Fixed a bug where an `Audience#frame` that filtered any data caused a later, fully permitted `read` on the same thread to fail with a `RestrictedAccessException`. A `frame` now has no effect on later calls, as its contract promises. In a server that pools threads, the stale failure could cross requests.
 * Fixed a bug where the single-key `Audience#read` (and `readAs`) returned `null` for a key the `Audience` may not read, instead of the `RestrictedAccessException` that its contract documents. The single-key form now behaves the same as the collection-based `read`. A `read` of a record that the `Audience` cannot discover at all is now also refused with a `RestrictedAccessException`; previously the outcome depended on the earlier calls on the thread.
 * Fixed a bug where an `Audience#frame` that threw partway through its walk poisoned every later `frame` on the same thread. The records in flight at the failure rendered as `(recursive link)` placeholders instead of nested data, and the result still looked successful. In a server that pools threads, one failure degraded every later response the thread rendered. A `frame` that throws now leaves no residue, and the placeholder appears only for a genuine cycle within a single `frame`. ([GH-206](https://github.com/cinchapi/runway/issues/206))
+* Fixed a bug where a save that already committed reported failure. The save returned `false`, and every record it processed reverted to its pre-save state in memory, so the caller could not learn that the database held the changes. The bug occurred when a save deleted a record that another record in the same save referenced through a `@CaptureDelete` collection field whose declared type cannot be created without constructor arguments.
+    * Within a `Transaction`, the failure still reaches the caller from `commit()`, and `committed()` reports `true`.
+    * A failure in one record's dispatch does not block the notifications and checkpoints of the records that follow it.
 
 #### Version 2.2.0 (August 4, 2026)
 * **Added `DynamicWritePolicy` to govern which fields `Record#set` can write.** By default, a dynamic write can reach any field, including final, private, package-private and protected ones, which preserves the historical behavior. Configure a policy per `Runway` instance with `Runway.builder().dynamicWritePolicy(...)`. ([GH-147](https://github.com/cinchapi/runway/issues/147))
